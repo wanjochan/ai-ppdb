@@ -39,18 +39,55 @@ REM 设置基准目录
 set R=%~dp0
 set ROOT_DIR=%R%..
 set CROSS_DIR=%ROOT_DIR%\cross9\bin
-set COSMOPOLITAN_DIR=%ROOT_DIR%\cosmopolitan
+set COSMO_DIR=%ROOT_DIR%\cosmopolitan
 set CC=%CROSS_DIR%\x86_64-pc-linux-gnu-gcc.exe
 set AR=%CROSS_DIR%\x86_64-pc-linux-gnu-ar.exe
 set OBJCOPY=%CROSS_DIR%\x86_64-pc-linux-gnu-objcopy.exe
+
+REM 检查必要工具
+if not exist "%CC%" (
+    echo Error: Compiler not found at %CC%
+    goto :error
+)
+if not exist "%AR%" (
+    echo Error: AR not found at %AR%
+    goto :error
+)
+if not exist "%OBJCOPY%" (
+    echo Error: OBJCOPY not found at %OBJCOPY%
+    goto :error
+)
+
+REM 检查必要文件
+if not exist "%COSMO_DIR%\cosmopolitan.h" (
+    echo Error: cosmopolitan.h not found
+    goto :error
+)
+if not exist "%COSMO_DIR%\ape.lds" (
+    echo Error: ape.lds not found
+    goto :error
+)
+if not exist "%COSMO_DIR%\crt.o" (
+    echo Error: crt.o not found
+    goto :error
+)
+if not exist "%COSMO_DIR%\ape-no-modify-self.o" (
+    echo Error: ape-no-modify-self.o not found
+    goto :error
+)
+if not exist "%COSMO_DIR%\cosmopolitan.a" (
+    echo Error: cosmopolitan.a not found
+    goto :error
+)
 
 REM ==================== 设置编译选项 ====================
 echo Setting up build flags...
 
 REM 设置编译标志
 set COMMON_FLAGS=-g -O0 -Wall -Wextra -DPPDB_DEBUG -DPPDB_TEST -DPPDB_VERSION=\"%VERSION%\" -fno-pie -no-pie -mno-red-zone -fno-omit-frame-pointer -nostdlib -nostdinc -D_XOPEN_SOURCE=700
-set INCLUDES=-I"%ROOT_DIR%" -I"%ROOT_DIR%\include" -I"%ROOT_DIR%\src" -I"%ROOT_DIR%\test_white" -I"%COSMOPOLITAN_DIR%"
-set LDFLAGS=-Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -fuse-ld=bfd -Wl,-T,"%COSMOPOLITAN_DIR%\ape.lds"
+set WARNING_FLAGS=-Wno-sign-compare -Wno-unused-parameter -Wno-format-truncation
+set INCLUDES=-I"%COSMO_DIR%" -I"%ROOT_DIR%" -I"%ROOT_DIR%\include" -I"%ROOT_DIR%\src" -I"%ROOT_DIR%\test_white" -include "%COSMO_DIR%\cosmopolitan.h"
+set LDFLAGS=-Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -fuse-ld=bfd -Wl,-T,"%COSMO_DIR%\ape.lds"
 
 REM 设置源文件目录
 set SRC_DIR=%ROOT_DIR%\src
@@ -77,36 +114,37 @@ echo Building source files...
 echo Compiling common files...
 for %%f in ("%SRC_DIR%\common\*.c") do (
     echo   %%~nxf
-    %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\common_%%~nf.o"
+    %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\common_%%~nf.o"
     if !errorlevel! neq 0 goto :error
 )
 
 echo Compiling kvstore files...
 for %%f in ("%SRC_DIR%\kvstore\*.c") do (
     echo   %%~nxf
-    %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\kvstore_%%~nf.o"
+    %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\kvstore_%%~nf.o"
     if !errorlevel! neq 0 goto :error
 )
 
-echo Compiling main files...
-for %%f in ("%SRC_DIR%\*.c") do (
-    echo   %%~nxf
-    %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\%%~nf.o"
-    if !errorlevel! neq 0 goto :error
-)
+REM 测试构建不需要main.c
+REM echo Compiling main files...
+REM for %%f in ("%SRC_DIR%\*.c") do (
+REM     echo   %%~nxf
+REM     %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\%%~nf.o"
+REM     if !errorlevel! neq 0 goto :error
+REM )
 
 REM ==================== 编译测试文件 ====================
 echo Building test files...
 
 echo Compiling test framework...
-%CC% %COMMON_FLAGS% %INCLUDES% -c "%TEST_DIR%\test_framework.c" -o "%BUILD_DIR%\test_framework.o"
+%CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%TEST_DIR%\test_framework.c" -o "%BUILD_DIR%\test_framework.o"
 if !errorlevel! neq 0 goto :error
 
 echo Compiling test files...
 for %%f in ("%TEST_DIR%\test_*.c") do (
     if not "%%~nxf"=="test_framework.c" (
         echo   %%~nxf
-        %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\%%~nf.o"
+        %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\%%~nf.o"
         if !errorlevel! neq 0 goto :error
     )
 )
@@ -115,7 +153,7 @@ REM ==================== 链接 ====================
 echo Linking...
 
 echo Creating test executable...
-%CC% %COMMON_FLAGS% %LDFLAGS% -o "%BUILD_DIR%\ppdb_test.dbg" "%BUILD_DIR%\*.o" "%COSMOPOLITAN_DIR%\crt.o" "%COSMOPOLITAN_DIR%\ape-no-modify-self.o" "%COSMOPOLITAN_DIR%\cosmopolitan.a"
+%CC% %COMMON_FLAGS% %LDFLAGS% -o "%BUILD_DIR%\ppdb_test.dbg" "%BUILD_DIR%\*.o" "%COSMO_DIR%\crt.o" "%COSMO_DIR%\ape-no-modify-self.o" "%COSMO_DIR%\cosmopolitan.a"
 if !errorlevel! neq 0 goto :error
 
 echo Creating final binary...
