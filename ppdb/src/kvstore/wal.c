@@ -243,7 +243,7 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
             }
 
             // 读取键，为结尾空字符分配额外的字节
-            uint8_t* key = malloc(record.key_size + 1);
+            uint8_t* key = malloc(record.key_size);
             if (!key) {
                 ppdb_log_error("Failed to allocate memory for key");
                 break;
@@ -255,12 +255,11 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
                 free(key);
                 break;
             }
-            key[record.key_size] = '\0';  // 添加结尾空字符
 
-            // 读取值（如果有），为结尾空字符分配额外的字节
+            // 读取值（如果有）
             uint8_t* value = NULL;
             if (record.type == PPDB_WAL_RECORD_PUT) {
-                value = malloc(record.value_size + 1);
+                value = malloc(record.value_size);
                 if (!value) {
                     ppdb_log_error("Failed to allocate memory for value");
                     free(key);
@@ -274,15 +273,14 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
                     free(value);
                     break;
                 }
-                value[record.value_size] = '\0';  // 添加结尾空字符
             }
 
             // 应用记录
             ppdb_error_t err;
             if (record.type == PPDB_WAL_RECORD_PUT) {
-                err = ppdb_memtable_put(table, key, record.key_size + 1, value, record.value_size + 1);
+                err = ppdb_memtable_put(table, key, record.key_size, value, record.value_size);
             } else {
-                err = ppdb_memtable_delete(table, key, record.key_size + 1);
+                err = ppdb_memtable_delete(table, key, record.key_size);
             }
 
             free(key);

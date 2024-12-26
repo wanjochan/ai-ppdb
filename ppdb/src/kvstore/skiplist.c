@@ -17,8 +17,9 @@ typedef struct skipnode_t {
 // 跳表结构
 struct skiplist_t {
     int level;                     // 当前最大层数
-    size_t size;                   // 节点数量
+    volatile size_t size;          // 节点数量（volatile 保证可见性）
     skipnode_t* header;            // 头节点
+    pthread_mutex_t mutex;         // 互斥锁
 };
 
 // 创建节点
@@ -51,18 +52,23 @@ static skipnode_t* create_node(int level,
     node->key_len = key_len;
     node->value_len = value_len;
 
+    // 初始化 forward 数组
+    for (int i = 0; i < level; i++) {
+        node->forward[i] = NULL;
+    }
+
     return node;
 }
 
 // 销毁节点
 static void destroy_node(skipnode_t* node) {
     if (!node) return;
-    free(node->key);
-    free(node->value);
+    if (node->key) free(node->key);
+    if (node->value) free(node->value);
     free(node);
 }
 
-// 随机层数
+// 随机层数（线程安全）
 static int random_level(void) {
     int level = 1;
     while ((random() & 0xFFFF) < (P * 0xFFFF) && level < MAX_LEVEL) {
@@ -79,16 +85,18 @@ skiplist_t* skiplist_create(void) {
     list->level = 1;
     list->size = 0;
 
-    // 创建头节点
-    list->header = create_node(MAX_LEVEL, NULL, 0, NULL, 0);
-    if (!list->header) {
+    // 初始化互斥锁
+    if (pthread_mutex_init(&list->mutex, NULL) != 0) {
         free(list);
         return NULL;
     }
 
-    // 初始化头节点的forward指针
-    for (int i = 0; i < MAX_LEVEL; i++) {
-        list->header->forward[i] = NULL;
+    // 创建头节点
+    list->header = create_node(MAX_LEVEL, NULL, 0, NULL, 0);
+    if (!list->header) {
+        pthread_mutex_destroy(&list->mutex);
+        free(list);
+        return NULL;
     }
 
     return list;
@@ -108,22 +116,18 @@ void skiplist_destroy(skiplist_t* list) {
 
     // 释放头节点和跳表结构
     destroy_node(list->header);
+    pthread_mutex_destroy(&list->mutex);
     free(list);
 }
 
 // 比较键
 static int compare_key(const uint8_t* key1, size_t key1_len,
                       const uint8_t* key2, size_t key2_len) {
-    // 不包含结尾空字符的长度
-    size_t real_len1 = key1_len;
-    size_t real_len2 = key2_len;
-    if (key1[key1_len - 1] == '\0') real_len1--;
-    if (key2[key2_len - 1] == '\0') real_len2--;
-
-    size_t min_len = real_len1 < real_len2 ? real_len1 : real_len2;
+    // 直接比较键的内容，不考虑结尾的空字符
+    size_t min_len = key1_len < key2_len ? key1_len : key2_len;
     int result = memcmp(key1, key2, min_len);
     if (result != 0) return result;
-    return real_len1 - real_len2;
+    return key1_len - key2_len;
 }
 
 // 插入/更新键值对
@@ -133,6 +137,8 @@ int skiplist_put(skiplist_t* list,
     if (!list || !key || !value || key_len == 0 || value_len == 0) {
         return -1;
     }
+
+    pthread_mutex_lock(&list->mutex);
 
     // 查找位置
     skipnode_t* update[MAX_LEVEL];
@@ -154,13 +160,23 @@ int skiplist_put(skiplist_t* list,
     if (current && compare_key(current->key, current->key_len,
                              key, key_len) == 0) {
         uint8_t* new_value = malloc(value_len + 1);
-        if (!new_value) return -1;
+        if (!new_value) {
+            pthread_mutex_unlock(&list->mutex);
+            return -1;
+        }
 
         memcpy(new_value, value, value_len);
         ((uint8_t*)new_value)[value_len] = '\0';
-        free(current->value);
+        
+        // 先保存旧值的指针，再更新新值
+        uint8_t* old_value = current->value;
         current->value = new_value;
         current->value_len = value_len;
+        
+        // 最后释放旧值
+        free(old_value);
+        
+        pthread_mutex_unlock(&list->mutex);
         return 0;
     }
 
@@ -175,14 +191,18 @@ int skiplist_put(skiplist_t* list,
 
     skipnode_t* new_node = create_node(new_level, key, key_len,
                                      value, value_len);
-    if (!new_node) return -1;
+    if (!new_node) {
+        pthread_mutex_unlock(&list->mutex);
+        return -1;
+    }
 
     for (int i = 0; i < new_level; i++) {
         new_node->forward[i] = update[i]->forward[i];
         update[i]->forward[i] = new_node;
     }
 
-    list->size++;
+    list->size++;  // 在锁的保护下更新
+    pthread_mutex_unlock(&list->mutex);
     return 0;
 }
 
@@ -193,6 +213,8 @@ int skiplist_get(skiplist_t* list,
     if (!list || !key || !value || !value_len || key_len == 0) {
         return -1;
     }
+
+    pthread_mutex_lock(&list->mutex);
 
     skipnode_t* current = list->header;
     for (int i = list->level - 1; i >= 0; i--) {
@@ -207,17 +229,21 @@ int skiplist_get(skiplist_t* list,
     current = current->forward[0];
     if (!current || compare_key(current->key, current->key_len,
                               key, key_len) != 0) {
+        pthread_mutex_unlock(&list->mutex);
         return 1;  // 未找到
     }
 
     if (*value_len < current->value_len) {
         *value_len = current->value_len;
+        pthread_mutex_unlock(&list->mutex);
         return -1;  // 缓冲区太小
     }
 
     memcpy(value, current->value, current->value_len);
     ((uint8_t*)value)[current->value_len] = '\0';
     *value_len = current->value_len;
+
+    pthread_mutex_unlock(&list->mutex);
     return 0;
 }
 
@@ -227,6 +253,8 @@ int skiplist_delete(skiplist_t* list,
     if (!list || !key || key_len == 0) {
         return -1;
     }
+
+    pthread_mutex_lock(&list->mutex);
 
     skipnode_t* update[MAX_LEVEL];
     skipnode_t* current = list->header;
@@ -244,6 +272,7 @@ int skiplist_delete(skiplist_t* list,
     current = current->forward[0];
     if (!current || compare_key(current->key, current->key_len,
                               key, key_len) != 0) {
+        pthread_mutex_unlock(&list->mutex);
         return 1;  // 未找到
     }
 
@@ -260,11 +289,16 @@ int skiplist_delete(skiplist_t* list,
         list->level--;
     }
 
-    list->size--;
+    list->size--;  // 在锁的保护下更新
+    pthread_mutex_unlock(&list->mutex);
     return 0;
 }
 
 // 获取跳表大小
 size_t skiplist_size(skiplist_t* list) {
-    return list ? list->size : 0;
+    if (!list) return 0;
+    pthread_mutex_lock(&list->mutex);
+    size_t size = list->size;
+    pthread_mutex_unlock(&list->mutex);
+    return size;
 }
