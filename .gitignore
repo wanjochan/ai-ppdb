@@ -48,3 +48,4 @@ cross9
 /cosmopolitan
 /ppdb/cosmopolitan
 /ppdb/scripts/test_wal_concurrent
+/ppdb/scripts/wal
