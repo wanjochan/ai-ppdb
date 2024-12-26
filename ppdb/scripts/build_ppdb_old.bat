@@ -9,11 +9,13 @@ set BUILD_TIME=%date% %time%
 REM ==================== Command Line Args ====================
 set CLEAN_ONLY=0
 set SHOW_HELP=0
+set FORCE_REBUILD=0
 
 :arg_loop
 if "%1"=="" goto arg_done
 if /i "%1"=="--clean" set CLEAN_ONLY=1
 if /i "%1"=="--help" set SHOW_HELP=1
+if /i "%1"=="--rebuild" set FORCE_REBUILD=1
 shift
 goto arg_loop
 :arg_done
@@ -23,6 +25,7 @@ if %SHOW_HELP%==1 (
     echo Options:
     echo   --clean      Clean build directory only
     echo   --help       Show this help message
+    echo   --rebuild    Force rebuild all files
     exit /b 0
 )
 
@@ -109,23 +112,80 @@ echo Building source files...
 
 echo Compiling common files...
 for %%f in ("%SRC_DIR%\common\*.c") do (
-    echo   %%~nxf
-    %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\common_%%~nf.o"
-    if !errorlevel! neq 0 goto :error
+    set "SOURCE_FILE=%%f"
+    set "OBJ_FILE=%BUILD_DIR%\common_%%~nf.o"
+    
+    REM Check if object file exists and source is newer
+    set "NEED_COMPILE=0"
+    if not exist "!OBJ_FILE!" set NEED_COMPILE=1
+    if %FORCE_REBUILD%==1 set NEED_COMPILE=1
+    if !NEED_COMPILE!==0 (
+        for /f "tokens=2 delims==" %%i in ('wmic datafile where "name='%%~sf'" get lastmodified /value') do (
+            for /f "tokens=2 delims==" %%j in ('wmic datafile where "name='!OBJ_FILE:\=\\!'" get lastmodified /value') do (
+                if %%i gtr %%j set NEED_COMPILE=1
+            )
+        )
+    )
+    
+    if !NEED_COMPILE!==1 (
+        echo   %%~nxf
+        %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "!OBJ_FILE!"
+        if !errorlevel! neq 0 goto :error
+    ) else (
+        echo   %%~nxf [Skipped - up to date]
+    )
 )
 
 echo Compiling kvstore files...
 for %%f in ("%SRC_DIR%\kvstore\*.c") do (
-    echo   %%~nxf
-    %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\kvstore_%%~nf.o"
-    if !errorlevel! neq 0 goto :error
+    set "SOURCE_FILE=%%f"
+    set "OBJ_FILE=%BUILD_DIR%\kvstore_%%~nf.o"
+    
+    REM Check if object file exists and source is newer
+    set "NEED_COMPILE=0"
+    if not exist "!OBJ_FILE!" set NEED_COMPILE=1
+    if %FORCE_REBUILD%==1 set NEED_COMPILE=1
+    if !NEED_COMPILE!==0 (
+        for /f "tokens=2 delims==" %%i in ('wmic datafile where "name='%%~sf'" get lastmodified /value') do (
+            for /f "tokens=2 delims==" %%j in ('wmic datafile where "name='!OBJ_FILE:\=\\!'" get lastmodified /value') do (
+                if %%i gtr %%j set NEED_COMPILE=1
+            )
+        )
+    )
+    
+    if !NEED_COMPILE!==1 (
+        echo   %%~nxf
+        %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "!OBJ_FILE!"
+        if !errorlevel! neq 0 goto :error
+    ) else (
+        echo   %%~nxf [Skipped - up to date]
+    )
 )
 
 echo Compiling main files...
 for %%f in ("%SRC_DIR%\*.c") do (
-    echo   %%~nxf
-    %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\%%~nf.o"
-    if !errorlevel! neq 0 goto :error
+    set "SOURCE_FILE=%%f"
+    set "OBJ_FILE=%BUILD_DIR%\%%~nf.o"
+    
+    REM Check if object file exists and source is newer
+    set "NEED_COMPILE=0"
+    if not exist "!OBJ_FILE!" set NEED_COMPILE=1
+    if %FORCE_REBUILD%==1 set NEED_COMPILE=1
+    if !NEED_COMPILE!==0 (
+        for /f "tokens=2 delims==" %%i in ('wmic datafile where "name='%%~sf'" get lastmodified /value') do (
+            for /f "tokens=2 delims==" %%j in ('wmic datafile where "name='!OBJ_FILE:\=\\!'" get lastmodified /value') do (
+                if %%i gtr %%j set NEED_COMPILE=1
+            )
+        )
+    )
+    
+    if !NEED_COMPILE!==1 (
+        echo   %%~nxf
+        %CC% %COMMON_FLAGS% %INCLUDES% -c "%%f" -o "!OBJ_FILE!"
+        if !errorlevel! neq 0 goto :error
+    ) else (
+        echo   %%~nxf [Skipped - up to date]
+    )
 )
 
 REM ==================== Create Libraries ====================

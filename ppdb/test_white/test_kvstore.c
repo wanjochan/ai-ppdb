@@ -375,7 +375,8 @@ static int test_kvstore_concurrent(void) {
 
     // 验证结果
     ppdb_log_info("Total successful operations: %d", total_success);
-    TEST_ASSERT(total_success > 0, "At least one operation should succeed");
+    TEST_ASSERT(total_success == NUM_THREADS * OPS_PER_THREAD * 2, 
+                "All operations should succeed");
 
     // 关闭 KVStore
     ppdb_kvstore_close(store);
