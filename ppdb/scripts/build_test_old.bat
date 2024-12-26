@@ -10,12 +10,14 @@ REM ==================== 命令行参数处理 ====================
 set CLEAN_ONLY=0
 set BUILD_ONLY=0
 set SHOW_HELP=0
+set FORCE_REBUILD=0
 
 :arg_loop
 if "%1"=="" goto arg_done
 if /i "%1"=="--clean" set CLEAN_ONLY=1
 if /i "%1"=="--build-only" set BUILD_ONLY=1
 if /i "%1"=="--help" set SHOW_HELP=1
+if /i "%1"=="--rebuild" set FORCE_REBUILD=1
 shift
 goto arg_loop
 :arg_done
@@ -26,6 +28,7 @@ if %SHOW_HELP%==1 (
     echo   --clean      Clean build directory only
     echo   --build-only Build without running tests
     echo   --help       Show this help message
+    echo   --rebuild    Force rebuild all files
     exit /b 0
 )
 
@@ -98,54 +101,135 @@ REM ==================== 准备构建 ====================
 echo Preparing build directory...
 
 REM 清理并创建输出目录
-if exist "%BUILD_DIR%" (
-    echo Cleaning build directory...
-    del /q "%BUILD_DIR%\*.*" 2>nul
-)
 if %CLEAN_ONLY%==1 (
+    if exist "%BUILD_DIR%" (
+        echo Cleaning build directory...
+        del /q "%BUILD_DIR%\*.*" 2>nul
+    )
     echo Clean completed
     exit /b 0
 )
-if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
+
+if not exist "%BUILD_DIR%" (
+    echo Creating build directory...
+    mkdir "%BUILD_DIR%"
+)
 
 REM ==================== 编译源文件 ====================
 echo Building source files...
 
 echo Compiling common files...
 for %%f in ("%SRC_DIR%\common\*.c") do (
-    echo   %%~nxf
-    %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\common_%%~nf.o"
-    if !errorlevel! neq 0 goto :error
+    set "SOURCE_FILE=%%f"
+    set "OBJ_FILE=%BUILD_DIR%\common_%%~nf.o"
+    
+    REM Check if object file exists and source is newer
+    set "NEED_COMPILE=0"
+    if not exist "!OBJ_FILE!" set NEED_COMPILE=1
+    if %FORCE_REBUILD%==1 set NEED_COMPILE=1
+    if !NEED_COMPILE!==0 (
+        for /f "tokens=*" %%t in ('forfiles /p "%SRC_DIR%\common" /m "%%~nxf" /c "cmd /c echo @fdate @ftime"') do set SRC_TIME=%%t
+        if exist "!OBJ_FILE!" (
+            for /f "tokens=*" %%t in ('forfiles /p "%BUILD_DIR%" /m "common_%%~nf.o" /c "cmd /c echo @fdate @ftime"') do set OBJ_TIME=%%t
+            if "!SRC_TIME!" gtr "!OBJ_TIME!" set NEED_COMPILE=1
+        ) else (
+            set NEED_COMPILE=1
+        )
+    )
+    
+    if !NEED_COMPILE!==1 (
+        echo   %%~nxf
+        %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "!OBJ_FILE!"
+        if !errorlevel! neq 0 goto :error
+    ) else (
+        echo   %%~nxf [Skipped - up to date]
+    )
 )
 
 echo Compiling kvstore files...
 for %%f in ("%SRC_DIR%\kvstore\*.c") do (
-    echo   %%~nxf
-    %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\kvstore_%%~nf.o"
-    if !errorlevel! neq 0 goto :error
+    set "SOURCE_FILE=%%f"
+    set "OBJ_FILE=%BUILD_DIR%\kvstore_%%~nf.o"
+    
+    REM Check if object file exists and source is newer
+    set "NEED_COMPILE=0"
+    if not exist "!OBJ_FILE!" set NEED_COMPILE=1
+    if %FORCE_REBUILD%==1 set NEED_COMPILE=1
+    if !NEED_COMPILE!==0 (
+        for /f "tokens=*" %%t in ('forfiles /p "%SRC_DIR%\kvstore" /m "%%~nxf" /c "cmd /c echo @fdate @ftime"') do set SRC_TIME=%%t
+        if exist "!OBJ_FILE!" (
+            for /f "tokens=*" %%t in ('forfiles /p "%BUILD_DIR%" /m "kvstore_%%~nf.o" /c "cmd /c echo @fdate @ftime"') do set OBJ_TIME=%%t
+            if "!SRC_TIME!" gtr "!OBJ_TIME!" set NEED_COMPILE=1
+        ) else (
+            set NEED_COMPILE=1
+        )
+    )
+    
+    if !NEED_COMPILE!==1 (
+        echo   %%~nxf
+        %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "!OBJ_FILE!"
+        if !errorlevel! neq 0 goto :error
+    ) else (
+        echo   %%~nxf [Skipped - up to date]
+    )
 )
-
-REM 测试构建不需要main.c
-REM echo Compiling main files...
-REM for %%f in ("%SRC_DIR%\*.c") do (
-REM     echo   %%~nxf
-REM     %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\%%~nf.o"
-REM     if !errorlevel! neq 0 goto :error
-REM )
 
 REM ==================== 编译测试文件 ====================
 echo Building test files...
 
 echo Compiling test framework...
-%CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%TEST_DIR%\test_framework.c" -o "%BUILD_DIR%\test_framework.o"
-if !errorlevel! neq 0 goto :error
+set "SOURCE_FILE=%TEST_DIR%\test_framework.c"
+set "OBJ_FILE=%BUILD_DIR%\test_framework.o"
+
+REM Check if object file exists and source is newer
+set "NEED_COMPILE=0"
+if not exist "!OBJ_FILE!" set NEED_COMPILE=1
+if %FORCE_REBUILD%==1 set NEED_COMPILE=1
+if !NEED_COMPILE!==0 (
+    for /f "tokens=*" %%t in ('forfiles /p "%TEST_DIR%" /m "test_framework.c" /c "cmd /c echo @fdate @ftime"') do set SRC_TIME=%%t
+    if exist "!OBJ_FILE!" (
+        for /f "tokens=*" %%t in ('forfiles /p "%BUILD_DIR%" /m "test_framework.o" /c "cmd /c echo @fdate @ftime"') do set OBJ_TIME=%%t
+        if "!SRC_TIME!" gtr "!OBJ_TIME!" set NEED_COMPILE=1
+    ) else (
+        set NEED_COMPILE=1
+    )
+)
+
+if !NEED_COMPILE!==1 (
+    echo   test_framework.c
+    %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "!SOURCE_FILE!" -o "!OBJ_FILE!"
+    if !errorlevel! neq 0 goto :error
+) else (
+    echo   test_framework.c [Skipped - up to date]
+)
 
 echo Compiling test files...
 for %%f in ("%TEST_DIR%\test_*.c") do (
     if not "%%~nxf"=="test_framework.c" (
-        echo   %%~nxf
-        %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "%BUILD_DIR%\%%~nf.o"
-        if !errorlevel! neq 0 goto :error
+        set "SOURCE_FILE=%%f"
+        set "OBJ_FILE=%BUILD_DIR%\%%~nf.o"
+        
+        REM Check if object file exists and source is newer
+        set "NEED_COMPILE=0"
+        if not exist "!OBJ_FILE!" set NEED_COMPILE=1
+        if %FORCE_REBUILD%==1 set NEED_COMPILE=1
+        if !NEED_COMPILE!==0 (
+            for /f "tokens=*" %%t in ('forfiles /p "%TEST_DIR%" /m "%%~nxf" /c "cmd /c echo @fdate @ftime"') do set SRC_TIME=%%t
+            if exist "!OBJ_FILE!" (
+                for /f "tokens=*" %%t in ('forfiles /p "%BUILD_DIR%" /m "%%~nf.o" /c "cmd /c echo @fdate @ftime"') do set OBJ_TIME=%%t
+                if "!SRC_TIME!" gtr "!OBJ_TIME!" set NEED_COMPILE=1
+            ) else (
+                set NEED_COMPILE=1
+            )
+        )
+        
+        if !NEED_COMPILE!==1 (
+            echo   %%~nxf
+            %CC% %COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -c "%%f" -o "!OBJ_FILE!"
+            if !errorlevel! neq 0 goto :error
+        ) else (
+            echo   %%~nxf [Skipped - up to date]
+        )
     )
 )
 
