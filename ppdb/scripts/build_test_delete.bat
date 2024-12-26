@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM ÉèÖÃ»ù×¼Ä¿Â¼
+REM è®¾ç½®åŸºå‡†ç›®å½•
 set R=%~dp0
 set ROOT_DIR=%R%..
 set CROSS_DIR=%ROOT_DIR%\cross9\bin
@@ -9,21 +9,21 @@ set CC=%CROSS_DIR%\x86_64-pc-linux-gnu-gcc.exe
 set AR=%CROSS_DIR%\x86_64-pc-linux-gnu-ar.exe
 set OBJCOPY=%CROSS_DIR%\x86_64-pc-linux-gnu-objcopy.exe
 
-REM ÉèÖÃ±àÒë±êÖ¾
+REM è®¾ç½®ç¼–è¯‘æ ‡å¿—
 set COMMON_FLAGS=-g -O0 -Wall -Wextra -DPPDB_DEBUG -DPPDB_TEST -fno-pie -no-pie -mno-red-zone -fno-omit-frame-pointer -nostdlib -nostdinc -D_XOPEN_SOURCE=700
 
-set INCLUDES=-I%ROOT_DIR% -I%ROOT_DIR%\include -I%ROOT_DIR%\src -I%ROOT_DIR%\tests -include %ROOT_DIR%\cosmopolitan.h
+set INCLUDES=-I%ROOT_DIR% -I%ROOT_DIR%\include -I%ROOT_DIR%\src -I%ROOT_DIR%\test_white -include %ROOT_DIR%\cosmopolitan.h
 set LDFLAGS=-Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -fuse-ld=bfd -Wl,-T,%ROOT_DIR%\ape.lds
 
-REM ÉèÖÃÔ´ÎÄ¼şÄ¿Â¼
+REM è®¾ç½®æºæ–‡ä»¶ç›®å½•
 set SRC_DIR=%ROOT_DIR%\src
-set TEST_DIR=%ROOT_DIR%\tests
+set TEST_DIR=%ROOT_DIR%\test_white
 set BUILD_DIR=%ROOT_DIR%\build\test
 
-REM ´´½¨¹¹½¨Ä¿Â¼
+REM åˆ›å»ºè¾“å‡ºç›®å½•
 if not exist %BUILD_DIR% mkdir %BUILD_DIR%
 
-REM ±àÒëÔ´ÎÄ¼ş
+REM ç¼–è¯‘æºæ–‡ä»¶
 echo Compiling source files...
 for %%f in (%SRC_DIR%\common\*.c %SRC_DIR%\kvstore\*.c) do (
     echo   %%f
@@ -31,12 +31,12 @@ for %%f in (%SRC_DIR%\common\*.c %SRC_DIR%\kvstore\*.c) do (
     if !errorlevel! neq 0 goto :error
 )
 
-REM ±àÒë²âÊÔ¿ò¼Ü
+REM ç¼–è¯‘æµ‹è¯•æ¡†æ¶
 echo Compiling test framework...
 %CC% %COMMON_FLAGS% %INCLUDES% -c %TEST_DIR%\test_framework.c -o %BUILD_DIR%\test_framework.o
 if !errorlevel! neq 0 goto :error
 
-REM ±àÒë²âÊÔÎÄ¼ş
+REM ç¼–è¯‘æµ‹è¯•æ–‡ä»¶
 echo Compiling test files...
 for %%f in (%TEST_DIR%\test_*.c) do (
     echo   %%f
@@ -44,14 +44,14 @@ for %%f in (%TEST_DIR%\test_*.c) do (
     if !errorlevel! neq 0 goto :error
 )
 
-REM Á´½Ó²âÊÔ¿ÉÖ´ĞĞÎÄ¼ş
+REM é“¾æ¥æµ‹è¯•å¯æ‰§è¡Œæ–‡ä»¶
 echo Linking test executable...
 %CC% %COMMON_FLAGS% %LDFLAGS% -o %BUILD_DIR%\ppdb_test.dbg %BUILD_DIR%\*.o %ROOT_DIR%\crt.o %ROOT_DIR%\ape.o %ROOT_DIR%\cosmopolitan.a
 if !errorlevel! neq 0 goto :error
 %OBJCOPY% -S -O binary %BUILD_DIR%\ppdb_test.dbg %BUILD_DIR%\ppdb_test.exe
 if !errorlevel! neq 0 goto :error
 
-REM ÔËĞĞ²âÊÔ
+REM è¿è¡Œæµ‹è¯•
 echo Running tests...
 %BUILD_DIR%\ppdb_test.exe
 if !errorlevel! neq 0 goto :error

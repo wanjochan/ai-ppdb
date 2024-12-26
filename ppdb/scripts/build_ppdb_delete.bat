@@ -1,28 +1,29 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM ÉèÖÃ»ù×¼Ä¿Â¼
+REM è®¾ç½®åŸºå‡†ç›®å½•
 set R=%~dp0
 set ROOT_DIR=%R%..
-set CROSS_DIR=%ROOT_DIR%\cross9\bin
+set REPO_ROOT=%ROOT_DIR%\..
+set CROSS_DIR=%REPO_ROOT%\cross9\bin
 set CC=%CROSS_DIR%\x86_64-pc-linux-gnu-gcc.exe
 set AR=%CROSS_DIR%\x86_64-pc-linux-gnu-ar.exe
 set OBJCOPY=%CROSS_DIR%\x86_64-pc-linux-gnu-objcopy.exe
 
-REM ÉèÖÃ±àÒë±êÖ¾
+REM è®¾ç½®ç¼–è¯‘æ ‡å¿—
 set COMMON_FLAGS=-O2 -Wall -Wextra -DNDEBUG -fno-pie -no-pie -mno-red-zone -fno-omit-frame-pointer -nostdlib -nostdinc
-set INCLUDES=-I%ROOT_DIR% -I%ROOT_DIR%\include -I%ROOT_DIR%\src -include %ROOT_DIR%\cosmopolitan.h
-set LDFLAGS=-Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -fuse-ld=bfd -Wl,-T,%ROOT_DIR%\ape.lds
+set INCLUDES=-I%ROOT_DIR% -I%ROOT_DIR%\include -I%ROOT_DIR%\src -include %REPO_ROOT%\cosmopolitan\cosmopolitan.h
+set LDFLAGS=-Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -fuse-ld=bfd -Wl,-T,%REPO_ROOT%\cosmopolitan\ape.lds
 
-REM ÉèÖÃÔ´ÎÄ¼şÄ¿Â¼
+REM è®¾ç½®æºæ–‡ä»¶ç›®å½•
 set SRC_DIR=%ROOT_DIR%\src
 set BUILD_DIR=%ROOT_DIR%\build\release
 
-REM ´´½¨¹¹½¨Ä¿Â¼
+REM åˆ›å»ºè¾“å‡ºç›®å½•
 if not exist %BUILD_DIR% mkdir %BUILD_DIR%
 if not exist %BUILD_DIR%\include\ppdb mkdir %BUILD_DIR%\include\ppdb
 
-REM ±àÒëÔ´ÎÄ¼ş
+REM ç¼–è¯‘æºæ–‡ä»¶
 echo Compiling source files...
 for %%f in (%SRC_DIR%\common\*.c %SRC_DIR%\kvstore\*.c) do (
     echo   %%f
@@ -30,19 +31,19 @@ for %%f in (%SRC_DIR%\common\*.c %SRC_DIR%\kvstore\*.c) do (
     if !errorlevel! neq 0 goto :error
 )
 
-REM ´´½¨¾²Ì¬¿â
+REM åˆ›å»ºé™æ€åº“
 echo Creating static library...
 %AR% rcs %BUILD_DIR%\libppdb.a %BUILD_DIR%\*.o
 if !errorlevel! neq 0 goto :error
 
-REM ´´½¨¶¯Ì¬¿â
+REM åˆ›å»ºåŠ¨æ€åº“
 echo Creating shared library...
-%CC% %COMMON_FLAGS% %LDFLAGS% -shared -o %BUILD_DIR%\libppdb.so.dbg %BUILD_DIR%\*.o %ROOT_DIR%\crt.o %ROOT_DIR%\ape.o %ROOT_DIR%\cosmopolitan.a
+%CC% %COMMON_FLAGS% %LDFLAGS% -shared -o %BUILD_DIR%\libppdb.so.dbg %BUILD_DIR%\*.o %REPO_ROOT%\cosmopolitan\crt.o %REPO_ROOT%\cosmopolitan\ape.o %REPO_ROOT%\cosmopolitan\cosmopolitan.a
 if !errorlevel! neq 0 goto :error
 %OBJCOPY% -S -O binary %BUILD_DIR%\libppdb.so.dbg %BUILD_DIR%\libppdb.so
 if !errorlevel! neq 0 goto :error
 
-REM ¸´ÖÆÍ·ÎÄ¼ş
+REM å¤åˆ¶å¤´æ–‡ä»¶
 echo Copying header files...
 copy %ROOT_DIR%\include\ppdb\*.h %BUILD_DIR%\include\ppdb\
 if !errorlevel! neq 0 goto :error
