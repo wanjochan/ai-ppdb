@@ -7,6 +7,8 @@
 
 #define WAL_MAGIC 0x4C415750  // "PWAL"
 #define WAL_VERSION 1
+#define MAX_KEY_SIZE (1024 * 1024)     // 1MB
+#define MAX_VALUE_SIZE (10 * 1024 * 1024)  // 10MB
 
 // 前向声明
 static ppdb_error_t create_new_segment(ppdb_wal_t* wal);
@@ -172,6 +174,7 @@ ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal,
 ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
                              ppdb_memtable_t* table) {
     if (!wal || !table) {
+        ppdb_log_error("Invalid arguments: wal=%p, table=%p", wal, table);
         return PPDB_ERR_INVALID_ARG;
     }
 
@@ -185,8 +188,18 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
 
     struct dirent* entry;
     bool found_wal = false;
+    ppdb_error_t err = PPDB_OK;
+    int total_records = 0;
+
     while ((entry = readdir(dir)) != NULL) {
-        if (strncmp(entry->d_name, "wal.", 4) != 0) {
+        // 跳过 . 和 ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        // 检查是否是 .log 文件
+        const char* ext = strrchr(entry->d_name, '.');
+        if (!ext || strcmp(ext, ".log") != 0) {
             continue;
         }
 
@@ -196,8 +209,11 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
                              wal->dir_path, entry->d_name);
         if (written < 0 || (size_t)written >= sizeof(filename)) {
             ppdb_log_error("Failed to create segment filename");
-            return PPDB_ERR_IO;
+            err = PPDB_ERR_IO;
+            break;
         }
+
+        ppdb_log_debug("Processing WAL file: %s", filename);
 
         // 打开WAL文件
         int fd = open(filename, O_RDONLY | O_CLOEXEC);
@@ -210,99 +226,130 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
         ppdb_wal_header_t header;
         ssize_t read_size = read(fd, &header, sizeof(header));
         if (read_size != sizeof(header)) {
-            ppdb_log_error("Failed to read WAL header: %s", filename);
+            ppdb_log_error("Failed to read WAL header: %s, read_size=%zd, expected=%zu", 
+                          filename, read_size, sizeof(header));
             close(fd);
-            continue;
+            err = PPDB_ERR_IO;
+            break;
         }
 
         // 验证文件头
         if (header.magic != WAL_MAGIC || header.version != WAL_VERSION) {
-            ppdb_log_error("Invalid WAL header: %s", filename);
+            ppdb_log_error("Invalid WAL header: %s, magic=0x%x, version=%u", 
+                          filename, header.magic, header.version);
             close(fd);
-            continue;
+            err = PPDB_ERR_CORRUPTED;
+            break;
         }
 
+        ppdb_log_debug("WAL header valid: magic=0x%x, version=%u, segment_size=%u",
+                      header.magic, header.version, header.segment_size);
+
         // 读取记录
+        int file_records = 0;
         while (1) {
-            ppdb_wal_record_header_t record;
-            read_size = read(fd, &record, sizeof(record));
+            // 读取记录头
+            ppdb_wal_record_header_t record_header;
+            read_size = read(fd, &record_header, sizeof(record_header));
             if (read_size == 0) {
-                break;  // 文件结束
+                // 文件结束
+                break;
             }
-            if (read_size != sizeof(record)) {
-                ppdb_log_error("Failed to read WAL record header: %s", filename);
+            if (read_size != sizeof(record_header)) {
+                if (read_size < 0) {
+                    ppdb_log_error("Failed to read WAL record header: %s", strerror(errno));
+                    err = PPDB_ERR_IO;
+                } else {
+                    ppdb_log_error("Incomplete WAL record header");
+                    err = PPDB_ERR_CORRUPTED;
+                }
                 break;
             }
 
-            // 验证记录类型
-            if (record.type != PPDB_WAL_RECORD_PUT && record.type != PPDB_WAL_RECORD_DELETE) {
-                ppdb_log_error("Invalid WAL record type: %u", record.type);
+            // 验证记录大小
+            if (record_header.key_size > MAX_KEY_SIZE || record_header.value_size > MAX_VALUE_SIZE) {
+                ppdb_log_error("Invalid record size: key_size=%u, value_size=%u",
+                             record_header.key_size, record_header.value_size);
+                err = PPDB_ERR_CORRUPTED;
+                break;
+            }
+
+            // 分配缓冲区
+            uint8_t* key = (uint8_t*)malloc(record_header.key_size);
+            uint8_t* value = record_header.value_size > 0 ? (uint8_t*)malloc(record_header.value_size) : NULL;
+            if (!key || (record_header.value_size > 0 && !value)) {
+                ppdb_log_error("Failed to allocate memory for record");
+                free(key);
+                free(value);
+                err = PPDB_ERR_NO_MEMORY;
                 break;
             }
 
             // 读取键
-            uint8_t* key = malloc(record.key_size);  
-            if (!key) {
-                ppdb_log_error("Failed to allocate memory for key");
-                break;
-            }
-
-            read_size = read(fd, key, record.key_size);
-            if ((size_t)read_size != record.key_size) {
-                ppdb_log_error("Failed to read WAL record key: %s", filename);
+            read_size = read(fd, key, record_header.key_size);
+            if (read_size != record_header.key_size) {
+                ppdb_log_error("Failed to read key data");
                 free(key);
+                free(value);
+                err = PPDB_ERR_IO;
                 break;
             }
 
             // 读取值（如果有）
-            uint8_t* value = NULL;
-            if (record.type == PPDB_WAL_RECORD_PUT) {
-                value = malloc(record.value_size);  
-                if (!value) {
-                    ppdb_log_error("Failed to allocate memory for value");
-                    free(key);
-                    break;
-                }
-
-                read_size = read(fd, value, record.value_size);
-                if ((size_t)read_size != record.value_size) {
-                    ppdb_log_error("Failed to read WAL record value: %s", filename);
+            if (record_header.value_size > 0) {
+                read_size = read(fd, value, record_header.value_size);
+                if (read_size != record_header.value_size) {
+                    ppdb_log_error("Failed to read value data");
                     free(key);
                     free(value);
+                    err = PPDB_ERR_IO;
                     break;
                 }
             }
 
-            // 应用记录
-            ppdb_error_t err;
-            if (record.type == PPDB_WAL_RECORD_PUT) {
-                err = ppdb_memtable_put(table, key, record.key_size, value, record.value_size);
-                if (err != PPDB_OK) {
-                    ppdb_log_error("Failed to apply WAL record: %s (error: %d)", filename, err);
-                    free(key);
-                    free(value);
-                    break;
-                }
+            // 应用记录到MemTable
+            if (record_header.type == PPDB_WAL_RECORD_PUT) {
+                err = ppdb_memtable_put(table, key, record_header.key_size,
+                                      value, record_header.value_size);
+            } else if (record_header.type == PPDB_WAL_RECORD_DELETE) {
+                err = ppdb_memtable_delete(table, key, record_header.key_size);
             } else {
-                err = ppdb_memtable_delete(table, key, record.key_size);
-                if (err != PPDB_OK) {
-                    ppdb_log_error("Failed to apply WAL record: %s (error: %d)", filename, err);
-                    free(key);
-                    break;
-                }
+                ppdb_log_error("Unknown record type: %u", record_header.type);
+                free(key);
+                free(value);
+                err = PPDB_ERR_CORRUPTED;
+                break;
             }
 
             free(key);
-            if (value) {
-                free(value);
+            free(value);
+
+            if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
+                ppdb_log_error("Failed to apply WAL record: %s", ppdb_error_string(err));
+                break;
             }
+
+            file_records++;
         }
 
         close(fd);
+        ppdb_log_debug("Processed %d records from WAL file: %s", file_records, filename);
+        total_records += file_records;
+
+        if (err != PPDB_OK) {
+            break;
+        }
     }
 
     closedir(dir);
-    return found_wal ? PPDB_OK : PPDB_ERR_NOT_FOUND;
+
+    if (!found_wal) {
+        ppdb_log_info("No WAL files found");
+        return PPDB_OK;
+    }
+
+    ppdb_log_info("WAL recovery completed: total_records=%d, status=%d", total_records, err);
+    return err;
 }
 
 // 归档旧的WAL文件

@@ -100,7 +100,7 @@ REM Clean and create output directory
 if %CLEAN_ONLY%==1 (
     if exist "%BUILD_DIR%" (
         echo Cleaning build directory...
-        del /q "%BUILD_DIR%\*.*" 2>nul
+        rd /s /q "%BUILD_DIR%" 2>nul
     )
     echo Clean completed
     exit /b 0
@@ -216,7 +216,7 @@ if !errorlevel! neq 0 goto :error
 
 REM ==================== Copy Header Files ====================
 echo Copying header files...
-copy "%ROOT_DIR%\include\ppdb\*.h" "%BUILD_DIR%\include\ppdb\"
+xcopy /y /i /q "%ROOT_DIR%\include\ppdb\*.h" "%BUILD_DIR%\include\ppdb\"
 if !errorlevel! neq 0 goto :error
 
 echo Build completed successfully

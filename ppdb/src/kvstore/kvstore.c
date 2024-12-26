@@ -18,6 +18,7 @@ struct ppdb_kvstore_t {
 // 创建KVStore实例
 ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
     if (!path || !store || path[0] == '\0') {
+        ppdb_log_error("Invalid arguments: path=%p, store=%p", path, store);
         return PPDB_ERR_INVALID_ARG;
     }
 
@@ -26,7 +27,7 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
     // 确保数据库目录存在
     ppdb_error_t err = ppdb_ensure_directory(path);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to ensure database directory exists");
+        ppdb_log_error("Failed to ensure database directory exists: %s", path);
         return err;
     }
 
@@ -36,6 +37,7 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
         ppdb_log_error("Failed to allocate memory for KVStore");
         return PPDB_ERR_NO_MEMORY;
     }
+    memset(new_store, 0, sizeof(ppdb_kvstore_t));
 
     // 初始化路径
     size_t path_len = strlen(path);
@@ -47,8 +49,8 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
     }
     memcpy(new_store->path, path, path_len + 1);
 
-    // 创建MemTable
-    err = ppdb_memtable_create(1024 * 1024, &new_store->memtable);  // 1MB大小的memtable
+    // 创建MemTable (增加大小到10MB)
+    err = ppdb_memtable_create(10 * 1024 * 1024, &new_store->memtable);
     if (err != PPDB_OK) {
         ppdb_log_error("Failed to create MemTable");
         free(new_store->path);
@@ -70,7 +72,7 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
     // 确保WAL目录存在
     err = ppdb_ensure_directory(wal_path);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to ensure WAL directory exists");
+        ppdb_log_error("Failed to ensure WAL directory exists: %s", wal_path);
         ppdb_memtable_destroy(new_store->memtable);
         free(new_store->path);
         free(new_store);
@@ -85,7 +87,7 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
     };
     err = ppdb_wal_create(&wal_config, &new_store->wal);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to create WAL");
+        ppdb_log_error("Failed to create WAL: %d", err);
         ppdb_memtable_destroy(new_store->memtable);
         free(new_store->path);
         free(new_store);
@@ -94,8 +96,8 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
 
     // 从WAL恢复数据
     err = ppdb_wal_recover(new_store->wal, new_store->memtable);
-    if (err != PPDB_OK) {
-        ppdb_log_error("Failed to recover from WAL");
+    if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
+        ppdb_log_error("Failed to recover from WAL: %d", err);
         ppdb_wal_destroy(new_store->wal);
         ppdb_memtable_destroy(new_store->memtable);
         free(new_store->path);
@@ -124,9 +126,15 @@ void ppdb_kvstore_close(ppdb_kvstore_t* store) {
 
     ppdb_log_info("Closing KVStore at: %s", store->path);
     pthread_mutex_destroy(&store->mutex);
-    ppdb_wal_destroy(store->wal);
-    ppdb_memtable_destroy(store->memtable);
-    free(store->path);
+    if (store->wal) {
+        ppdb_wal_destroy(store->wal);
+    }
+    if (store->memtable) {
+        ppdb_memtable_destroy(store->memtable);
+    }
+    if (store->path) {
+        free(store->path);
+    }
     free(store);
 }
 
@@ -137,6 +145,8 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
                              const uint8_t* value,
                              size_t value_len) {
     if (!store || !key || !value || key_len == 0) {
+        ppdb_log_error("Invalid arguments: store=%p, key=%p, value=%p, key_len=%zu",
+                      store, key, value, key_len);
         return PPDB_ERR_INVALID_ARG;
     }
 
@@ -146,7 +156,7 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
     ppdb_error_t err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_PUT,
                                      key, key_len, value, value_len);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to write to WAL");
+        ppdb_log_error("Failed to write to WAL: %d", err);
         pthread_mutex_unlock(&store->mutex);
         return err;
     }
@@ -154,7 +164,7 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
     // 写入MemTable
     err = ppdb_memtable_put(store->memtable, key, key_len, value, value_len);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to write to MemTable");
+        ppdb_log_error("Failed to write to MemTable: %d", err);
         pthread_mutex_unlock(&store->mutex);
         return err;
     }
@@ -167,15 +177,17 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
                              const uint8_t* key, size_t key_len,
                              uint8_t* value, size_t* value_len) {
-    if (!store || !key || !value || !value_len) {
-        return PPDB_ERR_NULL_POINTER;
+    if (!store || !key || !value || !value_len || key_len == 0) {
+        ppdb_log_error("Invalid arguments: store=%p, key=%p, value=%p, value_len=%p, key_len=%zu",
+                      store, key, value, value_len, key_len);
+        return PPDB_ERR_INVALID_ARG;
     }
 
     pthread_mutex_lock(&store->mutex);
     ppdb_error_t err = ppdb_memtable_get(store->memtable, key, key_len,
                                         value, value_len);
     if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
-        ppdb_log_error("Failed to read from MemTable");
+        ppdb_log_error("Failed to read from MemTable: %d", err);
     }
     pthread_mutex_unlock(&store->mutex);
     return err;
@@ -186,6 +198,8 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
                                 const uint8_t* key,
                                 size_t key_len) {
     if (!store || !key || key_len == 0) {
+        ppdb_log_error("Invalid arguments: store=%p, key=%p, key_len=%zu",
+                      store, key, key_len);
         return PPDB_ERR_INVALID_ARG;
     }
 
@@ -195,15 +209,15 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
     ppdb_error_t err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_DELETE,
                                      key, key_len, NULL, 0);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to write to WAL");
+        ppdb_log_error("Failed to write to WAL: %d", err);
         pthread_mutex_unlock(&store->mutex);
         return err;
     }
 
     // 从MemTable中删除
     err = ppdb_memtable_delete(store->memtable, key, key_len);
-    if (err != PPDB_OK) {
-        ppdb_log_error("Failed to delete from MemTable");
+    if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
+        ppdb_log_error("Failed to delete from MemTable: %d", err);
         pthread_mutex_unlock(&store->mutex);
         return err;
     }
