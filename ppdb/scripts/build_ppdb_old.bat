@@ -80,7 +80,7 @@ echo Setting up build flags...
 
 REM 设置编译标志
 set COMMON_FLAGS=-O2 -Wall -Wextra -DNDEBUG -DPPDB_VERSION=\"%VERSION%\" -fno-pie -no-pie -mno-red-zone -fno-omit-frame-pointer -nostdlib -nostdinc
-set INCLUDES=-I"%ROOT_DIR%" -I"%ROOT_DIR%\include" -I"%ROOT_DIR%\src" -include "%COSMO_DIR%\cosmopolitan.h"
+set INCLUDES=-I"%COSMO_DIR%" -I"%ROOT_DIR%" -I"%ROOT_DIR%\include" -I"%ROOT_DIR%\src" -include "%COSMO_DIR%\cosmopolitan.h"
 set LDFLAGS=-Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -fuse-ld=bfd -Wl,-T,"%COSMO_DIR%\ape.lds"
 
 REM 设置源文件目录
