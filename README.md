@@ -15,8 +15,6 @@ cross9.zip => ppdb/cross9/
 ppdb/scripts/build_test.bat
 ppdb/scripts/build_ppdb.bat
 
-```
-
 # 进度
 
-(ppdb/docs/overview/TODO.md)
+[ppdb/docs/overview/TODO.md]
