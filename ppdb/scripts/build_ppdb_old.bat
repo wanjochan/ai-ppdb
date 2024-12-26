@@ -96,15 +96,19 @@ REM ==================== Prepare Build ====================
 echo Preparing build directory...
 
 REM Clean and create output directory
-if exist "%BUILD_DIR%" (
-    echo Cleaning build directory...
-    del /q "%BUILD_DIR%\*.*" 2>nul
-)
 if %CLEAN_ONLY%==1 (
+    if exist "%BUILD_DIR%" (
+        echo Cleaning build directory...
+        del /q "%BUILD_DIR%\*.*" 2>nul
+    )
     echo Clean completed
     exit /b 0
 )
-if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
+
+if not exist "%BUILD_DIR%" (
+    echo Creating build directory...
+    mkdir "%BUILD_DIR%"
+)
 if not exist "%BUILD_DIR%\include\ppdb" mkdir "%BUILD_DIR%\include\ppdb"
 
 REM ==================== Build Source Files ====================
@@ -120,10 +124,12 @@ for %%f in ("%SRC_DIR%\common\*.c") do (
     if not exist "!OBJ_FILE!" set NEED_COMPILE=1
     if %FORCE_REBUILD%==1 set NEED_COMPILE=1
     if !NEED_COMPILE!==0 (
-        for /f "tokens=2 delims==" %%i in ('wmic datafile where "name='%%~sf'" get lastmodified /value') do (
-            for /f "tokens=2 delims==" %%j in ('wmic datafile where "name='!OBJ_FILE:\=\\!'" get lastmodified /value') do (
-                if %%i gtr %%j set NEED_COMPILE=1
-            )
+        for /f "tokens=*" %%t in ('forfiles /p "%SRC_DIR%\common" /m "%%~nxf" /c "cmd /c echo @fdate @ftime"') do set SRC_TIME=%%t
+        if exist "!OBJ_FILE!" (
+            for /f "tokens=*" %%t in ('forfiles /p "%BUILD_DIR%" /m "common_%%~nf.o" /c "cmd /c echo @fdate @ftime"') do set OBJ_TIME=%%t
+            if "!SRC_TIME!" gtr "!OBJ_TIME!" set NEED_COMPILE=1
+        ) else (
+            set NEED_COMPILE=1
         )
     )
     
@@ -146,10 +152,12 @@ for %%f in ("%SRC_DIR%\kvstore\*.c") do (
     if not exist "!OBJ_FILE!" set NEED_COMPILE=1
     if %FORCE_REBUILD%==1 set NEED_COMPILE=1
     if !NEED_COMPILE!==0 (
-        for /f "tokens=2 delims==" %%i in ('wmic datafile where "name='%%~sf'" get lastmodified /value') do (
-            for /f "tokens=2 delims==" %%j in ('wmic datafile where "name='!OBJ_FILE:\=\\!'" get lastmodified /value') do (
-                if %%i gtr %%j set NEED_COMPILE=1
-            )
+        for /f "tokens=*" %%t in ('forfiles /p "%SRC_DIR%\kvstore" /m "%%~nxf" /c "cmd /c echo @fdate @ftime"') do set SRC_TIME=%%t
+        if exist "!OBJ_FILE!" (
+            for /f "tokens=*" %%t in ('forfiles /p "%BUILD_DIR%" /m "kvstore_%%~nf.o" /c "cmd /c echo @fdate @ftime"') do set OBJ_TIME=%%t
+            if "!SRC_TIME!" gtr "!OBJ_TIME!" set NEED_COMPILE=1
+        ) else (
+            set NEED_COMPILE=1
         )
     )
     
@@ -172,10 +180,12 @@ for %%f in ("%SRC_DIR%\*.c") do (
     if not exist "!OBJ_FILE!" set NEED_COMPILE=1
     if %FORCE_REBUILD%==1 set NEED_COMPILE=1
     if !NEED_COMPILE!==0 (
-        for /f "tokens=2 delims==" %%i in ('wmic datafile where "name='%%~sf'" get lastmodified /value') do (
-            for /f "tokens=2 delims==" %%j in ('wmic datafile where "name='!OBJ_FILE:\=\\!'" get lastmodified /value') do (
-                if %%i gtr %%j set NEED_COMPILE=1
-            )
+        for /f "tokens=*" %%t in ('forfiles /p "%SRC_DIR%" /m "%%~nxf" /c "cmd /c echo @fdate @ftime"') do set SRC_TIME=%%t
+        if exist "!OBJ_FILE!" (
+            for /f "tokens=*" %%t in ('forfiles /p "%BUILD_DIR%" /m "%%~nf.o" /c "cmd /c echo @fdate @ftime"') do set OBJ_TIME=%%t
+            if "!SRC_TIME!" gtr "!OBJ_TIME!" set NEED_COMPILE=1
+        ) else (
+            set NEED_COMPILE=1
         )
     )
     
