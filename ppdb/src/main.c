@@ -3,7 +3,7 @@
 #include "ppdb/wal.h"
 #include "common/logger.h"
 
-int main(int argc, char* argv[]) {
+int main(int argc __attribute__((unused)), char* argv[] __attribute__((unused))) {
     ppdb_log_info("PPDB starting...");
 
     // 创建MemTable

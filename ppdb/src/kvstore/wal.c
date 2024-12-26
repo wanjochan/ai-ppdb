@@ -69,11 +69,10 @@ void ppdb_wal_destroy(ppdb_wal_t* wal) {
 // 创建新的WAL段文件
 static ppdb_error_t create_new_segment(ppdb_wal_t* wal) {
     char filename[MAX_PATH_LENGTH];
-    int timestamp = (int)time(NULL);
-    int written = snprintf(filename, sizeof(filename), "%s/wal.%d", 
-                          wal->dir_path, timestamp);
-    if (written < 0 || written >= sizeof(filename)) {
-        ppdb_log_error("Failed to format WAL filename: path too long");
+    int written = snprintf(filename, sizeof(filename), "%s/%zu.log",
+                         wal->dir_path, wal->current_size);
+    if (written < 0 || (size_t)written >= sizeof(filename)) {
+        ppdb_log_error("Failed to create segment filename");
         return PPDB_ERR_IO;
     }
 
@@ -195,9 +194,8 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
         char filename[MAX_PATH_LENGTH];
         int written = snprintf(filename, sizeof(filename), "%s/%s", 
                              wal->dir_path, entry->d_name);
-        if (written < 0 || written >= sizeof(filename)) {
-            ppdb_log_error("Failed to format WAL filename: path too long");
-            closedir(dir);
+        if (written < 0 || (size_t)written >= sizeof(filename)) {
+            ppdb_log_error("Failed to create segment filename");
             return PPDB_ERR_IO;
         }
 
@@ -311,8 +309,8 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
 static ppdb_error_t archive_old_wal_files(const char* wal_dir) {
     char archive_dir[MAX_PATH_LENGTH];
     int written = snprintf(archive_dir, sizeof(archive_dir), "%s/archive", wal_dir);
-    if (written < 0 || written >= sizeof(archive_dir)) {
-        ppdb_log_error("Failed to format archive directory path: path too long");
+    if (written < 0 || (size_t)written >= sizeof(archive_dir)) {
+        ppdb_log_error("Failed to create archive directory path");
         return PPDB_ERR_IO;
     }
 
@@ -339,16 +337,16 @@ static ppdb_error_t archive_old_wal_files(const char* wal_dir) {
         char archive_path[MAX_PATH_LENGTH];
         written = snprintf(old_path, sizeof(old_path), "%s/%s", 
                          wal_dir, entry->d_name);
-        if (written < 0 || written >= sizeof(old_path)) {
-            ppdb_log_warn("Failed to format old path: path too long");
-            continue;
+        if (written < 0 || (size_t)written >= sizeof(old_path)) {
+            ppdb_log_error("Failed to create old segment path");
+            return PPDB_ERR_IO;
         }
 
         written = snprintf(archive_path, sizeof(archive_path), "%s/%s", 
                          archive_dir, entry->d_name);
-        if (written < 0 || written >= sizeof(archive_path)) {
-            ppdb_log_warn("Failed to format archive path: path too long");
-            continue;
+        if (written < 0 || (size_t)written >= sizeof(archive_path)) {
+            ppdb_log_error("Failed to create archive segment path");
+            return PPDB_ERR_IO;
         }
 
         if (rename(old_path, archive_path) != 0) {
