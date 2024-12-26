@@ -46,3 +46,4 @@ cross9
 *.a
 *.com
 /cosmopolitan
+/ppdb/cosmopolitan
