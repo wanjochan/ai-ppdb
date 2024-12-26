@@ -25,7 +25,22 @@ if not exist %BUILD_DIR% mkdir %BUILD_DIR%
 
 REM 编译源文件
 echo Compiling source files...
-for %%f in (%SRC_DIR%\common\*.c %SRC_DIR%\kvstore\*.c) do (
+echo Compiling common files...
+for %%f in (%SRC_DIR%\common\*.c) do (
+    echo   %%f
+    %CC% %COMMON_FLAGS% %INCLUDES% -c %%f -o %BUILD_DIR%\common_%%~nf.o
+    if !errorlevel! neq 0 goto :error
+)
+
+echo Compiling kvstore files...
+for %%f in (%SRC_DIR%\kvstore\*.c) do (
+    echo   %%f
+    %CC% %COMMON_FLAGS% %INCLUDES% -c %%f -o %BUILD_DIR%\kvstore_%%~nf.o
+    if !errorlevel! neq 0 goto :error
+)
+
+echo Compiling main files...
+for %%f in (%SRC_DIR%\*.c) do (
     echo   %%f
     %CC% %COMMON_FLAGS% %INCLUDES% -c %%f -o %BUILD_DIR%\%%~nf.o
     if !errorlevel! neq 0 goto :error
@@ -46,7 +61,7 @@ for %%f in (%TEST_DIR%\test_*.c) do (
 
 REM 链接测试可执行文件
 echo Linking test executable...
-%CC% %COMMON_FLAGS% %LDFLAGS% -o %BUILD_DIR%\ppdb_test.dbg %BUILD_DIR%\*.o %ROOT_DIR%\crt.o %ROOT_DIR%\ape.o %ROOT_DIR%\cosmopolitan.a
+%CC% %COMMON_FLAGS% %LDFLAGS% -o %BUILD_DIR%\ppdb_test.dbg %BUILD_DIR%\*.o %ROOT_DIR%\crt.o %ROOT_DIR%\ape-no-modify-self.o %ROOT_DIR%\cosmopolitan.a
 if !errorlevel! neq 0 goto :error
 %OBJCOPY% -S -O binary %BUILD_DIR%\ppdb_test.dbg %BUILD_DIR%\ppdb_test.exe
 if !errorlevel! neq 0 goto :error
@@ -60,5 +75,5 @@ echo All tests completed successfully
 goto :eof
 
 :error
-echo Build or test failed with error code !errorlevel!
+echo Build failed with error code !errorlevel!
 exit /b !errorlevel! 
