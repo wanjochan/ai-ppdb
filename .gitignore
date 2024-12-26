@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+
+*.class
+
+# Node
+node_modules/
+.wrangler/
+
+# Environment variables
+.dev.vars
+.env
+
+.secrets/
+
+# misc
+*.swp
+*.zst
+
+# Logs
+*.log
+*.jsonl
+
+*.pid
+
+# Command manager temporary files
+.temp/
+
+# ppdb
+cosmocc.zip
+/build/
+*.lds
+!ape.lds
+cosmopolitan.zip
+#cosmopolitan.a
+*.exe
+*.dbg
+*.wal
+/ppdb/build/
+cross9.zip
+cross9
+*.o
+!crt.o
+!ape.o
+*.a
+*.com
