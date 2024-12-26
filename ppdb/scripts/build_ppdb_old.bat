@@ -36,18 +36,52 @@ REM 设置基准目录
 set R=%~dp0
 set ROOT_DIR=%R%..
 set CROSS_DIR=%ROOT_DIR%\cross9\bin
-set COSMOPOLITAN_DIR=%ROOT_DIR%\cosmopolitan
+set COSMO_DIR=%ROOT_DIR%\cosmopolitan
 set CC=%CROSS_DIR%\x86_64-pc-linux-gnu-gcc.exe
 set AR=%CROSS_DIR%\x86_64-pc-linux-gnu-ar.exe
 set OBJCOPY=%CROSS_DIR%\x86_64-pc-linux-gnu-objcopy.exe
 
+REM 检查必要工具
+if not exist "%CC%" (
+    echo Error: Compiler not found at %CC%
+    goto :error
+)
+if not exist "%AR%" (
+    echo Error: AR not found at %AR%
+    goto :error
+)
+if not exist "%OBJCOPY%" (
+    echo Error: OBJCOPY not found at %OBJCOPY%
+    goto :error
+)
+REM 检查必要文件
+if not exist "%COSMO_DIR%\cosmopolitan.h" (
+    echo Error: cosmopolitan.h not found
+    goto :error
+)
+if not exist "%COSMO_DIR%\ape.lds" (
+    echo Error: ape.lds not found
+    goto :error
+)
+if not exist "%COSMO_DIR%\crt.o" (
+    echo Error: crt.o not found
+    goto :error
+)
+if not exist "%COSMO_DIR%\ape-no-modify-self.o" (
+    echo Error: ape-no-modify-self.o not found
+    goto :error
+)
+if not exist "%COSMO_DIR%\cosmopolitan.a" (
+    echo Error: cosmopolitan.a not found
+    goto :error
+)
 REM ==================== 设置编译选项 ====================
 echo Setting up build flags...
 
 REM 设置编译标志
 set COMMON_FLAGS=-O2 -Wall -Wextra -DNDEBUG -DPPDB_VERSION=\"%VERSION%\" -fno-pie -no-pie -mno-red-zone -fno-omit-frame-pointer -nostdlib -nostdinc
-set INCLUDES=-I"%ROOT_DIR%" -I"%ROOT_DIR%\include" -I"%ROOT_DIR%\src" -I"%COSMOPOLITAN_DIR%"
-set LDFLAGS=-Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -fuse-ld=bfd -Wl,-T,"%COSMOPOLITAN_DIR%\ape.lds"
+set INCLUDES=-I"%ROOT_DIR%" -I"%ROOT_DIR%\include" -I"%ROOT_DIR%\src" -include "%COSMO_DIR%\cosmopolitan.h"
+set LDFLAGS=-Wl,--gc-sections -Wl,-z,max-page-size=0x1000 -fuse-ld=bfd -Wl,-T,"%COSMO_DIR%\ape.lds"
 
 REM 设置源文件目录
 set SRC_DIR=%ROOT_DIR%\src
@@ -100,7 +134,7 @@ echo Creating static library...
 if !errorlevel! neq 0 goto :error
 
 echo Creating shared library...
-%CC% %COMMON_FLAGS% %LDFLAGS% -shared -o "%BUILD_DIR%\libppdb.so.dbg" "%BUILD_DIR%\*.o" "%COSMOPOLITAN_DIR%\crt.o" "%COSMOPOLITAN_DIR%\ape-no-modify-self.o" "%COSMOPOLITAN_DIR%\cosmopolitan.a"
+%CC% %COMMON_FLAGS% %LDFLAGS% -shared -o "%BUILD_DIR%\libppdb.so.dbg" "%BUILD_DIR%\*.o" "%COSMO_DIR%\crt.o" "%COSMO_DIR%\ape-no-modify-self.o" "%COSMO_DIR%\cosmopolitan.a"
 if !errorlevel! neq 0 goto :error
 
 echo Creating final binary...
