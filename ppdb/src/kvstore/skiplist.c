@@ -29,15 +29,15 @@ static skipnode_t* create_node(int level,
     skipnode_t* node = malloc(sizeof(skipnode_t) + level * sizeof(skipnode_t*));
     if (!node) return NULL;
 
-    // 为键分配内存并确保结尾有空字符
-    node->key = malloc(key_len + 1);
+    // 为键分配内存
+    node->key = malloc(key_len);
     if (!node->key) {
         free(node);
         return NULL;
     }
 
-    // 为值分配内存并确保结尾有空字符
-    node->value = malloc(value_len + 1);
+    // 为值分配内存
+    node->value = malloc(value_len);
     if (!node->value) {
         free(node->key);
         free(node);
@@ -46,9 +46,6 @@ static skipnode_t* create_node(int level,
 
     memcpy(node->key, key, key_len);
     memcpy(node->value, value, value_len);
-    // 确保字符串以空字符结尾
-    ((uint8_t*)node->key)[key_len] = '\0';
-    ((uint8_t*)node->value)[value_len] = '\0';
     node->key_len = key_len;
     node->value_len = value_len;
 
@@ -159,14 +156,13 @@ int skiplist_put(skiplist_t* list,
     // 更新已存在的键
     if (current && compare_key(current->key, current->key_len,
                              key, key_len) == 0) {
-        uint8_t* new_value = malloc(value_len + 1);
+        uint8_t* new_value = malloc(value_len);
         if (!new_value) {
             pthread_mutex_unlock(&list->mutex);
             return -1;
         }
 
         memcpy(new_value, value, value_len);
-        ((uint8_t*)new_value)[value_len] = '\0';
         
         // 先保存旧值的指针，再更新新值
         uint8_t* old_value = current->value;
@@ -240,7 +236,6 @@ int skiplist_get(skiplist_t* list,
     }
 
     memcpy(value, current->value, current->value_len);
-    ((uint8_t*)value)[current->value_len] = '\0';
     *value_len = current->value_len;
 
     pthread_mutex_unlock(&list->mutex);

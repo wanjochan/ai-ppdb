@@ -190,7 +190,7 @@ ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
     pthread_mutex_lock(&store->mutex);
     ppdb_error_t err = ppdb_memtable_get(store->memtable, key, key_len,
                                         value, value_len);
-    if (err != PPDB_OK) {
+    if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
         ppdb_log_error("Failed to read from MemTable");
     }
     pthread_mutex_unlock(&store->mutex);
