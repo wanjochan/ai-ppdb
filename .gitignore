@@ -47,3 +47,4 @@ cross9
 *.com
 /cosmopolitan
 /ppdb/cosmopolitan
+/ppdb/scripts/test_wal_concurrent
