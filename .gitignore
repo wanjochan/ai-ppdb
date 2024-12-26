@@ -45,3 +45,4 @@ cross9
 !ape.o
 *.a
 *.com
+/cosmopolitan
