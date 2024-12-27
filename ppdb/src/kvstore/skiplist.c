@@ -229,12 +229,14 @@ int skiplist_get(skiplist_t* list,
         return 1;  // 未找到
     }
 
+    // 检查缓冲区大小是否足够
     if (*value_len < current->value_len) {
         *value_len = current->value_len;
         pthread_mutex_unlock(&list->mutex);
         return -1;  // 缓冲区太小
     }
 
+    // 复制值，包括结束符
     memcpy(value, current->value, current->value_len);
     *value_len = current->value_len;
 

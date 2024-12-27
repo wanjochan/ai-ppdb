@@ -258,14 +258,14 @@ static int test_kvstore_recovery(void) {
     const int num_pairs = 3;
 
     for (int i = 0; i < num_pairs; i++) {
-        err = ppdb_kvstore_put(store, (const uint8_t*)test_keys[i], strlen(test_keys[i]),
-                              (const uint8_t*)test_values[i], strlen(test_values[i]));
+        err = ppdb_kvstore_put(store, (const uint8_t*)test_keys[i], strlen(test_keys[i]) + 1,
+                              (const uint8_t*)test_values[i], strlen(test_values[i]) + 1);
         TEST_ASSERT_OK(err, "Put data for recovery test");
         ppdb_log_info("Written key-value pair %d: [%s] = [%s]", i, test_keys[i], test_values[i]);
     }
 
     // 删除一个键值对
-    err = ppdb_kvstore_delete(store, (const uint8_t*)test_keys[1], strlen(test_keys[1]));
+    err = ppdb_kvstore_delete(store, (const uint8_t*)test_keys[1], strlen(test_keys[1]) + 1);
     TEST_ASSERT_OK(err, "Delete data for recovery test");
     ppdb_log_info("Deleted key: [%s]", test_keys[1]);
 
@@ -281,7 +281,7 @@ static int test_kvstore_recovery(void) {
     for (int i = 0; i < num_pairs; i++) {
         uint8_t read_buf[256];
         size_t read_size = sizeof(read_buf);
-        err = ppdb_kvstore_get(store, (const uint8_t*)test_keys[i], strlen(test_keys[i]),
+        err = ppdb_kvstore_get(store, (const uint8_t*)test_keys[i], strlen(test_keys[i]) + 1,
                               read_buf, &read_size);
         
         if (i == 1) {
@@ -299,8 +299,8 @@ static int test_kvstore_recovery(void) {
     // 第三阶段：写入新数据并再次验证
     const char* new_key = "new_recovery_key";
     const char* new_value = "new_recovery_value";
-    err = ppdb_kvstore_put(store, (const uint8_t*)new_key, strlen(new_key),
-                          (const uint8_t*)new_value, strlen(new_value));
+    err = ppdb_kvstore_put(store, (const uint8_t*)new_key, strlen(new_key) + 1,
+                          (const uint8_t*)new_value, strlen(new_value) + 1);
     TEST_ASSERT_OK(err, "Put new data after recovery");
     ppdb_log_info("Written new key-value pair: [%s] = [%s]", new_key, new_value);
 
@@ -314,7 +314,7 @@ static int test_kvstore_recovery(void) {
     // 验证新写入的数据
     uint8_t final_buf[256];
     size_t final_size = sizeof(final_buf);
-    err = ppdb_kvstore_get(store, (const uint8_t*)new_key, strlen(new_key),
+    err = ppdb_kvstore_get(store, (const uint8_t*)new_key, strlen(new_key) + 1,
                           final_buf, &final_size);
     TEST_ASSERT_OK(err, "Get new data after final recovery");
     TEST_ASSERT_STR_EQ((const char*)final_buf, new_value, "Final read value should match written value");

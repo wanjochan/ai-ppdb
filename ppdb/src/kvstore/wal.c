@@ -345,8 +345,7 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
                                 filename, strerror(errno));
                     final_err = PPDB_ERR_IO;
                 } else {
-                    ppdb_log_error("Incomplete record header in file: %s", filename);
-                    final_err = PPDB_ERR_CORRUPTED;
+                    ppdb_log_warn("Incomplete record header in file: %s", filename);
                 }
                 break;
             }
