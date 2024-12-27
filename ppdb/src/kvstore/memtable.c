@@ -61,7 +61,7 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
     pthread_mutex_lock(&table->mutex);
 
     // 检查大小限制
-    size_t entry_size = key_len + value_len;  // 实际数据大小
+    size_t entry_size = key_len + value_len + sizeof(size_t) * 2;  // 加上长度字段的大小
     if (table->current_size + entry_size > table->size_limit) {
         ppdb_log_warn("MemTable size limit exceeded: current=%zu, limit=%zu, new_entry=%zu",
                      table->current_size, table->size_limit, entry_size);
@@ -116,7 +116,16 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
 
     pthread_mutex_lock(&table->mutex);
 
-    // 查找并删除键
+    // 先获取值的大小
+    uint8_t temp_value[1];
+    size_t value_size = 0;
+    int get_ret = skiplist_get(table->list, key, key_len, temp_value, &value_size);
+    if (get_ret == 1) {
+        pthread_mutex_unlock(&table->mutex);
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    // 删除键值对
     int ret = skiplist_delete(table->list, key, key_len);
     if (ret == 1) {
         pthread_mutex_unlock(&table->mutex);
@@ -126,8 +135,9 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
         return PPDB_ERR_NO_MEMORY;
     }
 
-    // 更新当前大小（这里我们使用一个估计值，因为我们无法获取实际的键值大小）
-    table->current_size = table->current_size > key_len ? table->current_size - key_len : 0;
+    // 更新当前大小
+    size_t entry_size = key_len + value_size + sizeof(size_t) * 2;
+    table->current_size = table->current_size > entry_size ? table->current_size - entry_size : 0;
 
     pthread_mutex_unlock(&table->mutex);
     return PPDB_OK;
