@@ -103,6 +103,23 @@ void ppdb_wal_destroy(ppdb_wal_t* wal) {
     }
     pthread_mutex_unlock(&wal->mutex);
     pthread_mutex_destroy(&wal->mutex);
+
+    // 删除WAL目录及其内容
+    DIR* dir = opendir(wal->dir_path);
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+            char path[MAX_PATH_LENGTH];
+            snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+            unlink(path);
+        }
+        closedir(dir);
+        rmdir(wal->dir_path);
+    }
+
     free(wal);
 }
 
@@ -279,7 +296,7 @@ static int compare_wal_files(const void* a, const void* b) {
     return 0;
 }
 
-// 恢复数据
+// 从WAL恢复数据
 ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
     if (!wal || !table) {
         ppdb_log_error("Invalid arguments: wal=%p, table=%p", wal, table);
@@ -288,226 +305,149 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
 
     ppdb_log_info("Recovering WAL from: %s", wal->dir_path);
 
-    // 对MemTable加锁
-    pthread_mutex_lock(&wal->mutex);
-
-    // 打开目录
+    // 获取WAL目录中的所有文件
     DIR* dir = opendir(wal->dir_path);
     if (!dir) {
-        ppdb_log_error("Failed to open WAL directory: %s, error: %s", 
-                      wal->dir_path, strerror(errno));
-        pthread_mutex_unlock(&wal->mutex);
+        ppdb_log_error("Failed to open WAL directory: %s", strerror(errno));
         return PPDB_ERR_IO;
     }
 
     // 收集所有WAL文件
     struct dirent* entry;
-    char* wal_files[1024];  // 假设最多1024个WAL文件
-    size_t file_count = 0;
+    char** wal_files = NULL;
+    size_t num_files = 0;
+    size_t capacity = 16;
+
+    wal_files = (char**)malloc(capacity * sizeof(char*));
+    if (!wal_files) {
+        closedir(dir);
+        return PPDB_ERR_NO_MEMORY;
+    }
 
     while ((entry = readdir(dir)) != NULL) {
-        // 跳过 . 和 ..
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-
-        // 检查文件名是否以 .log 结尾
-        size_t name_len = strlen(entry->d_name);
-        if (name_len < 4 || strcmp(entry->d_name + name_len - 4, ".log") != 0) {
-            continue;
-        }
-
-        // 保存文件名
-        wal_files[file_count] = strdup(entry->d_name);
-        if (!wal_files[file_count]) {
-            ppdb_log_error("Failed to allocate memory for filename");
-            for (size_t i = 0; i < file_count; i++) {
-                free(wal_files[i]);
+        if (entry->d_type == DT_REG && strstr(entry->d_name, ".log") != NULL) {
+            if (num_files >= capacity) {
+                capacity *= 2;
+                char** new_files = (char**)realloc(wal_files, capacity * sizeof(char*));
+                if (!new_files) {
+                    for (size_t i = 0; i < num_files; i++) {
+                        free(wal_files[i]);
+                    }
+                    free(wal_files);
+                    closedir(dir);
+                    return PPDB_ERR_NO_MEMORY;
+                }
+                wal_files = new_files;
             }
-            closedir(dir);
-            pthread_mutex_unlock(&wal->mutex);
-            return PPDB_ERR_NO_MEMORY;
+
+            wal_files[num_files] = strdup(entry->d_name);
+            if (!wal_files[num_files]) {
+                for (size_t i = 0; i < num_files; i++) {
+                    free(wal_files[i]);
+                }
+                free(wal_files);
+                closedir(dir);
+                return PPDB_ERR_NO_MEMORY;
+            }
+            num_files++;
         }
-        file_count++;
     }
     closedir(dir);
 
-    // 按照文件名数字大小排序
-    qsort(wal_files, file_count, sizeof(char*), compare_wal_files);
-
-    ppdb_error_t final_err = PPDB_OK;
+    // 按文件名排序(文件名是按时间顺序编号的)
+    qsort(wal_files, num_files, sizeof(char*), compare_wal_files);
 
     // 按顺序处理每个WAL文件
-    for (size_t i = 0; i < file_count; i++) {
-        // 构建完整路径
-        char filename[MAX_PATH_LENGTH];
-        snprintf(filename, sizeof(filename), "%s/%s", wal->dir_path, wal_files[i]);
-        ppdb_log_info("Processing WAL file: %s", filename);
+    for (size_t i = 0; i < num_files; i++) {
+        char path[MAX_PATH_LENGTH];
+        snprintf(path, sizeof(path), "%s/%s", wal->dir_path, wal_files[i]);
+        ppdb_log_info("Processing WAL file: %s", path);
 
-        // 打开WAL文件
-        int fd = open(filename, O_RDONLY);
-        if (fd < 0) {
-            ppdb_log_error("Failed to open WAL file: %s, error: %s", 
-                          filename, strerror(errno));
-            final_err = PPDB_ERR_IO;
-            break;
+        int fd = open(path, O_RDONLY);
+        if (fd == -1) {
+            ppdb_log_error("Failed to open WAL file: %s", strerror(errno));
+            continue;  // 跳过此文件，继续处理其他文件
         }
 
-        // 读取WAL头部
+        // 读取并验证WAL头部
         ppdb_wal_header_t header;
-        ssize_t read_size = read(fd, &header, sizeof(header));
-        if (read_size != sizeof(header)) {
-            ppdb_log_error("Failed to read WAL header: %s, error: %s", 
-                          filename, strerror(errno));
+        ssize_t read_bytes = read(fd, &header, sizeof(header));
+        if (read_bytes != sizeof(header)) {
+            ppdb_log_error("Failed to read WAL header: %s", strerror(errno));
             close(fd);
-            final_err = PPDB_ERR_IO;
-            break;
+            continue;
         }
 
-        // 验证WAL头部
-        if (header.magic != WAL_MAGIC || header.version != WAL_VERSION) {
-            ppdb_log_error("Invalid WAL header: magic=0x%x, version=%d",
-                          header.magic, header.version);
+        if (header.magic != WAL_MAGIC) {
+            ppdb_log_error("Invalid WAL magic number");
             close(fd);
-            final_err = PPDB_ERR_CORRUPTED;
-            break;
+            continue;
         }
+
         ppdb_log_info("WAL header valid: magic=0x%x, version=%d, segment_size=%d",
                      header.magic, header.version, header.segment_size);
 
         // 读取并应用记录
-        size_t total_records = 0;
+        size_t processed_records = 0;
         while (1) {
-            // 读取记录头
             ppdb_wal_record_header_t record_header;
-            read_size = read(fd, &record_header, sizeof(record_header));
-            if (read_size == 0) {
-                // 文件结束
-                break;
+            read_bytes = read(fd, &record_header, sizeof(record_header));
+            if (read_bytes == 0) {
+                break;  // 文件结束
             }
-            if (read_size != sizeof(record_header)) {
-                if (read_size < 0) {
-                    ppdb_log_error("Error reading record header: %s, error: %s", 
-                                filename, strerror(errno));
-                    final_err = PPDB_ERR_IO;
-                } else {
-                    ppdb_log_warn("Incomplete record header in file: %s", filename);
-                }
-                break;
-            }
-
-            // 验证记录头
-            if (record_header.key_size > MAX_KEY_SIZE ||
-                record_header.value_size > MAX_VALUE_SIZE) {
-                ppdb_log_error("Invalid record size in file %s: key_size=%d, value_size=%d",
-                              filename, record_header.key_size, record_header.value_size);
-                final_err = PPDB_ERR_CORRUPTED;
+            if (read_bytes != sizeof(record_header)) {
+                ppdb_log_error("Failed to read record header: %s", strerror(errno));
                 break;
             }
 
             // 读取键
-            uint8_t* key = (uint8_t*)malloc(record_header.key_size);
-            if (!key) {
-                ppdb_log_error("Failed to allocate memory for key");
-                final_err = PPDB_ERR_NO_MEMORY;
-                break;
-            }
-            read_size = read(fd, key, record_header.key_size);
-            if (read_size != record_header.key_size) {
-                ppdb_log_error("Failed to read key from file %s: expected %d bytes, got %zd bytes",
-                              filename, record_header.key_size, read_size);
-                free(key);
-                final_err = PPDB_ERR_CORRUPTED;
+            uint8_t key[MAX_KEY_SIZE];
+            read_bytes = read(fd, key, record_header.key_size);
+            if (read_bytes != record_header.key_size) {
+                ppdb_log_error("Failed to read key: %s", strerror(errno));
                 break;
             }
 
-            // 读取值
-            uint8_t* value = NULL;
-            if (record_header.value_size > 0) {
-                value = (uint8_t*)malloc(record_header.value_size);
-                if (!value) {
-                    ppdb_log_error("Failed to allocate memory for value");
-                    free(key);
-                    final_err = PPDB_ERR_NO_MEMORY;
+            // 对于PUT操作，读取并应用值
+            if (record_header.type == PPDB_WAL_RECORD_PUT) {
+                uint8_t value[MAX_VALUE_SIZE];
+                read_bytes = read(fd, value, record_header.value_size);
+                if (read_bytes != record_header.value_size) {
+                    ppdb_log_error("Failed to read value: %s", strerror(errno));
                     break;
                 }
-                read_size = read(fd, value, record_header.value_size);
-                if (read_size != record_header.value_size) {
-                    ppdb_log_error("Failed to read value from file %s: expected %d bytes, got %zd bytes",
-                                  filename, record_header.value_size, read_size);
-                    free(key);
-                    free(value);
-                    final_err = PPDB_ERR_CORRUPTED;
+
+                ppdb_error_t err = ppdb_memtable_put(table, key, record_header.key_size,
+                                                   value, record_header.value_size);
+                if (err != PPDB_OK && err != PPDB_ERR_FULL) {
+                    ppdb_log_error("Failed to apply PUT record: %d", err);
                     break;
                 }
             }
-
-            // 应用记录
-            ppdb_error_t err;
-            switch (record_header.type) {
-            case PPDB_WAL_RECORD_PUT:
-                err = ppdb_memtable_put(table, key, record_header.key_size,
-                                      value, record_header.value_size);
-                if (err == PPDB_ERR_FULL) {
-                    // 如果MemTable已满，我们应该停止恢复并通知上层创建新的MemTable
-                    ppdb_log_warn("MemTable is full during recovery, need to create new MemTable");
-                    final_err = PPDB_ERR_FULL;
-                    free(key);
-                    if (value) free(value);
-                    break;
-                } else if (err != PPDB_OK) {
-                    ppdb_log_error("Failed to apply PUT record in file %s: %d", filename, err);
-                    final_err = err;
-                }
-                break;
-            case PPDB_WAL_RECORD_DELETE:
-                err = ppdb_memtable_delete(table, key, record_header.key_size);
+            // 对于DELETE操作，从MemTable中删除键
+            else if (record_header.type == PPDB_WAL_RECORD_DELETE) {
+                ppdb_error_t err = ppdb_memtable_delete(table, key, record_header.key_size);
                 if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
-                    ppdb_log_error("Failed to apply DELETE record in file %s: %d", filename, err);
-                    final_err = err;
+                    ppdb_log_error("Failed to apply DELETE record: %d", err);
+                    break;
                 }
-                break;
-            default:
-                ppdb_log_error("Invalid record type in file %s: %d", 
-                              filename, record_header.type);
-                final_err = PPDB_ERR_CORRUPTED;
-                break;
             }
 
-            // 释放内存
-            free(key);
-            if (value) {
-                free(value);
-            }
-
-            if (final_err != PPDB_OK) {
-                break;
-            }
-
-            total_records++;
+            processed_records++;
         }
 
+        ppdb_log_info("Processed %zu records from WAL file: %s", processed_records, path);
         close(fd);
-        ppdb_log_info("Processed %zu records from WAL file: %s", total_records, filename);
-
-        if (final_err != PPDB_OK) {
-            break;
-        }
     }
 
-    // 释放文件名内存
-    for (size_t i = 0; i < file_count; i++) {
+    // 清理
+    for (size_t i = 0; i < num_files; i++) {
         free(wal_files[i]);
     }
+    free(wal_files);
 
-    if (final_err != PPDB_OK) {
-        ppdb_log_error("WAL recovery failed with error: %d", final_err);
-    } else {
-        ppdb_log_info("WAL recovery completed successfully");
-    }
-
-    pthread_mutex_unlock(&wal->mutex);
-    return final_err;
+    ppdb_log_info("WAL recovery completed successfully");
+    return PPDB_OK;
 }
 
 // 归档旧的WAL文件

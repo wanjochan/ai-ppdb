@@ -74,6 +74,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
     }
 
     // 从WAL恢复数据
+    pthread_mutex_lock(&new_store->mutex);
     err = ppdb_wal_recover(new_store->wal, new_store->table);
     if (err != PPDB_OK) {
         if (err == PPDB_ERR_FULL) {
@@ -83,6 +84,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
             err = ppdb_memtable_create(size_limit, &new_table);
             if (err != PPDB_OK) {
                 ppdb_log_error("Failed to create new MemTable during recovery: %d", err);
+                pthread_mutex_unlock(&new_store->mutex);
                 ppdb_wal_destroy(new_store->wal);
                 pthread_mutex_destroy(&new_store->mutex);
                 ppdb_memtable_destroy(new_store->table);
@@ -98,14 +100,16 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
             err = ppdb_wal_recover(new_store->wal, new_store->table);
             if (err != PPDB_OK && err != PPDB_ERR_FULL) {
                 ppdb_log_error("Failed to recover from WAL after creating new MemTable: %d", err);
+                pthread_mutex_unlock(&new_store->mutex);
                 ppdb_wal_destroy(new_store->wal);
                 pthread_mutex_destroy(&new_store->mutex);
                 ppdb_memtable_destroy(new_store->table);
                 free(new_store);
                 return err;
             }
-        } else {
+        } else if (err != PPDB_ERR_NOT_FOUND) {
             ppdb_log_error("Failed to recover from WAL: %d", err);
+            pthread_mutex_unlock(&new_store->mutex);
             ppdb_wal_destroy(new_store->wal);
             pthread_mutex_destroy(&new_store->mutex);
             ppdb_memtable_destroy(new_store->table);
@@ -113,6 +117,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
             return err;
         }
     }
+    pthread_mutex_unlock(&new_store->mutex);
 
     *store = new_store;
     ppdb_log_info("Successfully created KVStore at: %s", config->dir_path);
@@ -125,8 +130,9 @@ void ppdb_kvstore_close(ppdb_kvstore_t* store) {
 
     ppdb_log_info("Closing KVStore at: %s", store->db_path);
 
+    // 确保所有数据都写入WAL
     if (store->wal) {
-        ppdb_wal_destroy(store->wal);
+        ppdb_wal_close(store->wal);
         store->wal = NULL;
     }
 
