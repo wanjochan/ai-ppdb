@@ -26,7 +26,9 @@ static int test_kvstore_create_close(void) {
     
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_create(&config, &store);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create KVStore");
+    char err_msg[128];
+    snprintf(err_msg, sizeof(err_msg), "Failed to create KVStore: %s", ppdb_error_string(err));
+    TEST_ASSERT(err == PPDB_OK, err_msg);
     TEST_ASSERT(store != NULL, "KVStore pointer is NULL");
     
     // Close KVStore
@@ -55,7 +57,9 @@ static int test_kvstore_basic_ops(void) {
     
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_create(&config, &store);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create KVStore");
+    char err_msg[128];
+    snprintf(err_msg, sizeof(err_msg), "Failed to create KVStore: %s", ppdb_error_string(err));
+    TEST_ASSERT(err == PPDB_OK, err_msg);
     
     // Put key-value pair
     const uint8_t* key = (const uint8_t*)"test_key";
@@ -107,7 +111,9 @@ static int test_kvstore_recovery(void) {
         
         ppdb_kvstore_t* store = NULL;
         ppdb_error_t err = ppdb_kvstore_create(&config, &store);
-        TEST_ASSERT(err == PPDB_OK, "Failed to create KVStore");
+        char err_msg[128];
+        snprintf(err_msg, sizeof(err_msg), "Failed to create KVStore: %s", ppdb_error_string(err));
+        TEST_ASSERT(err == PPDB_OK, err_msg);
         
         const uint8_t* key = (const uint8_t*)"recovery_key";
         const uint8_t* value = (const uint8_t*)"recovery_value";
@@ -130,7 +136,9 @@ static int test_kvstore_recovery(void) {
         
         ppdb_kvstore_t* store = NULL;
         ppdb_error_t err = ppdb_kvstore_create(&config, &store);
-        TEST_ASSERT(err == PPDB_OK, "Failed to create KVStore");
+        char err_msg[128];
+        snprintf(err_msg, sizeof(err_msg), "Failed to create KVStore: %s", ppdb_error_string(err));
+        TEST_ASSERT(err == PPDB_OK, err_msg);
         
         // Verify recovered data
         const uint8_t* key = (const uint8_t*)"recovery_key";
@@ -152,6 +160,7 @@ typedef struct {
     ppdb_kvstore_t* store;
     int thread_id;
     int success_count;
+    pthread_mutex_t* mutex;  // 添加互斥锁用于计数
 } thread_data_t;
 
 // Worker thread function
@@ -163,13 +172,16 @@ static void* concurrent_worker(void* arg) {
     char key[32];
     char value[32];
     char buf[32];
+    size_t size;
     
     for (int i = 0; i < 100; i++) {
-        // Put key-value pair
-        snprintf(key, sizeof(key), "key_%d_%d", thread_id, i);
-        snprintf(value, sizeof(value), "value_%d_%d", thread_id, i);
+        // 每个线程使用独立的键空间
+        memset(key, 0, sizeof(key));
+        memset(value, 0, sizeof(value));
+        snprintf(key, sizeof(key), "thread_%d_key_%d", thread_id, i);
+        snprintf(value, sizeof(value), "thread_%d_value_%d", thread_id, i);
         
-        // 重试直到成功写入
+        // 重试写入逻辑
         int retries = 0;
         const int max_retries = 3;
         ppdb_error_t err;
@@ -179,53 +191,72 @@ static void* concurrent_worker(void* arg) {
                                 (const uint8_t*)key, strlen(key),
                                 (const uint8_t*)value, strlen(value));
             if (err != PPDB_OK) {
-                ppdb_log_error("Thread %d failed to put key %s: %d (retry %d)",
-                             thread_id, key, err, retries);
-                usleep(10000);  // 10ms backoff
+                if (err == PPDB_ERR_FULL) {
+                    // 如果 MemTable 已满，等待更长时间让 compaction 完成
+                    usleep(100000);  // 100ms
+                } else {
+                    usleep(10000 * (retries + 1));  // 递增退避时间
+                }
+                ppdb_log_error("Thread %d put failed for key %s: %s (retry %d)",
+                             thread_id, key, ppdb_error_string(err), retries);
             }
             retries++;
         } while (err != PPDB_OK && retries < max_retries);
         
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d gave up putting key %s after %d retries",
-                          thread_id, key, retries);
+            ppdb_log_error("Thread %d gave up putting key %s after %d retries: %s",
+                          thread_id, key, retries, ppdb_error_string(err));
             continue;
         }
         
         // 验证写入
-        size_t size = sizeof(buf);
+        memset(buf, 0, sizeof(buf));
+        size = sizeof(buf) - 1;  // 保留一个字节给 null 终止符
         err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), (uint8_t*)buf, &size);
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d failed to get key %s: %d", thread_id, key, err);
+            ppdb_log_error("Thread %d get failed for key %s: %s",
+                          thread_id, key, ppdb_error_string(err));
             continue;
         }
         
-        // 如果值不匹配，重试写入
+        // 验证值是否匹配
         if (strcmp(buf, value) != 0) {
-            ppdb_log_error("Thread %d: value mismatch for key %s, retrying...", thread_id, key);
+            ppdb_log_error("Thread %d value mismatch for key %s: expected=%s, got=%s",
+                          thread_id, key, value, buf);
+            
+            // 重试写入
             retries = 0;
             do {
                 err = ppdb_kvstore_put(store, 
                                     (const uint8_t*)key, strlen(key),
                                     (const uint8_t*)value, strlen(value));
                 if (err != PPDB_OK) {
-                    ppdb_log_error("Thread %d failed to retry put key %s: %d (retry %d)",
-                                 thread_id, key, err, retries);
-                    usleep(10000);  // 10ms backoff
+                    if (err == PPDB_ERR_FULL) {
+                        usleep(100000);  // 100ms
+                    } else {
+                        usleep(10000 * (retries + 1));
+                    }
+                    ppdb_log_error("Thread %d retry put failed for key %s: %s (retry %d)",
+                                 thread_id, key, ppdb_error_string(err), retries);
                 }
                 retries++;
             } while (err != PPDB_OK && retries < max_retries);
             
             if (err == PPDB_OK) {
                 // 再次验证
-                size = sizeof(buf);
+                memset(buf, 0, sizeof(buf));
+                size = sizeof(buf) - 1;
                 err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), (uint8_t*)buf, &size);
                 if (err == PPDB_OK && strcmp(buf, value) == 0) {
+                    pthread_mutex_lock(data->mutex);
                     data->success_count++;
+                    pthread_mutex_unlock(data->mutex);
                 }
             }
         } else {
+            pthread_mutex_lock(data->mutex);
             data->success_count++;
+            pthread_mutex_unlock(data->mutex);
         }
     }
     
@@ -239,44 +270,52 @@ static int test_kvstore_concurrent(void) {
     const char* test_dir = "test_kvstore_concurrent.db";
     cleanup_test_dir(test_dir);
     
-    // Create KVStore
+    // 创建 KVStore，使用更大的配置
     ppdb_kvstore_config_t config = {
         .dir_path = {0},
-        .memtable_size = 4096 * 16,  // Larger size for concurrent test
-        .l0_size = 4096 * 64,
-        .l0_files = 8,
+        .memtable_size = 65536,  // 64KB
+        .l0_size = 262144,      // 256KB
+        .l0_files = 4,
         .compression = PPDB_COMPRESSION_NONE
     };
     strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
     
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_create(&config, &store);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create KVStore");
+    char err_msg[128];
+    snprintf(err_msg, sizeof(err_msg), "Failed to create KVStore: %s", ppdb_error_string(err));
+    TEST_ASSERT(err == PPDB_OK, err_msg);
     
-    // Create threads
+    // 创建线程
     const int num_threads = 4;
     pthread_t threads[num_threads];
     thread_data_t thread_data[num_threads];
+    pthread_mutex_t mutex;
+    
+    pthread_mutex_init(&mutex, NULL);
     
     for (int i = 0; i < num_threads; i++) {
         thread_data[i].store = store;
         thread_data[i].thread_id = i;
         thread_data[i].success_count = 0;
+        thread_data[i].mutex = &mutex;
         pthread_create(&threads[i], NULL, concurrent_worker, &thread_data[i]);
     }
     
-    // Wait for threads to complete
+    // 等待所有线程完成
     int total_success = 0;
     for (int i = 0; i < num_threads; i++) {
         pthread_join(threads[i], NULL);
         total_success += thread_data[i].success_count;
     }
     
-    // Verify results
+    pthread_mutex_destroy(&mutex);
+    
+    // 验证结果
     ppdb_log_info("Total successful operations: %d", total_success);
     TEST_ASSERT(total_success > 0, "No successful operations");
     
-    // Verify all keys with retries
+    // 验证所有键值对
     const int max_retries = 3;
     int retry_count = 0;
     bool all_verified = false;
@@ -290,11 +329,15 @@ static int test_kvstore_concurrent(void) {
                 char key[32];
                 char expected_value[32];
                 uint8_t buf[32];
-                size_t size = sizeof(buf);
                 
-                snprintf(key, sizeof(key), "key_%d_%d", i, j);
-                snprintf(expected_value, sizeof(expected_value), "value_%d_%d", i, j);
+                memset(key, 0, sizeof(key));
+                memset(expected_value, 0, sizeof(expected_value));
+                memset(buf, 0, sizeof(buf));
                 
+                snprintf(key, sizeof(key), "thread_%d_key_%d", i, j);
+                snprintf(expected_value, sizeof(expected_value), "thread_%d_value_%d", i, j);
+                
+                size_t size = sizeof(buf) - 1;
                 err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), buf, &size);
                 if (err == PPDB_OK) {
                     if (strcmp((const char*)buf, expected_value) == 0) {
@@ -305,7 +348,7 @@ static int test_kvstore_concurrent(void) {
                         all_verified = false;
                     }
                 } else {
-                    ppdb_log_error("Failed to get key %s: %d", key, err);
+                    ppdb_log_error("Failed to get key %s: %s", key, ppdb_error_string(err));
                     all_verified = false;
                 }
             }
@@ -315,15 +358,14 @@ static int test_kvstore_concurrent(void) {
             ppdb_log_info("Retry %d: Verified %d/%d keys",
                          retry_count + 1, verified_count, num_threads * 100);
             retry_count++;
-            usleep(100000);  // Wait 100ms before retrying
+            usleep(100000);  // 100ms
         }
     }
     
     TEST_ASSERT(all_verified, "Failed to verify all keys after retries");
     
-    // Close KVStore
+    // 清理
     ppdb_kvstore_destroy(store);
-    
     cleanup_test_dir(test_dir);
     return 0;
 }

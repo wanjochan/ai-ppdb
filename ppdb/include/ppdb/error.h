@@ -13,6 +13,12 @@ typedef enum {
     PPDB_ERR_BUFFER_TOO_SMALL = -7, // 缓冲区太小
     PPDB_ERR_MUTEX_ERROR = -8,      // 互斥锁错误
     PPDB_ERR_WRITE_FAILED = -9,     // 写入失败
+    PPDB_ERR_CORRUPTED = -10,       // 数据损坏
+    PPDB_ERR_SYSTEM = -11,          // 系统错误
+    PPDB_ERR_BUSY = -12,            // 资源忙
+    PPDB_ERR_TIMEOUT = -13,         // 操作超时
+    PPDB_ERR_EXISTS = -14,          // 已存在
+    PPDB_ERR_NOT_SUPPORTED = -15,   // 不支持的操作
 } ppdb_error_t;
 
 // 错误码转字符串
