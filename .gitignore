@@ -51,3 +51,6 @@ cross9
 /ppdb/scripts/wal
 cosmo.zip
 tinycc_src/
+cosmo_tinycc.zip
+*.swo
+*.bin
