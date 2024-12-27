@@ -1,0 +1,14 @@
+三思而后行，也就是时常以计划为指导；
+无计划则先根据目标做计划，然后执行；
+当目标有变 或者执行过程中遇到问题时，先思考并更新计划；
+更新计划时同时要更新相关文档（包括本文档），以确保记忆能延续；
+
+下面是这个目录的目标：
+
+通过混合 cosmopolitan 和 tinycc技术得到能自举（bootstrap）的跨平台迷你cc
+
+*）参考 ppdb 项目复习cosmopolitan通用架构的c底层，
+*）用 curl （注意用本机代理 http://127.0.0.1:8889）上网下载tinycc在github上面的源码到当前目录的 ./tinyy_src/ 中，并复制一份到 ./cosmo_tinycc/ 中;
+*）用cosmopolitan的方法调整 ./cosmopolitan/ 的代码后用cosmopolitan的工具编译得到 cosmo_tinycc.exe
+*）用 cosmo_tinycc.exe 再次编译 ./cosmo_tinycc/ 得到 cosmo_tinycc_boostrap.exe
+
