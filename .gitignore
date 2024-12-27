@@ -49,3 +49,5 @@ cross9
 /ppdb/cosmopolitan
 /ppdb/scripts/test_wal_concurrent
 /ppdb/scripts/wal
+cosmo.zip
+tinycc_src/
