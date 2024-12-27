@@ -7,9 +7,23 @@ AI编写的分布式数据库
 ```
 # 下载 cosmocc：
 
-（稍后补官网地址、下载地址等，或把本文档合并到 docs/overview/中某个md）
-cosmopolitan.zip => ppdb/cosmopolitan/
-cross9.zip => ppdb/cross9/
+https://justine.lol/cosmopolitan/index.html
+https://cosmo.zip/pub/cosmocc/cosmocc.zip => ppdb/cosmopolitan/
+
+-- or --
+https://cosmo.zip/pub/cosmos/bin/
+  ape.lds
+  ape.o
+  ape-copy-self.o
+  ape-no-modify-self.o
+  cosmopolitan.a
+  cosmopolitan.h
+  crt.o
+=> ppdb/cosmopolitan/
+
+
+https://justine.lol/cosmopolitan/windows-compiling.html
+https://justine.lol/linux-compiler-on-windows/cross9.zip => ppdb/cross9/
 
 # 编译
 ppdb/scripts/build_test.bat
