@@ -28,6 +28,7 @@ typedef struct ppdb_wal_t {
     bool sync_write;                 // 是否同步写入
     int current_fd;                  // 当前文件描述符
     size_t current_size;             // 当前段大小
+    size_t segment_id;               // 当前段ID
     pthread_mutex_t mutex;           // 互斥锁
 } ppdb_wal_t;
 
@@ -58,6 +59,7 @@ ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal) 
     new_wal->sync_write = config->sync_write;
     new_wal->current_fd = -1;
     new_wal->current_size = 0;
+    new_wal->segment_id = 0;  // 初始化段ID
 
     // 初始化互斥锁
     if (pthread_mutex_init(&new_wal->mutex, NULL) != 0) {
@@ -137,9 +139,7 @@ void ppdb_wal_close(ppdb_wal_t* wal) {
     pthread_mutex_lock(&wal->mutex);
     if (wal->current_fd >= 0) {
         // 确保所有数据都写入磁盘
-        if (wal->sync_write) {
-            fsync(wal->current_fd);
-        }
+        fsync(wal->current_fd);
         close(wal->current_fd);
         wal->current_fd = -1;
     }
@@ -152,7 +152,7 @@ void ppdb_wal_close(ppdb_wal_t* wal) {
 static ppdb_error_t create_new_segment(ppdb_wal_t* wal) {
     char filename[MAX_PATH_LENGTH];
     int written = snprintf(filename, sizeof(filename), "%s/%010zu.log",
-                         wal->dir_path, wal->current_size);
+                         wal->dir_path, wal->segment_id);
     if (written < 0 || (size_t)written >= sizeof(filename)) {
         ppdb_log_error("Failed to create segment filename");
         return PPDB_ERR_IO;
@@ -198,6 +198,7 @@ static ppdb_error_t create_new_segment(ppdb_wal_t* wal) {
 
     wal->current_fd = fd;
     wal->current_size = sizeof(header);
+    wal->segment_id++;  // 增加段ID
     ppdb_log_debug("Successfully created WAL segment: %s", filename);
     return PPDB_OK;
 }
@@ -359,10 +360,17 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
     }
     closedir(dir);
 
+    if (num_files == 0) {
+        free(wal_files);
+        ppdb_log_info("No WAL files found");
+        return PPDB_OK;
+    }
+
     // 按文件名排序(文件名是按时间顺序编号的)
     qsort(wal_files, num_files, sizeof(char*), compare_wal_files);
 
     // 按顺序处理每个WAL文件
+    ppdb_error_t final_err = PPDB_OK;
     for (size_t i = 0; i < num_files; i++) {
         char path[MAX_PATH_LENGTH];
         snprintf(path, sizeof(path), "%s/%s", wal->dir_path, wal_files[i]);
@@ -426,6 +434,7 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
                                                    value, record_header.value_size);
                 if (err != PPDB_OK && err != PPDB_ERR_FULL) {
                     ppdb_log_error("Failed to apply PUT record: %d", err);
+                    final_err = err;
                     break;
                 }
             }
@@ -434,6 +443,7 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
                 ppdb_error_t err = ppdb_memtable_delete(table, key, record_header.key_size);
                 if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
                     ppdb_log_error("Failed to apply DELETE record: %d", err);
+                    final_err = err;
                     break;
                 }
             }
@@ -452,7 +462,7 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
     free(wal_files);
 
     ppdb_log_info("WAL recovery completed successfully");
-    return PPDB_OK;
+    return final_err;
 }
 
 // 归档旧的WAL文件

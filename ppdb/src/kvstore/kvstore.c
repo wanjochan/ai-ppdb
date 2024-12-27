@@ -98,7 +98,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
             
             // 重试恢复
             err = ppdb_wal_recover(new_store->wal, new_store->table);
-            if (err != PPDB_OK && err != PPDB_ERR_FULL) {
+            if (err != PPDB_OK && err != PPDB_ERR_FULL && err != PPDB_ERR_NOT_FOUND) {
                 ppdb_log_error("Failed to recover from WAL after creating new MemTable: %d", err);
                 pthread_mutex_unlock(&new_store->mutex);
                 ppdb_wal_destroy(new_store->wal);
@@ -130,6 +130,8 @@ void ppdb_kvstore_close(ppdb_kvstore_t* store) {
 
     ppdb_log_info("Closing KVStore at: %s", store->db_path);
 
+    pthread_mutex_lock(&store->mutex);
+
     // 确保所有数据都写入WAL
     if (store->wal) {
         ppdb_wal_close(store->wal);
@@ -141,6 +143,7 @@ void ppdb_kvstore_close(ppdb_kvstore_t* store) {
         store->table = NULL;
     }
 
+    pthread_mutex_unlock(&store->mutex);
     pthread_mutex_destroy(&store->mutex);
     free(store);
 }
