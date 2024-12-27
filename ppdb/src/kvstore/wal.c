@@ -131,7 +131,11 @@ void ppdb_wal_destroy(ppdb_wal_t* wal) {
                 continue;
             }
             char path[MAX_PATH_LENGTH];
-            snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+            int written = snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+            if (written < 0 || written >= (int)sizeof(path)) {
+                ppdb_log_error("Path too long: %s/%s", wal->dir_path, entry->d_name);
+                continue;
+            }
             // 在测试模式下不删除WAL文件
             #ifndef PPDB_TEST_MODE
             unlink(path);
@@ -171,7 +175,7 @@ static ppdb_error_t create_new_segment(ppdb_wal_t* wal) {
     char filename[MAX_PATH_LENGTH];
     int written = snprintf(filename, sizeof(filename), "%s/%010zu.log",
                          wal->dir_path, wal->segment_id);
-    if (written < 0 || (size_t)written >= sizeof(filename)) {
+    if (written < 0 || written >= (int)sizeof(filename)) {
         ppdb_log_error("Failed to create segment filename");
         return PPDB_ERR_IO;
     }
@@ -302,7 +306,7 @@ ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal,
         .value_size = value_size
     };
     ssize_t written = write(wal->current_fd, &record_header, sizeof(record_header));
-    if (written != sizeof(record_header)) {
+    if (written < 0 || (size_t)written != sizeof(record_header)) {
         ppdb_log_error("Failed to write record header: %s", strerror(errno));
         pthread_mutex_unlock(&wal->mutex);
         return PPDB_ERR_IO;
@@ -310,7 +314,7 @@ ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal,
 
     // 写入键
     written = write(wal->current_fd, key, key_size);
-    if (written != key_size) {
+    if (written < 0 || (size_t)written != key_size) {
         ppdb_log_error("Failed to write key: %s", strerror(errno));
         pthread_mutex_unlock(&wal->mutex);
         return PPDB_ERR_IO;
@@ -319,7 +323,7 @@ ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal,
     // 写入值(如果有)
     if (value_size > 0) {
         written = write(wal->current_fd, value, value_size);
-        if (written != value_size) {
+        if (written < 0 || (size_t)written != value_size) {
             ppdb_log_error("Failed to write value: %s", strerror(errno));
             pthread_mutex_unlock(&wal->mutex);
             return PPDB_ERR_IO;
@@ -437,7 +441,12 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t** table) {
     ppdb_error_t err = PPDB_OK;
     for (size_t i = 0; i < num_files; i++) {
         char path[MAX_PATH_LENGTH];
-        snprintf(path, sizeof(path), "%s/%s", wal->dir_path, wal_files[i]);
+        int written = snprintf(path, sizeof(path), "%s/%s", wal->dir_path, wal_files[i]);
+        if (written < 0 || written >= (int)sizeof(path)) {
+            ppdb_log_error("Path too long: %s/%s", wal->dir_path, wal_files[i]);
+            continue;
+        }
+
         ppdb_log_info("Processing WAL file: %s", path);
 
         int fd = open(path, O_RDONLY);
@@ -592,7 +601,12 @@ static ppdb_error_t archive_old_wal_files(const char* wal_dir) {
 
     // 创建归档目录
     char archive_dir[MAX_PATH_LENGTH];
-    snprintf(archive_dir, sizeof(archive_dir), "%s/archive", wal_dir);
+    int written = snprintf(archive_dir, sizeof(archive_dir), "%s/archive", wal_dir);
+    if (written < 0 || written >= (int)sizeof(archive_dir)) {
+        ppdb_log_error("Failed to create archive directory path");
+        return PPDB_ERR_IO;
+    }
+
     ppdb_error_t err = ppdb_ensure_directory(archive_dir);
     if (err != PPDB_OK) {
         ppdb_log_error("Failed to create archive directory: %s", archive_dir);
@@ -614,18 +628,22 @@ static ppdb_error_t archive_old_wal_files(const char* wal_dir) {
             continue;
         }
 
-        // 检查文件名是否以 .log 结尾
-        size_t name_len = strlen(entry->d_name);
-        if (name_len < 4 || strcmp(entry->d_name + name_len - 4, ".log") != 0) {
+        char src_path[MAX_PATH_LENGTH];
+        char dst_path[MAX_PATH_LENGTH];
+        
+        int written = snprintf(src_path, sizeof(src_path), "%s/%s", wal_dir, entry->d_name);
+        if (written < 0 || written >= (int)sizeof(src_path)) {
+            ppdb_log_error("Source path too long: %s/%s", wal_dir, entry->d_name);
+            continue;
+        }
+
+        written = snprintf(dst_path, sizeof(dst_path), "%s/%s", archive_dir, entry->d_name);
+        if (written < 0 || written >= (int)sizeof(dst_path)) {
+            ppdb_log_error("Destination path too long: %s/%s", archive_dir, entry->d_name);
             continue;
         }
 
         // 构建源文件和目标文件路径
-        char src_path[MAX_PATH_LENGTH];
-        char dst_path[MAX_PATH_LENGTH];
-        snprintf(src_path, sizeof(src_path), "%s/%s", wal_dir, entry->d_name);
-        snprintf(dst_path, sizeof(dst_path), "%s/%s", archive_dir, entry->d_name);
-
         // 移动文件
         if (rename(src_path, dst_path) != 0) {
             ppdb_log_error("Failed to move WAL file: %s -> %s, error: %s",

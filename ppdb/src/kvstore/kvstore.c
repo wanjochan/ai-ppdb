@@ -33,9 +33,13 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
     // 初始化结构
     memset(new_store, 0, sizeof(ppdb_kvstore_t));
 
-    // 初始化路径
-    strncpy(new_store->db_path, config->dir_path, MAX_PATH_LENGTH - 1);
-    new_store->db_path[MAX_PATH_LENGTH - 1] = '\0';
+    // 复制路径
+    size_t path_len = strlen(config->dir_path);
+    if (path_len >= MAX_PATH_LENGTH) {
+        return PPDB_ERR_PATH_TOO_LONG;
+    }
+    memcpy(new_store->db_path, config->dir_path, path_len);
+    new_store->db_path[path_len] = '\0';
 
     // 创建MemTable
     ppdb_error_t err = ppdb_memtable_create(config->memtable_size, &new_store->table);
@@ -53,24 +57,21 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
         return PPDB_ERR_MUTEX_ERROR;
     }
 
-    // 创建WAL目录
+    // 构造WAL路径
     char wal_path[MAX_PATH_LENGTH];
-    snprintf(wal_path, sizeof(wal_path), "%s.wal", config->dir_path);
-    err = ppdb_ensure_directory(wal_path);
-    if (err != PPDB_OK && err != PPDB_ERR_EXISTS) {  // 忽略目录已存在的错误
-        ppdb_log_error("Failed to create WAL directory: %s", wal_path);
-        pthread_mutex_destroy(&new_store->mutex);
+    int written = snprintf(wal_path, sizeof(wal_path), "%s.wal", config->dir_path);
+    if (written < 0 || written >= (int)sizeof(wal_path)) {
         ppdb_memtable_destroy(new_store->table);
         free(new_store);
-        return err;
+        return PPDB_ERR_PATH_TOO_LONG;
     }
 
     // 创建WAL配置
     ppdb_wal_config_t wal_config = {0};  // 使用零初始化
     wal_config.segment_size = config->l0_size;
     wal_config.sync_write = true;
-    strncpy(wal_config.dir_path, wal_path, MAX_PATH_LENGTH - 1);
-    wal_config.dir_path[MAX_PATH_LENGTH - 1] = '\0';
+    memcpy(wal_config.dir_path, wal_path, sizeof(wal_path));
+    wal_config.dir_path[sizeof(wal_path) - 1] = '\0';
 
     // 创建WAL
     err = ppdb_wal_create(&wal_config, &new_store->wal);

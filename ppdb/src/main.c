@@ -31,7 +31,7 @@ int main(int argc __attribute__((unused)), char* argv[] __attribute__((unused)))
     }
 
     // 从WAL恢复数据
-    err = ppdb_wal_recover(wal, memtable);
+    err = ppdb_wal_recover(wal, &memtable);
     if (err != PPDB_OK) {
         ppdb_log_error("Failed to recover from WAL: %d", err);
         ppdb_wal_destroy(wal);
@@ -49,4 +49,4 @@ int main(int argc __attribute__((unused)), char* argv[] __attribute__((unused)))
     ppdb_memtable_destroy(memtable);
 
     return 0;
-} 
+}
