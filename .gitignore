@@ -54,3 +54,4 @@ tinycc_src/
 cosmo_tinycc.zip
 *.swo
 *.bin
+*.obj
