@@ -56,6 +56,28 @@ if %ERRORLEVEL% neq 0 (
     exit /b %ERRORLEVEL%
 )
 
+REM 编译KVStore测试
+echo Building KVStore test...
+cl %CFLAGS% %INCLUDES% /Fe:"%BUILD_DIR%\test_kvstore.exe" ^
+    "%TEST_DIR%\test_kvstore_main.c" ^
+    "%TEST_DIR%\test_kvstore.c" ^
+    "%TEST_DIR%\test_framework.c" ^
+    "%SRC_DIR%\kvstore\kvstore.c" ^
+    "%SRC_DIR%\kvstore\memtable.c" ^
+    "%SRC_DIR%\kvstore\skiplist.c" ^
+    "%SRC_DIR%\kvstore\wal.c" ^
+    "%SRC_DIR%\common\fs.c" ^
+    "%SRC_DIR%\common\logger.c" ^
+    "%COSMO_DIR%\lib\ape.lib" ^
+    %LIBS%
+
+if %ERRORLEVEL% neq 0 (
+    echo Build failed with error code %ERRORLEVEL%
+    echo Current directory: %CD%
+    echo Build directory: %BUILD_DIR%
+    exit /b %ERRORLEVEL%
+)
+
 REM 运行WAL测试
 echo Running WAL test...
 "%BUILD_DIR%\test_wal.exe"
@@ -71,6 +93,15 @@ echo Running MemTable test...
 
 if %ERRORLEVEL% neq 0 (
     echo MemTable tests failed with error code %ERRORLEVEL%
+    exit /b %ERRORLEVEL%
+)
+
+REM 运行KVStore测试
+echo Running KVStore test...
+"%BUILD_DIR%\test_kvstore.exe"
+
+if %ERRORLEVEL% neq 0 (
+    echo KVStore tests failed with error code %ERRORLEVEL%
     exit /b %ERRORLEVEL%
 )
 
