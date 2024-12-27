@@ -30,7 +30,7 @@ static int test_kvstore_create_close(void) {
     TEST_ASSERT(store != NULL, "KVStore pointer is NULL");
     
     // Close KVStore
-    ppdb_kvstore_close(store);
+    ppdb_kvstore_destroy(store);
     
     cleanup_test_dir(test_dir);
     return 0;
@@ -81,7 +81,7 @@ static int test_kvstore_basic_ops(void) {
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after deletion");
     
     // Close KVStore
-    ppdb_kvstore_close(store);
+    ppdb_kvstore_destroy(store);
     
     cleanup_test_dir(test_dir);
     return 0;
@@ -140,7 +140,7 @@ static int test_kvstore_recovery(void) {
         TEST_ASSERT(err == PPDB_OK, "Failed to get value");
         TEST_ASSERT(strcmp((const char*)buf, "recovery_value") == 0, "Recovered value does not match");
         
-        ppdb_kvstore_close(store);
+        ppdb_kvstore_destroy(store);
     }
     
     cleanup_test_dir(test_dir);
@@ -256,7 +256,7 @@ static int test_kvstore_concurrent(void) {
     }
     
     // Close KVStore
-    ppdb_kvstore_close(store);
+    ppdb_kvstore_destroy(store);
     
     cleanup_test_dir(test_dir);
     return 0;

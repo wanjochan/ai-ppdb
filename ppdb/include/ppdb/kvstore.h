@@ -21,19 +21,17 @@ typedef struct {
     ppdb_compression_t compression;   // 压缩算法
 } ppdb_kvstore_config_t;
 
-// KVStore结构
-typedef struct ppdb_kvstore_t {
-    char db_path[MAX_PATH_LENGTH];  // 数据库路径
-    struct ppdb_memtable_t* table;  // 内存表
-    struct ppdb_wal_t* wal;         // WAL日志
-    pthread_mutex_t mutex;          // 并发控制
-} ppdb_kvstore_t;
+// KVStore结构(不透明)
+typedef struct ppdb_kvstore_t ppdb_kvstore_t;
 
 // 创建KVStore
 ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvstore_t** store);
 
 // 关闭KVStore
 void ppdb_kvstore_close(ppdb_kvstore_t* store);
+
+// 销毁KVStore及其所有数据
+void ppdb_kvstore_destroy(ppdb_kvstore_t* store);
 
 // 写入键值对
 ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,

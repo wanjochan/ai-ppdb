@@ -303,8 +303,8 @@ static int compare_wal_files(const void* a, const void* b) {
 }
 
 // 从WAL恢复数据
-ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
-    if (!wal || !table) {
+ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t** table) {
+    if (!wal || !table || !*table) {
         ppdb_log_error("Invalid arguments: wal=%p, table=%p", wal, table);
         return PPDB_ERR_INVALID_ARG;
     }
@@ -430,9 +430,28 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
                     break;
                 }
 
-                ppdb_error_t err = ppdb_memtable_put(table, key, record_header.key_size,
+                ppdb_error_t err = ppdb_memtable_put(*table, key, record_header.key_size,
                                                    value, record_header.value_size);
-                if (err != PPDB_OK && err != PPDB_ERR_FULL) {
+                if (err == PPDB_ERR_FULL) {
+                    // 如果MemTable已满，创建新的MemTable
+                    ppdb_memtable_t* new_table = NULL;
+                    size_t size_limit = ppdb_memtable_max_size(*table);
+                    err = ppdb_memtable_create(size_limit, &new_table);
+                    if (err != PPDB_OK) {
+                        ppdb_log_error("Failed to create new MemTable during recovery: %d", err);
+                        final_err = err;
+                        break;
+                    }
+                    
+                    // 将旧的MemTable持久化（这里简化处理，实际应该写入SSTable）
+                    ppdb_memtable_destroy(*table);
+                    *table = new_table;
+                    
+                    // 重试写入
+                    err = ppdb_memtable_put(*table, key, record_header.key_size,
+                                          value, record_header.value_size);
+                }
+                if (err != PPDB_OK) {
                     ppdb_log_error("Failed to apply PUT record: %d", err);
                     final_err = err;
                     break;
@@ -440,7 +459,7 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
             }
             // 对于DELETE操作，从MemTable中删除键
             else if (record_header.type == PPDB_WAL_RECORD_DELETE) {
-                ppdb_error_t err = ppdb_memtable_delete(table, key, record_header.key_size);
+                ppdb_error_t err = ppdb_memtable_delete(*table, key, record_header.key_size);
                 if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
                     ppdb_log_error("Failed to apply DELETE record: %d", err);
                     final_err = err;
