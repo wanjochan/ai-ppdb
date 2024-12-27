@@ -65,13 +65,14 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
         return err;
     }
 
-    // 创建WAL
+    // 创建WAL配置
     ppdb_wal_config_t wal_config = {0};  // 使用零初始化
     wal_config.segment_size = config->l0_size;
     wal_config.sync_write = true;
     strncpy(wal_config.dir_path, wal_path, MAX_PATH_LENGTH - 1);
     wal_config.dir_path[MAX_PATH_LENGTH - 1] = '\0';
 
+    // 创建WAL
     err = ppdb_wal_create(&wal_config, &new_store->wal);
     if (err != PPDB_OK) {
         ppdb_log_error("Failed to create WAL: %d", err);
@@ -84,7 +85,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
     // 从WAL恢复数据
     pthread_mutex_lock(&new_store->mutex);
     err = ppdb_wal_recover(new_store->wal, &new_store->table);
-    if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
+    if (err != PPDB_OK) {
         ppdb_log_error("Failed to recover from WAL: %d", err);
         pthread_mutex_unlock(&new_store->mutex);
         ppdb_wal_destroy(new_store->wal);
@@ -186,10 +187,17 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 
         // 重试写入
         err = ppdb_memtable_put(store->table, key, key_len, value, value_len);
+        if (err != PPDB_OK) {
+            pthread_mutex_unlock(&store->mutex);
+            return err;
+        }
+    } else if (err != PPDB_OK) {
+        pthread_mutex_unlock(&store->mutex);
+        return err;
     }
 
     pthread_mutex_unlock(&store->mutex);
-    return err;
+    return PPDB_OK;
 }
 
 // 读取键值对
@@ -225,7 +233,11 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
 
     // 再从MemTable删除
     err = ppdb_memtable_delete(store->table, key, key_len);
+    if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
+        pthread_mutex_unlock(&store->mutex);
+        return err;
+    }
 
     pthread_mutex_unlock(&store->mutex);
-    return err;
+    return PPDB_OK;
 }

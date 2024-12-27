@@ -105,7 +105,7 @@ static int test_wal_recovery(void) {
         err = ppdb_wal_create(&config, &wal);
         TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
         
-        err = ppdb_wal_recover(wal, memtable);
+        err = ppdb_wal_recover(wal, &memtable);
         TEST_ASSERT(err == PPDB_OK, "Failed to recover from WAL");
         
         // Verify recovered data
