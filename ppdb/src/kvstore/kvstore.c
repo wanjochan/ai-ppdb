@@ -96,7 +96,7 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
 
     // 从WAL恢复数据
     err = ppdb_wal_recover(new_store->wal, new_store->memtable);
-    if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
+    if (err != PPDB_OK) {
         ppdb_log_error("Failed to recover from WAL: %d", err);
         ppdb_wal_destroy(new_store->wal);
         ppdb_memtable_destroy(new_store->memtable);
@@ -127,7 +127,7 @@ void ppdb_kvstore_close(ppdb_kvstore_t* store) {
     ppdb_log_info("Closing KVStore at: %s", store->path);
     pthread_mutex_destroy(&store->mutex);
     if (store->wal) {
-        ppdb_wal_destroy(store->wal);
+        ppdb_wal_close(store->wal);
     }
     if (store->memtable) {
         ppdb_memtable_destroy(store->memtable);

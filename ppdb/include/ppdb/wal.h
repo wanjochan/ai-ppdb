@@ -5,6 +5,12 @@
 #include "defs.h"
 #include "memtable.h"
 
+// WAL常量
+#define WAL_MAGIC 0x4C415750  // "PWAL"
+#define WAL_VERSION 1
+#define MAX_KEY_SIZE (1024 * 1024)     // 1MB
+#define MAX_VALUE_SIZE (10 * 1024 * 1024)  // 10MB
+
 // WAL配置
 typedef struct ppdb_wal_config_t {
     const char* dir_path;  // WAL目录路径
@@ -19,6 +25,7 @@ typedef struct ppdb_wal_t {
     bool sync_write;                 // 是否同步写入
     int current_fd;                  // 当前WAL段文件描述符
     size_t current_size;             // 当前WAL段文件大小
+    pthread_mutex_t mutex;           // 互斥锁
 } ppdb_wal_t;
 
 // WAL文件头
@@ -49,7 +56,7 @@ ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config,
 // 销毁WAL实例
 void ppdb_wal_destroy(ppdb_wal_t* wal);
 
-// 写入WAL记录
+// 写入记录
 ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal,
                            ppdb_wal_record_type_t type,
                            const void* key,
@@ -57,8 +64,14 @@ ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal,
                            const void* value,
                            size_t value_size);
 
-// 从WAL恢复数据
+// 恢复数据
 ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
                              ppdb_memtable_t* table);
 
-#endif // PPDB_WAL_H 
+// 归档WAL文件
+ppdb_error_t ppdb_wal_archive(ppdb_wal_t* wal);
+
+// 关闭WAL实例
+void ppdb_wal_close(ppdb_wal_t* wal);
+
+#endif // PPDB_WAL_H

@@ -5,108 +5,151 @@
 #include "../common/logger.h"
 #include "../common/fs.h"
 
-#define WAL_MAGIC 0x4C415750  // "PWAL"
-#define WAL_VERSION 1
-#define MAX_KEY_SIZE (1024 * 1024)     // 1MB
-#define MAX_VALUE_SIZE (10 * 1024 * 1024)  // 10MB
-
 // 前向声明
 static ppdb_error_t create_new_segment(ppdb_wal_t* wal);
 static ppdb_error_t archive_old_wal_files(const char* wal_dir);
 
 // 创建WAL实例
-ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config,
-                            ppdb_wal_t** wal) {
-    if (!config || !config->dir_path || !wal) {
+ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal) {
+    if (!config || !wal || !config->dir_path || config->dir_path[0] == '\0') {
+        ppdb_log_error("Invalid arguments: config=%p, wal=%p", config, wal);
         return PPDB_ERR_INVALID_ARG;
     }
 
     ppdb_log_info("Creating WAL at: %s", config->dir_path);
 
-    // 确保目录存在
-    ppdb_error_t err = ppdb_ensure_directory(config->dir_path);
-    if (err != PPDB_OK) {
-        ppdb_log_error("Failed to create WAL directory: %s", config->dir_path);
-        return err;
-    }
-
-    // 分配WAL实例
-    ppdb_wal_t* new_wal = (ppdb_wal_t*)calloc(1, sizeof(ppdb_wal_t));
+    // 分配WAL结构
+    ppdb_wal_t* new_wal = (ppdb_wal_t*)malloc(sizeof(ppdb_wal_t));
     if (!new_wal) {
+        ppdb_log_error("Failed to allocate WAL");
         return PPDB_ERR_NO_MEMORY;
     }
 
-    // 初始化WAL实例
+    // 初始化WAL结构
     strncpy(new_wal->dir_path, config->dir_path, MAX_PATH_LENGTH - 1);
     new_wal->dir_path[MAX_PATH_LENGTH - 1] = '\0';
     new_wal->segment_size = config->segment_size;
     new_wal->sync_write = config->sync_write;
     new_wal->current_fd = -1;
+    new_wal->current_size = 0;
 
-    // 创建新的WAL段
-    err = create_new_segment(new_wal);
+    // 初始化互斥锁
+    if (pthread_mutex_init(&new_wal->mutex, NULL) != 0) {
+        ppdb_log_error("Failed to initialize mutex");
+        free(new_wal);
+        return PPDB_ERR_MUTEX_ERROR;
+    }
+
+    // 创建WAL目录
+    ppdb_error_t err = ppdb_ensure_directory(new_wal->dir_path);
     if (err != PPDB_OK) {
+        ppdb_log_error("Failed to create WAL directory: %s", new_wal->dir_path);
+        pthread_mutex_destroy(&new_wal->mutex);
         free(new_wal);
         return err;
     }
 
-    ppdb_log_info("Successfully created WAL at: %s", config->dir_path);
+    // 创建第一个WAL段
+    err = create_new_segment(new_wal);
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to create initial WAL segment");
+        pthread_mutex_destroy(&new_wal->mutex);
+        free(new_wal);
+        return err;
+    }
+
+    ppdb_log_info("Successfully created WAL at: %s", new_wal->dir_path);
     *wal = new_wal;
     return PPDB_OK;
 }
 
 // 销毁WAL实例
 void ppdb_wal_destroy(ppdb_wal_t* wal) {
-    if (!wal) {
-        return;
-    }
+    if (!wal) return;
 
     ppdb_log_info("Destroying WAL at: %s", wal->dir_path);
+
+    pthread_mutex_lock(&wal->mutex);
     if (wal->current_fd >= 0) {
+        // 确保所有数据都写入磁盘
+        fsync(wal->current_fd);
         close(wal->current_fd);
     }
+    pthread_mutex_unlock(&wal->mutex);
+    pthread_mutex_destroy(&wal->mutex);
+    free(wal);
+}
+
+// 关闭WAL实例
+void ppdb_wal_close(ppdb_wal_t* wal) {
+    if (!wal) return;
+
+    ppdb_log_info("Closing WAL at: %s", wal->dir_path);
+
+    pthread_mutex_lock(&wal->mutex);
+    if (wal->current_fd >= 0) {
+        // 确保所有数据都写入磁盘
+        if (wal->sync_write) {
+            fsync(wal->current_fd);
+        }
+        close(wal->current_fd);
+        wal->current_fd = -1;
+    }
+    pthread_mutex_unlock(&wal->mutex);
+    pthread_mutex_destroy(&wal->mutex);
     free(wal);
 }
 
 // 创建新的WAL段文件
 static ppdb_error_t create_new_segment(ppdb_wal_t* wal) {
     char filename[MAX_PATH_LENGTH];
-    int written = snprintf(filename, sizeof(filename), "%s/%zu.log",
+    int written = snprintf(filename, sizeof(filename), "%s/%010zu.log",
                          wal->dir_path, wal->current_size);
     if (written < 0 || (size_t)written >= sizeof(filename)) {
         ppdb_log_error("Failed to create segment filename");
         return PPDB_ERR_IO;
     }
 
-    ppdb_log_debug("Creating new WAL segment: %s", filename);
+    ppdb_log_info("Creating new WAL segment: %s", filename);
 
-    // 创建新文件
-    int fd = open(filename, O_CREAT | O_WRONLY | O_TRUNC | O_CLOEXEC, 0644);
-    if (fd < 0) {
-        ppdb_log_error("Failed to create WAL segment: %s, error: %s", filename, strerror(errno));
+    // 创建新文件,如果已存在则截断
+    int fd = open(filename, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd == -1) {
+        ppdb_log_error("Failed to create WAL segment: %s", strerror(errno));
         return PPDB_ERR_IO;
     }
 
-    // 写入文件头
+    // 写入WAL头部
     ppdb_wal_header_t header = {
         .magic = WAL_MAGIC,
         .version = WAL_VERSION,
         .segment_size = wal->segment_size,
         .reserved = 0
     };
+    ssize_t written_bytes = write(fd, &header, sizeof(header));
+    if (written_bytes != sizeof(header)) {
+        ppdb_log_error("Failed to write WAL header: %s", strerror(errno));
+        close(fd);
+        return PPDB_ERR_IO;
+    }
 
-    if (write(fd, &header, sizeof(header)) != sizeof(header)) {
-        ppdb_log_error("Failed to write WAL header: %s, error: %s", filename, strerror(errno));
+    // 同步写入
+    if (wal->sync_write && fsync(fd) != 0) {
+        ppdb_log_error("Failed to sync WAL header: %s", strerror(errno));
         close(fd);
         return PPDB_ERR_IO;
     }
 
     // 关闭旧文件
     if (wal->current_fd >= 0) {
+        if (wal->sync_write) {
+            fsync(wal->current_fd);
+        }
         close(wal->current_fd);
     }
 
     wal->current_fd = fd;
+    wal->current_size = sizeof(header);
     ppdb_log_debug("Successfully created WAL segment: %s", filename);
     return PPDB_OK;
 }
@@ -118,61 +161,77 @@ ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal,
                            size_t key_size,
                            const void* value,
                            size_t value_size) {
-    if (!wal || !key || key_size == 0) {
+    if (!wal || !key || key_size == 0 || key_size > MAX_KEY_SIZE ||
+        (value_size > 0 && !value) || value_size > MAX_VALUE_SIZE) {
+        ppdb_log_error("Invalid arguments: wal=%p, key=%p, key_size=%zu, value=%p, value_size=%zu",
+                      wal, key, key_size, value, value_size);
         return PPDB_ERR_INVALID_ARG;
     }
 
-    if (type == PPDB_WAL_RECORD_PUT && (!value || value_size == 0)) {
-        return PPDB_ERR_INVALID_ARG;
+    pthread_mutex_lock(&wal->mutex);
+
+    // 计算记录大小
+    size_t record_size = sizeof(ppdb_wal_record_header_t) + key_size + value_size;
+
+    // 检查是否需要创建新的段
+    if (wal->current_fd < 0 || wal->current_size + record_size > wal->segment_size) {
+        ppdb_error_t err = create_new_segment(wal);
+        if (err != PPDB_OK) {
+            pthread_mutex_unlock(&wal->mutex);
+            return err;
+        }
     }
 
-    // 准备记录头
-    ppdb_wal_record_header_t header = {
-        .type = (uint32_t)type,
+    // 写入记录头
+    ppdb_wal_record_header_t record_header = {
+        .type = type,
         .key_size = key_size,
         .value_size = value_size
     };
-
-    ppdb_log_debug("Writing WAL record: type=%d, key_size=%zu, value_size=%zu", 
-                   type, key_size, value_size);
-
-    // 写入记录头
-    ssize_t written = write(wal->current_fd, &header, sizeof(header));
-    if (written != sizeof(header)) {
-        ppdb_log_error("Failed to write WAL record header: %s", strerror(errno));
+    ssize_t written = write(wal->current_fd, &record_header, sizeof(record_header));
+    if (written != sizeof(record_header)) {
+        ppdb_log_error("Failed to write record header: %s", strerror(errno));
+        pthread_mutex_unlock(&wal->mutex);
         return PPDB_ERR_IO;
     }
 
     // 写入键
     written = write(wal->current_fd, key, key_size);
-    if ((size_t)written != key_size) {
-        ppdb_log_error("Failed to write WAL key: %s", strerror(errno));
+    if (written != key_size) {
+        ppdb_log_error("Failed to write key: %s", strerror(errno));
+        pthread_mutex_unlock(&wal->mutex);
         return PPDB_ERR_IO;
     }
 
-    // 写入值
-    if (value && value_size > 0) {
+    // 写入值(如果有)
+    if (value_size > 0) {
         written = write(wal->current_fd, value, value_size);
-        if ((size_t)written != value_size) {
-            ppdb_log_error("Failed to write WAL value: %s", strerror(errno));
+        if (written != value_size) {
+            ppdb_log_error("Failed to write value: %s", strerror(errno));
+            pthread_mutex_unlock(&wal->mutex);
             return PPDB_ERR_IO;
         }
     }
+
+    ppdb_log_info("Writing WAL record: type=%d, key_size=%zu, value_size=%zu",
+                  type, key_size, value_size);
 
     // 同步写入
     if (wal->sync_write) {
         if (fsync(wal->current_fd) != 0) {
             ppdb_log_error("Failed to sync WAL to disk: %s", strerror(errno));
+            pthread_mutex_unlock(&wal->mutex);
             return PPDB_ERR_IO;
         }
     }
 
+    wal->current_size += record_size;
+    pthread_mutex_unlock(&wal->mutex);
     return PPDB_OK;
 }
 
 // 恢复数据
-ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
-                             ppdb_memtable_t* table) {
+ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
     if (!wal || !table) {
         ppdb_log_error("Invalid arguments: wal=%p, table=%p", wal, table);
         return PPDB_ERR_INVALID_ARG;
@@ -180,16 +239,19 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
 
     ppdb_log_info("Recovering WAL from: %s", wal->dir_path);
 
+    bool has_error = false;
+
+    // 打开目录
     DIR* dir = opendir(wal->dir_path);
     if (!dir) {
-        ppdb_log_error("Failed to open WAL directory: %s, error: %s", wal->dir_path, strerror(errno));
+        ppdb_log_error("Failed to open WAL directory: %s", strerror(errno));
         return PPDB_ERR_IO;
     }
 
+    // 收集所有WAL文件
     struct dirent* entry;
-    bool found_wal = false;
-    ppdb_error_t err = PPDB_OK;
-    int total_records = 0;
+    char* wal_files[1024];  // 假设最多1024个WAL文件
+    size_t file_count = 0;
 
     while ((entry = readdir(dir)) != NULL) {
         // 跳过 . 和 ..
@@ -197,56 +259,72 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
             continue;
         }
 
-        // 检查是否是 .log 文件
-        const char* ext = strrchr(entry->d_name, '.');
-        if (!ext || strcmp(ext, ".log") != 0) {
+        // 检查文件名是否以 .log 结尾
+        size_t name_len = strlen(entry->d_name);
+        if (name_len < 4 || strcmp(entry->d_name + name_len - 4, ".log") != 0) {
             continue;
         }
 
-        found_wal = true;
-        char filename[MAX_PATH_LENGTH];
-        int written = snprintf(filename, sizeof(filename), "%s/%s", 
-                             wal->dir_path, entry->d_name);
-        if (written < 0 || (size_t)written >= sizeof(filename)) {
-            ppdb_log_error("Failed to create segment filename");
-            err = PPDB_ERR_IO;
-            break;
+        // 保存文件名
+        wal_files[file_count] = strdup(entry->d_name);
+        if (!wal_files[file_count]) {
+            ppdb_log_error("Failed to allocate memory for filename");
+            for (size_t i = 0; i < file_count; i++) {
+                free(wal_files[i]);
+            }
+            closedir(dir);
+            return PPDB_ERR_NO_MEMORY;
         }
+        file_count++;
+    }
+    closedir(dir);
 
-        ppdb_log_debug("Processing WAL file: %s", filename);
+    // 按照文件名排序(文件名是按照偏移量命名的)
+    for (size_t i = 0; i < file_count - 1; i++) {
+        for (size_t j = 0; j < file_count - i - 1; j++) {
+            if (strcmp(wal_files[j], wal_files[j + 1]) > 0) {
+                char* temp = wal_files[j];
+                wal_files[j] = wal_files[j + 1];
+                wal_files[j + 1] = temp;
+            }
+        }
+    }
+
+    // 按顺序处理每个WAL文件
+    for (size_t i = 0; i < file_count; i++) {
+        // 构建完整路径
+        char filename[MAX_PATH_LENGTH];
+        snprintf(filename, sizeof(filename), "%s/%s", wal->dir_path, wal_files[i]);
+        ppdb_log_info("Processing WAL file: %s", filename);
 
         // 打开WAL文件
-        int fd = open(filename, O_RDONLY | O_CLOEXEC);
+        int fd = open(filename, O_RDONLY);
         if (fd < 0) {
-            ppdb_log_error("Failed to open WAL file: %s, error: %s", filename, strerror(errno));
+            ppdb_log_error("Failed to open WAL file: %s", strerror(errno));
             continue;
         }
 
-        // 读取文件头
+        // 读取WAL头部
         ppdb_wal_header_t header;
         ssize_t read_size = read(fd, &header, sizeof(header));
         if (read_size != sizeof(header)) {
-            ppdb_log_error("Failed to read WAL header: %s, read_size=%zd, expected=%zu", 
-                          filename, read_size, sizeof(header));
+            ppdb_log_error("Failed to read WAL header: %s", strerror(errno));
             close(fd);
-            err = PPDB_ERR_IO;
-            break;
+            continue;
         }
 
-        // 验证文件头
+        // 验证WAL头部
         if (header.magic != WAL_MAGIC || header.version != WAL_VERSION) {
-            ppdb_log_error("Invalid WAL header: %s, magic=0x%x, version=%u", 
-                          filename, header.magic, header.version);
+            ppdb_log_error("Invalid WAL header: magic=0x%x, version=%d",
+                          header.magic, header.version);
             close(fd);
-            err = PPDB_ERR_CORRUPTED;
-            break;
+            continue;
         }
+        ppdb_log_info("WAL header valid: magic=0x%x, version=%d, segment_size=%d",
+                     header.magic, header.version, header.segment_size);
 
-        ppdb_log_debug("WAL header valid: magic=0x%x, version=%u, segment_size=%u",
-                      header.magic, header.version, header.segment_size);
-
-        // 读取记录
-        int file_records = 0;
+        // 读取并应用记录
+        size_t total_records = 0;
         while (1) {
             // 读取记录头
             ppdb_wal_record_header_t record_header;
@@ -256,151 +334,156 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal,
                 break;
             }
             if (read_size != sizeof(record_header)) {
-                if (read_size < 0) {
-                    ppdb_log_error("Failed to read WAL record header: %s", strerror(errno));
-                    err = PPDB_ERR_IO;
-                } else {
-                    ppdb_log_error("Incomplete WAL record header");
-                    err = PPDB_ERR_CORRUPTED;
-                }
+                ppdb_log_error("Failed to read record header: %s", strerror(errno));
+                has_error = true;
                 break;
             }
 
-            // 验证记录大小
-            if (record_header.key_size > MAX_KEY_SIZE || record_header.value_size > MAX_VALUE_SIZE) {
-                ppdb_log_error("Invalid record size: key_size=%u, value_size=%u",
-                             record_header.key_size, record_header.value_size);
-                err = PPDB_ERR_CORRUPTED;
-                break;
-            }
-
-            // 分配缓冲区
-            uint8_t* key = (uint8_t*)malloc(record_header.key_size);
-            uint8_t* value = record_header.value_size > 0 ? (uint8_t*)malloc(record_header.value_size) : NULL;
-            if (!key || (record_header.value_size > 0 && !value)) {
-                ppdb_log_error("Failed to allocate memory for record");
-                free(key);
-                free(value);
-                err = PPDB_ERR_NO_MEMORY;
+            // 验证记录头
+            if (record_header.key_size > MAX_KEY_SIZE ||
+                record_header.value_size > MAX_VALUE_SIZE) {
+                ppdb_log_error("Invalid record size: key_size=%d, value_size=%d",
+                              record_header.key_size, record_header.value_size);
+                has_error = true;
                 break;
             }
 
             // 读取键
+            uint8_t* key = (uint8_t*)malloc(record_header.key_size);
+            if (!key) {
+                ppdb_log_error("Failed to allocate memory for key");
+                has_error = true;
+                break;
+            }
             read_size = read(fd, key, record_header.key_size);
             if (read_size != record_header.key_size) {
-                ppdb_log_error("Failed to read key data");
+                ppdb_log_error("Failed to read key: %s", strerror(errno));
                 free(key);
-                free(value);
-                err = PPDB_ERR_IO;
+                has_error = true;
                 break;
             }
 
-            // 读取值（如果有）
+            // 读取值
+            uint8_t* value = NULL;
             if (record_header.value_size > 0) {
+                value = (uint8_t*)malloc(record_header.value_size);
+                if (!value) {
+                    ppdb_log_error("Failed to allocate memory for value");
+                    free(key);
+                    has_error = true;
+                    break;
+                }
                 read_size = read(fd, value, record_header.value_size);
                 if (read_size != record_header.value_size) {
-                    ppdb_log_error("Failed to read value data");
+                    ppdb_log_error("Failed to read value: %s", strerror(errno));
                     free(key);
                     free(value);
-                    err = PPDB_ERR_IO;
+                    has_error = true;
                     break;
                 }
             }
 
-            // 应用记录到MemTable
-            if (record_header.type == PPDB_WAL_RECORD_PUT) {
+            // 应用记录
+            ppdb_error_t err;
+            switch (record_header.type) {
+            case PPDB_WAL_RECORD_PUT:
                 err = ppdb_memtable_put(table, key, record_header.key_size,
                                       value, record_header.value_size);
-            } else if (record_header.type == PPDB_WAL_RECORD_DELETE) {
+                if (err != PPDB_OK) {
+                    ppdb_log_error("Failed to apply PUT record: %d", err);
+                    has_error = true;
+                }
+                break;
+            case PPDB_WAL_RECORD_DELETE:
                 err = ppdb_memtable_delete(table, key, record_header.key_size);
-            } else {
-                ppdb_log_error("Unknown record type: %u", record_header.type);
-                free(key);
-                free(value);
-                err = PPDB_ERR_CORRUPTED;
+                if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
+                    ppdb_log_error("Failed to apply DELETE record: %d", err);
+                    has_error = true;
+                } else {
+                    err = PPDB_OK;  // 忽略 PPDB_ERR_NOT_FOUND 错误
+                }
+                break;
+            default:
+                ppdb_log_error("Invalid record type: %d", record_header.type);
+                has_error = true;
                 break;
             }
 
+            // 释放内存
             free(key);
-            free(value);
+            if (value) {
+                free(value);
+            }
 
-            if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
-                ppdb_log_error("Failed to apply WAL record: %s", ppdb_error_string(err));
+            if (has_error) {
                 break;
             }
 
-            file_records++;
+            total_records++;
         }
 
         close(fd);
-        ppdb_log_debug("Processed %d records from WAL file: %s", file_records, filename);
-        total_records += file_records;
-
-        if (err != PPDB_OK) {
-            break;
-        }
+        ppdb_log_info("Processed %zu records from WAL file: %s", total_records, filename);
     }
 
-    closedir(dir);
-
-    if (!found_wal) {
-        ppdb_log_info("No WAL files found");
-        return PPDB_OK;
+    // 释放文件名内存
+    for (size_t i = 0; i < file_count; i++) {
+        free(wal_files[i]);
     }
 
-    ppdb_log_info("WAL recovery completed: total_records=%d, status=%d", total_records, err);
-    return err;
+    ppdb_log_info("WAL recovery completed");
+    return has_error ? PPDB_ERR_CORRUPTED : PPDB_OK;
 }
 
 // 归档旧的WAL文件
 static ppdb_error_t archive_old_wal_files(const char* wal_dir) {
-    char archive_dir[MAX_PATH_LENGTH];
-    int written = snprintf(archive_dir, sizeof(archive_dir), "%s/archive", wal_dir);
-    if (written < 0 || (size_t)written >= sizeof(archive_dir)) {
-        ppdb_log_error("Failed to create archive directory path");
-        return PPDB_ERR_IO;
+    if (!wal_dir) {
+        return PPDB_ERR_INVALID_ARG;
     }
 
     // 创建归档目录
-    if (mkdir(archive_dir, 0755) != 0 && errno != EEXIST) {
-        ppdb_log_error("Failed to create WAL archive directory: %s, error: %s", archive_dir, strerror(errno));
-        return PPDB_ERR_IO;
+    char archive_dir[MAX_PATH_LENGTH];
+    snprintf(archive_dir, sizeof(archive_dir), "%s/archive", wal_dir);
+    ppdb_error_t err = ppdb_ensure_directory(archive_dir);
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to create archive directory: %s", archive_dir);
+        return err;
     }
 
+    // 打开WAL目录
     DIR* dir = opendir(wal_dir);
     if (!dir) {
-        ppdb_log_error("Failed to open WAL directory: %s, error: %s", wal_dir, strerror(errno));
+        ppdb_log_error("Failed to open WAL directory: %s", strerror(errno));
         return PPDB_ERR_IO;
     }
 
+    // 遍历所有WAL文件
     struct dirent* entry;
     while ((entry = readdir(dir)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0 ||
-            strcmp(entry->d_name, "archive") == 0) {
+        // 跳过 . 和 ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
             continue;
         }
 
-        char old_path[MAX_PATH_LENGTH];
-        char archive_path[MAX_PATH_LENGTH];
-        written = snprintf(old_path, sizeof(old_path), "%s/%s", 
-                         wal_dir, entry->d_name);
-        if (written < 0 || (size_t)written >= sizeof(old_path)) {
-            ppdb_log_error("Failed to create old segment path");
-            return PPDB_ERR_IO;
+        // 检查文件名是否以 .log 结尾
+        size_t name_len = strlen(entry->d_name);
+        if (name_len < 4 || strcmp(entry->d_name + name_len - 4, ".log") != 0) {
+            continue;
         }
 
-        written = snprintf(archive_path, sizeof(archive_path), "%s/%s", 
-                         archive_dir, entry->d_name);
-        if (written < 0 || (size_t)written >= sizeof(archive_path)) {
-            ppdb_log_error("Failed to create archive segment path");
-            return PPDB_ERR_IO;
-        }
+        // 构建源文件和目标文件路径
+        char src_path[MAX_PATH_LENGTH];
+        char dst_path[MAX_PATH_LENGTH];
+        snprintf(src_path, sizeof(src_path), "%s/%s", wal_dir, entry->d_name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", archive_dir, entry->d_name);
 
-        if (rename(old_path, archive_path) != 0) {
-            ppdb_log_warn("Failed to archive WAL file: %s, error: %s", old_path, strerror(errno));
-        } else {
-            ppdb_log_debug("Archived WAL file: %s -> %s", old_path, archive_path);
+        // 移动文件
+        if (rename(src_path, dst_path) != 0) {
+            ppdb_log_error("Failed to move WAL file: %s -> %s, error: %s",
+                          src_path, dst_path, strerror(errno));
+            continue;
         }
+        ppdb_log_info("Archived WAL file: %s -> %s", src_path, dst_path);
     }
 
     closedir(dir);
@@ -413,6 +496,8 @@ ppdb_error_t ppdb_wal_archive(ppdb_wal_t* wal) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    ppdb_log_info("Archiving WAL files in: %s", wal->dir_path);
-    return archive_old_wal_files(wal->dir_path);
+    pthread_mutex_lock(&wal->mutex);
+    ppdb_error_t err = archive_old_wal_files(wal->dir_path);
+    pthread_mutex_unlock(&wal->mutex);
+    return err;
 }
