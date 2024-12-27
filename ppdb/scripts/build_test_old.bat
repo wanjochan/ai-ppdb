@@ -37,12 +37,40 @@ if %ERRORLEVEL% neq 0 (
     exit /b %ERRORLEVEL%
 )
 
+REM 编译MemTable测试
+echo Building MemTable test...
+cl %CFLAGS% %INCLUDES% /Fe:"%BUILD_DIR%\test_memtable.exe" ^
+    "%TEST_DIR%\test_memtable_main.c" ^
+    "%TEST_DIR%\test_memtable.c" ^
+    "%TEST_DIR%\test_framework.c" ^
+    "%SRC_DIR%\kvstore\memtable.c" ^
+    "%SRC_DIR%\kvstore\skiplist.c" ^
+    "%SRC_DIR%\common\logger.c" ^
+    "%COSMO_DIR%\lib\ape.lib" ^
+    %LIBS%
+
+if %ERRORLEVEL% neq 0 (
+    echo Build failed with error code %ERRORLEVEL%
+    echo Current directory: %CD%
+    echo Build directory: %BUILD_DIR%
+    exit /b %ERRORLEVEL%
+)
+
 REM 运行WAL测试
 echo Running WAL test...
 "%BUILD_DIR%\test_wal.exe"
 
 if %ERRORLEVEL% neq 0 (
-    echo Tests failed with error code %ERRORLEVEL%
+    echo WAL tests failed with error code %ERRORLEVEL%
+    exit /b %ERRORLEVEL%
+)
+
+REM 运行MemTable测试
+echo Running MemTable test...
+"%BUILD_DIR%\test_memtable.exe"
+
+if %ERRORLEVEL% neq 0 (
+    echo MemTable tests failed with error code %ERRORLEVEL%
     exit /b %ERRORLEVEL%
 )
 

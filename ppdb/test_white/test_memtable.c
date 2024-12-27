@@ -1,128 +1,146 @@
 #include <cosmopolitan.h>
-#include "../include/ppdb/memtable.h"
-#include "../include/ppdb/error.h"
 #include "test_framework.h"
+#include <ppdb/memtable.h>
+#include <ppdb/error.h>
 
-// 测试函数声明
-static int test_create(void);
-static int test_basic_ops(void);
-static int test_delete(void);
-static int test_size_limit(void);
+// 创建和销毁测试
+static int test_memtable_create_destroy(void) {
+    ppdb_log_info("Testing MemTable create/destroy...");
+    
+    ppdb_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_memtable_create(4096, &table);
+    TEST_ASSERT(err == PPDB_OK, "Failed to create MemTable");
+    TEST_ASSERT(table != NULL, "MemTable pointer is NULL");
+    
+    ppdb_memtable_destroy(table);
+    return 0;
+}
 
-// 测试用例定义
+// 基本操作测试
+static int test_memtable_basic_ops(void) {
+    ppdb_log_info("Testing MemTable basic operations...");
+    
+    ppdb_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_memtable_create(4096, &table);
+    TEST_ASSERT(err == PPDB_OK, "Failed to create MemTable");
+    
+    // 测试插入
+    const char* key = "test_key";
+    const char* value = "test_value";
+    err = ppdb_memtable_put(table, key, strlen(key), value, strlen(value));
+    TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
+    
+    // 测试查询
+    char buf[256] = {0};
+    size_t size = 0;
+    err = ppdb_memtable_get(table, key, strlen(key), buf, sizeof(buf), &size);
+    TEST_ASSERT(err == PPDB_OK, "Failed to get value");
+    TEST_ASSERT(strcmp(buf, value) == 0, "Retrieved value does not match");
+    
+    ppdb_memtable_destroy(table);
+    return 0;
+}
+
+// 删除操作测试
+static int test_memtable_delete(void) {
+    ppdb_log_info("Testing MemTable delete operation...");
+    
+    ppdb_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_memtable_create(4096, &table);
+    TEST_ASSERT(err == PPDB_OK, "Failed to create MemTable");
+    
+    // 插入然后删除
+    const char* key = "delete_key";
+    const char* value = "delete_value";
+    err = ppdb_memtable_put(table, key, strlen(key), value, strlen(value));
+    TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
+    
+    err = ppdb_memtable_delete(table, key, strlen(key));
+    TEST_ASSERT(err == PPDB_OK, "Failed to delete key");
+    
+    // 验证删除
+    char buf[256] = {0};
+    size_t size = 0;
+    err = ppdb_memtable_get(table, key, strlen(key), buf, sizeof(buf), &size);
+    TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key still exists after deletion");
+    
+    ppdb_memtable_destroy(table);
+    return 0;
+}
+
+// 大小限制测试
+static int test_memtable_size_limit(void) {
+    ppdb_log_info("Testing MemTable size limit...");
+    
+    // 创建一个很小的MemTable
+    ppdb_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_memtable_create(32, &table);  // 只允许32字节
+    TEST_ASSERT(err == PPDB_OK, "Failed to create MemTable");
+    
+    // 尝试插入超过限制的数据
+    const char* key = "size_limit_key";
+    const char* value = "this_is_a_very_long_value_that_should_exceed_the_size_limit";
+    err = ppdb_memtable_put(table, key, strlen(key), value, strlen(value));
+    TEST_ASSERT(err == PPDB_ERR_FULL, "Should fail with FULL error");
+    
+    ppdb_memtable_destroy(table);
+    return 0;
+}
+
+// 迭代器测试
+static int test_memtable_iterator(void) {
+    ppdb_log_info("Testing MemTable iterator...");
+    
+    ppdb_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_memtable_create(4096, &table);
+    TEST_ASSERT(err == PPDB_OK, "Failed to create MemTable");
+    
+    // 插入一些数据
+    const char* pairs[][2] = {
+        {"key1", "value1"},
+        {"key2", "value2"},
+        {"key3", "value3"}
+    };
+    
+    for (int i = 0; i < 3; i++) {
+        err = ppdb_memtable_put(table, pairs[i][0], strlen(pairs[i][0]), 
+                               pairs[i][1], strlen(pairs[i][1]));
+        TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
+    }
+    
+    // 使用迭代器遍历
+    ppdb_memtable_iterator_t* iter = NULL;
+    err = ppdb_memtable_iterator_create(table, &iter);
+    TEST_ASSERT(err == PPDB_OK, "Failed to create iterator");
+    
+    int count = 0;
+    while (ppdb_memtable_iterator_valid(iter)) {
+        const char* key = ppdb_memtable_iterator_key(iter);
+        const char* value = ppdb_memtable_iterator_value(iter);
+        TEST_ASSERT(key != NULL && value != NULL, "Iterator key/value is NULL");
+        count++;
+        ppdb_memtable_iterator_next(iter);
+    }
+    
+    TEST_ASSERT(count == 3, "Iterator did not visit all items");
+    
+    ppdb_memtable_iterator_destroy(iter);
+    ppdb_memtable_destroy(table);
+    return 0;
+}
+
+// MemTable测试套件定义
 static const test_case_t memtable_test_cases[] = {
-    {"create", test_create},
-    {"basic_ops", test_basic_ops},
-    {"delete", test_delete},
-    {"size_limit", test_size_limit}
+    {"create_destroy", test_memtable_create_destroy},
+    {"basic_ops", test_memtable_basic_ops},
+    {"delete", test_memtable_delete},
+    {"size_limit", test_memtable_size_limit},
+    {"iterator", test_memtable_iterator}
 };
 
-// 测试套件定义
+// 导出MemTable测试套件
 const test_suite_t memtable_suite = {
     .name = "MemTable",
     .cases = memtable_test_cases,
     .num_cases = sizeof(memtable_test_cases) / sizeof(memtable_test_cases[0])
-};
-
-// 测试创建和销毁
-static int test_create() {
-    printf("Testing create/destroy...\n");
-    
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(1024, &table);
-    printf("  Create result: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    if (err != PPDB_OK) return 1;
-    
-    ppdb_memtable_destroy(table);
-    printf("  Destroy completed\n");
-    return 0;
-}
-
-// 测试基本操作
-static int test_basic_ops() {
-    printf("Testing basic operations...\n");
-    
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(1024, &table);
-    if (err != PPDB_OK) return 1;
-    
-    // 测试写入
-    const char* key = "test_key";
-    const char* value = "test_value";
-    err = ppdb_memtable_put(table, (uint8_t*)key, strlen(key) + 1,
-                           (uint8_t*)value, strlen(value) + 1);
-    printf("  Put [key='%s', value='%s']: %s\n", key, value,
-           err == PPDB_OK ? "OK" : "Failed");
-    if (err != PPDB_OK) return 1;
-    
-    // 测试读取
-    uint8_t read_buf[256];
-    size_t read_len = sizeof(read_buf);
-    err = ppdb_memtable_get(table, (uint8_t*)key, strlen(key) + 1,
-                           read_buf, &read_len);
-    printf("  Get [key='%s']: %s\n", key,
-           err == PPDB_OK ? "OK" : "Failed");
-    if (err != PPDB_OK) return 1;
-    
-    printf("  Value comparison: %s\n",
-           strcmp((char*)read_buf, value) == 0 ? "OK" : "Failed");
-    if (strcmp((char*)read_buf, value) != 0) return 1;
-    
-    ppdb_memtable_destroy(table);
-    return 0;
-}
-
-// 测试删除
-static int test_delete() {
-    printf("Testing delete...\n");
-    
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(1024, &table);
-    if (err != PPDB_OK) return 1;
-    
-    // 写入数据
-    const char* key = "delete_key";
-    const char* value = "delete_value";
-    err = ppdb_memtable_put(table, (uint8_t*)key, strlen(key) + 1,
-                           (uint8_t*)value, strlen(value) + 1);
-    if (err != PPDB_OK) return 1;
-    
-    // 删除数据
-    err = ppdb_memtable_delete(table, (uint8_t*)key, strlen(key) + 1);
-    printf("  Delete [key='%s']: %s\n", key,
-           err == PPDB_OK ? "OK" : "Failed");
-    if (err != PPDB_OK) return 1;
-    
-    // 验证删除
-    uint8_t read_buf[256];
-    size_t read_len = sizeof(read_buf);
-    err = ppdb_memtable_get(table, (uint8_t*)key, strlen(key) + 1,
-                           read_buf, &read_len);
-    printf("  Verify delete [key='%s']: %s\n", key,
-           err == PPDB_ERR_NOT_FOUND ? "OK" : "Failed");
-    if (err != PPDB_ERR_NOT_FOUND) return 1;
-    
-    ppdb_memtable_destroy(table);
-    return 0;
-}
-
-// 测试大小限制
-static int test_size_limit() {
-    printf("Testing size limit...\n");
-    
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(32, &table);  // 小容量
-    if (err != PPDB_OK) return 1;
-    
-    // 尝试写入大于容量的数据
-    const char* key = "big_key";
-    const char* value = "this_is_a_very_long_value_that_exceeds_the_size_limit";
-    err = ppdb_memtable_put(table, (uint8_t*)key, strlen(key) + 1,
-                           (uint8_t*)value, strlen(value) + 1);
-    printf("  Result: %s\n",
-           err == PPDB_ERR_FULL ? "Correctly rejected" : "Incorrectly accepted");
-    if (err != PPDB_ERR_FULL) return 1;
-    
-    ppdb_memtable_destroy(table);
-    return 0;
-} 
+}; 
