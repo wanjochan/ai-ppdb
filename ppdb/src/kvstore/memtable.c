@@ -62,7 +62,19 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
 
     // 检查大小限制
     size_t entry_size = key_len + value_len + sizeof(size_t) * 2;  // 加上长度字段的大小
-    if (table->current_size + entry_size > table->size_limit) {
+    size_t new_size = table->current_size + entry_size;
+
+    // 先获取旧值的大小(如果存在)
+    uint8_t temp_value[1];
+    size_t old_value_size = 0;
+    int get_ret = skiplist_get(table->list, key, key_len, temp_value, &old_value_size);
+    if (get_ret == 0) {
+        // 如果键已存在,减去旧值的大小
+        size_t old_entry_size = key_len + old_value_size + sizeof(size_t) * 2;
+        new_size = table->current_size - old_entry_size + entry_size;
+    }
+
+    if (new_size > table->size_limit) {
         ppdb_log_warn("MemTable size limit exceeded: current=%zu, limit=%zu, new_entry=%zu",
                      table->current_size, table->size_limit, entry_size);
         pthread_mutex_unlock(&table->mutex);
@@ -77,7 +89,7 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
     }
 
     // 更新当前大小
-    table->current_size += entry_size;
+    table->current_size = new_size;
 
     pthread_mutex_unlock(&table->mutex);
     return PPDB_OK;
@@ -137,7 +149,11 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
 
     // 更新当前大小
     size_t entry_size = key_len + value_size + sizeof(size_t) * 2;
-    table->current_size = table->current_size > entry_size ? table->current_size - entry_size : 0;
+    if (table->current_size >= entry_size) {
+        table->current_size -= entry_size;
+    } else {
+        table->current_size = 0;
+    }
 
     pthread_mutex_unlock(&table->mutex);
     return PPDB_OK;
