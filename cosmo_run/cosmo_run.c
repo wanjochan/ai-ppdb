@@ -38,7 +38,7 @@ int main(int argc __attribute__((unused)), char **argv __attribute__((unused))) 
     }
 
     /* Relocate the code */
-    if (tcc_relocate(s, TCC_RELOCATE_AUTO) < 0) {
+    if (tcc_relocate(s) < 0) {
         fprintf(stderr, "Relocation failed\n");
         return 1;
     }
