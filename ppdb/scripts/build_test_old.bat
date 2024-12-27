@@ -210,6 +210,8 @@ echo Building WAL test...
     "%TEST_DIR%\test_wal.c" ^
     "%TEST_DIR%\test_framework.c" ^
     "%SRC_DIR%\kvstore\wal.c" ^
+    "%SRC_DIR%\kvstore\memtable.c" ^
+    "%SRC_DIR%\kvstore\skiplist.c" ^
     "%SRC_DIR%\common\fs.c" ^
     "%SRC_DIR%\common\logger.c" ^
     "%COSMO_DIR%\crt.o" ^

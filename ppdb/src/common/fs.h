@@ -6,4 +6,7 @@
 // 确保目录存在，如果不存在则创建
 ppdb_error_t ppdb_ensure_directory(const char* path);
 
+// 删除目录及其所有内容
+ppdb_error_t ppdb_remove_directory(const char* path);
+
 #endif // PPDB_COMMON_FS_H 

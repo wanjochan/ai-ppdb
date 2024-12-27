@@ -1,17 +1,27 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include <ppdb/wal.h>
+#include <ppdb/kvstore.h>
 #include <ppdb/error.h>
+#include <ppdb/logger.h>
 
-// 声明WAL测试套件
+// Declare WAL test suite
 extern test_suite_t wal_suite;
 
 int main(int argc, char* argv[]) {
-    // 初始化日志系统
-    ppdb_log_init(PPDB_LOG_LEVEL_DEBUG);
+    // Initialize logging system
+    ppdb_log_config_t log_config = {
+        .enabled = true,
+        .outputs = PPDB_LOG_CONSOLE,
+        .types = PPDB_LOG_TYPE_ALL,
+        .async_mode = false,
+        .buffer_size = 4096,
+        .log_file = NULL,
+        .level = PPDB_LOG_DEBUG
+    };
+    ppdb_log_init(&log_config);
     ppdb_log_info("Starting WAL tests...");
 
-    // 运行WAL测试套件
+    // Run WAL test suite
     int result = run_test_suite(&wal_suite);
 
     ppdb_log_info("WAL tests completed with result: %d", result);
