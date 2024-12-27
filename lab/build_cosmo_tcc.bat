@@ -48,9 +48,9 @@ if not exist "%COSMO_DIR%\cosmopolitan.a" (
 
 REM Set build flags
 set COMMON_FLAGS=-g -Os -Wall -fno-pie -no-pie -mno-red-zone -fno-omit-frame-pointer -nostdlib -nostdinc
-set WARNING_FLAGS=-Wno-sign-compare -Wno-unused-parameter -Wno-unused-function
-set INCLUDES=-I"%COSMO_DIR%" -I"%TCC_DIR%" -I"%LAB_DIR%" -include "%COSMO_DIR%\cosmopolitan.h"
-set CFLAGS=%COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -DCONFIG_COSMO -ffunction-sections -fdata-sections
+set WARNING_FLAGS=-Wno-sign-compare -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable
+set INCLUDES=-I"%COSMO_DIR%" -I"%TCC_DIR%" -I"%LAB_DIR%" -I"%COSMO_DIR%\libc\nexgen32e" -I"%COSMO_DIR%\libc\isystem"
+set CFLAGS=%COMMON_FLAGS% %WARNING_FLAGS% %INCLUDES% -DCONFIG_COSMO -ffunction-sections -fdata-sections -include "%COSMO_DIR%\cosmopolitan.h"
 set LDFLAGS=-static -nostdlib -T "%COSMO_DIR%\ape.lds" -Wl,--gc-sections -Wl,-z,max-page-size=0x1000
 
 REM ==================== Build Steps ====================

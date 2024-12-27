@@ -1,7 +1,5 @@
 /*
  * TinyCC Cosmopolitan Configuration
- * 
- * 精简版配置,只保留必要的选项
  */
 
 #ifndef _CONFIG_COSMO_H
@@ -17,7 +15,6 @@
 #define CONFIG_TCC_STATIC 1  /* 静态链接 */
 #define CONFIG_USE_LIBGCC 0  /* 不使用 libgcc */
 #define CONFIG_TCC_BACKTRACE 1  /* 支持堆栈回溯 */
-#define CONFIG_TCC_BCHECK 0  /* 禁用边界检查 */
 
 /* 优化选项 */
 #define CONFIG_TCC_OPTIMIZE 2  /* 基本优化 */
@@ -37,9 +34,20 @@
 #define CONFIG_SYSROOT ""
 #define CONFIG_TCCDIR "/lib/tcc"
 
+/* 系统头文件路径 */
+#define CONFIG_TCC_SYSINCLUDEPATHS "/usr/include:/usr/local/include"
+#define CONFIG_TCC_LIBPATHS "/usr/lib:/usr/local/lib"
+#define CONFIG_TCC_CRTPREFIX "/usr/lib"
+#define CONFIG_TCC_ELFINTERP "/lib/ld-linux.so"
+
+/* 编译器特性 */
+#define TCC_IS_NATIVE
+#define CONFIG_TCC_SEMLOCK 0
+#define CONFIG_TCC_ASM 1
+
 /* 禁用不需要的功能 */
 #undef CONFIG_TCC_PIE  /* 禁用 PIE */
 #undef CONFIG_TCC_PIC  /* 禁用 PIC */
-#undef CONFIG_TCC_ELFINTERP  /* 禁用 ELF 解释器 */
+#undef CONFIG_TCC_BCHECK  /* 禁用边界检查 */
 
 #endif /* _CONFIG_COSMO_H */
