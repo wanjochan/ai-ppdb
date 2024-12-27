@@ -156,20 +156,20 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
                              const uint8_t* key, size_t key_len,
                              const uint8_t* value, size_t value_len) {
     if (!store || !key || !value || key_len == 0 || value_len == 0) {
-        return PPDB_ERR_INVALID_ARG;
+        return PPDB_ERR_NULL_POINTER;
     }
 
     pthread_mutex_lock(&store->mutex);
 
-    // 先写入WAL
+    // 先写WAL
     ppdb_error_t err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_PUT,
-                                     key, key_len, value, value_len);
+                                    key, key_len, value, value_len);
     if (err != PPDB_OK) {
         pthread_mutex_unlock(&store->mutex);
         return err;
     }
 
-    // 再写入MemTable
+    // 写入MemTable
     err = ppdb_memtable_put(store->table, key, key_len, value, value_len);
     if (err == PPDB_ERR_FULL) {
         // 如果MemTable已满，创建新的MemTable
@@ -181,9 +181,49 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
             return err;
         }
 
-        // 将旧的MemTable持久化（这里简化处理，实际应该写入SSTable）
-        ppdb_memtable_destroy(store->table);
+        // 将旧MemTable中的数据复制到新MemTable
+        ppdb_memtable_iterator_t* iter = NULL;
+        err = ppdb_memtable_iterator_create(store->table, &iter);
+        if (err != PPDB_OK) {
+            ppdb_memtable_destroy(new_table);
+            pthread_mutex_unlock(&store->mutex);
+            return err;
+        }
+
+        while (ppdb_memtable_iterator_valid(iter)) {
+            const uint8_t* iter_key = NULL;
+            size_t iter_key_len = 0;
+            const uint8_t* iter_value = NULL;
+            size_t iter_value_len = 0;
+
+            err = ppdb_memtable_iterator_get(iter, &iter_key, &iter_key_len,
+                                           &iter_value, &iter_value_len);
+            if (err != PPDB_OK) {
+                ppdb_memtable_iterator_destroy(iter);
+                ppdb_memtable_destroy(new_table);
+                pthread_mutex_unlock(&store->mutex);
+                return err;
+            }
+
+            // 将数据写入新的MemTable
+            err = ppdb_memtable_put(new_table, iter_key, iter_key_len,
+                                  iter_value, iter_value_len);
+            if (err != PPDB_OK) {
+                ppdb_memtable_iterator_destroy(iter);
+                ppdb_memtable_destroy(new_table);
+                pthread_mutex_unlock(&store->mutex);
+                return err;
+            }
+
+            ppdb_memtable_iterator_next(iter);
+        }
+
+        ppdb_memtable_iterator_destroy(iter);
+
+        // 销毁旧的MemTable，使用新的MemTable
+        ppdb_memtable_t* old_table = store->table;
         store->table = new_table;
+        ppdb_memtable_destroy(old_table);
 
         // 重试写入
         err = ppdb_memtable_put(store->table, key, key_len, value, value_len);
@@ -194,6 +234,18 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
     } else if (err != PPDB_OK) {
         pthread_mutex_unlock(&store->mutex);
         return err;
+    }
+
+    // 验证写入是否成功
+    uint8_t verify_buf[1024];
+    size_t verify_size = sizeof(verify_buf);
+    err = ppdb_memtable_get(store->table, key, key_len, verify_buf, &verify_size);
+    if (err != PPDB_OK || verify_size != value_len || 
+        memcmp(verify_buf, value, value_len) != 0) {
+        ppdb_log_error("Write verification failed: err=%d, size=%zu/%zu",
+                      err, verify_size, value_len);
+        pthread_mutex_unlock(&store->mutex);
+        return PPDB_ERR_WRITE_FAILED;
     }
 
     pthread_mutex_unlock(&store->mutex);

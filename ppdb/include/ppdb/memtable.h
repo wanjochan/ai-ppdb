@@ -48,11 +48,10 @@ void ppdb_memtable_iterator_destroy(ppdb_memtable_iterator_t* iter);
 // 检查迭代器是否有效
 bool ppdb_memtable_iterator_valid(ppdb_memtable_iterator_t* iter);
 
-// 获取当前键
-const uint8_t* ppdb_memtable_iterator_key(ppdb_memtable_iterator_t* iter);
-
-// 获取当前值
-const uint8_t* ppdb_memtable_iterator_value(ppdb_memtable_iterator_t* iter);
+// 获取当前键值对
+ppdb_error_t ppdb_memtable_iterator_get(ppdb_memtable_iterator_t* iter,
+                                       const uint8_t** key, size_t* key_len,
+                                       const uint8_t** value, size_t* value_len);
 
 // 移动到下一个位置
 void ppdb_memtable_iterator_next(ppdb_memtable_iterator_t* iter);

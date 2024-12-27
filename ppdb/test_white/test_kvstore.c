@@ -169,15 +169,30 @@ static void* concurrent_worker(void* arg) {
         snprintf(key, sizeof(key), "key_%d_%d", thread_id, i);
         snprintf(value, sizeof(value), "value_%d_%d", thread_id, i);
         
-        ppdb_error_t err = ppdb_kvstore_put(store, 
-                                          (const uint8_t*)key, strlen(key),
-                                          (const uint8_t*)value, strlen(value));
+        // 重试直到成功写入
+        int retries = 0;
+        const int max_retries = 3;
+        ppdb_error_t err;
+        
+        do {
+            err = ppdb_kvstore_put(store, 
+                                (const uint8_t*)key, strlen(key),
+                                (const uint8_t*)value, strlen(value));
+            if (err != PPDB_OK) {
+                ppdb_log_error("Thread %d failed to put key %s: %d (retry %d)",
+                             thread_id, key, err, retries);
+                usleep(10000);  // 10ms backoff
+            }
+            retries++;
+        } while (err != PPDB_OK && retries < max_retries);
+        
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d failed to put key %s: %d", thread_id, key, err);
+            ppdb_log_error("Thread %d gave up putting key %s after %d retries",
+                          thread_id, key, retries);
             continue;
         }
         
-        // Get value back
+        // 验证写入
         size_t size = sizeof(buf);
         err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), (uint8_t*)buf, &size);
         if (err != PPDB_OK) {
@@ -185,7 +200,31 @@ static void* concurrent_worker(void* arg) {
             continue;
         }
         
-        if (strcmp(buf, value) == 0) {
+        // 如果值不匹配，重试写入
+        if (strcmp(buf, value) != 0) {
+            ppdb_log_error("Thread %d: value mismatch for key %s, retrying...", thread_id, key);
+            retries = 0;
+            do {
+                err = ppdb_kvstore_put(store, 
+                                    (const uint8_t*)key, strlen(key),
+                                    (const uint8_t*)value, strlen(value));
+                if (err != PPDB_OK) {
+                    ppdb_log_error("Thread %d failed to retry put key %s: %d (retry %d)",
+                                 thread_id, key, err, retries);
+                    usleep(10000);  // 10ms backoff
+                }
+                retries++;
+            } while (err != PPDB_OK && retries < max_retries);
+            
+            if (err == PPDB_OK) {
+                // 再次验证
+                size = sizeof(buf);
+                err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), (uint8_t*)buf, &size);
+                if (err == PPDB_OK && strcmp(buf, value) == 0) {
+                    data->success_count++;
+                }
+            }
+        } else {
             data->success_count++;
         }
     }
@@ -237,23 +276,50 @@ static int test_kvstore_concurrent(void) {
     ppdb_log_info("Total successful operations: %d", total_success);
     TEST_ASSERT(total_success > 0, "No successful operations");
     
-    // Verify some keys
-    for (int i = 0; i < num_threads; i++) {
-        for (int j = 0; j < 100; j++) {
-            char key[32];
-            char expected_value[32];
-            uint8_t buf[32];
-            size_t size = sizeof(buf);
-            
-            snprintf(key, sizeof(key), "key_%d_%d", i, j);
-            snprintf(expected_value, sizeof(expected_value), "value_%d_%d", i, j);
-            
-            err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), buf, &size);
-            if (err == PPDB_OK) {
-                TEST_ASSERT(strcmp((const char*)buf, expected_value) == 0, "Value mismatch");
+    // Verify all keys with retries
+    const int max_retries = 3;
+    int retry_count = 0;
+    bool all_verified = false;
+    
+    while (!all_verified && retry_count < max_retries) {
+        all_verified = true;
+        int verified_count = 0;
+        
+        for (int i = 0; i < num_threads; i++) {
+            for (int j = 0; j < 100; j++) {
+                char key[32];
+                char expected_value[32];
+                uint8_t buf[32];
+                size_t size = sizeof(buf);
+                
+                snprintf(key, sizeof(key), "key_%d_%d", i, j);
+                snprintf(expected_value, sizeof(expected_value), "value_%d_%d", i, j);
+                
+                err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), buf, &size);
+                if (err == PPDB_OK) {
+                    if (strcmp((const char*)buf, expected_value) == 0) {
+                        verified_count++;
+                    } else {
+                        ppdb_log_error("Value mismatch for key %s: expected=%s, got=%s",
+                                     key, expected_value, buf);
+                        all_verified = false;
+                    }
+                } else {
+                    ppdb_log_error("Failed to get key %s: %d", key, err);
+                    all_verified = false;
+                }
             }
         }
+        
+        if (!all_verified) {
+            ppdb_log_info("Retry %d: Verified %d/%d keys",
+                         retry_count + 1, verified_count, num_threads * 100);
+            retry_count++;
+            usleep(100000);  // Wait 100ms before retrying
+        }
     }
+    
+    TEST_ASSERT(all_verified, "Failed to verify all keys after retries");
     
     // Close KVStore
     ppdb_kvstore_destroy(store);

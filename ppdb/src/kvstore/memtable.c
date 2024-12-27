@@ -301,3 +301,23 @@ void ppdb_memtable_iterator_next(ppdb_memtable_iterator_t* iter) {
         iter->current_value_size = 0;
     }
 }
+
+// 获取当前键值对
+ppdb_error_t ppdb_memtable_iterator_get(ppdb_memtable_iterator_t* iter,
+                                       const uint8_t** key, size_t* key_len,
+                                       const uint8_t** value, size_t* value_len) {
+    if (!iter || !key || !key_len || !value || !value_len) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    if (!iter->current_key) {
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    *key = iter->current_key;
+    *key_len = iter->current_key_size;
+    *value = iter->current_value;
+    *value_len = iter->current_value_size;
+
+    return PPDB_OK;
+}

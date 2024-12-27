@@ -126,9 +126,28 @@ static int test_memtable_iterator(void) {
     // Iterate through all entries
     size_t count = 0;
     while (ppdb_memtable_iterator_valid(iter)) {
-        const uint8_t* key = ppdb_memtable_iterator_key(iter);
-        const uint8_t* value = ppdb_memtable_iterator_value(iter);
+        const uint8_t* key = NULL;
+        size_t key_len = 0;
+        const uint8_t* value = NULL;
+        size_t value_len = 0;
+        
+        err = ppdb_memtable_iterator_get(iter, &key, &key_len, &value, &value_len);
+        TEST_ASSERT(err == PPDB_OK, "Failed to get key-value pair from iterator");
         TEST_ASSERT(key != NULL && value != NULL, "Iterator key/value is NULL");
+        
+        // Verify key and value
+        bool found = false;
+        for (size_t i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++) {
+            if (key_len == strlen(pairs[i][0]) &&
+                value_len == strlen(pairs[i][1]) &&
+                memcmp(key, pairs[i][0], key_len) == 0 &&
+                memcmp(value, pairs[i][1], value_len) == 0) {
+                found = true;
+                break;
+            }
+        }
+        TEST_ASSERT(found, "Iterator returned unexpected key-value pair");
+        
         count++;
         ppdb_memtable_iterator_next(iter);
     }
