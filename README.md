@@ -26,8 +26,11 @@ https://justine.lol/cosmopolitan/windows-compiling.html
 https://justine.lol/linux-compiler-on-windows/cross9.zip => ppdb/cross9/
 
 # 编译
+
 ppdb/scripts/build_test.bat
 ppdb/scripts/build_ppdb.bat
+
+cmd /c "cd /d d:\dev\ai-ppdb\ppdb\scripts && build_test_old.bat --rebuild"
 
 # 进度
 

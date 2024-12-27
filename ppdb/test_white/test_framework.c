@@ -6,13 +6,15 @@ int run_test_suite(const test_suite_t* suite) {
 
     for (int i = 0; i < suite->num_cases; i++) {
         ppdb_log_info("  Running test: %s", suite->cases[i].name);
+        ppdb_log_info("  ========================================");
         int result = suite->cases[i].func();
         if (result != 0) {
-            ppdb_log_error("  Test failed: %s", suite->cases[i].name);
+            ppdb_log_error("  Test failed: %s (result = %d)", suite->cases[i].name, result);
             failed++;
         } else {
             ppdb_log_info("  Test passed: %s", suite->cases[i].name);
         }
+        ppdb_log_info("  ========================================");
     }
 
     if (failed > 0) {

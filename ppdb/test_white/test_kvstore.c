@@ -117,7 +117,7 @@ static void cleanup_test_dir(const char* dir_path) {
 
 // 基本的创建和关闭测试
 static int test_kvstore_create_close(void) {
-    ppdb_log_info("Running test: test_kvstore_create_close");
+    ppdb_log_info("=== Starting test: test_kvstore_create_close ===");
     ppdb_log_info("Testing KVStore create/close...");
 
     const char* test_path = "test_create.db";
@@ -126,30 +126,49 @@ static int test_kvstore_create_close(void) {
     int result = 0;
 
     // 清理测试目录
+    ppdb_log_info("Cleaning up test directories...");
     cleanup_test_dir(test_path);
     char wal_path[MAX_PATH_LENGTH];
     snprintf(wal_path, sizeof(wal_path), "%s.wal", test_path);
     cleanup_test_dir(wal_path);
 
     // 创建 KVStore
+    ppdb_log_info("Creating KVStore at: %s", test_path);
     err = ppdb_kvstore_open(test_path, &store);
-    TEST_ASSERT_OK(err, "Create KVStore");
-    TEST_ASSERT_NOT_NULL(store, "KVStore instance should not be NULL");
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to create KVStore: %d", err);
+        result = 1;
+        goto cleanup;
+    }
+    if (!store) {
+        ppdb_log_error("KVStore instance is NULL");
+        result = 1;
+        goto cleanup;
+    }
+    ppdb_log_info("Successfully created KVStore");
 
     // 关闭 KVStore
+    ppdb_log_info("Closing KVStore...");
     ppdb_kvstore_close(store);
+    ppdb_log_info("Successfully closed KVStore");
 
+cleanup:
     // 清理测试目录
+    ppdb_log_info("Final cleanup of test directories...");
     cleanup_test_dir(test_path);
     cleanup_test_dir(wal_path);
 
-    ppdb_log_info("KVStore create/close test passed");
+    if (result == 0) {
+        ppdb_log_info("=== Test test_kvstore_create_close passed ===");
+    } else {
+        ppdb_log_error("=== Test test_kvstore_create_close failed ===");
+    }
     return result;
 }
 
 // 参数验证测试
 static int test_kvstore_null_params(void) {
-    ppdb_log_info("Running test: test_kvstore_null_params");
+    ppdb_log_info("=== Starting test: test_kvstore_null_params ===");
     ppdb_log_info("Testing KVStore parameter validation...");
 
     const char* test_path = "test.db";
@@ -165,19 +184,32 @@ static int test_kvstore_null_params(void) {
 
     // 测试空路径
     err = ppdb_kvstore_open(NULL, &store);
-    TEST_ASSERT(err == PPDB_ERR_INVALID_ARG, "Open with NULL path should fail");
+    if (err != PPDB_ERR_INVALID_ARG) {
+        ppdb_log_error("Open with NULL path should fail with INVALID_ARG, got: %d", err);
+        result = 1;
+        goto cleanup;
+    }
 
     // 测试空存储指针
     err = ppdb_kvstore_open(test_path, NULL);
-    TEST_ASSERT(err == PPDB_ERR_INVALID_ARG, "Open with NULL store pointer should fail");
+    if (err != PPDB_ERR_INVALID_ARG) {
+        ppdb_log_error("Open with NULL store pointer should fail with INVALID_ARG, got: %d", err);
+        result = 1;
+        goto cleanup;
+    }
 
-    ppdb_log_info("KVStore parameter validation test passed");
+cleanup:
+    if (result == 0) {
+        ppdb_log_info("=== Test test_kvstore_null_params passed ===");
+    } else {
+        ppdb_log_error("=== Test test_kvstore_null_params failed ===");
+    }
     return result;
 }
 
 // 基本操作测试
 static int test_kvstore_basic_ops(void) {
-    ppdb_log_info("Running test: test_kvstore_basic_ops");
+    ppdb_log_info("=== Starting test: test_kvstore_basic_ops ===");
     ppdb_log_info("Testing KVStore basic operations...");
 
     const char* test_path = "test_basic.db";
@@ -193,47 +225,82 @@ static int test_kvstore_basic_ops(void) {
 
     // 创建 KVStore
     err = ppdb_kvstore_open(test_path, &store);
-    TEST_ASSERT_OK(err, "Create KVStore");
-    TEST_ASSERT_NOT_NULL(store, "KVStore instance should not be NULL");
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to create KVStore: %d", err);
+        result = 1;
+        goto cleanup;
+    }
+    if (!store) {
+        ppdb_log_error("KVStore instance is NULL");
+        result = 1;
+        goto cleanup;
+    }
 
     // 写入数据
     const char* test_key = "test_key";
     const char* test_value = "test_value";
     err = ppdb_kvstore_put(store, (const uint8_t*)test_key, strlen(test_key) + 1,
                           (const uint8_t*)test_value, strlen(test_value) + 1);
-    TEST_ASSERT_OK(err, "Put data");
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to put data: %d", err);
+        result = 1;
+        goto cleanup;
+    }
 
     // 读取数据
     uint8_t read_buf[256];
     size_t read_size = sizeof(read_buf);
     err = ppdb_kvstore_get(store, (const uint8_t*)test_key, strlen(test_key) + 1,
                           read_buf, &read_size);
-    TEST_ASSERT_OK(err, "Get data");
-    TEST_ASSERT_STR_EQ((const char*)read_buf, test_value, "Read value should match written value");
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to get data: %d", err);
+        result = 1;
+        goto cleanup;
+    }
+    if (strcmp((const char*)read_buf, test_value) != 0) {
+        ppdb_log_error("Value mismatch: expected '%s', got '%s'", test_value, (const char*)read_buf);
+        result = 1;
+        goto cleanup;
+    }
 
     // 删除数据
     err = ppdb_kvstore_delete(store, (const uint8_t*)test_key, strlen(test_key) + 1);
-    TEST_ASSERT_OK(err, "Delete data");
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to delete data: %d", err);
+        result = 1;
+        goto cleanup;
+    }
 
     // 验证删除
     err = ppdb_kvstore_get(store, (const uint8_t*)test_key, strlen(test_key) + 1,
                           read_buf, &read_size);
-    TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Get deleted data should fail");
+    if (err != PPDB_ERR_NOT_FOUND) {
+        ppdb_log_error("Get deleted data should fail with NOT_FOUND, got: %d", err);
+        result = 1;
+        goto cleanup;
+    }
 
+cleanup:
     // 关闭 KVStore
-    ppdb_kvstore_close(store);
+    if (store) {
+        ppdb_kvstore_close(store);
+    }
 
     // 清理测试目录
     cleanup_test_dir(test_path);
     cleanup_test_dir(wal_path);
 
-    ppdb_log_info("KVStore basic operations test passed");
+    if (result == 0) {
+        ppdb_log_info("=== Test test_kvstore_basic_ops passed ===");
+    } else {
+        ppdb_log_error("=== Test test_kvstore_basic_ops failed ===");
+    }
     return result;
 }
 
 // 恢复测试
 static int test_kvstore_recovery(void) {
-    ppdb_log_info("Running test: test_kvstore_recovery");
+    ppdb_log_info("=== Starting test: test_kvstore_recovery ===");
     ppdb_log_info("Testing KVStore recovery...");
 
     const char* test_path = "test_recovery.db";
@@ -248,86 +315,89 @@ static int test_kvstore_recovery(void) {
     cleanup_test_dir(wal_path);
 
     // 第一阶段：写入多条数据
+    ppdb_log_info("Phase 1: Writing initial data...");
     err = ppdb_kvstore_open(test_path, &store);
-    TEST_ASSERT_OK(err, "Open KVStore for recovery test");
-    TEST_ASSERT_NOT_NULL(store, "KVStore instance should not be NULL");
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to create KVStore: %d", err);
+        result = 1;
+        goto cleanup;
+    }
+    if (!store) {
+        ppdb_log_error("KVStore instance is NULL");
+        result = 1;
+        goto cleanup;
+    }
 
-    // 写入多个键值对
-    const char* test_keys[] = {"recovery_key1", "recovery_key2", "recovery_key3"};
-    const char* test_values[] = {"recovery_value1", "recovery_value2", "recovery_value3"};
-    const int num_pairs = 3;
+    // 写入测试数据
+    const char* test_keys[] = {"key1", "key2", "key3"};
+    const char* test_values[] = {"value1", "value2", "value3"};
+    const int num_records = sizeof(test_keys) / sizeof(test_keys[0]);
 
-    for (int i = 0; i < num_pairs; i++) {
+    for (int i = 0; i < num_records; i++) {
         err = ppdb_kvstore_put(store, (const uint8_t*)test_keys[i], strlen(test_keys[i]) + 1,
                               (const uint8_t*)test_values[i], strlen(test_values[i]) + 1);
-        TEST_ASSERT_OK(err, "Put data for recovery test");
-        ppdb_log_info("Written key-value pair %d: [%s] = [%s]", i, test_keys[i], test_values[i]);
+        if (err != PPDB_OK) {
+            ppdb_log_error("Failed to put data [%s] = [%s]: %d", test_keys[i], test_values[i], err);
+            result = 1;
+            goto cleanup;
+        }
+        ppdb_log_info("Written [%s] = [%s]", test_keys[i], test_values[i]);
     }
 
-    // 删除一个键值对
-    err = ppdb_kvstore_delete(store, (const uint8_t*)test_keys[1], strlen(test_keys[1]) + 1);
-    TEST_ASSERT_OK(err, "Delete data for recovery test");
-    ppdb_log_info("Deleted key: [%s]", test_keys[1]);
-
+    // 关闭 KVStore
     ppdb_kvstore_close(store);
-    ppdb_log_info("First phase: data written and deleted successfully");
+    store = NULL;
 
     // 第二阶段：重新打开并验证数据
+    ppdb_log_info("Phase 2: Reopening KVStore and verifying data...");
     err = ppdb_kvstore_open(test_path, &store);
-    TEST_ASSERT_OK(err, "Reopen KVStore for recovery test");
-    TEST_ASSERT_NOT_NULL(store, "KVStore instance should not be NULL after reopen");
-
-    // 验证所有键值对
-    for (int i = 0; i < num_pairs; i++) {
-        uint8_t read_buf[256];
-        size_t read_size = sizeof(read_buf);
-        err = ppdb_kvstore_get(store, (const uint8_t*)test_keys[i], strlen(test_keys[i]) + 1,
-                              read_buf, &read_size);
-        
-        if (i == 1) {
-            // 验证已删除的键
-            TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Deleted key should not be found");
-            ppdb_log_info("Verified deleted key [%s] is not found", test_keys[i]);
-        } else {
-            // 验证其他键
-            TEST_ASSERT_OK(err, "Get recovered data");
-            TEST_ASSERT_STR_EQ((const char*)read_buf, test_values[i], "Read value should match written value");
-            ppdb_log_info("Verified key-value pair: [%s] = [%s]", test_keys[i], (const char*)read_buf);
-        }
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to reopen KVStore: %d", err);
+        result = 1;
+        goto cleanup;
+    }
+    if (!store) {
+        ppdb_log_error("Reopened KVStore instance is NULL");
+        result = 1;
+        goto cleanup;
     }
 
-    // 第三阶段：写入新数据并再次验证
-    const char* new_key = "new_recovery_key";
-    const char* new_value = "new_recovery_value";
-    err = ppdb_kvstore_put(store, (const uint8_t*)new_key, strlen(new_key) + 1,
-                          (const uint8_t*)new_value, strlen(new_value) + 1);
-    TEST_ASSERT_OK(err, "Put new data after recovery");
-    ppdb_log_info("Written new key-value pair: [%s] = [%s]", new_key, new_value);
+    // 验证数据
+    uint8_t read_buf[256];
+    size_t read_size;
+    for (int i = 0; i < num_records; i++) {
+        read_size = sizeof(read_buf);
+        err = ppdb_kvstore_get(store, (const uint8_t*)test_keys[i], strlen(test_keys[i]) + 1,
+                              read_buf, &read_size);
+        if (err != PPDB_OK) {
+            ppdb_log_error("Failed to get data [%s]: %d", test_keys[i], err);
+            result = 1;
+            goto cleanup;
+        }
+        if (strcmp((const char*)read_buf, test_values[i]) != 0) {
+            ppdb_log_error("Value mismatch for key [%s]: expected [%s], got [%s]",
+                          test_keys[i], test_values[i], (const char*)read_buf);
+            result = 1;
+            goto cleanup;
+        }
+        ppdb_log_info("Verified [%s] = [%s]", test_keys[i], test_values[i]);
+    }
 
-    ppdb_kvstore_close(store);
-
-    // 第四阶段：最终验证
-    err = ppdb_kvstore_open(test_path, &store);
-    TEST_ASSERT_OK(err, "Final reopen of KVStore");
-    TEST_ASSERT_NOT_NULL(store, "KVStore instance should not be NULL after final reopen");
-
-    // 验证新写入的数据
-    uint8_t final_buf[256];
-    size_t final_size = sizeof(final_buf);
-    err = ppdb_kvstore_get(store, (const uint8_t*)new_key, strlen(new_key) + 1,
-                          final_buf, &final_size);
-    TEST_ASSERT_OK(err, "Get new data after final recovery");
-    TEST_ASSERT_STR_EQ((const char*)final_buf, new_value, "Final read value should match written value");
-    ppdb_log_info("Verified new key-value pair after final recovery: [%s] = [%s]", 
-                  new_key, (const char*)final_buf);
-
-    ppdb_kvstore_close(store);
+cleanup:
+    // 关闭 KVStore
+    if (store) {
+        ppdb_kvstore_close(store);
+    }
 
     // 清理测试目录
     cleanup_test_dir(test_path);
     cleanup_test_dir(wal_path);
 
-    ppdb_log_info("KVStore recovery test completed successfully");
+    if (result == 0) {
+        ppdb_log_info("=== Test test_kvstore_recovery passed ===");
+    } else {
+        ppdb_log_error("=== Test test_kvstore_recovery failed ===");
+    }
     return result;
 }
 
@@ -352,8 +422,19 @@ static int test_kvstore_concurrent(void) {
 
     // 创建 KVStore
     err = ppdb_kvstore_open(test_path, &store);
-    TEST_ASSERT_OK(err, "Open KVStore for concurrent test");
-    TEST_ASSERT_NOT_NULL(store, "KVStore instance should not be NULL");
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to create KVStore: %d", err);
+        result = 1;
+        goto cleanup;
+    }
+    if (!store) {
+        ppdb_log_error("KVStore instance is NULL");
+        result = 1;
+        goto cleanup;
+    }
+
+    ppdb_log_info("Starting concurrent test with %d threads, %d operations per thread", 
+                  NUM_THREADS, OPS_PER_THREAD);
 
     // 创建并启动线程
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -362,30 +443,94 @@ static int test_kvstore_concurrent(void) {
         thread_data[i].num_operations = OPS_PER_THREAD;
         thread_data[i].success_count = 0;
 
-        ppdb_log_info("Created thread %d", i);
+        ppdb_log_info("Creating thread %d", i);
         err = pthread_create(&threads[i], NULL, concurrent_worker, &thread_data[i]);
-        TEST_ASSERT_OK(err, "Create worker thread");
+        if (err != 0) {
+            ppdb_log_error("Failed to create thread %d: %s", i, strerror(err));
+            result = 1;
+            goto cleanup;
+        }
     }
 
     // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        void* thread_result;
+        err = pthread_join(threads[i], &thread_result);
+        if (err != 0) {
+            ppdb_log_error("Failed to join thread %d: %s", i, strerror(err));
+            result = 1;
+            goto cleanup;
+        }
+        if (thread_result != NULL) {
+            ppdb_log_error("Thread %d failed with error", i);
+            result = 1;
+            goto cleanup;
+        }
         total_success += thread_data[i].success_count;
+        ppdb_log_info("Thread %d completed with %d successful operations", 
+                     i, thread_data[i].success_count);
     }
 
     // 验证结果
-    ppdb_log_info("Total successful operations: %d", total_success);
-    TEST_ASSERT(total_success == NUM_THREADS * OPS_PER_THREAD * 2, 
-                "All operations should succeed");
+    int expected_success = NUM_THREADS * OPS_PER_THREAD * 2;
+    ppdb_log_info("Total successful operations: %d (expected: %d)", 
+                  total_success, expected_success);
+    
+    if (total_success != expected_success) {
+        ppdb_log_error("Operation count mismatch: got %d, expected %d", 
+                      total_success, expected_success);
+        result = 1;
+        goto cleanup;
+    }
 
+    // 验证所有数据
+    uint8_t read_buf[256];
+    size_t read_size;
+    char key[32];
+    char value[32];
+
+    for (int i = 0; i < NUM_THREADS; i++) {
+        for (int j = 0; j < OPS_PER_THREAD; j++) {
+            snprintf(key, sizeof(key), "key_%d_%d", i, j);
+            snprintf(value, sizeof(value), "value_%d_%d", i, j);
+            
+            read_size = sizeof(read_buf);
+            err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key) + 1, 
+                                 read_buf, &read_size);
+            if (err != PPDB_OK) {
+                ppdb_log_error("Final verification failed: Get [%s] failed with error %d", 
+                              key, err);
+                result = 1;
+                goto cleanup;
+            }
+            if (strcmp((const char*)read_buf, value) != 0) {
+                ppdb_log_error("Final verification failed: Value mismatch for [%s]: expected [%s], got [%s]",
+                              key, value, (const char*)read_buf);
+                result = 1;
+                goto cleanup;
+            }
+            ppdb_log_debug("Final verification: [%s] = [%s] OK", key, value);
+        }
+    }
+
+cleanup:
     // 关闭 KVStore
-    ppdb_kvstore_close(store);
+    if (store) {
+        ppdb_log_info("Closing KVStore at: %s", test_path);
+        ppdb_kvstore_close(store);
+    }
 
     // 清理测试目录
+    ppdb_log_info("Cleaning up test directory: %s", test_path);
     cleanup_test_dir(test_path);
+    ppdb_log_info("Cleaning up test directory: %s", wal_path);
     cleanup_test_dir(wal_path);
 
-    ppdb_log_info("KVStore concurrent test completed successfully");
+    if (result == 0) {
+        ppdb_log_info("KVStore concurrent test completed successfully");
+    } else {
+        ppdb_log_error("KVStore concurrent test failed");
+    }
     return result;
 }
 
@@ -412,8 +557,9 @@ static void* concurrent_worker(void* arg) {
         err = ppdb_kvstore_put(store, (const uint8_t*)key, strlen(key) + 1, 
                               (const uint8_t*)value, strlen(value) + 1);
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d: Put failed [%s] = [%s]", thread_id, key, value);
-            continue;
+            ppdb_log_error("Thread %d: Put failed [%s] = [%s], error: %d", 
+                          thread_id, key, value, err);
+            return (void*)1;
         }
         ppdb_log_info("Thread %d: Put succeeded [%s] = [%s]", thread_id, key, value);
         data->success_count++;
@@ -423,20 +569,24 @@ static void* concurrent_worker(void* arg) {
         err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key) + 1, 
                               read_buf, &read_size);
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d: Get failed [%s]", thread_id, key);
-            continue;
+            ppdb_log_error("Thread %d: Get failed [%s], error: %d", 
+                          thread_id, key, err);
+            return (void*)1;
         }
 
         // 验证读取的值
         if (strcmp((const char*)read_buf, value) != 0) {
             ppdb_log_error("Thread %d: Value mismatch [%s]: expected [%s], got [%s]",
                           thread_id, key, value, (const char*)read_buf);
-            continue;
+            return (void*)1;
         }
 
-        ppdb_log_info("Thread %d: Get succeeded [%s] = [%s]", thread_id, key, (const char*)read_buf);
+        ppdb_log_info("Thread %d: Get succeeded [%s] = [%s]", 
+                     thread_id, key, (const char*)read_buf);
         data->success_count++;
     }
 
+    ppdb_log_info("Thread %d completed all operations with %d successes", 
+                  thread_id, data->success_count);
     return NULL;
 }

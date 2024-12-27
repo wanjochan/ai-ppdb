@@ -95,15 +95,21 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
     }
 
     // 从WAL恢复数据
+    ppdb_log_info("Starting WAL recovery process...");
     err = ppdb_wal_recover(new_store->wal, new_store->memtable);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to recover from WAL: %d", err);
+        ppdb_log_error("Failed to recover from WAL: %d (%s)", err, ppdb_error_string(err));
         ppdb_wal_destroy(new_store->wal);
         ppdb_memtable_destroy(new_store->memtable);
         free(new_store->path);
         free(new_store);
         return err;
     }
+    ppdb_log_info("WAL recovery completed successfully");
+
+    // 验证MemTable状态
+    size_t memtable_size = ppdb_memtable_size(new_store->memtable);
+    ppdb_log_info("Current MemTable size after recovery: %zu bytes", memtable_size);
 
     // 初始化互斥锁
     if (pthread_mutex_init(&new_store->mutex, NULL) != 0) {

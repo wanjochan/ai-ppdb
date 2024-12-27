@@ -131,4 +131,12 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
 
     pthread_mutex_unlock(&table->mutex);
     return PPDB_OK;
-} 
+}
+
+// 获取MemTable的当前大小
+size_t ppdb_memtable_size(ppdb_memtable_t* table) {
+    if (!table) {
+        return 0;
+    }
+    return table->current_size;
+}
