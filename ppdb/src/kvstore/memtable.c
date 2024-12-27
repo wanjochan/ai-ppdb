@@ -12,6 +12,16 @@ struct ppdb_memtable_t {
     pthread_mutex_t mutex;  // 互斥锁
 };
 
+// MemTable 迭代器结构
+struct ppdb_memtable_iterator_t {
+    ppdb_memtable_t* table;         // MemTable 指针
+    skiplist_iterator_t* list_iter;  // 跳表迭代器
+    uint8_t* current_key;           // 当前键
+    uint8_t* current_value;         // 当前值
+    size_t current_key_size;        // 当前键大小
+    size_t current_value_size;      // 当前值大小
+};
+
 // 创建 MemTable
 ppdb_error_t ppdb_memtable_create(size_t size_limit, ppdb_memtable_t** table) {
     if (!table) {
@@ -167,6 +177,14 @@ size_t ppdb_memtable_size(ppdb_memtable_t* table) {
     return table->current_size;
 }
 
+// 获取MemTable的最大大小
+size_t ppdb_memtable_max_size(ppdb_memtable_t* table) {
+    if (!table) {
+        return 0;
+    }
+    return table->size_limit;
+}
+
 // 复制数据到新的MemTable
 ppdb_error_t ppdb_memtable_copy(ppdb_memtable_t* src, ppdb_memtable_t* dst) {
     if (!src || !dst) {
@@ -203,4 +221,82 @@ ppdb_error_t ppdb_memtable_copy(ppdb_memtable_t* src, ppdb_memtable_t* dst) {
     pthread_mutex_unlock(&dst->mutex);
     pthread_mutex_unlock(&src->mutex);
     return err;
+}
+
+// 创建迭代器
+ppdb_error_t ppdb_memtable_iterator_create(ppdb_memtable_t* table, ppdb_memtable_iterator_t** iter) {
+    if (!table || !iter) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    ppdb_memtable_iterator_t* new_iter = (ppdb_memtable_iterator_t*)malloc(sizeof(ppdb_memtable_iterator_t));
+    if (!new_iter) {
+        return PPDB_ERR_NO_MEMORY;
+    }
+
+    new_iter->table = table;
+    new_iter->list_iter = skiplist_iterator_create(table->list);
+    if (!new_iter->list_iter) {
+        free(new_iter);
+        return PPDB_ERR_NO_MEMORY;
+    }
+
+    new_iter->current_key = NULL;
+    new_iter->current_value = NULL;
+    new_iter->current_key_size = 0;
+    new_iter->current_value_size = 0;
+
+    // 移动到第一个元素
+    if (!skiplist_iterator_next(new_iter->list_iter,
+                              &new_iter->current_key, &new_iter->current_key_size,
+                              &new_iter->current_value, &new_iter->current_value_size)) {
+        skiplist_iterator_destroy(new_iter->list_iter);
+        free(new_iter);
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    *iter = new_iter;
+    return PPDB_OK;
+}
+
+// 销毁迭代器
+void ppdb_memtable_iterator_destroy(ppdb_memtable_iterator_t* iter) {
+    if (!iter) return;
+
+    if (iter->list_iter) {
+        skiplist_iterator_destroy(iter->list_iter);
+    }
+    free(iter);
+}
+
+// 检查迭代器是否有效
+bool ppdb_memtable_iterator_valid(ppdb_memtable_iterator_t* iter) {
+    if (!iter) return false;
+    return iter->current_key != NULL;
+}
+
+// 获取当前键
+const uint8_t* ppdb_memtable_iterator_key(ppdb_memtable_iterator_t* iter) {
+    if (!iter) return NULL;
+    return iter->current_key;
+}
+
+// 获取当前值
+const uint8_t* ppdb_memtable_iterator_value(ppdb_memtable_iterator_t* iter) {
+    if (!iter) return NULL;
+    return iter->current_value;
+}
+
+// 移动到下一个位置
+void ppdb_memtable_iterator_next(ppdb_memtable_iterator_t* iter) {
+    if (!iter) return;
+
+    if (!skiplist_iterator_next(iter->list_iter,
+                              &iter->current_key, &iter->current_key_size,
+                              &iter->current_value, &iter->current_value_size)) {
+        iter->current_key = NULL;
+        iter->current_value = NULL;
+        iter->current_key_size = 0;
+        iter->current_value_size = 0;
+    }
 }
