@@ -169,6 +169,13 @@ static int test_kvstore_recovery(void) {
     return 0;
 }
 
+// 线程数据结构
+typedef struct {
+    ppdb_kvstore_t* store;
+    int thread_id;
+    int success_count;
+} thread_data_t;
+
 // 并发测试
 static int test_kvstore_concurrent(void) {
     ppdb_log_info("Testing KVStore concurrent operations...");
@@ -186,17 +193,21 @@ static int test_kvstore_concurrent(void) {
     #define OPS_PER_THREAD 100
     
     pthread_t threads[NUM_THREADS];
-    int thread_ids[NUM_THREADS];
+    thread_data_t thread_data[NUM_THREADS];
     
     // 启动线程
     for (int i = 0; i < NUM_THREADS; i++) {
-        thread_ids[i] = i;
-        pthread_create(&threads[i], NULL, concurrent_worker, &thread_ids[i]);
+        thread_data[i].store = store;
+        thread_data[i].thread_id = i;
+        thread_data[i].success_count = 0;
+        pthread_create(&threads[i], NULL, concurrent_worker, &thread_data[i]);
     }
     
     // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
         pthread_join(threads[i], NULL);
+        ppdb_log_info("Thread %d completed with %d successful operations", 
+                      thread_data[i].thread_id, thread_data[i].success_count);
     }
     
     // 验证所有数据
@@ -228,8 +239,9 @@ static int test_kvstore_concurrent(void) {
 
 // 并发测试的工作线程
 static void* concurrent_worker(void* arg) {
-    int thread_id = *(int*)arg;
-    int success_count = 0;
+    thread_data_t* data = (thread_data_t*)arg;
+    ppdb_kvstore_t* store = data->store;
+    int thread_id = data->thread_id;
     
     for (int i = 0; i < OPS_PER_THREAD; i++) {
         char key[32], value[32];
@@ -240,7 +252,7 @@ static void* concurrent_worker(void* arg) {
         ppdb_error_t err = ppdb_kvstore_put(store, key, strlen(key), value, strlen(value));
         if (err == PPDB_OK) {
             ppdb_log_debug("Thread %d: Put succeeded [%s] = [%s]", thread_id, key, value);
-            success_count++;
+            data->success_count++;
         } else {
             ppdb_log_error("Thread %d: Put failed [%s] = [%s], error: %d", 
                           thread_id, key, value, err);
@@ -253,14 +265,12 @@ static void* concurrent_worker(void* arg) {
         err = ppdb_kvstore_get(store, key, strlen(key), buf, sizeof(buf), &size);
         if (err == PPDB_OK) {
             ppdb_log_debug("Thread %d: Get succeeded [%s] = [%s]", thread_id, key, buf);
-            success_count++;
+            data->success_count++;
         } else {
             ppdb_log_error("Thread %d: Get failed [%s], error: %d", thread_id, key, err);
         }
     }
     
-    ppdb_log_info("Thread %d completed with %d successful operations", 
-                  thread_id, success_count);
     return NULL;
 }
 
