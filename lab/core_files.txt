@@ -1,0 +1,47 @@
+# TinyCC 核心文件列表
+
+## 编译器核心
+tcc.c          # 主程序
+tcc.h          # 主头文件
+libtcc.c       # 库接口
+libtcc.h       # 库头文件
+tccpp.c        # 预处理器
+tccgen.c       # 代码生成
+tcctok.h       # 词法标记
+
+## x86_64 支持
+x86_64-gen.c   # x86_64 代码生成
+x86_64-link.c  # x86_64 链接
+x86_64-asm.h   # x86_64 汇编支持
+
+## 目标文件支持
+tccelf.c       # ELF 格式支持
+elf.h          # ELF 头文件
+tccape.c       # APE 格式支持
+
+## 运行时支持
+tccrun.c       # 运行时支持
+tccasm.c       # 汇编器
+tccdbg.c       # 调试支持
+
+## 配置文件
+config-cosmo.h # Cosmopolitan 配置
+
+## 工具
+tcctools.c     # 基本工具
+
+## 库头文件
+tcclib.h       # 基本库头文件
+
+## 删除的文件
+# arm-*.c arm-*.h       # ARM 支持
+# arm64-*.c arm64-*.h   # ARM64 支持
+# c67-*.c c67-*.h      # C67 支持
+# riscv64-*.c riscv64-*.h # RISC-V 支持
+# i386-*.c i386-*.h    # i386 支持
+# tccpe.c              # PE 格式支持
+# tccmacho.c           # Mach-O 格式支持
+# tcccoff.c            # COFF 格式支持
+# win32/               # Windows 特定代码
+# tests/               # 测试代码
+# examples/            # 示例代码
