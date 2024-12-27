@@ -230,6 +230,29 @@ ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal,
     return PPDB_OK;
 }
 
+// 比较WAL文件名(按数字序)
+static int compare_wal_files(const void* a, const void* b) {
+    const char* file_a = *(const char**)a;
+    const char* file_b = *(const char**)b;
+    
+    // 提取文件名中的数字部分
+    char* end_a;
+    char* end_b;
+    unsigned long num_a = strtoul(file_a, &end_a, 10);
+    unsigned long num_b = strtoul(file_b, &end_b, 10);
+    
+    // 检查转换是否成功
+    if (end_a == file_a && end_b == file_b) {
+        return strcmp(file_a, file_b);
+    }
+    if (end_a == file_a) return 1;
+    if (end_b == file_b) return -1;
+    
+    if (num_a < num_b) return -1;
+    if (num_a > num_b) return 1;
+    return 0;
+}
+
 // 恢复数据
 ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
     if (!wal || !table) {
@@ -239,11 +262,15 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
 
     ppdb_log_info("Recovering WAL from: %s", wal->dir_path);
 
+    // 对MemTable加锁
+    pthread_mutex_lock(&wal->mutex);
+
     // 打开目录
     DIR* dir = opendir(wal->dir_path);
     if (!dir) {
         ppdb_log_error("Failed to open WAL directory: %s, error: %s", 
                       wal->dir_path, strerror(errno));
+        pthread_mutex_unlock(&wal->mutex);
         return PPDB_ERR_IO;
     }
 
@@ -272,22 +299,15 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
                 free(wal_files[i]);
             }
             closedir(dir);
+            pthread_mutex_unlock(&wal->mutex);
             return PPDB_ERR_NO_MEMORY;
         }
         file_count++;
     }
     closedir(dir);
 
-    // 按照文件名排序(文件名是按照偏移量命名的)
-    for (size_t i = 0; i < file_count - 1; i++) {
-        for (size_t j = 0; j < file_count - i - 1; j++) {
-            if (strcmp(wal_files[j], wal_files[j + 1]) > 0) {
-                char* temp = wal_files[j];
-                wal_files[j] = wal_files[j + 1];
-                wal_files[j + 1] = temp;
-            }
-        }
-    }
+    // 按照文件名数字大小排序
+    qsort(wal_files, file_count, sizeof(char*), compare_wal_files);
 
     ppdb_error_t final_err = PPDB_OK;
 
@@ -402,7 +422,7 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
             case PPDB_WAL_RECORD_PUT:
                 err = ppdb_memtable_put(table, key, record_header.key_size,
                                       value, record_header.value_size);
-                if (err != PPDB_OK) {
+                if (err != PPDB_OK && err != PPDB_ERR_FULL) {
                     ppdb_log_error("Failed to apply PUT record in file %s: %d", filename, err);
                     final_err = err;
                 }
@@ -453,6 +473,7 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
         ppdb_log_info("WAL recovery completed successfully");
     }
 
+    pthread_mutex_unlock(&wal->mutex);
     return final_err;
 }
 
