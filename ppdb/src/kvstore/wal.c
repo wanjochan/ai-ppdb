@@ -114,10 +114,15 @@ void ppdb_wal_destroy(ppdb_wal_t* wal) {
             }
             char path[MAX_PATH_LENGTH];
             snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+            // 在测试模式下不删除WAL文件
+            #ifndef PPDB_TEST_MODE
             unlink(path);
+            #endif
         }
         closedir(dir);
+        #ifndef PPDB_TEST_MODE
         rmdir(wal->dir_path);
+        #endif
     }
 
     free(wal);

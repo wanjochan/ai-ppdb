@@ -88,7 +88,7 @@ static int test_wal_recovery(void) {
         err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, key, strlen(key), value, strlen(value));
         TEST_ASSERT(err == PPDB_OK, "Failed to write to WAL");
         
-        ppdb_wal_destroy(wal);
+        ppdb_wal_close(wal);
     }
     
     // Second session: recover data
