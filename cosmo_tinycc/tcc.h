@@ -1,48 +1,21 @@
-/*
- *  TCC - Tiny C Compiler
- *
- *  Copyright (c) 2001-2004 Fabrice Bellard
- *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2 of the License, or (at your option) any later version.
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
- */
-
 #ifndef _TCC_H
 #define _TCC_H
 
-#define _GNU_SOURCE
-#define _DARWIN_C_SOURCE
+/* We only use cosmopolitan */
+#include "cosmopolitan.h"
 #include "config.h"
+#include "config-cosmo.h"
 
-/* Include Cosmopolitan config if building for it */
-#ifdef CONFIG_COSMO
-#include "cosmo-config.h"
-#endif
+/* Define target as x86_64 only */
+#define TCC_TARGET_X86_64 1
 
-#ifdef CONFIG_COSMO
-#include "libc/stdio/stdio.h"
-#include "libc/stdlib/stdlib.h"
-#include "libc/str/str.h"
-#include "libc/errno.h"
-#include "libc/stdarg.h"
-#include "libc/math.h"
-#include "libc/fcntl.h"
-#include "libc/setjmp.h"
-#include "libc/time.h"
-#include "libc/sysv/consts/o.h"
-#include "libc/runtime/runtime.h"
-#else
+/* Basic configs */
+#define CONFIG_TCC_STATIC 1
+#define CONFIG_USE_LIBGCC 0
+#define CONFIG_TCC_BACKTRACE 1
+#define CONFIG_TCC_OPTIMIZE 2
+
+/* Standard includes are all in cosmopolitan.h */
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -52,65 +25,6 @@
 #include <fcntl.h>
 #include <setjmp.h>
 #include <time.h>
-#endif
-
-#ifndef _WIN32
-# include <unistd.h>
-# include <sys/time.h>
-# ifndef CONFIG_TCC_STATIC
-#  include <dlfcn.h>
-# endif
-
-/* Cosmopolitan specific includes */
-#ifdef CONFIG_COSMO
-# include "cosmopolitan.h"
-#endif
-
-/* XXX: need to define this to use them in non ISOC99 context */
-extern float strtof (const char *__nptr, char **__endptr);
-extern long double strtold (const char *__nptr, char **__endptr);
-#endif
-
-#ifdef _WIN32
-# define WIN32_LEAN_AND_MEAN 1
-# include <windows.h>
-# include <io.h> /* open, close etc. */
-# include <direct.h> /* getcwd */
-# include <malloc.h> /* alloca */
-# ifdef __GNUC__
-#  include <stdint.h>
-# endif
-# define inline __inline
-# define snprintf _snprintf
-# define vsnprintf _vsnprintf
-# ifndef __GNUC__
-#  define strtold (long double)strtod
-#  define strtof (float)strtod
-#  define strtoll _strtoi64
-#  define strtoull _strtoui64
-# endif
-# ifdef LIBTCC_AS_DLL
-#  define LIBTCCAPI __declspec(dllexport)
-#  define PUB_FUNC LIBTCCAPI
-# endif
-# ifdef _MSC_VER
-#  pragma warning (disable : 4244)  // conversion from 'uint64_t' to 'int', possible loss of data
-#  pragma warning (disable : 4267)  // conversion from 'size_t' to 'int', possible loss of data
-#  pragma warning (disable : 4996)  // The POSIX name for this item is deprecated. Instead, use the ISO C and C++ conformant name
-#  pragma warning (disable : 4018)  // signed/unsigned mismatch
-#  pragma warning (disable : 4146)  // unary minus operator applied to unsigned type, result still unsigned
-#  define ssize_t intptr_t
-#  ifdef _X86_
-#   define __i386__ 1
-#  endif
-#  ifdef _AMD64_
-#   define __x86_64__ 1
-#  endif
-# endif
-# ifndef va_copy
-#  define va_copy(a,b) a = b
-# endif
-#endif
 
 #ifndef O_BINARY
 # define O_BINARY 0
@@ -146,65 +60,18 @@ extern long double strtold (const char *__nptr, char **__endptr);
 # define PATHSEP ":"
 #endif
 
-/* -------------------------------------------- */
-
-/* parser debug */
-/* #define PARSE_DEBUG */
-/* preprocessor debug */
-/* #define PP_DEBUG */
-/* include file debug */
-/* #define INC_DEBUG */
-/* memory leak debug (only for single threaded usage) */
-/* #define MEM_DEBUG 1,2,3 */
-/* assembler debug */
-/* #define ASM_DEBUG */
-
 /* target selection */
-/* #define TCC_TARGET_I386   *//* i386 code generator */
-/* #define TCC_TARGET_X86_64 *//* x86-64 code generator */
-/* #define TCC_TARGET_ARM    *//* ARMv4 code generator */
-/* #define TCC_TARGET_ARM64  *//* ARMv8 code generator */
-/* #define TCC_TARGET_C67    *//* TMS320C67xx code generator */
-/* #define TCC_TARGET_RISCV64 *//* risc-v code generator */
+#define TCC_TARGET_X86_64 1 /* x86-64 code generator */
 
-/* default target is I386 */
-#if !defined(TCC_TARGET_I386) && !defined(TCC_TARGET_ARM) && \
-    !defined(TCC_TARGET_ARM64) && !defined(TCC_TARGET_C67) && \
-    !defined(TCC_TARGET_X86_64) && !defined(TCC_TARGET_RISCV64)
-# if defined __x86_64__
-#  define TCC_TARGET_X86_64
-# elif defined __arm__
-#  define TCC_TARGET_ARM
-#  define TCC_ARM_EABI
-#  define TCC_ARM_VFP
-#  define TCC_ARM_HARDFLOAT
-# elif defined __aarch64__
-#  define TCC_TARGET_ARM64
-# elif defined __riscv
-#  define TCC_TARGET_RISCV64
-# else
-#  define TCC_TARGET_I386
-# endif
-# ifdef _WIN32
-#  define TCC_TARGET_PE 1
-# endif
-# ifdef __APPLE__
-#  define TCC_TARGET_MACHO 1
-# endif
+/* default target is X86_64 */
+#if !defined(TCC_TARGET_X86_64)
+# error "Unsupported target"
 #endif
 
 /* only native compiler supports -run */
 #if defined _WIN32 == defined TCC_TARGET_PE \
     && defined __APPLE__ == defined TCC_TARGET_MACHO
-# if defined __i386__ && defined TCC_TARGET_I386
-#  define TCC_IS_NATIVE
-# elif defined __x86_64__ && defined TCC_TARGET_X86_64
-#  define TCC_IS_NATIVE
-# elif defined __arm__ && defined TCC_TARGET_ARM
-#  define TCC_IS_NATIVE
-# elif defined __aarch64__ && defined TCC_TARGET_ARM64
-#  define TCC_IS_NATIVE
-# elif defined __riscv && defined __LP64__ && defined TCC_TARGET_RISCV64
+# if defined __x86_64__ && defined TCC_TARGET_X86_64
 #  define TCC_IS_NATIVE
 # endif
 #endif
@@ -387,29 +254,9 @@ extern long double strtold (const char *__nptr, char **__endptr);
 /* include the target specific definitions */
 
 #define TARGET_DEFS_ONLY
-#ifdef TCC_TARGET_I386
-# include "i386-gen.c"
-# include "i386-link.c"
-#elif defined TCC_TARGET_X86_64
+#ifdef TCC_TARGET_X86_64
 # include "x86_64-gen.c"
 # include "x86_64-link.c"
-#elif defined TCC_TARGET_ARM
-# include "arm-gen.c"
-# include "arm-link.c"
-# include "arm-asm.c"
-#elif defined TCC_TARGET_ARM64
-# include "arm64-gen.c"
-# include "arm64-link.c"
-# include "arm-asm.c"
-#elif defined TCC_TARGET_C67
-# define TCC_TARGET_COFF
-# include "coff.h"
-# include "c67-gen.c"
-# include "c67-link.c"
-#elif defined(TCC_TARGET_RISCV64)
-# include "riscv64-gen.c"
-# include "riscv64-link.c"
-# include "riscv64-asm.c"
 #else
 #error unknown target
 #endif
@@ -1718,19 +1565,6 @@ dwarf_read_sleb128(unsigned char **ln, unsigned char *end)
 }
 
 
-/* ------------ i386-gen.c ------------ */
-#if defined TCC_TARGET_I386 || defined TCC_TARGET_X86_64 || defined TCC_TARGET_ARM
-ST_FUNC void g(int c);
-ST_FUNC void gen_le16(int c);
-ST_FUNC void gen_le32(int c);
-#endif
-#if defined TCC_TARGET_I386 || defined TCC_TARGET_X86_64
-ST_FUNC void gen_addr32(int r, Sym *sym, int c);
-ST_FUNC void gen_addrpc32(int r, Sym *sym, int c);
-ST_FUNC void gen_cvt_csti(int t);
-ST_FUNC void gen_increment_tcov (SValue *sv);
-#endif
-
 /* ------------ x86_64-gen.c ------------ */
 #ifdef TCC_TARGET_X86_64
 ST_FUNC void gen_addr64(int r, Sym *sym, int64_t c);
@@ -1740,69 +1574,6 @@ ST_FUNC void gen_vla_result(int addr);
 #endif
 ST_FUNC void gen_cvt_sxtw(void);
 ST_FUNC void gen_cvt_csti(int t);
-#endif
-
-/* ------------ arm-gen.c ------------ */
-#ifdef TCC_TARGET_ARM
-#if defined(TCC_ARM_EABI) && !defined(CONFIG_TCC_ELFINTERP)
-PUB_FUNC const char *default_elfinterp(struct TCCState *s);
-#endif
-ST_FUNC void arm_init(struct TCCState *s);
-ST_FUNC void gen_increment_tcov (SValue *sv);
-#endif
-
-/* ------------ arm64-gen.c ------------ */
-#ifdef TCC_TARGET_ARM64
-ST_FUNC void gen_opl(int op);
-ST_FUNC void gfunc_return(CType *func_type);
-ST_FUNC void gen_va_start(void);
-ST_FUNC void gen_va_arg(CType *t);
-ST_FUNC void gen_clear_cache(void);
-ST_FUNC void gen_cvt_sxtw(void);
-ST_FUNC void gen_cvt_csti(int t);
-ST_FUNC void gen_increment_tcov (SValue *sv);
-#endif
-
-/* ------------ riscv64-gen.c ------------ */
-#ifdef TCC_TARGET_RISCV64
-ST_FUNC void gen_opl(int op);
-//ST_FUNC void gfunc_return(CType *func_type);
-ST_FUNC void gen_va_start(void);
-ST_FUNC void arch_transfer_ret_regs(int);
-ST_FUNC void gen_cvt_sxtw(void);
-ST_FUNC void gen_increment_tcov (SValue *sv);
-#endif
-
-/* ------------ c67-gen.c ------------ */
-#ifdef TCC_TARGET_C67
-#endif
-
-/* ------------ tcccoff.c ------------ */
-#ifdef TCC_TARGET_COFF
-ST_FUNC int tcc_output_coff(TCCState *s1, FILE *f);
-ST_FUNC int tcc_load_coff(TCCState * s1, int fd);
-#endif
-
-/* ------------ tccasm.c ------------ */
-ST_FUNC void asm_instr(void);
-ST_FUNC void asm_global_instr(void);
-ST_FUNC int tcc_assemble(TCCState *s1, int do_preprocess);
-#ifdef CONFIG_TCC_ASM
-ST_FUNC int find_constraint(ASMOperand *operands, int nb_operands, const char *name, const char **pp);
-ST_FUNC Sym* get_asm_sym(int name, Sym *csym);
-ST_FUNC void asm_expr(TCCState *s1, ExprValue *pe);
-ST_FUNC int asm_int_expr(TCCState *s1);
-/* ------------ i386-asm.c ------------ */
-ST_FUNC void gen_expr32(ExprValue *pe);
-#ifdef TCC_TARGET_X86_64
-ST_FUNC void gen_expr64(ExprValue *pe);
-#endif
-ST_FUNC void asm_opcode(TCCState *s1, int opcode);
-ST_FUNC int asm_parse_regvar(int t);
-ST_FUNC void asm_compute_constraints(ASMOperand *operands, int nb_operands, int nb_outputs, const uint8_t *clobber_regs, int *pout_reg);
-ST_FUNC void subst_asm_operand(CString *add_str, SValue *sv, int modifier);
-ST_FUNC void asm_gen_code(ASMOperand *operands, int nb_operands, int nb_outputs, int is_output, uint8_t *clobber_regs, int out_reg);
-ST_FUNC void asm_clobber(uint8_t *clobber_regs, const char *str);
 #endif
 
 /* ------------ tccpe.c -------------- */
