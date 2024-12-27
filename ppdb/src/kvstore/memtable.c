@@ -120,9 +120,10 @@ ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
     if (ret == 1) {
         pthread_mutex_unlock(&table->mutex);
         return PPDB_ERR_NOT_FOUND;
-    } else if (ret != 0) {
+    } else if (ret == -1) {
+        // 缓冲区太小的情况
         pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NO_MEMORY;
+        return PPDB_ERR_BUFFER_TOO_SMALL;
     }
 
     pthread_mutex_unlock(&table->mutex);

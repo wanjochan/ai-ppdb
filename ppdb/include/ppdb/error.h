@@ -16,6 +16,7 @@ typedef enum {
     PPDB_ERR_FULL = -10,          // 容量已满
     PPDB_ERR_EXISTS = -11,        // 已存在
     PPDB_ERR_NOT_SUPPORTED = -12, // 不支持的操作
+    PPDB_ERR_BUFFER_TOO_SMALL = -13, // 缓冲区太小
     PPDB_ERR_UNKNOWN = -99,        // 未知错误
     PPDB_ERR_MUTEX_ERROR         // 互斥锁错误
 } ppdb_error_t;
@@ -49,6 +50,8 @@ static inline const char* ppdb_error_string(ppdb_error_t err) {
             return "Already exists";
         case PPDB_ERR_NOT_SUPPORTED:
             return "Not supported";
+        case PPDB_ERR_BUFFER_TOO_SMALL:
+            return "Buffer too small";
         case PPDB_ERR_MUTEX_ERROR:
             return "Mutex error";
         default:

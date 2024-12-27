@@ -5,6 +5,22 @@
 #include "error.h"
 #include "defs.h"
 
+// 压缩算法
+typedef enum {
+    PPDB_COMPRESSION_NONE = 0,  // 不压缩
+    PPDB_COMPRESSION_SNAPPY,    // Snappy压缩
+    PPDB_COMPRESSION_LZ4        // LZ4压缩
+} ppdb_compression_t;
+
+// KVStore配置
+typedef struct {
+    char dir_path[MAX_PATH_LENGTH];  // 数据库目录路径
+    size_t memtable_size;            // MemTable大小限制
+    size_t l0_size;                  // L0文件大小限制
+    size_t l0_files;                 // L0文件数量限制
+    ppdb_compression_t compression;   // 压缩算法
+} ppdb_kvstore_config_t;
+
 // KVStore结构
 typedef struct ppdb_kvstore_t {
     char db_path[MAX_PATH_LENGTH];  // 数据库路径
@@ -13,8 +29,8 @@ typedef struct ppdb_kvstore_t {
     pthread_mutex_t mutex;          // 并发控制
 } ppdb_kvstore_t;
 
-// 打开KVStore
-ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store);
+// 创建KVStore
+ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvstore_t** store);
 
 // 关闭KVStore
 void ppdb_kvstore_close(ppdb_kvstore_t* store);

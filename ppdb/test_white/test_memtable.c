@@ -33,11 +33,18 @@ static int test_memtable_basic_ops(void) {
     
     // Get value
     uint8_t buf[256] = {0};
-    size_t size = 0;
+    size_t size = sizeof(buf);  // 设置足够大的缓冲区大小
     err = ppdb_memtable_get(table, key, strlen((const char*)key), buf, &size);
     TEST_ASSERT(err == PPDB_OK, "Failed to get value");
     TEST_ASSERT(size == strlen((const char*)value), "Value size mismatch");
     TEST_ASSERT(memcmp(buf, value, size) == 0, "Value content mismatch");
+    
+    // 测试缓冲区太小的情况
+    uint8_t small_buf[4] = {0};
+    size_t small_size = sizeof(small_buf);
+    err = ppdb_memtable_get(table, key, strlen((const char*)key), small_buf, &small_size);
+    TEST_ASSERT(err == PPDB_ERR_BUFFER_TOO_SMALL, "Should fail with buffer too small");
+    TEST_ASSERT(small_size == strlen((const char*)value), "Should return required buffer size");
     
     ppdb_memtable_destroy(table);
     return 0;

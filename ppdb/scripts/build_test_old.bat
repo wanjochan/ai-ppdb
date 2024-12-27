@@ -40,6 +40,7 @@ echo Checking environment...
 
 REM Set base directories
 set R=%~dp0
+cd/d %R%
 set ROOT_DIR=%R%..
 set CROSS_DIR=%ROOT_DIR%\cross9\bin
 set COSMO_DIR=%ROOT_DIR%\cosmopolitan
@@ -266,41 +267,50 @@ echo Creating KVStore test binary...
 %OBJCOPY% -S -O binary "%BUILD_DIR%\test_kvstore.dbg" "%BUILD_DIR%\test_kvstore.exe"
 if !errorlevel! neq 0 goto :error
 
+REM ==================== Run Tests ====================
 if %BUILD_ONLY%==1 (
     echo Build completed successfully
-    goto :eof
+    exit /b 0
 )
 
-REM ==================== Run Tests ====================
 echo Running tests...
 
+REM Run WAL test
 echo Running WAL test...
 "%BUILD_DIR%\test_wal.exe"
-if !errorlevel! neq 0 (
-    echo WAL test failed with error code !errorlevel!
+set WAL_RESULT=%errorlevel%
+if !WAL_RESULT! neq 0 (
+    echo WAL test failed with error code !WAL_RESULT!
     goto :error
 )
+echo WAL tests completed with result: !WAL_RESULT!
 
+REM Run MemTable test
 echo Running MemTable test...
 "%BUILD_DIR%\test_memtable.exe"
-if !errorlevel! neq 0 (
-    echo MemTable test failed with error code !errorlevel!
+set MEMTABLE_RESULT=%errorlevel%
+if !MEMTABLE_RESULT! neq 0 (
+    echo MemTable test failed with error code !MEMTABLE_RESULT!
     goto :error
 )
+echo MemTable tests completed with result: !MEMTABLE_RESULT!
 
+REM Run KVStore test
 echo Running KVStore test...
 "%BUILD_DIR%\test_kvstore.exe"
-if !errorlevel! neq 0 (
-    echo KVStore test failed with error code !errorlevel!
+set KVSTORE_RESULT=%errorlevel%
+if !KVSTORE_RESULT! neq 0 (
+    echo KVStore test failed with error code !KVSTORE_RESULT!
     goto :error
 )
+echo KVStore tests completed with result: !KVSTORE_RESULT!
 
 echo All tests completed successfully
-goto :eof
+exit /b 0
 
 :error
 echo.
-echo Build failed with error code !errorlevel!
+echo Build failed with error code %errorlevel%
 echo Current directory: %CD%
 echo Build directory: %BUILD_DIR%
-exit /b !errorlevel! 
+exit /b %errorlevel% 

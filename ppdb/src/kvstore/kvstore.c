@@ -6,14 +6,14 @@
 #include "../common/logger.h"
 #include "../common/fs.h"
 
-// 打开KVStore
-ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
-    if (!path || !store) {
-        ppdb_log_error("Invalid arguments: path=%p, store=%p", path, store);
+// 创建KVStore
+ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvstore_t** store) {
+    if (!config || !store) {
+        ppdb_log_error("Invalid arguments: config=%p, store=%p", config, store);
         return PPDB_ERR_INVALID_ARG;
     }
 
-    ppdb_log_info("Opening KVStore at: %s", path);
+    ppdb_log_info("Creating KVStore at: %s", config->dir_path);
 
     // 分配KVStore结构
     ppdb_kvstore_t* new_store = (ppdb_kvstore_t*)malloc(sizeof(ppdb_kvstore_t));
@@ -26,11 +26,11 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
     memset(new_store, 0, sizeof(ppdb_kvstore_t));
 
     // 初始化路径
-    strncpy(new_store->db_path, path, MAX_PATH_LENGTH - 1);
+    strncpy(new_store->db_path, config->dir_path, MAX_PATH_LENGTH - 1);
     new_store->db_path[MAX_PATH_LENGTH - 1] = '\0';
 
     // 创建MemTable
-    ppdb_error_t err = ppdb_memtable_create(MEMTABLE_SIZE_LIMIT * 2, &new_store->table);  // 恢复时使用双倍大小限制
+    ppdb_error_t err = ppdb_memtable_create(config->memtable_size, &new_store->table);
     if (err != PPDB_OK) {
         ppdb_log_error("Failed to create MemTable: %d", err);
         free(new_store);
@@ -47,7 +47,7 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
 
     // 创建WAL目录
     char wal_path[MAX_PATH_LENGTH];
-    snprintf(wal_path, sizeof(wal_path), "%s.wal", path);
+    snprintf(wal_path, sizeof(wal_path), "%s.wal", config->dir_path);
     err = ppdb_ensure_directory(wal_path);
     if (err != PPDB_OK && err != PPDB_ERR_EXISTS) {  // 忽略目录已存在的错误
         ppdb_log_error("Failed to create WAL directory: %s", wal_path);
@@ -59,7 +59,7 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
 
     // 创建WAL
     ppdb_wal_config_t wal_config = {0};  // 使用零初始化
-    wal_config.segment_size = WAL_SEGMENT_SIZE;
+    wal_config.segment_size = config->l0_size;
     wal_config.sync_write = true;
     strncpy(wal_config.dir_path, wal_path, MAX_PATH_LENGTH - 1);
     wal_config.dir_path[MAX_PATH_LENGTH - 1] = '\0';
@@ -75,45 +75,47 @@ ppdb_error_t ppdb_kvstore_open(const char* path, ppdb_kvstore_t** store) {
 
     // 从WAL恢复数据
     err = ppdb_wal_recover(new_store->wal, new_store->table);
-    if (err != PPDB_OK && err != PPDB_ERR_FULL) {
-        ppdb_log_error("Failed to recover from WAL: %d", err);
-        ppdb_wal_destroy(new_store->wal);
-        pthread_mutex_destroy(&new_store->mutex);
-        ppdb_memtable_destroy(new_store->table);
-        free(new_store);
-        return err;
-    }
-
-    // 重新创建MemTable,使用正常大小限制
-    ppdb_memtable_t* new_table = NULL;
-    err = ppdb_memtable_create(MEMTABLE_SIZE_LIMIT, &new_table);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to create new MemTable: %d", err);
-        ppdb_wal_destroy(new_store->wal);
-        pthread_mutex_destroy(&new_store->mutex);
-        ppdb_memtable_destroy(new_store->table);
-        free(new_store);
-        return err;
+        if (err == PPDB_ERR_FULL) {
+            // 如果MemTable已满，我们需要创建一个新的MemTable
+            ppdb_memtable_t* new_table = NULL;
+            size_t size_limit = ppdb_memtable_max_size(new_store->table);
+            err = ppdb_memtable_create(size_limit, &new_table);
+            if (err != PPDB_OK) {
+                ppdb_log_error("Failed to create new MemTable during recovery: %d", err);
+                ppdb_wal_destroy(new_store->wal);
+                pthread_mutex_destroy(&new_store->mutex);
+                ppdb_memtable_destroy(new_store->table);
+                free(new_store);
+                return err;
+            }
+            
+            // 将旧的MemTable持久化（这里简化处理，实际应该写入SSTable）
+            ppdb_memtable_destroy(new_store->table);
+            new_store->table = new_table;
+            
+            // 重试恢复
+            err = ppdb_wal_recover(new_store->wal, new_store->table);
+            if (err != PPDB_OK && err != PPDB_ERR_FULL) {
+                ppdb_log_error("Failed to recover from WAL after creating new MemTable: %d", err);
+                ppdb_wal_destroy(new_store->wal);
+                pthread_mutex_destroy(&new_store->mutex);
+                ppdb_memtable_destroy(new_store->table);
+                free(new_store);
+                return err;
+            }
+        } else {
+            ppdb_log_error("Failed to recover from WAL: %d", err);
+            ppdb_wal_destroy(new_store->wal);
+            pthread_mutex_destroy(&new_store->mutex);
+            ppdb_memtable_destroy(new_store->table);
+            free(new_store);
+            return err;
+        }
     }
-
-    // 将恢复的数据复制到新的MemTable
-    err = ppdb_memtable_copy(new_store->table, new_table);
-    if (err != PPDB_OK) {
-        ppdb_log_error("Failed to copy data to new MemTable: %d", err);
-        ppdb_memtable_destroy(new_table);
-        ppdb_wal_destroy(new_store->wal);
-        pthread_mutex_destroy(&new_store->mutex);
-        ppdb_memtable_destroy(new_store->table);
-        free(new_store);
-        return err;
-    }
-
-    // 销毁旧的MemTable
-    ppdb_memtable_destroy(new_store->table);
-    new_store->table = new_table;
 
     *store = new_store;
-    ppdb_log_info("Successfully opened KVStore at: %s", path);
+    ppdb_log_info("Successfully created KVStore at: %s", config->dir_path);
     return PPDB_OK;
 }
 
@@ -124,7 +126,7 @@ void ppdb_kvstore_close(ppdb_kvstore_t* store) {
     ppdb_log_info("Closing KVStore at: %s", store->db_path);
 
     if (store->wal) {
-        ppdb_wal_close(store->wal);
+        ppdb_wal_destroy(store->wal);
         store->wal = NULL;
     }
 
@@ -147,7 +149,7 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 
     pthread_mutex_lock(&store->mutex);
 
-    // 写入WAL
+    // 先写入WAL
     ppdb_error_t err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_PUT,
                                      key, key_len, value, value_len);
     if (err != PPDB_OK) {
@@ -155,15 +157,28 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
         return err;
     }
 
-    // 写入MemTable
+    // 再写入MemTable
     err = ppdb_memtable_put(store->table, key, key_len, value, value_len);
-    if (err != PPDB_OK) {
-        pthread_mutex_unlock(&store->mutex);
-        return err;
+    if (err == PPDB_ERR_FULL) {
+        // 如果MemTable已满，创建新的MemTable
+        ppdb_memtable_t* new_table = NULL;
+        size_t size_limit = ppdb_memtable_max_size(store->table);
+        err = ppdb_memtable_create(size_limit, &new_table);
+        if (err != PPDB_OK) {
+            pthread_mutex_unlock(&store->mutex);
+            return err;
+        }
+
+        // 将旧的MemTable持久化（这里简化处理，实际应该写入SSTable）
+        ppdb_memtable_destroy(store->table);
+        store->table = new_table;
+
+        // 重试写入
+        err = ppdb_memtable_put(store->table, key, key_len, value, value_len);
     }
 
     pthread_mutex_unlock(&store->mutex);
-    return PPDB_OK;
+    return err;
 }
 
 // 读取键值对
@@ -175,11 +190,7 @@ ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
     }
 
     pthread_mutex_lock(&store->mutex);
-
-    // 从MemTable读取
-    ppdb_error_t err = ppdb_memtable_get(store->table, key, key_len,
-                                        value, value_len);
-
+    ppdb_error_t err = ppdb_memtable_get(store->table, key, key_len, value, value_len);
     pthread_mutex_unlock(&store->mutex);
     return err;
 }
@@ -193,7 +204,7 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
 
     pthread_mutex_lock(&store->mutex);
 
-    // 写入WAL
+    // 先写入WAL
     ppdb_error_t err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_DELETE,
                                      key, key_len, NULL, 0);
     if (err != PPDB_OK) {
@@ -201,13 +212,9 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
         return err;
     }
 
-    // 从MemTable删除
+    // 再从MemTable删除
     err = ppdb_memtable_delete(store->table, key, key_len);
-    if (err != PPDB_OK) {
-        pthread_mutex_unlock(&store->mutex);
-        return err;
-    }
 
     pthread_mutex_unlock(&store->mutex);
-    return PPDB_OK;
+    return err;
 }

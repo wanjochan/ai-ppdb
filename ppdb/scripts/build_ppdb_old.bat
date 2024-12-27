@@ -9,13 +9,13 @@ set BUILD_TIME=%date% %time%
 REM ==================== Command Line Args ====================
 set CLEAN_ONLY=0
 set SHOW_HELP=0
-set FORCE_REBUILD=0
+set FORCE_REBUILD=1
 
 :arg_loop
 if "%1"=="" goto arg_done
 if /i "%1"=="--clean" set CLEAN_ONLY=1
 if /i "%1"=="--help" set SHOW_HELP=1
-if /i "%1"=="--rebuild" set FORCE_REBUILD=1
+if /i "%1"=="--no-rebuild" set FORCE_REBUILD=0
 shift
 goto arg_loop
 :arg_done
@@ -37,6 +37,7 @@ echo Checking environment...
 
 REM Set base directories
 set R=%~dp0
+cd /d %R%
 set ROOT_DIR=%R%..
 set CROSS_DIR=%ROOT_DIR%\cross9\bin
 set COSMO_DIR=%ROOT_DIR%\cosmopolitan

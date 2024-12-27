@@ -448,7 +448,14 @@ ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table) {
             case PPDB_WAL_RECORD_PUT:
                 err = ppdb_memtable_put(table, key, record_header.key_size,
                                       value, record_header.value_size);
-                if (err != PPDB_OK && err != PPDB_ERR_FULL) {
+                if (err == PPDB_ERR_FULL) {
+                    // 如果MemTable已满，我们应该停止恢复并通知上层创建新的MemTable
+                    ppdb_log_warn("MemTable is full during recovery, need to create new MemTable");
+                    final_err = PPDB_ERR_FULL;
+                    free(key);
+                    if (value) free(value);
+                    break;
+                } else if (err != PPDB_OK) {
                     ppdb_log_error("Failed to apply PUT record in file %s: %d", filename, err);
                     final_err = err;
                 }
