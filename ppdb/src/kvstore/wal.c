@@ -2,8 +2,34 @@
 #include "ppdb/wal.h"
 #include "ppdb/error.h"
 #include "ppdb/defs.h"
+#include "ppdb/memtable.h"
 #include "../common/logger.h"
 #include "../common/fs.h"
+
+// WAL头部结构
+typedef struct {
+    uint32_t magic;      // 魔数
+    uint32_t version;    // 版本号
+    uint32_t segment_size;  // 段大小
+    uint32_t reserved;   // 保留字段
+} ppdb_wal_header_t;
+
+// WAL记录头部结构
+typedef struct {
+    uint32_t type;       // 记录类型
+    uint32_t key_size;   // 键大小
+    uint32_t value_size; // 值大小
+} ppdb_wal_record_header_t;
+
+// WAL结构
+typedef struct ppdb_wal_t {
+    char dir_path[MAX_PATH_LENGTH];  // WAL目录路径
+    size_t segment_size;             // 段大小
+    bool sync_write;                 // 是否同步写入
+    int current_fd;                  // 当前文件描述符
+    size_t current_size;             // 当前段大小
+    pthread_mutex_t mutex;           // 互斥锁
+} ppdb_wal_t;
 
 // 前向声明
 static ppdb_error_t create_new_segment(ppdb_wal_t* wal);

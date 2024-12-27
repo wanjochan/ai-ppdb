@@ -2,7 +2,7 @@
 #include "ppdb/memtable.h"
 #include "ppdb/error.h"
 #include "../common/logger.h"
-#include "skiplist.h"
+#include "../kvstore/skiplist.h"
 
 // MemTable 结构
 struct ppdb_memtable_t {
@@ -165,4 +165,42 @@ size_t ppdb_memtable_size(ppdb_memtable_t* table) {
         return 0;
     }
     return table->current_size;
+}
+
+// 复制数据到新的MemTable
+ppdb_error_t ppdb_memtable_copy(ppdb_memtable_t* src, ppdb_memtable_t* dst) {
+    if (!src || !dst) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    pthread_mutex_lock(&src->mutex);
+    pthread_mutex_lock(&dst->mutex);
+
+    // 获取源MemTable的所有键值对
+    skiplist_iterator_t* iter = skiplist_iterator_create(src->list);
+    if (!iter) {
+        pthread_mutex_unlock(&dst->mutex);
+        pthread_mutex_unlock(&src->mutex);
+        return PPDB_ERR_NO_MEMORY;
+    }
+
+    ppdb_error_t err = PPDB_OK;
+    uint8_t* key;
+    uint8_t* value;
+    size_t key_size;
+    size_t value_size;
+
+    // 遍历并复制每个键值对
+    while (skiplist_iterator_next(iter, &key, &key_size, &value, &value_size)) {
+        err = ppdb_memtable_put(dst, key, key_size, value, value_size);
+        if (err != PPDB_OK) {
+            ppdb_log_error("Failed to copy key-value pair: %d", err);
+            break;
+        }
+    }
+
+    skiplist_iterator_destroy(iter);
+    pthread_mutex_unlock(&dst->mutex);
+    pthread_mutex_unlock(&src->mutex);
+    return err;
 }

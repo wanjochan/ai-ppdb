@@ -1,40 +1,40 @@
 #include <cosmopolitan.h>
-#include "fs.h"
+#include "ppdb/error.h"
 #include "ppdb/defs.h"
-#include "logger.h"
+#include "../common/logger.h"
 
+// 确保目录存在
 ppdb_error_t ppdb_ensure_directory(const char* path) {
+    if (!path) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // 检查目录是否已存在
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        if (S_ISDIR(st.st_mode)) {
+            return PPDB_OK;  // 目录已存在
+        }
+        return PPDB_ERR_EXISTS;  // 路径存在但不是目录
+    }
+
+    // 创建目录
     char tmp[MAX_PATH_LENGTH];
     char *p;
-    size_t len;
 
-    // 复制路径并移除末尾的斜杠
+    // 复制路径
     strncpy(tmp, path, sizeof(tmp) - 1);
     tmp[sizeof(tmp) - 1] = '\0';
-    len = strlen(tmp);
-    if (len > 0 && tmp[len - 1] == '/') {
-        tmp[len - 1] = '\0';
-    }
-
-    // 如果目录已存在，直接返回
-    struct stat st;
-    if (stat(tmp, &st) == 0) {
-        if (S_ISDIR(st.st_mode)) {
-            return PPDB_OK;
-        }
-        ppdb_log_error("Path exists but is not a directory: %s", tmp);
-        return PPDB_ERR_IO;
-    }
 
     // 递归创建目录
     for (p = tmp + 1; *p; p++) {
-        if (*p == '/') {
+        if (*p == '/' || *p == '\\') {
             *p = '\0';
             if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
                 ppdb_log_error("Failed to create directory: %s, error: %s", tmp, strerror(errno));
                 return PPDB_ERR_IO;
             }
-            *p = '/';
+            *p = '/';  // 统一使用正斜杠
         }
     }
 

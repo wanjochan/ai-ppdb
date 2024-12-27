@@ -33,4 +33,7 @@ size_t ppdb_memtable_size(ppdb_memtable_t* table);
 // 获取最大大小
 size_t ppdb_memtable_max_size(ppdb_memtable_t* table);
 
+// 复制数据到新的MemTable
+ppdb_error_t ppdb_memtable_copy(ppdb_memtable_t* src, ppdb_memtable_t* dst);
+
 #endif // PPDB_MEMTABLE_H 

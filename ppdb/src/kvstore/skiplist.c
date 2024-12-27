@@ -15,12 +15,12 @@ typedef struct skipnode_t {
 } skipnode_t;
 
 // 跳表结构
-struct skiplist_t {
+typedef struct skiplist_t {
     int level;                     // 当前最大层数
     volatile size_t size;          // 节点数量（volatile 保证可见性）
     skipnode_t* header;            // 头节点
     pthread_mutex_t mutex;         // 互斥锁
-};
+} skiplist_t;
 
 // 创建节点
 static skipnode_t* create_node(int level,
@@ -236,7 +236,7 @@ int skiplist_get(skiplist_t* list,
         return -1;  // 缓冲区太小
     }
 
-    // 复制值，包括结束符
+    // 复制值
     memcpy(value, current->value, current->value_len);
     *value_len = current->value_len;
 
@@ -298,4 +298,48 @@ size_t skiplist_size(skiplist_t* list) {
     size_t size = list->size;
     pthread_mutex_unlock(&list->mutex);
     return size;
+}
+
+// 创建迭代器
+skiplist_iterator_t* skiplist_iterator_create(skiplist_t* list) {
+    if (!list) {
+        return NULL;
+    }
+
+    skiplist_iterator_t* iter = (skiplist_iterator_t*)malloc(sizeof(skiplist_iterator_t));
+    if (!iter) {
+        return NULL;
+    }
+
+    iter->list = list;
+    iter->current = list->header->forward[0];  // 从第一个节点开始
+    return iter;
+}
+
+// 销毁迭代器
+void skiplist_iterator_destroy(skiplist_iterator_t* iter) {
+    if (iter) {
+        free(iter);
+    }
+}
+
+// 获取下一个键值对
+bool skiplist_iterator_next(skiplist_iterator_t* iter,
+                          uint8_t** key, size_t* key_size,
+                          uint8_t** value, size_t* value_size) {
+    if (!iter || !key || !key_size || !value || !value_size) {
+        return false;
+    }
+
+    if (!iter->current) {
+        return false;  // 已经到达末尾
+    }
+
+    *key = iter->current->key;
+    *key_size = iter->current->key_len;
+    *value = iter->current->value;
+    *value_size = iter->current->value_len;
+
+    iter->current = iter->current->forward[0];  // 移动到下一个节点
+    return true;
 }

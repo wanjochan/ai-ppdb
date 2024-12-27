@@ -6,6 +6,12 @@
 // 跳表结构
 typedef struct skiplist_t skiplist_t;
 
+// 迭代器结构
+typedef struct skiplist_iterator_t {
+    skiplist_t* list;
+    struct skipnode_t* current;
+} skiplist_iterator_t;
+
 // 创建跳表
 skiplist_t* skiplist_create(void);
 
@@ -31,5 +37,16 @@ int skiplist_delete(skiplist_t* list,
 
 // 获取跳表大小
 size_t skiplist_size(skiplist_t* list);
+
+// 创建迭代器
+skiplist_iterator_t* skiplist_iterator_create(skiplist_t* list);
+
+// 销毁迭代器
+void skiplist_iterator_destroy(skiplist_iterator_t* iter);
+
+// 获取下一个键值对
+bool skiplist_iterator_next(skiplist_iterator_t* iter,
+                          uint8_t** key, size_t* key_size,
+                          uint8_t** value, size_t* value_size);
 
 #endif // PPDB_SKIPLIST_H 
