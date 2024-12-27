@@ -489,7 +489,7 @@ struct ppdb_memtable_t {
 
 ### 配置建议
 1. MemTable 配置
-   ```
+   ```sql
    小型场景（1GB 以下）：
    - max_size: 64MB
    - warning_threshold: 0.8
@@ -507,7 +507,7 @@ struct ppdb_memtable_t {
    ```
 
 2. WAL 配置
-   ```
+   ```sql
    小型场景：
    - segment_size: 64MB
    - sync_write: true
@@ -535,4 +535,115 @@ struct ppdb_memtable_t {
 3. 定期维护
    - WAL 归档
    - 性能分析
-   - 容量规划 
+   - 容量规划
+
+## 性能优化探索
+
+> 注意：以下内容为探索性设计，尚未实现和验证，仅供参考。
+
+### 无锁结构优化
+
+#### 1. 无锁跳表设计
+```c
+typedef struct {
+    uint8_t* key;
+    size_t key_len;
+    uint8_t* value;
+    size_t value_len;
+    atomic_ulong version;      // 版本号，用于处理 ABA 问题
+    struct skipnode_t* forward[];  // 原子指针数组
+} skipnode_t;
+
+typedef struct {
+    int level;
+    atomic_size_t size;
+    skipnode_t* header;
+} skiplist_t;
+```
+
+关键设计点：
+- 使用原子操作替代互斥锁
+- 使用 CAS 操作实现无锁插入和删除
+- 读操作完全无锁
+- 版本号机制避免 ABA 问题
+
+#### 2. MemTable 分片设计
+```c
+typedef struct {
+    size_t shard_count;           // 分片数量
+    ppdb_memtable_shard_t* shards;  // 分片数组
+    atomic_size_t total_size;     // 总大小
+} ppdb_memtable_t;
+
+typedef struct {
+    skiplist_t* list;
+    pthread_mutex_t mutex;
+    size_t size_limit;
+    atomic_size_t current_size;
+} ppdb_memtable_shard_t;
+```
+
+优势：
+- 数据按键范围分片
+- 每个分片独立加锁
+- 减少锁竞争
+- 支持分片级别的独立刷盘
+
+#### 3. 内存池优化
+```c
+typedef struct {
+    void* blocks;              // 预分配内存块
+    atomic_ptr_t free_list;    // 空闲块链表
+    size_t block_size;         // 块大小
+    size_t total_blocks;       // 总块数
+} memory_pool_t;
+```
+
+目标：
+- 预分配固定大小内存块
+- 使用无锁队列管理
+- 减少内存碎片
+- 提高分配效率
+
+### 分阶段实施计划
+
+#### 第一阶段
+1. 无锁跳表基础框架
+2. 基础监控指标
+
+#### 第二阶段
+1. MemTable 分片实现
+2. 内存池实现
+
+#### 第三阶段
+1. 批量操作接口
+2. 完善监控系统
+
+### 风险评估
+
+1. 实现复杂度
+   - 无锁算法实现难度高
+   - 需要严格的并发测试
+   - 边界条件处理复杂
+
+2. 性能权衡
+   - CAS 操作可能导致 CPU 使用率上升
+   - 需要实际负载测试验证收益
+   - 内存开销可能增加
+
+3. 可维护性
+   - 代码复杂度提高
+   - 调试难度增加
+   - 需要专门的性能分析工具
+
+### 后续建议
+
+1. 原型验证
+   - 先实现简单原型
+   - 进行性能基准测试
+   - 收集实际数据支撑决策
+
+2. 渐进式改进
+   - 分阶段实施
+   - 保持向后兼容
+   - 灰度发布策略
