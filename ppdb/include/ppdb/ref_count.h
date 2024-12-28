@@ -4,19 +4,18 @@
 #include <cosmopolitan.h>
 
 // 引用计数结构
-typedef struct {
-    atomic_uint count;         // 引用计数
-    void* data;               // 数据指针
-    void (*destructor)(void*); // 析构函数
-} ref_count_t;
+typedef struct ref_count_t ref_count_t;
 
-// 创建引用计数对象
-ref_count_t* ref_count_create(void* data, void (*destructor)(void*));
+// 释放回调函数类型
+typedef void (*ref_count_free_fn)(void* ptr);
+
+// 创建引用计数
+ref_count_t* ref_count_create(void* ptr, ref_count_free_fn free_fn);
 
 // 增加引用计数
 void ref_count_inc(ref_count_t* ref);
 
-// 减少引用计数
+// 减少引用计数，如果计数为0则释放对象
 void ref_count_dec(ref_count_t* ref);
 
 // 获取当前引用计数值

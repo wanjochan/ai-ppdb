@@ -1,4 +1,4 @@
-#include "common/logger.h"
+#include "ppdb/logger.h"
 #include <cosmopolitan.h>
 
 static ppdb_log_level_t current_level = PPDB_LOG_INFO;

@@ -1,6 +1,7 @@
 #include <cosmopolitan.h>
-#include "atomic_skiplist.h"
+#include "ppdb/atomic_skiplist.h"
 #include "ppdb/logger.h"
+#include "ppdb/ref_count.h"
 
 // 随机层数生成
 static uint32_t random_level(uint32_t max_level) {

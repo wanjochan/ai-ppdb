@@ -2,6 +2,8 @@
 
 AI编写的分布式数据库
 
+This repo is in Chinese on purpose.
+
 # 初始化
 
 ```

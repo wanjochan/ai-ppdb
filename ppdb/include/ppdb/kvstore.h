@@ -19,6 +19,7 @@ typedef struct {
     size_t l0_size;                  // L0文件大小限制
     size_t l0_files;                 // L0文件数量限制
     ppdb_compression_t compression;   // 压缩算法
+    ppdb_mode_t mode;               // 运行模式
 } ppdb_kvstore_config_t;
 
 // KVStore结构(不透明)

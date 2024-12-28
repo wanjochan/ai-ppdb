@@ -2,7 +2,7 @@
 #define PPDB_ATOMIC_SKIPLIST_H
 
 #include <cosmopolitan.h>
-#include "ref_count.h"
+#include "ppdb/ref_count.h"
 
 // 最大层数
 #define MAX_LEVEL 32

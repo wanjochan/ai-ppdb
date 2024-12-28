@@ -1,6 +1,6 @@
 #include <cosmopolitan.h>
-#include "skiplist.h"
-#include "../common/logger.h"
+#include "ppdb/skiplist.h"
+#include "ppdb/logger.h"
 
 #define MAX_LEVEL 32
 #define P 0.25
@@ -21,6 +21,12 @@ typedef struct skiplist_t {
     skipnode_t* header;            // 头节点
     pthread_mutex_t mutex;         // 互斥锁
 } skiplist_t;
+
+// 迭代器结构
+typedef struct skiplist_iterator_t {
+    skiplist_t* list;           // 关联的跳表
+    skipnode_t* current;        // 当前节点
+} skiplist_iterator_t;
 
 // 创建节点
 static skipnode_t* create_node(int level,
