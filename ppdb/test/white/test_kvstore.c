@@ -39,6 +39,27 @@ static int test_kvstore_create_close(void) {
     return 0;
 }
 
+// 创建测试用的 KVStore
+static ppdb_kvstore_t* create_test_kvstore(const char* test_dir, ppdb_mode_t mode) {
+    cleanup_test_dir(test_dir);
+    
+    ppdb_kvstore_config_t config = {
+        .dir_path = {0},
+        .memtable_size = 4096,
+        .l0_size = 4096 * 4,
+        .l0_files = 4,
+        .compression = PPDB_COMPRESSION_NONE,
+        .mode = mode
+    };
+    strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
+    
+    ppdb_kvstore_t* store = NULL;
+    ppdb_error_t err = ppdb_kvstore_create(&config, &store);
+    assert(err == PPDB_OK);
+    assert(store != NULL);
+    return store;
+}
+
 // Test KVStore basic operations
 static int test_kvstore_basic_ops(void) {
     printf("Testing KVStore basic operations...\n");
@@ -61,16 +82,15 @@ static int test_kvstore_basic_ops(void) {
     assert(err == PPDB_OK);
     assert(value_size == strlen(test_value));
 
-    // 分配足够的缓冲区并获取值
-    uint8_t* value_buf = (uint8_t*)malloc(value_size + 1);
-    assert(value_buf != NULL);
-    size_t actual_size = value_size;
+    // 获取值
+    uint8_t* value_buf = NULL;
+    size_t actual_size = 0;
     err = ppdb_kvstore_get(store, (const uint8_t*)test_key, strlen(test_key),
-                          value_buf, &actual_size);
+                          &value_buf, &actual_size);
     assert(err == PPDB_OK);
     assert(actual_size == strlen(test_value));
-    value_buf[actual_size] = '\0';  // 添加字符串结束符
-    assert(strcmp((const char*)value_buf, test_value) == 0);
+    assert(value_buf != NULL);
+    assert(memcmp(value_buf, test_value, actual_size) == 0);
     free(value_buf);
 
     // 测试删除
@@ -84,6 +104,7 @@ static int test_kvstore_basic_ops(void) {
 
     // 销毁 KVStore
     ppdb_kvstore_destroy(store);
+    return 0;
 }
 
 // Test KVStore recovery
@@ -215,7 +236,7 @@ static void* concurrent_worker(void* arg) {
         }
         
         // 验证值是否匹配
-        if (strcmp((const char*)buf, value) != 0) {
+        if (size != strlen(value) || memcmp(buf, value, size) != 0) {
             ppdb_log_error("Thread %d value mismatch for key %s: expected=%s, got=%s",
                           thread_id, key, value, buf);
             free(buf);  // 释放分配的内存
@@ -242,7 +263,7 @@ static void* concurrent_worker(void* arg) {
                 // 再次验证
                 size = 0;
                 err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), &buf, &size);
-                if (err == PPDB_OK && strcmp((const char*)buf, value) == 0) {
+                if (err == PPDB_OK && size == strlen(value) && memcmp(buf, value, size) == 0) {
                     pthread_mutex_lock(data->mutex);
                     data->success_count++;
                     pthread_mutex_unlock(data->mutex);
@@ -273,7 +294,8 @@ static int test_kvstore_concurrent(void) {
         .memtable_size = 65536,  // 64KB
         .l0_size = 262144,      // 256KB
         .l0_files = 4,
-        .compression = PPDB_COMPRESSION_NONE
+        .compression = PPDB_COMPRESSION_NONE,
+        .mode = PPDB_MODE_LOCKED
     };
     strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
     
@@ -336,7 +358,7 @@ static int test_kvstore_concurrent(void) {
                 size_t size = 0;
                 err = ppdb_kvstore_get(store, (const uint8_t*)key, strlen(key), &buf, &size);
                 if (err == PPDB_OK) {
-                    if (strcmp((const char*)buf, expected_value) == 0) {
+                    if (size == strlen(expected_value) && memcmp(buf, expected_value, size) == 0) {
                         verified_count++;
                     } else {
                         ppdb_log_error("Value mismatch for key %s: expected=%s, got=%s",

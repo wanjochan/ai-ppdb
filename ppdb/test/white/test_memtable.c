@@ -22,14 +22,16 @@ static int test_memtable_basic_ops(void) {
     printf("Testing MemTable basic operations...\n");
 
     // 创建 MemTable
-    ppdb_memtable_t* table = ppdb_memtable_create(4096);
+    ppdb_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_memtable_create(4096, &table);
+    assert(err == PPDB_OK);
     assert(table != NULL);
 
     // 测试插入和获取
     const char* test_key = "test_key";
     const char* test_value = "test_value";
-    ppdb_error_t err = ppdb_memtable_put(table, (const uint8_t*)test_key, strlen(test_key),
-                                        (const uint8_t*)test_value, strlen(test_value));
+    err = ppdb_memtable_put(table, (const uint8_t*)test_key, strlen(test_key),
+                           (const uint8_t*)test_value, strlen(test_value));
     assert(err == PPDB_OK);
 
     // 先获取值的大小
@@ -39,16 +41,15 @@ static int test_memtable_basic_ops(void) {
     assert(err == PPDB_OK);
     assert(value_size == strlen(test_value));
 
-    // 分配足够的缓冲区并获取值
-    uint8_t* value_buf = (uint8_t*)malloc(value_size + 1);
-    assert(value_buf != NULL);
-    size_t actual_size = value_size;
+    // 获取值
+    uint8_t* value_buf = NULL;
+    size_t actual_size = 0;
     err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
-                           value_buf, &actual_size);
+                           &value_buf, &actual_size);
     assert(err == PPDB_OK);
     assert(actual_size == strlen(test_value));
-    value_buf[actual_size] = '\0';  // 添加字符串结束符
-    assert(strcmp((const char*)value_buf, test_value) == 0);
+    assert(value_buf != NULL);
+    assert(memcmp(value_buf, test_value, actual_size) == 0);
     free(value_buf);
 
     // 测试删除

@@ -78,7 +78,7 @@ ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table,
 
 ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* table,
                                        const uint8_t* key, size_t key_len,
-                                       uint8_t* value, size_t* value_len) {
+                                       uint8_t** value, size_t* value_len) {
     if (!table || !key || !value_len) return PPDB_ERR_NULL_POINTER;
 
     // 先查询值的大小
@@ -87,21 +87,26 @@ ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* table,
     if (ret == 1) return PPDB_ERR_NOT_FOUND;
     if (ret != 0) return PPDB_ERR_NO_MEMORY;
 
-    // 检查缓冲区大小
+    // 如果只是查询大小
     if (!value) {
         *value_len = required_size;
         return PPDB_OK;
     }
-    if (*value_len < required_size) {
-        *value_len = required_size;
-        return PPDB_ERR_BUFFER_TOO_SMALL;
-    }
+
+    // 分配内存
+    *value = (uint8_t*)malloc(required_size);
+    if (!*value) return PPDB_ERR_NO_MEMORY;
 
     // 获取值
-    ret = atomic_skiplist_get(table->list, key, key_len, value, value_len);
-    if (ret == 1) return PPDB_ERR_NOT_FOUND;
-    if (ret != 0) return PPDB_ERR_NO_MEMORY;
+    size_t actual_size = required_size;
+    ret = atomic_skiplist_get(table->list, key, key_len, *value, &actual_size);
+    if (ret != 0) {
+        free(*value);
+        *value = NULL;
+        return ret == 1 ? PPDB_ERR_NOT_FOUND : PPDB_ERR_NO_MEMORY;
+    }
 
+    *value_len = actual_size;
     return PPDB_OK;
 }
 

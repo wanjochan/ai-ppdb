@@ -146,27 +146,39 @@ void test_wal_basic_ops(void) {
     // 创建 WAL
     const char* test_dir = "test_wal_basic.db.wal";
     cleanup_test_dir(test_dir);
-    ppdb_wal_t* wal = ppdb_wal_create(test_dir, 16384);
+    ppdb_wal_t* wal = NULL;
+    ppdb_wal_config_t config = {
+        .dir_path = {0},
+        .segment_size = 16384,
+        .sync_write = true,
+        .mode = PPDB_MODE_LOCKED
+    };
+    strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
+    ppdb_error_t err = ppdb_wal_create(&config, &wal);
+    assert(err == PPDB_OK);
     assert(wal != NULL);
 
     // 测试写入记录
     const char* test_key = "test_key";
     const char* test_value = "test_value";
-    ppdb_error_t err = ppdb_wal_write(wal, (const uint8_t*)test_key, strlen(test_key),
-                                     (const uint8_t*)test_value, strlen(test_value));
+    err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, (const uint8_t*)test_key, strlen(test_key),
+                        (const uint8_t*)test_value, strlen(test_value));
     assert(err == PPDB_OK);
 
     // 关闭 WAL
     ppdb_wal_close(wal);
 
     // 重新打开 WAL 并恢复
-    ppdb_memtable_t* table = ppdb_memtable_create(4096);
+    ppdb_memtable_t* table = NULL;
+    err = ppdb_memtable_create(4096, &table);
+    assert(err == PPDB_OK);
     assert(table != NULL);
 
-    wal = ppdb_wal_create(test_dir, 16384);
+    err = ppdb_wal_create(&config, &wal);
+    assert(err == PPDB_OK);
     assert(wal != NULL);
 
-    err = ppdb_wal_recover(wal, table);
+    err = ppdb_wal_recover(wal, &table);
     assert(err == PPDB_OK);
 
     // 验证恢复的数据
@@ -176,16 +188,15 @@ void test_wal_basic_ops(void) {
     assert(err == PPDB_OK);
     assert(value_size == strlen(test_value));
 
-    // 分配足够的缓冲区并获取值
-    uint8_t* value_buf = (uint8_t*)malloc(value_size + 1);
-    assert(value_buf != NULL);
-    size_t actual_size = value_size;
+    // 获取值
+    uint8_t* value_buf = NULL;
+    size_t actual_size = 0;
     err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
-                           value_buf, &actual_size);
+                           &value_buf, &actual_size);
     assert(err == PPDB_OK);
     assert(actual_size == strlen(test_value));
-    value_buf[actual_size] = '\0';  // 添加字符串结束符
-    assert(strcmp((const char*)value_buf, test_value) == 0);
+    assert(value_buf != NULL);
+    assert(memcmp(value_buf, test_value, actual_size) == 0);
     free(value_buf);
 
     // 销毁资源

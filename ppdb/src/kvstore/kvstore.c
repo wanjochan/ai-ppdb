@@ -194,7 +194,7 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 
 ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
                              const uint8_t* key, size_t key_len,
-                             uint8_t* value, size_t* value_len) {
+                             uint8_t** value, size_t* value_len) {
     if (!store || !key || !value_len) return PPDB_ERR_NULL_POINTER;
 
     if (store->mode == PPDB_MODE_LOCKED) {
