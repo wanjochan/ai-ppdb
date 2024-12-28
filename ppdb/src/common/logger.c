@@ -17,7 +17,6 @@ void ppdb_log_init(const ppdb_log_config_t* config) {
         async_mode = config->async_mode;
         buffer_size = config->buffer_size;
         current_level = config->level;
-        
         if ((config->outputs & PPDB_LOG_FILE) && config->log_file) {
             log_file = fopen(config->log_file, "a");
         }
@@ -31,29 +30,12 @@ void ppdb_log_shutdown(void) {
     }
 }
 
-void ppdb_log_set_level(ppdb_log_level_t level) {
-    current_level = level;
-}
+void ppdb_log_set_level(ppdb_log_level_t level) { current_level = level; }
+void ppdb_log_enable(bool enable) { is_enabled = enable; }
+void ppdb_log_set_outputs(ppdb_log_output_t outputs) { current_outputs = outputs; }
+void ppdb_log_set_types(ppdb_log_type_t types) { current_types = types; }
 
-void ppdb_log_enable(bool enable) {
-    is_enabled = enable;
-}
-
-void ppdb_log_set_outputs(ppdb_log_output_t outputs) {
-    current_outputs = outputs;
-}
-
-void ppdb_log_set_types(ppdb_log_type_t types) {
-    current_types = types;
-}
-
-void ppdb_log_debug_type(ppdb_log_type_t type, const char* format, ...) {
-    if (!is_enabled || current_level > PPDB_LOG_DEBUG || !(current_types & type)) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, format);
+static inline void log_output(const char* format, va_list args) {
     if (current_outputs & PPDB_LOG_CONSOLE) {
         vprintf(format, args);
         printf("\n");
@@ -63,138 +45,32 @@ void ppdb_log_debug_type(ppdb_log_type_t type, const char* format, ...) {
         fprintf(log_file, "\n");
         fflush(log_file);
     }
-    va_end(args);
 }
 
-void ppdb_log_info_type(ppdb_log_type_t type, const char* format, ...) {
-    if (!is_enabled || current_level > PPDB_LOG_INFO || !(current_types & type)) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, format);
-    if (current_outputs & PPDB_LOG_CONSOLE) {
-        vprintf(format, args);
-        printf("\n");
-    }
-    if ((current_outputs & PPDB_LOG_FILE) && log_file) {
-        vfprintf(log_file, format, args);
-        fprintf(log_file, "\n");
-        fflush(log_file);
-    }
-    va_end(args);
+#define DEFINE_LOG_FUNC(name, level) \
+void ppdb_log_##name(const char* format, ...) { \
+    if (!is_enabled || current_level > PPDB_LOG_##level) return; \
+    va_list args; \
+    va_start(args, format); \
+    log_output(format, args); \
+    va_end(args); \
 }
 
-void ppdb_log_warn_type(ppdb_log_type_t type, const char* format, ...) {
-    if (!is_enabled || current_level > PPDB_LOG_WARN || !(current_types & type)) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, format);
-    if (current_outputs & PPDB_LOG_CONSOLE) {
-        vprintf(format, args);
-        printf("\n");
-    }
-    if ((current_outputs & PPDB_LOG_FILE) && log_file) {
-        vfprintf(log_file, format, args);
-        fprintf(log_file, "\n");
-        fflush(log_file);
-    }
-    va_end(args);
+#define DEFINE_LOG_TYPE_FUNC(name, level) \
+void ppdb_log_##name##_type(ppdb_log_type_t type, const char* format, ...) { \
+    if (!is_enabled || current_level > PPDB_LOG_##level || !(current_types & type)) return; \
+    va_list args; \
+    va_start(args, format); \
+    log_output(format, args); \
+    va_end(args); \
 }
 
-void ppdb_log_error_type(ppdb_log_type_t type, const char* format, ...) {
-    if (!is_enabled || current_level > PPDB_LOG_ERROR || !(current_types & type)) {
-        return;
-    }
+DEFINE_LOG_FUNC(debug, DEBUG)
+DEFINE_LOG_FUNC(info, INFO)
+DEFINE_LOG_FUNC(warn, WARN)
+DEFINE_LOG_FUNC(error, ERROR)
 
-    va_list args;
-    va_start(args, format);
-    if (current_outputs & PPDB_LOG_CONSOLE) {
-        vprintf(format, args);
-        printf("\n");
-    }
-    if ((current_outputs & PPDB_LOG_FILE) && log_file) {
-        vfprintf(log_file, format, args);
-        fprintf(log_file, "\n");
-        fflush(log_file);
-    }
-    va_end(args);
-}
-
-void ppdb_log_debug(const char* format, ...) {
-    if (!is_enabled || current_level > PPDB_LOG_DEBUG) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, format);
-    if (current_outputs & PPDB_LOG_CONSOLE) {
-        vprintf(format, args);
-        printf("\n");
-    }
-    if ((current_outputs & PPDB_LOG_FILE) && log_file) {
-        vfprintf(log_file, format, args);
-        fprintf(log_file, "\n");
-        fflush(log_file);
-    }
-    va_end(args);
-}
-
-void ppdb_log_info(const char* format, ...) {
-    if (!is_enabled || current_level > PPDB_LOG_INFO) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, format);
-    if (current_outputs & PPDB_LOG_CONSOLE) {
-        vprintf(format, args);
-        printf("\n");
-    }
-    if ((current_outputs & PPDB_LOG_FILE) && log_file) {
-        vfprintf(log_file, format, args);
-        fprintf(log_file, "\n");
-        fflush(log_file);
-    }
-    va_end(args);
-}
-
-void ppdb_log_warn(const char* format, ...) {
-    if (!is_enabled || current_level > PPDB_LOG_WARN) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, format);
-    if (current_outputs & PPDB_LOG_CONSOLE) {
-        vprintf(format, args);
-        printf("\n");
-    }
-    if ((current_outputs & PPDB_LOG_FILE) && log_file) {
-        vfprintf(log_file, format, args);
-        fprintf(log_file, "\n");
-        fflush(log_file);
-    }
-    va_end(args);
-}
-
-void ppdb_log_error(const char* format, ...) {
-    if (!is_enabled || current_level > PPDB_LOG_ERROR) {
-        return;
-    }
-
-    va_list args;
-    va_start(args, format);
-    if (current_outputs & PPDB_LOG_CONSOLE) {
-        vprintf(format, args);
-        printf("\n");
-    }
-    if ((current_outputs & PPDB_LOG_FILE) && log_file) {
-        vfprintf(log_file, format, args);
-        fprintf(log_file, "\n");
-        fflush(log_file);
-    }
-    va_end(args);
-} 
+DEFINE_LOG_TYPE_FUNC(debug, DEBUG)
+DEFINE_LOG_TYPE_FUNC(info, INFO)
+DEFINE_LOG_TYPE_FUNC(warn, WARN)
+DEFINE_LOG_TYPE_FUNC(error, ERROR) 
