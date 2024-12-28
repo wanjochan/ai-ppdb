@@ -4,60 +4,49 @@
 #include <cosmopolitan.h>
 #include "atomic_skiplist.h"
 
-// 分片的 MemTable
-typedef struct ppdb_memtable_shard_t {
-    atomic_skiplist_t* list;
-    size_t size_limit;
-    atomic_size_t current_size;
-    atomic_bool is_immutable;     // 是否为只读状态
-} ppdb_memtable_shard_t;
+// 分片配置
+typedef struct {
+    uint32_t shard_bits;       // 分片位数
+    uint32_t shard_count;      // 分片数量
+    uint32_t max_size;         // 每个分片的最大大小
+} shard_config_t;
 
-// 分片式 MemTable
-typedef struct ppdb_sharded_memtable_t {
-    size_t shard_count;           // 分片数量
-    ppdb_memtable_shard_t* shards;  // 分片数组
-    atomic_size_t total_size;     // 总大小
-    atomic_uint next_shard_index; // 下一个写入分片的索引
-} ppdb_sharded_memtable_t;
+// 分片内存表结构
+typedef struct {
+    shard_config_t config;     // 分片配置
+    atomic_skiplist_t** shards; // 分片数组
+    atomic_uint total_size;    // 总元素个数
+} sharded_memtable_t;
 
-// 创建分片式 MemTable
-ppdb_sharded_memtable_t* ppdb_sharded_memtable_create(
-    size_t shard_count,
-    size_t shard_size_limit);
+// 创建分片内存表
+sharded_memtable_t* sharded_memtable_create(const shard_config_t* config);
 
-// 销毁分片式 MemTable
-void ppdb_sharded_memtable_destroy(
-    ppdb_sharded_memtable_t* table);
+// 销毁分片内存表
+void sharded_memtable_destroy(sharded_memtable_t* table);
 
-// 写入键值对
-int ppdb_sharded_memtable_put(
-    ppdb_sharded_memtable_t* table,
-    const uint8_t* key, size_t key_len,
-    const uint8_t* value, size_t value_len);
-
-// 读取键值对
-int ppdb_sharded_memtable_get(
-    ppdb_sharded_memtable_t* table,
-    const uint8_t* key, size_t key_len,
-    uint8_t* value, size_t* value_len);
+// 插入键值对
+bool sharded_memtable_put(sharded_memtable_t* table, const char* key, uint32_t key_len,
+                         const void* value, uint32_t value_len);
 
 // 删除键值对
-int ppdb_sharded_memtable_delete(
-    ppdb_sharded_memtable_t* table,
-    const uint8_t* key, size_t key_len);
+bool sharded_memtable_delete(sharded_memtable_t* table, const char* key, uint32_t key_len);
 
-// 获取总大小
-size_t ppdb_sharded_memtable_size(
-    ppdb_sharded_memtable_t* table);
+// 查找键值对
+bool sharded_memtable_get(sharded_memtable_t* table, const char* key, uint32_t key_len,
+                         void** value, uint32_t* value_len);
 
-// 将分片转换为只读状态
-int ppdb_sharded_memtable_make_immutable(
-    ppdb_sharded_memtable_t* table,
-    size_t shard_index);
+// 获取总元素个数
+uint32_t sharded_memtable_size(sharded_memtable_t* table);
 
-// 检查分片是否为只读状态
-bool ppdb_sharded_memtable_is_immutable(
-    ppdb_sharded_memtable_t* table,
-    size_t shard_index);
+// 获取指定分片的元素个数
+uint32_t sharded_memtable_shard_size(sharded_memtable_t* table, uint32_t shard_index);
+
+// 清空分片内存表
+void sharded_memtable_clear(sharded_memtable_t* table);
+
+// 遍历分片内存表
+typedef bool (*memtable_visitor_t)(const char* key, uint32_t key_len,
+                                 const void* value, uint32_t value_len, void* ctx);
+void sharded_memtable_foreach(sharded_memtable_t* table, memtable_visitor_t visitor, void* ctx);
 
 #endif // PPDB_SHARDED_MEMTABLE_H

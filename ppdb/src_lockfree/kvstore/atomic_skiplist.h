@@ -2,72 +2,63 @@
 #define PPDB_ATOMIC_SKIPLIST_H
 
 #include <cosmopolitan.h>
+#include "ref_count.h"
 
-// 标记位，用于并发操作
-#define PPDB_MARK_MASK    0x1
-#define PPDB_FLAG_MASK    0x2
-#define PPDB_NODEREF_MASK (~0x3)
+// 最大层数
+#define MAX_LEVEL 32
 
-// 跳表节点
-typedef struct atomic_skipnode_t {
-    uint8_t* key;
-    size_t key_len;
-    uint8_t* value;
-    size_t value_len;
-    atomic_ulong version;      // 版本号，用于 ABA 问题
-    _Atomic(struct atomic_skipnode_t*) forward[];  // 原子指针数组
-} atomic_skipnode_t;
+// 跳表节点状态
+typedef enum {
+    NODE_VALID = 0,    // 节点有效
+    NODE_DELETED = 1,  // 节点已删除
+    NODE_INSERTING = 2 // 节点正在插入
+} node_state_t;
+
+// 跳表节点结构
+typedef struct skiplist_node {
+    ref_count_t* ref_count;                     // 引用计数
+    char* key;                                  // 键
+    uint32_t key_len;                          // 键长度
+    void* value;                               // 值
+    uint32_t value_len;                        // 值长度
+    atomic_uint state;                         // 节点状态
+    uint32_t level;                            // 节点层数
+    _Atomic(struct skiplist_node*) next[];     // 后继节点数组
+} skiplist_node_t;
 
 // 跳表结构
-typedef struct atomic_skiplist_t {
-    int max_level;            // 最大层数
-    atomic_int level;         // 当前最大层数
-    atomic_size_t size;       // 节点数量
-    atomic_skipnode_t* head;  // 头节点
+typedef struct {
+    skiplist_node_t* head;     // 头节点
+    atomic_uint size;          // 元素个数
+    uint32_t max_level;        // 最大层数
 } atomic_skiplist_t;
 
-// 迭代器结构
-typedef struct atomic_skiplist_iter_t {
-    atomic_skiplist_t* list;
-    atomic_skipnode_t* current;
-    atomic_ulong version;     // 用于一致性检查
-} atomic_skiplist_iter_t;
-
 // 创建跳表
-atomic_skiplist_t* atomic_skiplist_create(int max_level);
+atomic_skiplist_t* atomic_skiplist_create(uint32_t max_level);
 
 // 销毁跳表
 void atomic_skiplist_destroy(atomic_skiplist_t* list);
 
-// 插入/更新键值对
-// 返回值：0表示成功，非0表示失败
-int atomic_skiplist_put(atomic_skiplist_t* list,
-                       const uint8_t* key, size_t key_len,
-                       const uint8_t* value, size_t value_len);
-
-// 获取键对应的值
-// 返回值：0表示成功，1表示未找到，其他值表示错误
-int atomic_skiplist_get(atomic_skiplist_t* list,
-                       const uint8_t* key, size_t key_len,
-                       uint8_t* value, size_t* value_len);
+// 插入键值对
+bool atomic_skiplist_insert(atomic_skiplist_t* list, const char* key, uint32_t key_len, 
+                          const void* value, uint32_t value_len);
 
 // 删除键值对
-// 返回值：0表示成功，1表示未找到，其他值表示错误
-int atomic_skiplist_delete(atomic_skiplist_t* list,
-                          const uint8_t* key, size_t key_len);
+bool atomic_skiplist_delete(atomic_skiplist_t* list, const char* key, uint32_t key_len);
 
-// 获取跳表大小
-size_t atomic_skiplist_size(atomic_skiplist_t* list);
+// 查找键值对
+bool atomic_skiplist_find(atomic_skiplist_t* list, const char* key, uint32_t key_len,
+                         void** value, uint32_t* value_len);
 
-// 创建迭代器
-atomic_skiplist_iter_t* atomic_skiplist_iter_create(atomic_skiplist_t* list);
+// 获取元素个数
+uint32_t atomic_skiplist_size(atomic_skiplist_t* list);
 
-// 销毁迭代器
-void atomic_skiplist_iter_destroy(atomic_skiplist_iter_t* iter);
+// 清空跳表
+void atomic_skiplist_clear(atomic_skiplist_t* list);
 
-// 迭代器获取下一个元素
-bool atomic_skiplist_iter_next(atomic_skiplist_iter_t* iter,
-                             uint8_t** key, size_t* key_len,
-                             uint8_t** value, size_t* value_len);
+// 遍历跳表
+typedef bool (*skiplist_visitor_t)(const char* key, uint32_t key_len, 
+                                 const void* value, uint32_t value_len, void* ctx);
+void atomic_skiplist_foreach(atomic_skiplist_t* list, skiplist_visitor_t visitor, void* ctx);
 
 #endif // PPDB_ATOMIC_SKIPLIST_H

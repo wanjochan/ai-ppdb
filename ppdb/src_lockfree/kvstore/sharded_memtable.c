@@ -1,152 +1,134 @@
-#include <stdlib.h>
-#include <string.h>
+#include <cosmopolitan.h>
 #include "sharded_memtable.h"
+#include "ppdb/logger.h"
 
-// 创建分片式 MemTable
-ppdb_sharded_memtable_t* ppdb_sharded_memtable_create(
-    size_t shard_count,
-    size_t shard_size_limit) {
-    
-    ppdb_sharded_memtable_t* table = malloc(sizeof(ppdb_sharded_memtable_t));
-    if (!table) return NULL;
+// 计算键的哈希值
+static uint32_t hash_key(const char* key, uint32_t key_len) {
+    uint32_t hash = 5381;
+    for (uint32_t i = 0; i < key_len; i++) {
+        hash = ((hash << 5) + hash) + key[i];
+    }
+    return hash;
+}
 
-    table->shard_count = shard_count;
-    table->shards = malloc(shard_count * sizeof(ppdb_memtable_shard_t));
-    if (!table->shards) {
-        free(table);
+// 根据键计算分片索引
+static uint32_t get_shard_index(const sharded_memtable_t* table,
+                              const char* key, uint32_t key_len) {
+    uint32_t hash = hash_key(key, key_len);
+    return hash & ((1 << table->config.shard_bits) - 1);
+}
+
+// 创建分片内存表
+sharded_memtable_t* sharded_memtable_create(const shard_config_t* config) {
+    sharded_memtable_t* table = (sharded_memtable_t*)malloc(sizeof(sharded_memtable_t));
+    if (!table) {
+        ppdb_log_error("Failed to allocate sharded memtable");
         return NULL;
     }
 
-    atomic_store(&table->total_size, 0);
-    atomic_store(&table->next_shard_index, 0);
+    // 复制配置
+    memcpy(&table->config, config, sizeof(shard_config_t));
+
+    // 分配分片数组
+    table->shards = (atomic_skiplist_t**)malloc(config->shard_count * sizeof(atomic_skiplist_t*));
+    if (!table->shards) {
+        free(table);
+        ppdb_log_error("Failed to allocate shards array");
+        return NULL;
+    }
 
     // 初始化每个分片
-    for (size_t i = 0; i < shard_count; i++) {
-        table->shards[i].list = atomic_skiplist_create(32);  // 最大32层
-        if (!table->shards[i].list) {
-            // 清理已创建的分片
-            for (size_t j = 0; j < i; j++) {
-                atomic_skiplist_destroy(table->shards[j].list);
+    for (uint32_t i = 0; i < config->shard_count; i++) {
+        table->shards[i] = atomic_skiplist_create(MAX_LEVEL);
+        if (!table->shards[i]) {
+            for (uint32_t j = 0; j < i; j++) {
+                atomic_skiplist_destroy(table->shards[j]);
             }
             free(table->shards);
             free(table);
+            ppdb_log_error("Failed to create skiplist for shard %u", i);
             return NULL;
         }
-        table->shards[i].size_limit = shard_size_limit;
-        atomic_store(&table->shards[i].current_size, 0);
-        atomic_store(&table->shards[i].is_immutable, false);
     }
 
+    atomic_init(&table->total_size, 0);
     return table;
 }
 
-// 销毁分片式 MemTable
-void ppdb_sharded_memtable_destroy(ppdb_sharded_memtable_t* table) {
+// 销毁分片内存表
+void sharded_memtable_destroy(sharded_memtable_t* table) {
     if (!table) return;
 
-    if (table->shards) {
-        for (size_t i = 0; i < table->shard_count; i++) {
-            atomic_skiplist_destroy(table->shards[i].list);
-        }
-        free(table->shards);
+    // 销毁每个分片
+    for (uint32_t i = 0; i < table->config.shard_count; i++) {
+        atomic_skiplist_destroy(table->shards[i]);
     }
+
+    free(table->shards);
     free(table);
 }
 
-// 计算键的分片索引
-static size_t get_shard_index(ppdb_sharded_memtable_t* table,
-                            const uint8_t* key, size_t key_len) {
-    // TODO: 实现更好的分片策略
-    // 当前简单地对键的第一个字节取模
-    return key[0] % table->shard_count;
-}
+// 插入键值对
+bool sharded_memtable_put(sharded_memtable_t* table, const char* key, uint32_t key_len,
+                         const void* value, uint32_t value_len) {
+    uint32_t shard_index = get_shard_index(table, key, key_len);
+    atomic_skiplist_t* shard = table->shards[shard_index];
 
-// 写入键值对
-int ppdb_sharded_memtable_put(ppdb_sharded_memtable_t* table,
-                             const uint8_t* key, size_t key_len,
-                             const uint8_t* value, size_t value_len) {
-    if (!table || !key || !value) return -1;
-
-    size_t shard_idx = get_shard_index(table, key, key_len);
-    ppdb_memtable_shard_t* shard = &table->shards[shard_idx];
-
-    // 检查分片是否为只读
-    if (atomic_load(&shard->is_immutable)) {
-        return -1;
+    // 检查分片大小是否超过限制
+    if (atomic_skiplist_size(shard) >= table->config.max_size) {
+        ppdb_log_error("Shard %u is full", shard_index);
+        return false;
     }
 
-    // 检查大小限制
-    size_t entry_size = key_len + value_len;
-    size_t new_size = atomic_fetch_add(&shard->current_size, entry_size);
-    if (new_size + entry_size > shard->size_limit) {
-        atomic_fetch_sub(&shard->current_size, entry_size);
-        return -1;
+    if (atomic_skiplist_insert(shard, key, key_len, value, value_len)) {
+        atomic_fetch_add_explicit(&table->total_size, 1, memory_order_relaxed);
+        return true;
     }
-
-    // 写入跳表
-    int ret = atomic_skiplist_put(shard->list, key, key_len, value, value_len);
-    if (ret != 0) {
-        atomic_fetch_sub(&shard->current_size, entry_size);
-        return ret;
-    }
-
-    atomic_fetch_add(&table->total_size, entry_size);
-    return 0;
-}
-
-// 读取键值对
-int ppdb_sharded_memtable_get(ppdb_sharded_memtable_t* table,
-                             const uint8_t* key, size_t key_len,
-                             uint8_t* value, size_t* value_len) {
-    if (!table || !key || !value || !value_len) return -1;
-
-    size_t shard_idx = get_shard_index(table, key, key_len);
-    ppdb_memtable_shard_t* shard = &table->shards[shard_idx];
-
-    return atomic_skiplist_get(shard->list, key, key_len, value, value_len);
+    return false;
 }
 
 // 删除键值对
-int ppdb_sharded_memtable_delete(ppdb_sharded_memtable_t* table,
-                                const uint8_t* key, size_t key_len) {
-    if (!table || !key) return -1;
+bool sharded_memtable_delete(sharded_memtable_t* table, const char* key, uint32_t key_len) {
+    uint32_t shard_index = get_shard_index(table, key, key_len);
+    atomic_skiplist_t* shard = table->shards[shard_index];
 
-    size_t shard_idx = get_shard_index(table, key, key_len);
-    ppdb_memtable_shard_t* shard = &table->shards[shard_idx];
-
-    // 检查分片是否为只读
-    if (atomic_load(&shard->is_immutable)) {
-        return -1;
+    if (atomic_skiplist_delete(shard, key, key_len)) {
+        atomic_fetch_sub_explicit(&table->total_size, 1, memory_order_relaxed);
+        return true;
     }
-
-    return atomic_skiplist_delete(shard->list, key, key_len);
+    return false;
 }
 
-// 获取总大小
-size_t ppdb_sharded_memtable_size(ppdb_sharded_memtable_t* table) {
-    if (!table) return 0;
-    return atomic_load(&table->total_size);
+// 查找键值对
+bool sharded_memtable_get(sharded_memtable_t* table, const char* key, uint32_t key_len,
+                         void** value, uint32_t* value_len) {
+    uint32_t shard_index = get_shard_index(table, key, key_len);
+    atomic_skiplist_t* shard = table->shards[shard_index];
+    return atomic_skiplist_find(shard, key, key_len, value, value_len);
 }
 
-// 将分片转换为只读状态
-int ppdb_sharded_memtable_make_immutable(ppdb_sharded_memtable_t* table,
-                                        size_t shard_index) {
-    if (!table || shard_index >= table->shard_count) return -1;
+// 获取总元素个数
+uint32_t sharded_memtable_size(sharded_memtable_t* table) {
+    return atomic_load_explicit(&table->total_size, memory_order_relaxed);
+}
 
-    bool expected = false;
-    bool desired = true;
-    
-    // 原子地将分片设置为只读状态
-    if (atomic_compare_exchange_strong(&table->shards[shard_index].is_immutable,
-                                     &expected, desired)) {
-        return 0;
+// 获取指定分片的元素个数
+uint32_t sharded_memtable_shard_size(sharded_memtable_t* table, uint32_t shard_index) {
+    if (shard_index >= table->config.shard_count) return 0;
+    return atomic_skiplist_size(table->shards[shard_index]);
+}
+
+// 清空分片内存表
+void sharded_memtable_clear(sharded_memtable_t* table) {
+    for (uint32_t i = 0; i < table->config.shard_count; i++) {
+        atomic_skiplist_clear(table->shards[i]);
     }
-    return -1;  // 已经是只读状态
+    atomic_store_explicit(&table->total_size, 0, memory_order_relaxed);
 }
 
-// 检查分片是否为只读状态
-bool ppdb_sharded_memtable_is_immutable(ppdb_sharded_memtable_t* table,
-                                       size_t shard_index) {
-    if (!table || shard_index >= table->shard_count) return true;
-    return atomic_load(&table->shards[shard_index].is_immutable);
+// 遍历分片内存表
+void sharded_memtable_foreach(sharded_memtable_t* table, memtable_visitor_t visitor, void* ctx) {
+    for (uint32_t i = 0; i < table->config.shard_count; i++) {
+        atomic_skiplist_foreach(table->shards[i], visitor, ctx);
+    }
 }
