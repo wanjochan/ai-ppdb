@@ -19,35 +19,48 @@ static int test_memtable_create_destroy(void) {
 
 // Test MemTable basic operations
 static int test_memtable_basic_ops(void) {
-    ppdb_log_info("Testing MemTable basic operations...");
-    
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(4096, &table);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create MemTable");
-    
-    // Put key-value pair
-    const uint8_t* key = (const uint8_t*)"test_key";
-    const uint8_t* value = (const uint8_t*)"test_value";
-    err = ppdb_memtable_put(table, key, strlen((const char*)key), value, strlen((const char*)value));
-    TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
-    
-    // Get value
-    uint8_t* buf = NULL;
-    size_t size = 0;
-    err = ppdb_memtable_get(table, key, strlen((const char*)key), &buf, &size);
-    TEST_ASSERT(err == PPDB_OK, "Failed to get value");
-    TEST_ASSERT(size == strlen((const char*)value), "Value size mismatch");
-    TEST_ASSERT(memcmp(buf, value, size) == 0, "Value content mismatch");
-    free(buf);  // 释放分配的内存
-    
-    // 测试缓冲区太小的情况
-    uint8_t* small_buf = NULL;
-    size_t small_size = 0;
-    err = ppdb_memtable_get(table, key, strlen((const char*)key), &small_buf, &small_size);
-    TEST_ASSERT(err == PPDB_OK, "Should succeed with dynamically allocated buffer");
-    TEST_ASSERT(small_size == strlen((const char*)value), "Should return correct buffer size");
-    free(small_buf);  // 释放分配的内存
-    
+    printf("Testing MemTable basic operations...\n");
+
+    // 创建 MemTable
+    ppdb_memtable_t* table = ppdb_memtable_create(4096);
+    assert(table != NULL);
+
+    // 测试插入和获取
+    const char* test_key = "test_key";
+    const char* test_value = "test_value";
+    ppdb_error_t err = ppdb_memtable_put(table, (const uint8_t*)test_key, strlen(test_key),
+                                        (const uint8_t*)test_value, strlen(test_value));
+    assert(err == PPDB_OK);
+
+    // 先获取值的大小
+    size_t value_size = 0;
+    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
+                           NULL, &value_size);
+    assert(err == PPDB_OK);
+    assert(value_size == strlen(test_value));
+
+    // 分配足够的缓冲区并获取值
+    uint8_t* value_buf = (uint8_t*)malloc(value_size + 1);
+    assert(value_buf != NULL);
+    size_t actual_size = value_size;
+    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
+                           value_buf, &actual_size);
+    assert(err == PPDB_OK);
+    assert(actual_size == strlen(test_value));
+    value_buf[actual_size] = '\0';  // 添加字符串结束符
+    assert(strcmp((const char*)value_buf, test_value) == 0);
+    free(value_buf);
+
+    // 测试删除
+    err = ppdb_memtable_delete(table, (const uint8_t*)test_key, strlen(test_key));
+    assert(err == PPDB_OK);
+
+    // 验证删除后无法获取
+    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
+                           NULL, &value_size);
+    assert(err == PPDB_ERR_NOT_FOUND);
+
+    // 销毁 MemTable
     ppdb_memtable_destroy(table);
     return 0;
 }
@@ -71,10 +84,11 @@ static int test_memtable_delete(void) {
     TEST_ASSERT(err == PPDB_OK, "Failed to delete key");
     
     // Try to get deleted key
-    uint8_t buf[256] = {0};
+    uint8_t* buf = NULL;
     size_t size = 0;
-    err = ppdb_memtable_get(table, key, strlen((const char*)key), buf, &size);
+    err = ppdb_memtable_get(table, key, strlen((const char*)key), &buf, &size);
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after deletion");
+    if (buf) free(buf);  // 如果获取成功，释放内存
     
     ppdb_memtable_destroy(table);
     return 0;
@@ -93,6 +107,13 @@ static int test_memtable_size_limit(void) {
     const uint8_t* value = (const uint8_t*)"test_value";
     err = ppdb_memtable_put(table, key, strlen((const char*)key), value, strlen((const char*)value));
     TEST_ASSERT(err == PPDB_ERR_FULL, "Should fail due to size limit");
+    
+    // Try to get the key (should not exist)
+    uint8_t* buf = NULL;
+    size_t size = 0;
+    err = ppdb_memtable_get(table, key, strlen((const char*)key), &buf, &size);
+    TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist");
+    if (buf) free(buf);  // 如果获取成功，释放内存
     
     ppdb_memtable_destroy(table);
     return 0;
@@ -145,16 +166,16 @@ static int test_memtable_iterator(void) {
                 memcmp(key, pairs[i][0], key_len) == 0 &&
                 memcmp(value, pairs[i][1], value_len) == 0) {
                 found = true;
+                count++;
                 break;
             }
         }
-        TEST_ASSERT(found, "Iterator returned unexpected key-value pair");
+        TEST_ASSERT(found, "Unexpected key-value pair in iterator");
         
-        count++;
         ppdb_memtable_iterator_next(iter);
     }
     
-    TEST_ASSERT(count == sizeof(pairs) / sizeof(pairs[0]), "Iterator count mismatch");
+    TEST_ASSERT(count == sizeof(pairs) / sizeof(pairs[0]), "Not all pairs were iterated");
     
     ppdb_memtable_iterator_destroy(iter);
     ppdb_memtable_destroy(table);

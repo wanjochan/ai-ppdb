@@ -78,27 +78,29 @@ ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table,
 
 ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* table,
                                        const uint8_t* key, size_t key_len,
-                                       uint8_t** value, size_t* value_len) {
-    if (!table || !key || !value || !value_len) return PPDB_ERR_NULL_POINTER;
+                                       uint8_t* value, size_t* value_len) {
+    if (!table || !key || !value_len) return PPDB_ERR_NULL_POINTER;
 
-    // 先获取值的大小
-    size_t temp_value_len = 0;
-    int ret = atomic_skiplist_get(table->list, key, key_len, NULL, &temp_value_len);
-    if (ret == -1) return PPDB_ERR_NOT_FOUND;
+    // 先查询值的大小
+    size_t required_size = 0;
+    int ret = atomic_skiplist_get(table->list, key, key_len, NULL, &required_size);
+    if (ret == 1) return PPDB_ERR_NOT_FOUND;
+    if (ret != 0) return PPDB_ERR_NO_MEMORY;
 
-    // 分配内存
-    *value = (uint8_t*)malloc(temp_value_len);
-    if (!*value) return PPDB_ERR_NO_MEMORY;
-
-    // 获取实际的值
-    *value_len = temp_value_len;
-    ret = atomic_skiplist_get(table->list, key, key_len, *value, value_len);
-    if (ret != 0) {
-        free(*value);
-        *value = NULL;
-        *value_len = 0;
-        return PPDB_ERR_NOT_FOUND;
+    // 检查缓冲区大小
+    if (!value) {
+        *value_len = required_size;
+        return PPDB_OK;
     }
+    if (*value_len < required_size) {
+        *value_len = required_size;
+        return PPDB_ERR_BUFFER_TOO_SMALL;
+    }
+
+    // 获取值
+    ret = atomic_skiplist_get(table->list, key, key_len, value, value_len);
+    if (ret == 1) return PPDB_ERR_NOT_FOUND;
+    if (ret != 0) return PPDB_ERR_NO_MEMORY;
 
     return PPDB_OK;
 }
@@ -111,16 +113,20 @@ ppdb_error_t ppdb_memtable_delete_lockfree(ppdb_memtable_t* table,
     uint8_t temp_value[1];
     size_t value_size = 0;
     int get_ret = atomic_skiplist_get(table->list, key, key_len, temp_value, &value_size);
-    if (get_ret == 1) return PPDB_ERR_NOT_FOUND;
+    if (get_ret != 0) return PPDB_ERR_NOT_FOUND;  // 任何非0返回值都表示未找到或错误
 
     // 删除键值对
     int ret = atomic_skiplist_delete(table->list, key, key_len);
-    if (ret == 1) return PPDB_ERR_NOT_FOUND;
-    if (ret != 0) return PPDB_ERR_NO_MEMORY;
+    if (ret != 0) return PPDB_ERR_NOT_FOUND;  // 任何非0返回值都表示未找到或错误
 
     // 更新当前大小
     size_t entry_size = key_len + value_size + sizeof(size_t) * 2;
-    atomic_fetch_sub_explicit(&table->current_size, entry_size, memory_order_release);
+    size_t current = atomic_load_explicit(&table->current_size, memory_order_acquire);
+    if (current >= entry_size) {
+        atomic_fetch_sub_explicit(&table->current_size, entry_size, memory_order_release);
+    } else {
+        atomic_store_explicit(&table->current_size, 0, memory_order_release);
+    }
 
     return PPDB_OK;
 }

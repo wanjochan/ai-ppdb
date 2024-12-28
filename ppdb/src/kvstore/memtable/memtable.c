@@ -108,38 +108,30 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
 // 读取键值对
 ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
                               const uint8_t* key, size_t key_len,
-                              uint8_t** value, size_t* value_len) {
-    if (!table || !key || !value || !value_len) {
-        return PPDB_ERR_NULL_POINTER;
+                              uint8_t* value, size_t* value_len) {
+    if (!table || !key || !value_len) return PPDB_ERR_NULL_POINTER;
+
+    // 先查询值的大小
+    size_t required_size = 0;
+    int ret = skiplist_get(table->list, key, key_len, NULL, &required_size);
+    if (ret == 1) return PPDB_ERR_NOT_FOUND;
+    if (ret != 0) return PPDB_ERR_NO_MEMORY;
+
+    // 检查缓冲区大小
+    if (!value) {
+        *value_len = required_size;
+        return PPDB_OK;
+    }
+    if (*value_len < required_size) {
+        *value_len = required_size;
+        return PPDB_ERR_BUFFER_TOO_SMALL;
     }
 
-    pthread_mutex_lock(&table->mutex);
+    // 获取值
+    ret = skiplist_get(table->list, key, key_len, value, value_len);
+    if (ret == 1) return PPDB_ERR_NOT_FOUND;
+    if (ret != 0) return PPDB_ERR_NO_MEMORY;
 
-    // 先获取值的大小
-    uint8_t temp_value[1];
-    size_t temp_value_len = 0;
-    int ret = skiplist_get(table->list, key, key_len, temp_value, &temp_value_len);
-    if (ret == 1) {
-        pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NOT_FOUND;
-    }
-
-    // 分配内存并复制值
-    *value = (uint8_t*)malloc(temp_value_len);
-    if (!*value) {
-        pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NO_MEMORY;
-    }
-
-    ret = skiplist_get(table->list, key, key_len, *value, value_len);
-    if (ret != 0) {
-        free(*value);
-        *value = NULL;
-        pthread_mutex_unlock(&table->mutex);
-        return ret == 1 ? PPDB_ERR_NOT_FOUND : PPDB_ERR_BUFFER_TOO_SMALL;
-    }
-
-    pthread_mutex_unlock(&table->mutex);
     return PPDB_OK;
 }
 

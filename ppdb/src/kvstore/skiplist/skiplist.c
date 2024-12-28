@@ -209,45 +209,56 @@ int skiplist_put(skiplist_t* list,
 }
 
 // 获取键对应的值
-int skiplist_get(skiplist_t* list,
-                const uint8_t* key, size_t key_len,
+int skiplist_get(skiplist_t* list, const uint8_t* key, size_t key_len,
                 uint8_t* value, size_t* value_len) {
-    if (!list || !key || !value || !value_len || key_len == 0) {
+    if (!list || !key || !value_len) {
         return -1;
     }
 
     pthread_mutex_lock(&list->mutex);
 
     skipnode_t* current = list->header;
-    for (int i = list->level - 1; i >= 0; i--) {
-        while (current->forward[i] &&
-               compare_key(current->forward[i]->key,
-                         current->forward[i]->key_len,
+    skipnode_t* target = NULL;
+    
+    // 从最高层开始查找
+    for (int32_t level = (int32_t)list->level - 1; level >= 0; level--) {
+        while (current->forward[level] &&
+               compare_key(current->forward[level]->key,
+                         current->forward[level]->key_len,
                          key, key_len) < 0) {
-            current = current->forward[i];
+            current = current->forward[level];
+        }
+        if (current->forward[level] &&
+            compare_key(current->forward[level]->key,
+                      current->forward[level]->key_len,
+                      key, key_len) == 0) {
+            target = current->forward[level];
         }
     }
 
-    current = current->forward[0];
-    if (!current || compare_key(current->key, current->key_len,
-                              key, key_len) != 0) {
+    // 如果没有找到节点
+    if (!target) {
         pthread_mutex_unlock(&list->mutex);
         return 1;  // 未找到
     }
 
-    // 检查缓冲区大小是否足够
-    if (*value_len < current->value_len) {
-        *value_len = current->value_len;
+    // 如果找到了节点,先返回值的大小
+    if (!value) {
+        *value_len = target->value_len;
+        pthread_mutex_unlock(&list->mutex);
+        return 0;  // 只是查询大小
+    }
+    if (*value_len < target->value_len) {
+        *value_len = target->value_len;
         pthread_mutex_unlock(&list->mutex);
         return -1;  // 缓冲区太小
     }
 
     // 复制值
-    memcpy(value, current->value, current->value_len);
-    *value_len = current->value_len;
-
+    memcpy(value, target->value, target->value_len);
+    *value_len = target->value_len;
     pthread_mutex_unlock(&list->mutex);
-    return 0;
+    return 0;  // 成功
 }
 
 // 删除键值对

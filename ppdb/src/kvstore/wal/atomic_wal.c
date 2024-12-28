@@ -6,6 +6,9 @@
 #include "ppdb/logger.h"
 #include "ppdb/fs.h"
 
+#define WAL_PATH_LENGTH 512  // 增加WAL路径长度限制
+#define WAL_SEGMENT_ID_MAX 999999999  // 最大段ID限制
+
 // WAL头部结构
 typedef struct {
     uint32_t magic;      // 魔数
@@ -38,12 +41,28 @@ ppdb_error_t ppdb_wal_create_lockfree(const ppdb_wal_config_t* config, ppdb_wal_
         return PPDB_ERR_INVALID_ARG;
     }
 
+    // 检查目录路径长度
+    size_t dir_path_len = strlen(config->dir_path);
+    if (dir_path_len > WAL_PATH_LENGTH - 20) {  // 预留足够空间给文件名
+        ppdb_log_error("Directory path too long: %s", config->dir_path);
+        return PPDB_ERR_PATH_TOO_LONG;
+    }
+
     ppdb_log_info("Creating WAL at: %s", config->dir_path);
 
     ppdb_wal_t* new_wal = (ppdb_wal_t*)malloc(sizeof(ppdb_wal_t));
     if (!new_wal) {
         ppdb_log_error("Failed to allocate WAL");
         return PPDB_ERR_NO_MEMORY;
+    }
+
+    // 构造WAL文件路径
+    char wal_path[WAL_PATH_LENGTH];
+    int n = snprintf(wal_path, sizeof(wal_path), "%s/wal", config->dir_path);
+    if (n < 0 || (size_t)n >= sizeof(wal_path)) {
+        ppdb_log_error("WAL path too long: %s/wal", config->dir_path);
+        free(new_wal);
+        return PPDB_ERR_PATH_TOO_LONG;
     }
 
     strncpy(new_wal->dir_path, config->dir_path, MAX_PATH_LENGTH - 1);
@@ -77,9 +96,14 @@ ppdb_error_t ppdb_wal_create_lockfree(const ppdb_wal_config_t* config, ppdb_wal_
         closedir(dir);
     }
 
-    char filename[MAX_PATH_LENGTH];
-    snprintf(filename, sizeof(filename), "%s/%010zu.log",
+    char filename[WAL_PATH_LENGTH];
+    n = snprintf(filename, sizeof(filename), "%s/%010zu.log",
              new_wal->dir_path, atomic_load(&new_wal->segment_id));
+    if (n < 0 || (size_t)n >= sizeof(filename)) {
+        ppdb_log_error("WAL filename too long");
+        free(new_wal);
+        return PPDB_ERR_PATH_TOO_LONG;
+    }
 
     int fd = open(filename, O_RDWR | O_CREAT, 0644);
     if (fd == -1) {
@@ -127,8 +151,20 @@ void ppdb_wal_destroy_lockfree(ppdb_wal_t* wal) {
         struct dirent* entry;
         while ((entry = readdir(dir)) != NULL) {
             if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-            char path[MAX_PATH_LENGTH];
-            snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+            
+            // 检查文件名长度
+            size_t name_len = strlen(entry->d_name);
+            if (strlen(wal->dir_path) + name_len + 2 > WAL_PATH_LENGTH) {
+                ppdb_log_error("Path too long for file: %s", entry->d_name);
+                continue;
+            }
+            
+            char path[WAL_PATH_LENGTH];
+            int n = snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+            if (n < 0 || (size_t)n >= sizeof(path)) {
+                ppdb_log_error("Path too long for file: %s", entry->d_name);
+                continue;
+            }
             unlink(path);
         }
         closedir(dir);
@@ -159,6 +195,13 @@ ppdb_error_t ppdb_wal_write_lockfree(ppdb_wal_t* wal, ppdb_wal_record_type_t typ
         return PPDB_ERR_INVALID_ARG;
     }
 
+    // 检查段ID是否超出限制
+    size_t current_id = atomic_load(&wal->segment_id);
+    if (current_id >= WAL_SEGMENT_ID_MAX) {
+        ppdb_log_error("WAL segment ID overflow: %zu", current_id);
+        return PPDB_ERR_LIMIT_EXCEEDED;
+    }
+
     ppdb_wal_record_header_t header = {
         .type = type,
         .key_size = key_size,
@@ -174,9 +217,20 @@ ppdb_error_t ppdb_wal_write_lockfree(ppdb_wal_t* wal, ppdb_wal_record_type_t typ
 
         if (new_size > wal->segment_size) {
             // 需要创建新段
-            char filename[MAX_PATH_LENGTH];
+            char filename[WAL_PATH_LENGTH];
             size_t new_id = atomic_fetch_add(&wal->segment_id, 1) + 1;
-            snprintf(filename, sizeof(filename), "%s/%010zu.log", wal->dir_path, new_id);
+            
+            // 检查新段ID是否超出限制
+            if (new_id > WAL_SEGMENT_ID_MAX) {
+                ppdb_log_error("WAL segment ID overflow: %zu", new_id);
+                return PPDB_ERR_LIMIT_EXCEEDED;
+            }
+
+            int n = snprintf(filename, sizeof(filename), "%s/%010zu.log", wal->dir_path, new_id);
+            if (n < 0 || (size_t)n >= sizeof(filename)) {
+                ppdb_log_error("WAL filename too long");
+                return PPDB_ERR_PATH_TOO_LONG;
+            }
 
             int new_fd = open(filename, O_RDWR | O_CREAT, 0644);
             if (new_fd == -1) return PPDB_ERR_IO;
@@ -188,7 +242,8 @@ ppdb_error_t ppdb_wal_write_lockfree(ppdb_wal_t* wal, ppdb_wal_record_type_t typ
                 .reserved = 0
             };
 
-            if (write(new_fd, &wal_header, sizeof(wal_header)) != sizeof(wal_header)) {
+            ssize_t written = write(new_fd, &wal_header, sizeof(wal_header));
+            if (written < 0 || (size_t)written != sizeof(wal_header)) {
                 close(new_fd);
                 return PPDB_ERR_IO;
             }
@@ -209,9 +264,10 @@ ppdb_error_t ppdb_wal_write_lockfree(ppdb_wal_t* wal, ppdb_wal_record_type_t typ
     if (fd < 0) return PPDB_ERR_IO;
 
     // 写入记录
-    if (write(fd, &header, sizeof(header)) != sizeof(header)) return PPDB_ERR_IO;
-    if (write(fd, key, key_size) != key_size) return PPDB_ERR_IO;
-    if (type == PPDB_WAL_RECORD_PUT && write(fd, value, value_size) != value_size) return PPDB_ERR_IO;
+    ssize_t written;
+    if ((written = write(fd, &header, sizeof(header))) < 0 || (size_t)written != sizeof(header)) return PPDB_ERR_IO;
+    if ((written = write(fd, key, key_size)) < 0 || (size_t)written != key_size) return PPDB_ERR_IO;
+    if (type == PPDB_WAL_RECORD_PUT && ((written = write(fd, value, value_size)) < 0 || (size_t)written != value_size)) return PPDB_ERR_IO;
 
     if (wal->sync_write) fsync(fd);
 
@@ -232,14 +288,26 @@ ppdb_error_t ppdb_wal_recover_lockfree(ppdb_wal_t* wal, ppdb_memtable_t** table)
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_type != DT_REG || !strstr(entry->d_name, ".log")) continue;
 
-        char path[MAX_PATH_LENGTH];
-        snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+        // 检查文件名长度
+        size_t name_len = strlen(entry->d_name);
+        if (strlen(wal->dir_path) + name_len + 2 > WAL_PATH_LENGTH) {
+            ppdb_log_error("Path too long for file: %s", entry->d_name);
+            continue;
+        }
+
+        char path[WAL_PATH_LENGTH];
+        int n = snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+        if (n < 0 || (size_t)n >= sizeof(path)) {
+            ppdb_log_error("Path too long for file: %s", entry->d_name);
+            continue;
+        }
 
         int fd = open(path, O_RDONLY);
         if (fd == -1) continue;
 
         ppdb_wal_header_t header;
-        if (read(fd, &header, sizeof(header)) != sizeof(header) || header.magic != WAL_MAGIC) {
+        ssize_t read_size = read(fd, &header, sizeof(header));
+        if (read_size < 0 || (size_t)read_size != sizeof(header) || header.magic != WAL_MAGIC) {
             close(fd);
             continue;
         }
@@ -296,12 +364,13 @@ ppdb_error_t ppdb_wal_recover_lockfree(ppdb_wal_t* wal, ppdb_memtable_t** table)
 ppdb_error_t ppdb_wal_archive_lockfree(ppdb_wal_t* wal) {
     if (!wal) return PPDB_ERR_INVALID_ARG;
 
+    size_t current_id = atomic_load(&wal->segment_id);
+    if (current_id == 0) return PPDB_OK;  // 没有需要归档的文件
+
     DIR* dir = opendir(wal->dir_path);
-    if (!dir) return PPDB_OK;
+    if (!dir) return PPDB_ERR_IO;
 
     struct dirent* entry;
-    size_t current_id = atomic_load(&wal->segment_id);
-
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_type != DT_REG || !strstr(entry->d_name, ".log")) continue;
 
@@ -309,8 +378,19 @@ ppdb_error_t ppdb_wal_archive_lockfree(ppdb_wal_t* wal) {
         unsigned long id = strtoul(entry->d_name, &end, 10);
         if (end == entry->d_name || id >= current_id) continue;
 
-        char path[MAX_PATH_LENGTH];
-        snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+        // 检查文件名长度
+        size_t name_len = strlen(entry->d_name);
+        if (strlen(wal->dir_path) + name_len + 2 > WAL_PATH_LENGTH) {
+            ppdb_log_error("Path too long for file: %s", entry->d_name);
+            continue;
+        }
+
+        char path[WAL_PATH_LENGTH];
+        int n = snprintf(path, sizeof(path), "%s/%s", wal->dir_path, entry->d_name);
+        if (n < 0 || (size_t)n >= sizeof(path)) {
+            ppdb_log_error("Path too long for file: %s", entry->d_name);
+            continue;
+        }
         unlink(path);
     }
 

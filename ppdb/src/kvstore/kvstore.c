@@ -194,16 +194,17 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 
 ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
                              const uint8_t* key, size_t key_len,
-                             uint8_t** value, size_t* value_len) {
-    if (!store || !key || !value || !value_len || key_len == 0) 
-        return PPDB_ERR_NULL_POINTER;
+                             uint8_t* value, size_t* value_len) {
+    if (!store || !key || !value_len) return PPDB_ERR_NULL_POINTER;
 
-    lock_if_needed(store);
-    ppdb_error_t err = store->mode == PPDB_MODE_LOCKFREE ?
-        ppdb_memtable_get_lockfree(store->table, key, key_len, value, value_len) :
-        ppdb_memtable_get(store->table, key, key_len, value, value_len);
-    unlock_if_needed(store);
-    return err;
+    if (store->mode == PPDB_MODE_LOCKED) {
+        pthread_mutex_lock(&store->mutex);
+        ppdb_error_t ret = ppdb_memtable_get(store->table, key, key_len, value, value_len);
+        pthread_mutex_unlock(&store->mutex);
+        return ret;
+    } else {
+        return ppdb_memtable_get_lockfree(store->table, key, key_len, value, value_len);
+    }
 }
 
 ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,

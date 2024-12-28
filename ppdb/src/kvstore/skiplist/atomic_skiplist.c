@@ -126,15 +126,16 @@ int atomic_skiplist_get(atomic_skiplist_t* list, const uint8_t* key, size_t key_
             int cmp = compare_keys(key, key_len, next->key, next->key_len);
             if (cmp < 0) break;
             if (cmp == 0 && atomic_load(&next->state) == NODE_VALID) {
-                if (value == NULL) {
-                    // 只返回值的大小
+                // 如果找到了节点,先返回值的大小
+                if (!value) {
                     *value_len = next->value_len;
-                    return 0;
+                    return 0;  // 只是查询大小
                 }
                 if (*value_len < next->value_len) {
                     *value_len = next->value_len;
-                    return -2;  // 缓冲区太小
+                    return -1;  // 缓冲区太小
                 }
+                // 复制值
                 memcpy(value, next->value, next->value_len);
                 *value_len = next->value_len;
                 return 0;  // 成功
@@ -142,7 +143,7 @@ int atomic_skiplist_get(atomic_skiplist_t* list, const uint8_t* key, size_t key_
             current = next;
         } while (1);
     }
-    return -1;  // 未找到
+    return 1;  // 未找到
 }
 
 // 插入键值对

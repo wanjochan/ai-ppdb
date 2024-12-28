@@ -20,6 +20,7 @@ typedef enum {
     PPDB_ERR_EXISTS = -14,          // 已存在
     PPDB_ERR_NOT_SUPPORTED = -15,   // 不支持的操作
     PPDB_ERR_PATH_TOO_LONG = -16,   // 路径太长
+    PPDB_ERR_LIMIT_EXCEEDED = -17,  // 超出限制
 } ppdb_error_t;
 
 // 错误码转字符串
@@ -59,6 +60,8 @@ static inline const char* ppdb_error_string(ppdb_error_t err) {
             return "Write failed";
         case PPDB_ERR_PATH_TOO_LONG:
             return "Path too long";
+        case PPDB_ERR_LIMIT_EXCEEDED:
+            return "Limit exceeded";
         default:
             return "Unknown error";
     }

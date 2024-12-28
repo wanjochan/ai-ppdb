@@ -138,4 +138,58 @@ const test_suite_t wal_suite = {
     .name = "WAL",
     .cases = wal_test_cases,
     .num_cases = sizeof(wal_test_cases) / sizeof(wal_test_cases[0])
-}; 
+};
+
+void test_wal_basic_ops(void) {
+    printf("Testing WAL basic operations...\n");
+
+    // 创建 WAL
+    const char* test_dir = "test_wal_basic.db.wal";
+    cleanup_test_dir(test_dir);
+    ppdb_wal_t* wal = ppdb_wal_create(test_dir, 16384);
+    assert(wal != NULL);
+
+    // 测试写入记录
+    const char* test_key = "test_key";
+    const char* test_value = "test_value";
+    ppdb_error_t err = ppdb_wal_write(wal, (const uint8_t*)test_key, strlen(test_key),
+                                     (const uint8_t*)test_value, strlen(test_value));
+    assert(err == PPDB_OK);
+
+    // 关闭 WAL
+    ppdb_wal_close(wal);
+
+    // 重新打开 WAL 并恢复
+    ppdb_memtable_t* table = ppdb_memtable_create(4096);
+    assert(table != NULL);
+
+    wal = ppdb_wal_create(test_dir, 16384);
+    assert(wal != NULL);
+
+    err = ppdb_wal_recover(wal, table);
+    assert(err == PPDB_OK);
+
+    // 验证恢复的数据
+    size_t value_size = 0;
+    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
+                           NULL, &value_size);
+    assert(err == PPDB_OK);
+    assert(value_size == strlen(test_value));
+
+    // 分配足够的缓冲区并获取值
+    uint8_t* value_buf = (uint8_t*)malloc(value_size + 1);
+    assert(value_buf != NULL);
+    size_t actual_size = value_size;
+    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
+                           value_buf, &actual_size);
+    assert(err == PPDB_OK);
+    assert(actual_size == strlen(test_value));
+    value_buf[actual_size] = '\0';  // 添加字符串结束符
+    assert(strcmp((const char*)value_buf, test_value) == 0);
+    free(value_buf);
+
+    // 销毁资源
+    ppdb_wal_close(wal);
+    ppdb_memtable_destroy(table);
+    cleanup_test_dir(test_dir);
+} 
