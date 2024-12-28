@@ -26,6 +26,7 @@ PPDB (Peer-to-Peer Distributed Database) 是一个跨平台、自组织的分布
 - [SSTable 设计](design/sstable.md) - 持久化存储格式
 
 ### 3. API 文档
+- [命令行接口](api/CLI.md) - 命令行工具使用指南
 - [HTTP API](api/HTTP.md) - HTTP 接口文档
 - [存储引擎 API](api/STORAGE.md) - 存储引擎接口文档
 
@@ -33,11 +34,13 @@ PPDB (Peer-to-Peer Distributed Database) 是一个跨平台、自组织的分布
 - [测试计划](test/PLAN.md) - 整体测试策略和计划
 - [测试框架](test/FRAMEWORK.md) - 测试框架设计和规范
 - [测试用例](test/CASES.md) - 详细测试用例集
+- [性能测试](test/PERFORMANCE.md) - 性能测试报告和分析
 
 ### 5. 运维文档
 - [部署指南](ops/DEPLOY.md) - 部署和配置指南
 - [监控方案](ops/MONITOR.md) - 监控和告警方案
 - [运维手册](ops/MAINTAIN.md) - 日常运维手册
+- [故障恢复](ops/RECOVERY.md) - 故障处理和恢复流程
 
 ## 文档更新指南
 
