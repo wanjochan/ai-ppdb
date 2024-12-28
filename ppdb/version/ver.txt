@@ -1,0 +1,5 @@
+Version Information
+------------------
+Initial version file
+Created: 2024-01-09
+This file will be automatically updated by GitHub Actions. 
