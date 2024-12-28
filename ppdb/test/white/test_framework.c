@@ -1,6 +1,6 @@
 #include "test_framework.h"
 #include <ppdb/logger.h>
-#include "common/fs.h"
+#include <ppdb/fs.h>
 
 int run_test_suite(const test_suite_t* suite) {
     ppdb_log_info("Running test suite: %s", suite->name);

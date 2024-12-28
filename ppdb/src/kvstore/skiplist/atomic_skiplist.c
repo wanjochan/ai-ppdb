@@ -4,17 +4,17 @@
 #include "ppdb/ref_count.h"
 
 // 随机层数生成
-static uint32_t random_level(uint32_t max_level) {
+static uint32_t random_level(void) {
     uint32_t level = 1;
-    while ((rand() & 0xFFFF) < (0xFFFF >> 1) && level < max_level) {
+    while ((rand() & 0xFFFF) < (0xFFFF >> 1) && level < MAX_LEVEL) {
         level++;
     }
     return level;
 }
 
 // 创建跳表节点
-static skiplist_node_t* create_node(const char* key, uint32_t key_len,
-                                  const void* value, uint32_t value_len,
+static skiplist_node_t* create_node(const uint8_t* key, size_t key_len,
+                                  const uint8_t* value, size_t value_len,
                                   uint32_t level) {
     size_t node_size = sizeof(skiplist_node_t) + level * sizeof(_Atomic(skiplist_node_t*));
     skiplist_node_t* node = (skiplist_node_t*)malloc(node_size);
@@ -24,7 +24,7 @@ static skiplist_node_t* create_node(const char* key, uint32_t key_len,
     }
 
     // 分配并复制键
-    node->key = (char*)malloc(key_len);
+    node->key = (uint8_t*)malloc(key_len);
     if (!node->key) {
         free(node);
         ppdb_log_error("Failed to allocate key buffer");
@@ -65,11 +65,7 @@ static skiplist_node_t* create_node(const char* key, uint32_t key_len,
 }
 
 // 创建跳表
-atomic_skiplist_t* atomic_skiplist_create(uint32_t max_level) {
-    if (max_level > MAX_LEVEL) {
-        max_level = MAX_LEVEL;
-    }
-
+atomic_skiplist_t* atomic_skiplist_create(void) {
     atomic_skiplist_t* list = (atomic_skiplist_t*)malloc(sizeof(atomic_skiplist_t));
     if (!list) {
         ppdb_log_error("Failed to allocate skiplist");
@@ -77,7 +73,7 @@ atomic_skiplist_t* atomic_skiplist_create(uint32_t max_level) {
     }
 
     // 创建头节点
-    list->head = create_node("", 0, "", 0, max_level);
+    list->head = create_node((const uint8_t*)"", 0, (const uint8_t*)"", 0, MAX_LEVEL);
     if (!list->head) {
         free(list);
         ppdb_log_error("Failed to create head node");
@@ -85,7 +81,7 @@ atomic_skiplist_t* atomic_skiplist_create(uint32_t max_level) {
     }
 
     atomic_init(&list->size, 0);
-    list->max_level = max_level;
+    list->max_level = MAX_LEVEL;
     return list;
 }
 
@@ -103,17 +99,21 @@ void atomic_skiplist_destroy(atomic_skiplist_t* list) {
 }
 
 // 比较键
-static int compare_keys(const char* key1, uint32_t key1_len,
-                       const char* key2, uint32_t key2_len) {
-    uint32_t min_len = key1_len < key2_len ? key1_len : key2_len;
+static int compare_keys(const uint8_t* key1, size_t key1_len,
+                       const uint8_t* key2, size_t key2_len) {
+    size_t min_len = key1_len < key2_len ? key1_len : key2_len;
     int result = memcmp(key1, key2, min_len);
     if (result != 0) return result;
     return (int)key1_len - (int)key2_len;
 }
 
 // 查找键值对
-bool atomic_skiplist_find(atomic_skiplist_t* list, const char* key, uint32_t key_len,
-                         void** value, uint32_t* value_len) {
+int atomic_skiplist_get(atomic_skiplist_t* list, const uint8_t* key, size_t key_len,
+                       uint8_t* value, size_t* value_len) {
+    if (!list || !key || !value_len) {
+        return -1;
+    }
+
     skiplist_node_t* current = list->head;
     
     // 从最高层开始查找
@@ -126,19 +126,32 @@ bool atomic_skiplist_find(atomic_skiplist_t* list, const char* key, uint32_t key
             int cmp = compare_keys(key, key_len, next->key, next->key_len);
             if (cmp < 0) break;
             if (cmp == 0 && atomic_load(&next->state) == NODE_VALID) {
-                *value = next->value;
+                if (value == NULL) {
+                    // 只返回值的大小
+                    *value_len = next->value_len;
+                    return 0;
+                }
+                if (*value_len < next->value_len) {
+                    *value_len = next->value_len;
+                    return -2;  // 缓冲区太小
+                }
+                memcpy(value, next->value, next->value_len);
                 *value_len = next->value_len;
-                return true;
+                return 0;  // 成功
             }
             current = next;
         } while (1);
     }
-    return false;
+    return -1;  // 未找到
 }
 
 // 插入键值对
-bool atomic_skiplist_insert(atomic_skiplist_t* list, const char* key, uint32_t key_len,
-                          const void* value, uint32_t value_len) {
+int atomic_skiplist_put(atomic_skiplist_t* list, const uint8_t* key, size_t key_len,
+                       const uint8_t* value, size_t value_len) {
+    if (!list || !key || !value) {
+        return -1;
+    }
+
     skiplist_node_t* update[MAX_LEVEL];
     skiplist_node_t* current = list->head;
     skiplist_node_t* found = NULL;
@@ -155,7 +168,7 @@ bool atomic_skiplist_insert(atomic_skiplist_t* list, const char* key, uint32_t k
             if (compare_keys(key, key_len, next->key, next->key_len) == 0) {
                 if (atomic_load(&next->state) == NODE_VALID) {
                     // 键已存在且有效
-                    return false;
+                    return -3;
                 }
                 found = next;
                 update[i] = current;
@@ -178,7 +191,7 @@ bool atomic_skiplist_insert(atomic_skiplist_t* list, const char* key, uint32_t k
             void* new_value = malloc(value_len);
             if (!new_value) {
                 atomic_store(&found->state, NODE_DELETED);
-                return false;
+                return -4;
             }
             memcpy(new_value, value, value_len);
             void* old_value = found->value;
@@ -186,14 +199,14 @@ bool atomic_skiplist_insert(atomic_skiplist_t* list, const char* key, uint32_t k
             found->value_len = value_len;
             free(old_value);
             atomic_fetch_add_explicit(&list->size, 1, memory_order_relaxed);
-            return true;
+            return 0;
         }
     }
 
     // 创建新节点
-    uint32_t level = random_level(list->max_level);
+    uint32_t level = random_level();
     skiplist_node_t* new_node = create_node(key, key_len, value, value_len, level);
-    if (!new_node) return false;
+    if (!new_node) return -4;
 
     // 插入新节点
     for (uint32_t i = 0; i < level; i++) {
@@ -209,11 +222,15 @@ bool atomic_skiplist_insert(atomic_skiplist_t* list, const char* key, uint32_t k
     }
 
     atomic_fetch_add_explicit(&list->size, 1, memory_order_relaxed);
-    return true;
+    return 0;
 }
 
 // 删除键值对
-bool atomic_skiplist_delete(atomic_skiplist_t* list, const char* key, uint32_t key_len) {
+int atomic_skiplist_delete(atomic_skiplist_t* list, const uint8_t* key, size_t key_len) {
+    if (!list || !key) {
+        return -1;
+    }
+
     skiplist_node_t* update[MAX_LEVEL];
     skiplist_node_t* current = list->head;
     skiplist_node_t* target = NULL;
@@ -237,7 +254,7 @@ bool atomic_skiplist_delete(atomic_skiplist_t* list, const char* key, uint32_t k
     }
 
     if (!target || atomic_load(&target->state) != NODE_VALID) {
-        return false;
+        return -1;
     }
 
     // 标记节点为已删除
@@ -248,7 +265,7 @@ bool atomic_skiplist_delete(atomic_skiplist_t* list, const char* key, uint32_t k
         NODE_DELETED,
         memory_order_release,
         memory_order_relaxed)) {
-        return false;
+        return -1;
     }
 
     // 从每一层中删除节点
@@ -268,16 +285,18 @@ bool atomic_skiplist_delete(atomic_skiplist_t* list, const char* key, uint32_t k
 
     atomic_fetch_sub_explicit(&list->size, 1, memory_order_relaxed);
     ref_count_dec(target->ref_count);
-    return true;
+    return 0;
 }
 
 // 获取元素个数
-uint32_t atomic_skiplist_size(atomic_skiplist_t* list) {
+size_t atomic_skiplist_size(atomic_skiplist_t* list) {
     return atomic_load_explicit(&list->size, memory_order_relaxed);
 }
 
 // 清空跳表
 void atomic_skiplist_clear(atomic_skiplist_t* list) {
+    if (!list) return;
+
     skiplist_node_t* current = atomic_load(&list->head->next[0]);
     while (current) {
         skiplist_node_t* next = atomic_load(&current->next[0]);
@@ -294,6 +313,8 @@ void atomic_skiplist_clear(atomic_skiplist_t* list) {
 
 // 遍历跳表
 void atomic_skiplist_foreach(atomic_skiplist_t* list, skiplist_visitor_t visitor, void* ctx) {
+    if (!list || !visitor) return;
+
     skiplist_node_t* current = atomic_load(&list->head->next[0]);
     while (current) {
         if (atomic_load(&current->state) == NODE_VALID) {

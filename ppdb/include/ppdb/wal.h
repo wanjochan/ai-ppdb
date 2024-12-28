@@ -3,6 +3,7 @@
 
 #include <cosmopolitan.h>
 #include "error.h"
+#include "defs.h"
 #include "memtable.h"
 
 // WAL配置结构

@@ -42,7 +42,7 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 // 读取键值对
 ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
                              const uint8_t* key, size_t key_len,
-                             uint8_t* value, size_t* value_len);
+                             uint8_t** value, size_t* value_len);
 
 // 删除键值对
 ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,

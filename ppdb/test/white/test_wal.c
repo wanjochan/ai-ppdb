@@ -3,7 +3,7 @@
 #include <ppdb/wal.h>
 #include <ppdb/error.h>
 #include <ppdb/logger.h>
-#include "common/fs.h"
+#include <ppdb/fs.h>
 
 // Test WAL filesystem operations
 static int test_wal_fs_ops(void) {
@@ -52,9 +52,9 @@ static int test_wal_write(void) {
     TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
     
     // Write data
-    const char* key = "test_key";
-    const char* value = "test_value";
-    err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, key, strlen(key), value, strlen(value));
+    const uint8_t* key = (const uint8_t*)"test_key";
+    const uint8_t* value = (const uint8_t*)"test_value";
+    err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, key, strlen((const char*)key), value, strlen((const char*)value));
     TEST_ASSERT(err == PPDB_OK, "Failed to write to WAL");
     
     // Close WAL
@@ -83,9 +83,9 @@ static int test_wal_recovery(void) {
         ppdb_error_t err = ppdb_wal_create(&config, &wal);
         TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
         
-        const char* key = "recovery_key";
-        const char* value = "recovery_value";
-        err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, key, strlen(key), value, strlen(value));
+        const uint8_t* key = (const uint8_t*)"recovery_key";
+        const uint8_t* value = (const uint8_t*)"recovery_value";
+        err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, key, strlen((const char*)key), value, strlen((const char*)value));
         TEST_ASSERT(err == PPDB_OK, "Failed to write to WAL");
         
         ppdb_wal_close(wal);
@@ -109,12 +109,13 @@ static int test_wal_recovery(void) {
         TEST_ASSERT(err == PPDB_OK, "Failed to recover from WAL");
         
         // Verify recovered data
-        const char* key = "recovery_key";
-        uint8_t recovered_value[256] = {0};
-        size_t value_size = sizeof(recovered_value);
-        err = ppdb_memtable_get(memtable, (const uint8_t*)key, strlen(key), recovered_value, &value_size);
+        const uint8_t* key = (const uint8_t*)"recovery_key";
+        uint8_t* recovered_value = NULL;
+        size_t value_size = 0;
+        err = ppdb_memtable_get(memtable, key, strlen((const char*)key), &recovered_value, &value_size);
         TEST_ASSERT(err == PPDB_OK, "Failed to get value from memtable");
-        TEST_ASSERT(strcmp((const char*)recovered_value, "recovery_value") == 0, "Recovered value does not match");
+        TEST_ASSERT(value_size == strlen("recovery_value"), "Recovered value size does not match");
+        TEST_ASSERT(memcmp(recovered_value, "recovery_value", value_size) == 0, "Recovered value does not match");
         
         // Cleanup
         ppdb_wal_destroy(wal);

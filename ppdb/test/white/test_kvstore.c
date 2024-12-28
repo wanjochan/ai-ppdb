@@ -3,6 +3,7 @@
 #include <ppdb/kvstore.h>
 #include <ppdb/error.h>
 #include <ppdb/logger.h>
+#include <ppdb/fs.h>
 
 // Forward declaration of worker thread function
 static void* concurrent_worker(void* arg);

@@ -17,7 +17,7 @@ typedef enum {
 // 跳表节点结构
 typedef struct skiplist_node {
     ref_count_t* ref_count;                     // 引用计数
-    char* key;                                  // 键
+    uint8_t* key;                              // 键
     uint32_t key_len;                          // 键长度
     void* value;                               // 值
     uint32_t value_len;                        // 值长度
@@ -34,31 +34,31 @@ typedef struct {
 } atomic_skiplist_t;
 
 // 创建跳表
-atomic_skiplist_t* atomic_skiplist_create(uint32_t max_level);
+atomic_skiplist_t* atomic_skiplist_create(void);
 
 // 销毁跳表
 void atomic_skiplist_destroy(atomic_skiplist_t* list);
 
 // 插入键值对
-bool atomic_skiplist_insert(atomic_skiplist_t* list, const char* key, uint32_t key_len, 
-                          const void* value, uint32_t value_len);
+int atomic_skiplist_put(atomic_skiplist_t* list, const uint8_t* key, size_t key_len, 
+                       const uint8_t* value, size_t value_len);
 
 // 删除键值对
-bool atomic_skiplist_delete(atomic_skiplist_t* list, const char* key, uint32_t key_len);
+int atomic_skiplist_delete(atomic_skiplist_t* list, const uint8_t* key, size_t key_len);
 
 // 查找键值对
-bool atomic_skiplist_find(atomic_skiplist_t* list, const char* key, uint32_t key_len,
-                         void** value, uint32_t* value_len);
+int atomic_skiplist_get(atomic_skiplist_t* list, const uint8_t* key, size_t key_len,
+                       uint8_t* value, size_t* value_len);
 
 // 获取元素个数
-uint32_t atomic_skiplist_size(atomic_skiplist_t* list);
+size_t atomic_skiplist_size(atomic_skiplist_t* list);
 
 // 清空跳表
 void atomic_skiplist_clear(atomic_skiplist_t* list);
 
 // 遍历跳表
-typedef bool (*skiplist_visitor_t)(const char* key, uint32_t key_len, 
-                                 const void* value, uint32_t value_len, void* ctx);
+typedef bool (*skiplist_visitor_t)(const uint8_t* key, size_t key_len, 
+                                 const uint8_t* value, size_t value_len, void* ctx);
 void atomic_skiplist_foreach(atomic_skiplist_t* list, skiplist_visitor_t visitor, void* ctx);
 
 #endif // PPDB_ATOMIC_SKIPLIST_H

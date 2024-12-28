@@ -25,28 +25,28 @@ sharded_memtable_t* sharded_memtable_create(const shard_config_t* config);
 void sharded_memtable_destroy(sharded_memtable_t* table);
 
 // 插入键值对
-bool sharded_memtable_put(sharded_memtable_t* table, const char* key, uint32_t key_len,
-                         const void* value, uint32_t value_len);
+int sharded_memtable_put(sharded_memtable_t* table, const uint8_t* key, size_t key_len,
+                        const uint8_t* value, size_t value_len);
 
 // 删除键值对
-bool sharded_memtable_delete(sharded_memtable_t* table, const char* key, uint32_t key_len);
+int sharded_memtable_delete(sharded_memtable_t* table, const uint8_t* key, size_t key_len);
 
 // 查找键值对
-bool sharded_memtable_get(sharded_memtable_t* table, const char* key, uint32_t key_len,
-                         void** value, uint32_t* value_len);
+int sharded_memtable_get(sharded_memtable_t* table, const uint8_t* key, size_t key_len,
+                        uint8_t* value, size_t* value_len);
 
 // 获取总元素个数
-uint32_t sharded_memtable_size(sharded_memtable_t* table);
+size_t sharded_memtable_size(sharded_memtable_t* table);
 
 // 获取指定分片的元素个数
-uint32_t sharded_memtable_shard_size(sharded_memtable_t* table, uint32_t shard_index);
+size_t sharded_memtable_shard_size(sharded_memtable_t* table, uint32_t shard_index);
 
 // 清空分片内存表
 void sharded_memtable_clear(sharded_memtable_t* table);
 
 // 遍历分片内存表
-typedef bool (*memtable_visitor_t)(const char* key, uint32_t key_len,
-                                 const void* value, uint32_t value_len, void* ctx);
+typedef bool (*memtable_visitor_t)(const uint8_t* key, size_t key_len,
+                                 const uint8_t* value, size_t value_len, void* ctx);
 void sharded_memtable_foreach(sharded_memtable_t* table, memtable_visitor_t visitor, void* ctx);
 
 #endif // PPDB_SHARDED_MEMTABLE_H

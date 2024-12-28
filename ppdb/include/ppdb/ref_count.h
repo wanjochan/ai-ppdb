@@ -3,11 +3,15 @@
 
 #include <cosmopolitan.h>
 
-// 引用计数结构
-typedef struct ref_count_t ref_count_t;
-
 // 释放回调函数类型
 typedef void (*ref_count_free_fn)(void* ptr);
+
+// 引用计数结构
+typedef struct ref_count_t {
+    atomic_uint count;          // 引用计数
+    void* data;                // 数据指针
+    ref_count_free_fn destructor; // 析构函数
+} ref_count_t;
 
 // 创建引用计数
 ref_count_t* ref_count_create(void* ptr, ref_count_free_fn free_fn);

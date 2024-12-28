@@ -3,8 +3,8 @@
 #include "ppdb/error.h"
 #include "ppdb/defs.h"
 #include "ppdb/memtable.h"
-#include "../common/logger.h"
-#include "../common/fs.h"
+#include "ppdb/logger.h"
+#include "ppdb/fs.h"
 
 // WAL头部结构
 typedef struct {
