@@ -188,7 +188,9 @@ int main(int argc, char* argv[]) {
         .compression = PPDB_COMPRESSION_NONE,
         .mode = opts.mode
     };
-    strncpy(config.dir_path, opts.dir_path, sizeof(config.dir_path) - 1);
+    
+    // 安全地复制目录路径
+    snprintf(config.dir_path, sizeof(config.dir_path), "%s", opts.dir_path);
 
     // 创建 KVStore
     ppdb_kvstore_t* store = NULL;
