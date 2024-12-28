@@ -1,5 +1,16 @@
 # PPDB 无锁版本设计文档
 
+## 实现状态
+✅ 已完成基本实现
+- [x] 无锁跳表（atomic_skiplist）
+  - [x] 原子操作支持
+  - [x] 引用计数内存管理
+  - [x] 无锁并发操作
+- [x] 分片内存表（sharded_memtable）
+  - [x] 基于无锁跳表
+  - [x] 分片并发优化
+  - [x] 原子计数器
+
 ## 1. 设计目标
 
 ### 1.1 功能目标
@@ -21,111 +32,63 @@
 // 节点状态
 typedef enum {
     NODE_VALID = 0,      // 正常节点
-    NODE_MARKED = 1,     // 已标记删除
-    NODE_INSERTING = 2,  // 正在插入
-    NODE_HELPING = 3     // 正在帮助其他操作
+    NODE_DELETED = 1,    // 已标记删除
+    NODE_INSERTING = 2   // 正在插入
 } node_state_t;
 
 // 节点结构
-struct atomic_node {
-    ppdb_slice_t key;                    // 键
-    ppdb_slice_t value;                  // 值
-    int height;                          // 节点高度
-    _Atomic node_state_t state;          // 节点状态
-    _Atomic(atomic_node_t*) next[0];     // 后继节点数组
+struct skiplist_node {
+    ref_count_t* ref_count;                     // 引用计数
+    char* key;                                  // 键
+    uint32_t key_len;                          // 键长度
+    void* value;                               // 值
+    uint32_t value_len;                        // 值长度
+    atomic_uint state;                         // 节点状态
+    uint32_t level;                            // 节点层数
+    _Atomic(struct skiplist_node*) next[];     // 后继节点数组
 };
 ```
-
-#### 状态转换
-1. VALID -> MARKED：标记删除
-2. VALID -> INSERTING：开始插入
-3. INSERTING -> VALID：插入完成
-4. INSERTING -> HELPING：其他线程帮助完成插入
-5. HELPING -> VALID：帮助操作完成
-
-#### 内存管理
-- 使用引用计数进行内存管理
-- 延迟删除机制避免ABA问题
-- 内存池减少内存分配开销
 
 ### 2.2 分片内存表
 ```c
 // 分片配置
 typedef struct {
-    size_t shard_count;        // 分片数量
-    size_t shard_size;         // 每个分片大小
-    bool auto_resize;          // 自动调整大小
+    uint32_t shard_bits;       // 分片位数
+    uint32_t shard_count;      // 分片数量
+    uint32_t max_size;         // 每个分片的最大大小
 } shard_config_t;
 
-// 分片表
-struct sharded_memtable {
-    atomic_skiplist_t** shards;         // 分片数组
-    _Atomic size_t total_size;          // 总大小
-    shard_config_t config;              // 配置
-};
+// 分片内存表结构
+typedef struct {
+    shard_config_t config;     // 分片配置
+    atomic_skiplist_t** shards; // 分片数组
+    atomic_uint total_size;    // 总元素个数
+} sharded_memtable_t;
 ```
 
-#### 分片策略
-1. 静态分片：固定分片数量
-2. 动态分片：根据负载自动调整
-3. 一致性哈希：支持动态伸缩
+## 3. 实现细节
 
-### 2.3 无锁WAL
-```c
-// WAL记录类型
-typedef enum {
-    WAL_PUT = 1,
-    WAL_DELETE = 2,
-    WAL_CHECKPOINT = 3
-} wal_record_type_t;
+### 3.1 内存管理
+- 使用引用计数进行内存管理
+- 延迟删除避免ABA问题
+- 原子操作保证线程安全
 
-// WAL记录
-struct wal_record {
-    uint64_t sequence;                  // 序列号
-    wal_record_type_t type;            // 记录类型
-    ppdb_slice_t key;                  // 键
-    ppdb_slice_t value;                // 值（可选）
-};
-```
+### 3.2 并发控制
+- 使用原子操作代替锁
+- CAS操作保证一致性
+- 分片减少竞争
 
-#### 写入机制
-1. 批量写入缓冲
-2. 无锁队列实现
-3. 异步刷盘策略
+### 3.3 性能优化
+- 分片策略优化
+- 原子操作优化
+- 内存布局优化
 
-## 3. 并发控制
-
-### 3.1 原子操作
-- 使用C11原子操作
-- 显式内存序控制
-- 避免伪共享
-
-### 3.2 一致性保证
-- 线性一致性读写
-- 快照隔离支持
-- 原子批量操作
-
-### 3.3 死锁避免
-- 无锁算法设计
-- 帮助机制实现
-- 超时和回退策略
-
-## 4. 性能优化
-
-### 4.1 内存管理
-- 自定义内存分配器
-- 内存池实现
-- 垃圾回收机制
-
-### 4.2 缓存优化
-- 缓存行对齐
-- 预取机制
-- 数据局部性优化
-
-### 4.3 并发优化
-- 细粒度并发
-- 批量操作支持
-- 无锁数据结构
+## 4. 下一步计划
+1. 实现无锁WAL
+2. 优化分片策略
+3. 添加性能测试
+4. 进行压力测试
+5. 补充单元测试
 
 ## 5. 监控和诊断
 

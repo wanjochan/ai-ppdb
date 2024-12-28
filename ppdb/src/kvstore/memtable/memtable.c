@@ -1,8 +1,8 @@
 #include <cosmopolitan.h>
 #include "ppdb/memtable.h"
 #include "ppdb/error.h"
-#include "../common/logger.h"
-#include "../kvstore/skiplist.h"
+#include "ppdb/logger.h"
+#include "ppdb/skiplist.h"
 
 // MemTable 结构
 struct ppdb_memtable_t {
