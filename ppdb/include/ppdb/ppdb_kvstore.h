@@ -1,8 +1,17 @@
-#ifndef PPDB_PUBLIC_KVSTORE_H
-#define PPDB_PUBLIC_KVSTORE_H
+#ifndef PPDB_KVSTORE_H
+#define PPDB_KVSTORE_H
 
 #include <cosmopolitan.h>
 #include "ppdb_error.h"
+
+// WAL配置
+typedef struct ppdb_wal_config {
+    char dir_path[256];         // WAL目录路径
+    size_t segment_size;        // 段大小
+    bool sync_write;           // 是否同步写入
+    bool enable_compression;   // 是否启用压缩
+    size_t buffer_size;        // 缓冲区大小
+} ppdb_wal_config_t;
 
 // KVStore配置
 typedef struct ppdb_kvstore_config {
@@ -12,6 +21,7 @@ typedef struct ppdb_kvstore_config {
     bool adaptive_sharding;     // 是否启用自适应分片
     bool enable_compression;    // 是否启用压缩
     bool enable_monitoring;     // 是否启用监控
+    ppdb_wal_config_t wal;      // WAL配置
 } ppdb_kvstore_config_t;
 
 // KVStore句柄
@@ -36,4 +46,4 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
 void ppdb_kvstore_close(ppdb_kvstore_t* store);
 void ppdb_kvstore_destroy(ppdb_kvstore_t* store);
 
-#endif // PPDB_PUBLIC_KVSTORE_H 
+#endif // PPDB_KVSTORE_H 

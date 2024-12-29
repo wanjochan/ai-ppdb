@@ -1,10 +1,10 @@
 #include <cosmopolitan.h>
-#include "internal/memtable.h"
-#include "ppdb/error.h"
-#include "ppdb/logger.h"
-#include "internal/skiplist.h"
-#include "internal/sync.h"
-#include "internal/metrics.h"
+#include "kvstore/internal/kvstore_memtable.h"
+#include "ppdb/ppdb_error.h"
+#include "kvstore/internal/kvstore_logger.h"
+#include "kvstore/internal/skiplist.h"
+#include "kvstore/internal/sync.h"
+#include "kvstore/internal/metrics.h"
 
 // MemTable structure
 struct ppdb_memtable_t {

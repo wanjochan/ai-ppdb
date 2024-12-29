@@ -3,16 +3,8 @@
 
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_kvstore.h"
 #include "kvstore_memtable.h"
-
-// WAL配置
-typedef struct ppdb_wal_config {
-    char dir_path[256];         // WAL目录路径
-    size_t segment_size;        // 段大小
-    bool sync_write;           // 是否同步写入
-    bool enable_compression;   // 是否启用压缩
-    size_t buffer_size;        // 缓冲区大小
-} ppdb_wal_config_t;
 
 // WAL记录类型
 typedef enum {
