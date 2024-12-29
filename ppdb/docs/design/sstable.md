@@ -2,14 +2,37 @@
 
 ## 1. 概述
 
-SSTable (Sorted String Table) 是 PPDB 的持久化存储格式，用于将内存中的数据以有序的方式存储到磁盘上。
+SSTable (Sorted String Table) 是 PPDB 的持久化存储格式，用于将内存中的数据以有序的方式存储到磁盘上。它不是临时的存储空间，而是数据的最终持久化形式。
 
-### 1.1 设计目标
+### 1.1 角色定位
+- 永久性存储：作为数据的最终持久化存储形式
+- 有序性：所有数据按键有序存储
+- 不可变性：一旦写入就不再修改，只能合并或删除
+- 可靠性：通过校验和等机制保证数据完整性
+
+### 1.2 数据流转
+```
+                    ┌─────────┐
+写入请求 → WAL日志 →│MemTable │ (内存层：临时缓冲)
+                    └────┬────┘
+                         ↓
+              ┌──────────────────┐
+              │     SSTable     │ (磁盘层：永久存储)
+              └──────────────────┘
+```
+
+### 1.3 设计目标
 - 高效的顺序写入
 - 快速的随机读取
 - 支持范围扫描
 - 节省存储空间
 - 易于压缩和缓存
+
+### 1.4 与MemTable协作
+- 作为MemTable数据的最终归宿
+- 通过后台自动刷盘机制接收数据
+- 支持手动控制选项
+- 提供数据恢复能力
 
 ## 2. 文件格式
 
@@ -62,155 +85,135 @@ struct DataEntry {
 };
 ```
 
-## 3. 索引设计
+## 3. 自动协作机制
 
-### 3.1 稀疏索引
+### 3.1 触发条件
 ```c
-struct IndexBlock {
-    uint32_t entry_count;   // 索引条目数量
-    IndexEntry entries[];   // 索引条目数组
-};
-
-struct IndexEntry {
-    uint16_t key_size;      // 键长度
-    uint32_t offset;        // 数据块偏移
-    uint32_t size;          // 数据块大小
-    uint8_t  key[];         // 索引键
-};
-```
-
-### 3.2 布隆过滤器
-```c
-struct BloomFilter {
-    uint32_t bits_per_key;  // 每个键的位数
-    uint32_t hash_count;    // 哈希函数数量
-    uint32_t size;          // 过滤器大小
-    uint8_t  data[];        // 过滤器数据
-};
-```
-
-## 4. 压缩策略
-
-### 4.1 块压缩
-```c
-enum CompressionType {
-    NO_COMPRESSION = 0,
-    SNAPPY = 1,
-    LZ4 = 2,
-    ZSTD = 3
-};
-
-struct CompressedBlock {
-    uint32_t raw_size;      // 原始大小
-    uint32_t compressed_size;// 压缩后大小
-    uint8_t  type;          // 压缩类型
-    uint8_t  data[];        // 压缩数据
-};
-```
-
-### 4.2 压缩选项
-```c
-struct CompressionOptions {
-    CompressionType type;   // 压缩类型
-    int level;              // 压缩级别
-    uint32_t min_size;      // 最小压缩大小
-};
-```
-
-## 5. 读写操作
-
-### 5.1 写入流程
-```c
-// 写入新的SSTable
-SSTableBuilder* builder = sstable_builder_create(options);
-
-// 添加数据
-while (has_next()) {
-    KeyValue kv = get_next();
-    sstable_builder_add(builder, kv.key, kv.value);
-}
-
-// 完成构建
-sstable_builder_finish(builder);
-```
-
-### 5.2 读取流程
-```c
-// 打开SSTable
-SSTable* table = sstable_open(filename);
-
-// 查找键
-Value* value = sstable_get(table, key);
-
-// 范围查询
-Iterator* iter = sstable_range(table, start_key, end_key);
-while (iterator_valid(iter)) {
-    // 处理数据
-    iterator_next(iter);
+// 以下任一条件满足时，自动触发MemTable到SSTable的转换：
+if (memtable.current_size >= memtable.max_size ||          // MemTable达到大小限制
+    system.memory_pressure() > threshold ||                 // 系统内存压力大
+    wal.size() > wal_size_limit ||                         // WAL文件过大
+    checkpoint_needed) {                                    // 需要检查点
+    
+    // 自动触发刷盘流程
+    trigger_flush_to_sstable();
 }
 ```
 
-## 6. 性能优化
-
-### 6.1 缓存策略
+### 3.2 刷盘流程
 ```c
-struct CacheOptions {
-    size_t block_cache_size;    // 块缓存大小
-    size_t filter_cache_size;   // 过滤器缓存大小
-    bool   pin_l0_filter_and_index; // 是否固定L0层
-};
+void trigger_flush_to_sstable() {
+    // 1. 将当前活跃MemTable转为只读
+    immutable_memtable = current_memtable;
+    
+    // 2. 创建新的活跃MemTable
+    current_memtable = new MemTable();
+    
+    // 3. 异步将只读MemTable刷新到SSTable
+    background_thread.submit([=]() {
+        // 创建新的SSTable
+        sstable_builder = new SSTableBuilder();
+        
+        // 将MemTable数据写入SSTable
+        for (auto iter = immutable_memtable.iterator(); iter.valid(); iter.next()) {
+            sstable_builder.add(iter.key(), iter.value());
+        }
+        
+        // 完成SSTable构建
+        new_sstable = sstable_builder.finish();
+        
+        // 更新元数据
+        version_set.add_new_sstable(new_sstable);
+        
+        // 清理资源
+        delete immutable_memtable;
+    });
+}
 ```
 
-### 6.2 预读策略
+### 3.3 配置选项
 ```c
-struct ReadOptions {
-    bool  verify_checksums;     // 是否验证校验和
-    bool  fill_cache;          // 是否填充缓存
-    size_t readahead_size;     // 预读大小
+struct SSTableOptions {
+    // MemTable相关配置
+    size_t memtable_size;                    // MemTable大小限制
+    double memtable_trigger_flush_ratio;     // 触发刷盘的使用率阈值
+    
+    // SSTable相关配置
+    size_t sstable_size;                     // SSTable文件大小限制
+    size_t max_file_size;                    // 最大文件大小
+    
+    // 后台任务配置
+    int max_background_flushes;              // 最大后台刷盘线程数
+    int max_background_compactions;          // 最大后台压缩线程数
+    int level0_file_num_compaction_trigger;  // L0文件数触发压缩阈值
 };
 ```
 
-## 7. 文件管理
+## 4. 手动控制接口
 
-### 7.1 文件命名
-```
-[level]_[sequence].sst
-示例：0_1001.sst
-```
-
-### 7.2 版本控制
+### 4.1 手动刷盘
 ```c
-struct Version {
-    uint32_t number;           // 版本号
-    std::vector<FileMetaData> files[kNumLevels];
-};
-
-struct FileMetaData {
-    uint64_t number;           // 文件号
-    uint64_t file_size;        // 文件大小
-    InternalKey smallest;      // 最小键
-    InternalKey largest;       // 最大键
+class StorageEngine {
+    // 手动触发刷盘
+    Status manual_flush() {
+        if (active_memtable->empty()) {
+            return Status::Nothing_To_Flush();
+        }
+        return trigger_flush_to_sstable();
+    }
 };
 ```
 
-## 8. 错误处理
-
-### 8.1 错误类型
+### 4.2 手动压缩
 ```c
-enum SSTableError {
-    SSTABLE_OK = 0,
-    SSTABLE_CORRUPTION,
-    SSTABLE_IO_ERROR,
-    SSTABLE_COMPRESSION_ERROR,
-    SSTABLE_INVALID_ARGUMENT
+class StorageEngine {
+    // 手动触发压缩
+    Status manual_compact(CompactionOptions options) {
+        return trigger_compaction(options);
+    }
 };
 ```
 
-### 8.2 恢复机制
+## 5. 最佳实践
+
+### 5.1 自动模式（推荐）
+- 适用于生产环境
+- 提供稳定性能
+- 自动资源管理
+- 减少人为干预
+
+### 5.2 手动模式（特殊场景）
+- 调试和测试
+- 维护操作
+- 性能调优
+- 资源精确控制
+
+### 5.3 推荐配置
 ```c
-struct RecoveryOptions {
-    bool paranoid_checks;      // 严格检查
-    bool ignore_corruption;    // 忽略损坏
-    bool force_consistency;    // 强制一致性
-};
+SSTableOptions options;
+// 基本配置
+options.memtable_size = 64 * 1024 * 1024;        // 64MB
+options.memtable_trigger_flush_ratio = 0.75;      // 75%触发刷盘
+options.sstable_size = 256 * 1024 * 1024;        // 256MB
+options.max_file_size = 2 * 1024 * 1024 * 1024;  // 2GB
+
+// 后台任务配置
+options.level0_file_num_compaction_trigger = 4;   // L0文件数达到4个触发压缩
+options.max_background_flushes = 2;               // 最多2个后台刷盘线程
+options.max_background_compactions = 4;           // 最多4个后台压缩线程
 ```
+
+## 6. 监控指标
+
+### 6.1 关键指标
+- 刷盘频率和耗时
+- 压缩频率和耗时
+- 文件数量和大小
+- 内存使用情况
+- 读写延迟
+
+### 6.2 告警阈值
+- 刷盘队列积压
+- 压缩队列积压
+- 文件数量过多
+- 内存使用过高
