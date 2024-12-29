@@ -14,6 +14,7 @@ static void print_usage(void) {
     printf("  --dir <path>             Data directory path (default: db)\n");
     printf("  --memtable-size <bytes>  Memtable size (default: 1MB)\n");
     printf("  --l0-size <bytes>        L0 file size (default: 1MB)\n");
+    printf("  --adaptive <on|off>      Enable/disable adaptive sharding (default: on)\n");
     printf("  --help                   Show this help message\n");
     printf("\nCommands:\n");
     printf("  put <key> <value>        Store a key-value pair\n");
@@ -34,6 +35,7 @@ typedef struct {
     char dir_path[256];
     size_t memtable_size;
     size_t l0_size;
+    bool adaptive_sharding;
     char command[32];
     char key[256];
     char value[1024];
@@ -46,6 +48,7 @@ static void parse_options(int argc, char* argv[], cli_options_t* opts) {
     strncpy(opts->dir_path, "db", sizeof(opts->dir_path) - 1);
     opts->memtable_size = 1024 * 1024;  // 1MB
     opts->l0_size = 1024 * 1024;        // 1MB
+    opts->adaptive_sharding = true;
     memset(opts->command, 0, sizeof(opts->command));
     memset(opts->key, 0, sizeof(opts->key));
     memset(opts->value, 0, sizeof(opts->value));
@@ -67,11 +70,17 @@ static void parse_options(int argc, char* argv[], cli_options_t* opts) {
             i++;
         }
         else if (strcmp(argv[i], "--memtable-size") == 0 && i + 1 < argc) {
-            opts->memtable_size = atoi(argv[i + 1]);
+            opts->memtable_size = atol(argv[i + 1]);
             i++;
         }
         else if (strcmp(argv[i], "--l0-size") == 0 && i + 1 < argc) {
-            opts->l0_size = atoi(argv[i + 1]);
+            opts->l0_size = atol(argv[i + 1]);
+            i++;
+        }
+        else if (strcmp(argv[i], "--adaptive") == 0 && i + 1 < argc) {
+            if (strcmp(argv[i + 1], "off") == 0) {
+                opts->adaptive_sharding = false;
+            }
             i++;
         }
         else if (opts->command[0] == '\0') {
@@ -144,6 +153,7 @@ static int execute_command(ppdb_kvstore_t* store, const cli_options_t* opts) {
         printf("- Data directory: %s\n", opts->dir_path);
         printf("- Memtable size limit: %zu bytes\n", opts->memtable_size);
         printf("- L0 file size limit: %zu bytes\n", opts->l0_size);
+        printf("- Adaptive sharding: %s\n", opts->adaptive_sharding ? "on" : "off");
         // TODO: Add more statistics
     }
     else if (strcmp(opts->command, "server") == 0) {
@@ -187,7 +197,8 @@ int main(int argc, char* argv[]) {
         .l0_size = opts.l0_size,
         .l0_files = 4,
         .compression = PPDB_COMPRESSION_NONE,
-        .mode = opts.mode
+        .mode = opts.mode,
+        .adaptive_sharding = opts.adaptive_sharding
     };
     
     // Safely copy directory path

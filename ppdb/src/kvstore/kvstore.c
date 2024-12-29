@@ -12,6 +12,9 @@ struct ppdb_kvstore_t {
     struct ppdb_wal_t* wal;
     pthread_mutex_t mutex;
     ppdb_mode_t mode;
+    ppdb_monitor_t* monitor;        // 添加性能监控器
+    bool using_sharded;             // 是否使用分片模式
+    bool adaptive_enabled;          // 是否启用自适应分片
 };
 
 static inline void lock_if_needed(ppdb_kvstore_t* store) {
@@ -22,14 +25,17 @@ static inline void unlock_if_needed(ppdb_kvstore_t* store) {
     if (store->mode == PPDB_MODE_LOCKED) pthread_mutex_unlock(&store->mutex);
 }
 
-static ppdb_error_t create_memtable(ppdb_mode_t mode, size_t size, struct ppdb_memtable_t** table) {
+static ppdb_error_t create_memtable(ppdb_mode_t mode, size_t size, struct ppdb_memtable_t** table, bool use_sharded) {
     if (!table) {
         ppdb_log_error("Invalid argument: table is NULL");
         return PPDB_ERR_INVALID_ARG;
     }
 
     ppdb_error_t err;
-    if (mode == PPDB_MODE_LOCKFREE) {
+    if (use_sharded) {
+        // 使用分片模式
+        err = ppdb_memtable_create_sharded(size, table);
+    } else if (mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_memtable_create_lockfree(size, table);
     } else {
         err = ppdb_memtable_create(size, table);
@@ -118,7 +124,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
     usleep(100000);  // 100ms
 
     // Create MemTable
-    ppdb_error_t err = create_memtable(config->mode, config->memtable_size, &new_store->table);
+    ppdb_error_t err = create_memtable(config->mode, config->memtable_size, &new_store->table, false);
     if (err != PPDB_OK) {
         ppdb_log_error("Failed to create MemTable: %s", ppdb_error_string(err));
         cleanup_store(new_store, true);
@@ -175,6 +181,18 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
 
     // Wait for WAL recovery to complete
     usleep(100000);  // 100ms
+
+    // 创建性能监控器，根据配置决定是否启用自适应分片
+    new_store->monitor = ppdb_monitor_create();
+    if (!new_store->monitor) {
+        ppdb_log_error("Failed to create performance monitor");
+        cleanup_store(new_store, true);
+        return PPDB_ERR_NO_MEMORY;
+    }
+    
+    // 设置自适应分片状态
+    new_store->using_sharded = false;
+    new_store->adaptive_enabled = config->adaptive_sharding;
 
     *store = new_store;
     ppdb_log_info("KVStore created successfully");
@@ -239,6 +257,12 @@ static void cleanup_store(ppdb_kvstore_t* store, bool destroy) {
         usleep(500000);  // Wait 500ms to ensure MemTable resources are released
     }
 
+    // Clean up performance monitor
+    if (store->monitor) {
+        ppdb_monitor_destroy(store->monitor);
+        store->monitor = NULL;
+    }
+
     // If locked mode, unlock and destroy mutex
     if (mode == PPDB_MODE_LOCKED) {
         pthread_mutex_unlock(&store->mutex);
@@ -254,50 +278,58 @@ static void cleanup_store(ppdb_kvstore_t* store, bool destroy) {
     usleep(500000);  // Wait 500ms to ensure memory is released
 }
 
-// Close KVStore
-void ppdb_kvstore_close(ppdb_kvstore_t* store) {
-    if (store) cleanup_store(store, false);
-}
+static ppdb_error_t check_and_switch_memtable(ppdb_kvstore_t* store) {
+    if (!store || !store->monitor) return PPDB_ERR_INVALID_ARG;
+    
+    // 只在启用自适应分片时进行检查
+    if (!store->adaptive_enabled) return PPDB_OK;
 
-// Destroy KVStore and all its data
-void ppdb_kvstore_destroy(ppdb_kvstore_t* store) {
-    if (store) cleanup_store(store, true);
-}
+    // 检查是否需要切换到分片模式
+    if (!store->using_sharded && ppdb_monitor_should_switch(store->monitor)) {
+        ppdb_log_info("Switching to sharded memtable mode due to high load");
+        
+        // 创建新的分片memtable
+        struct ppdb_memtable_t* new_table = NULL;
+        ppdb_error_t err = create_memtable(store->mode, 
+                                         ppdb_memtable_max_size(store->table),
+                                         &new_table, 
+                                         true);
+        if (err != PPDB_OK) {
+            ppdb_log_error("Failed to create sharded memtable: %s", ppdb_error_string(err));
+            return err;
+        }
 
-static ppdb_error_t handle_memtable_full(ppdb_kvstore_t* store, 
-                                        const uint8_t* key, size_t key_len,
-                                        const uint8_t* value, size_t value_len) {
-    ppdb_memtable_t* new_table = NULL;
-    size_t size_limit = store->mode == PPDB_MODE_LOCKFREE ? 
-                       ppdb_memtable_max_size_lockfree(store->table) : 
-                       ppdb_memtable_max_size(store->table);
+        // 获取旧表的迭代器
+        ppdb_memtable_iterator_t* it = ppdb_memtable_iterator_create(store->table);
+        if (!it) {
+            ppdb_memtable_destroy(new_table);
+            return PPDB_ERR_NO_MEMORY;
+        }
 
-    // Create new MemTable
-    ppdb_error_t err = create_memtable(store->mode, size_limit, &new_table);
-    if (err != PPDB_OK) {
-        ppdb_log_error("Failed to create new MemTable: %s", ppdb_error_string(err));
-        return err;
-    }
+        // 迁移数据
+        const void* key;
+        size_t key_len;
+        const void* value;
+        size_t value_len;
+        while (ppdb_memtable_iterator_next(it, &key, &key_len, &value, &value_len)) {
+            err = ppdb_memtable_put(new_table, key, key_len, value, value_len);
+            if (err != PPDB_OK) {
+                ppdb_memtable_iterator_destroy(it);
+                ppdb_memtable_destroy(new_table);
+                return err;
+            }
+        }
 
-    // Persist old MemTable (simplified, should write to SSTable)
-    if (store->mode == PPDB_MODE_LOCKFREE) {
-        ppdb_memtable_destroy_lockfree(store->table);
-    } else {
+        // 清理
+        ppdb_memtable_iterator_destroy(it);
         ppdb_memtable_destroy(store->table);
-    }
-    store->table = new_table;
+        store->table = new_table;
+        store->using_sharded = true;
 
-    // Retry write
-    if (store->mode == PPDB_MODE_LOCKFREE) {
-        err = ppdb_memtable_put_lockfree(store->table, key, key_len, value, value_len);
-    } else {
-        err = ppdb_memtable_put(store->table, key, key_len, value, value_len);
+        ppdb_log_info("Successfully switched to sharded memtable mode");
     }
 
-    if (err != PPDB_OK) {
-        ppdb_log_error("Failed to put key-value pair after MemTable switch: %s", ppdb_error_string(err));
-    }
-    return err;
+    return PPDB_OK;
 }
 
 ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
@@ -311,8 +343,16 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 
     lock_if_needed(store);
 
+    struct timespec start_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    
+    ppdb_monitor_op_start(store->monitor);
+    
+    // 检查是否需要切换到分片模式
+    ppdb_error_t err = check_and_switch_memtable(store);
+    if (err != PPDB_OK) return err;
+
     // Write to WAL
-    ppdb_error_t err;
     if (store->mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_wal_write_lockfree(store->wal, PPDB_WAL_RECORD_PUT, key, key_len, value, value_len);
     } else {
@@ -341,6 +381,13 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
         ppdb_log_error("Failed to put key-value pair: %s", ppdb_error_string(err));
     }
 
+    struct timespec end_time;
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    uint64_t latency_us = (end_time.tv_sec - start_time.tv_sec) * 1000000 +
+                         (end_time.tv_nsec - start_time.tv_nsec) / 1000;
+    
+    ppdb_monitor_op_end(store->monitor, latency_us);
+    
     unlock_if_needed(store);
     return err;
 }
@@ -409,4 +456,14 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
 
     unlock_if_needed(store);
     return err;
+}
+
+// Close KVStore
+void ppdb_kvstore_close(ppdb_kvstore_t* store) {
+    if (store) cleanup_store(store, false);
+}
+
+// Destroy KVStore and all its data
+void ppdb_kvstore_destroy(ppdb_kvstore_t* store) {
+    if (store) cleanup_store(store, true);
 }

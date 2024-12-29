@@ -8,22 +8,24 @@
    - 数据校验点机制
    - 完整性验证流程
 
-2. 内存管理
+2. 内存管理 
    - 内存池实现
    - 内存碎片优化
    - 内存使用限制
 
-3. 并发控制
+3. 并发控制 
    - 死锁预防机制
    - 迭代器线程安全
    - 分片锁优化
+   - 自适应切换机制
 
 ### 1.2 重要不紧急
-1. 性能优化
+1. 性能优化 
    - 布隆过滤器
    - 自适应退避策略
    - IO性能优化
    - 压缩算法实现
+   - 性能监控系统
 
 2. 可靠性增强
    - 错误处理完善
@@ -53,7 +55,7 @@
    } ppdb_checkpoint_t;
    ```
 
-2. 内存优化
+2. 内存优化 
    ```c
    typedef struct ppdb_mempool {
        void* chunks;
@@ -63,16 +65,35 @@
    } ppdb_mempool_t;
    ```
 
-3. 并发控制
+3. 并发控制 
    ```c
+   // 基础锁结构
    typedef struct ppdb_rw_lock {
        atomic_int readers;
        ppdb_sync_t write_lock;
    } ppdb_rw_lock_t;
+
+   // 性能监控结构
+   typedef struct ppdb_perf_metrics {
+       atomic_uint_least64_t op_count;
+       atomic_uint_least64_t total_latency_us;
+       atomic_uint_least64_t max_latency_us;
+       atomic_uint_least64_t lock_contentions;
+       atomic_uint_least64_t lock_wait_us;
+   } ppdb_perf_metrics_t;
+
+   // 监控器结构
+   typedef struct ppdb_monitor {
+       ppdb_perf_metrics_t current;
+       ppdb_perf_metrics_t previous;
+       atomic_bool should_switch;
+       time_t window_start_ms;
+       int cpu_cores;
+   } ppdb_monitor_t;
    ```
 
 ### 2.2 第二阶段（2个月）
-1. 性能优化
+1. 性能优化 
    - 实现布隆过滤器
    - 优化IO策略
    - 实现基础压缩
