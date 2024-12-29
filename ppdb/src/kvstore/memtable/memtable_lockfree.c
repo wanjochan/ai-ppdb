@@ -4,11 +4,11 @@
 #include "ppdb/error.h"
 #include "ppdb/logger.h"
 
-// 无锁MemTable结构
+// Lock-free memory table structure
 struct ppdb_memtable_t {
-    size_t size_limit;      // 大小限制
-    atomic_size_t current_size;  // 当前大小
-    atomic_skiplist_t* list;    // 原子跳表
+    size_t size_limit;           // Maximum size in bytes
+    atomic_size_t current_size;  // Current size in bytes
+    atomic_skiplist_t* list;     // Lock-free skip list
 };
 
 ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** table) {
@@ -43,7 +43,7 @@ ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table,
     size_t entry_size = key_len + value_len + sizeof(size_t) * 2;
     size_t old_size, new_size;
 
-    // 先获取旧值的大小(如果存在)
+    // Get size of old value if exists
     uint8_t temp_value[1];
     size_t old_value_size = 0;
     int get_ret = atomic_skiplist_get(table->list, key, key_len, temp_value, &old_value_size);
@@ -51,7 +51,7 @@ ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table,
     do {
         old_size = atomic_load_explicit(&table->current_size, memory_order_acquire);
         if (get_ret == 0) {
-            // 如果键已存在，减去旧值的大小
+            // If key exists, subtract old value size
             size_t old_entry_size = key_len + old_value_size + sizeof(size_t) * 2;
             new_size = old_size - old_entry_size + entry_size;
         } else {
@@ -68,7 +68,7 @@ ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table,
 
     int ret = atomic_skiplist_put(table->list, key, key_len, value, value_len);
     if (ret != 0) {
-        // 回滚大小更新
+        // Rollback size update on failure
         atomic_fetch_sub_explicit(&table->current_size, entry_size, memory_order_release);
         return PPDB_ERR_NO_MEMORY;
     }
