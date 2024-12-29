@@ -165,9 +165,8 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
     pthread_mutex_lock(&table->mutex);
 
     // 先获取值的大小
-    uint8_t temp_value[1];
     size_t value_size = 0;
-    ppdb_error_t get_ret = skiplist_get(table->list, key, key_len, temp_value, &value_size);
+    ppdb_error_t get_ret = skiplist_get(table->list, key, key_len, NULL, &value_size);
     if (get_ret == PPDB_ERR_NOT_FOUND) {
         pthread_mutex_unlock(&table->mutex);
         return PPDB_ERR_NOT_FOUND;
