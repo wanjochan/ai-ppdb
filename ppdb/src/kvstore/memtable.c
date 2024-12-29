@@ -1,10 +1,10 @@
 #include <cosmopolitan.h>
-#include "kvstore/internal/kvstore_memtable.h"
-#include "ppdb/ppdb_error.h"
-#include "kvstore/internal/kvstore_logger.h"
-#include "kvstore/internal/skiplist.h"
-#include "kvstore/internal/sync.h"
-#include "kvstore/internal/metrics.h"
+#include "internal/kvstore_memtable.h"
+#include "internal/kvstore_logger.h"
+#include "internal/kvstore_fs.h"
+#include "internal/skiplist.h"
+#include "internal/sync.h"
+#include "internal/metrics.h"
 
 // MemTable structure
 struct ppdb_memtable_t {
@@ -16,153 +16,154 @@ struct ppdb_memtable_t {
     ppdb_metrics_t metrics;       // 性能监控
 };
 
-ppdb_error_t ppdb_memtable_create(size_t size_limit, ppdb_memtable_t** table) {
-    if (!table) return PPDB_ERR_INVALID_ARG;
+// 创建内存表
+ppdb_error_t ppdb_memtable_create(size_t size, ppdb_memtable_t** table) {
+    if (!table) return PPDB_ERR_NULL_POINTER;
+    if (size == 0) return PPDB_ERR_INVALID_ARG;
 
+    // 分配内存表结构
     ppdb_memtable_t* new_table = aligned_alloc(64, sizeof(ppdb_memtable_t));
     if (!new_table) return PPDB_ERR_NO_MEMORY;
 
     // 初始化同步原语
-    ppdb_sync_config_t sync_config = PPDB_SYNC_DEFAULT_CONFIG;
-    ppdb_sync_init(&new_table->sync, &sync_config);
-
-    // 创建跳表
-    ppdb_skiplist_config_t sl_config = {
-        .max_level = 12,
-        .sync_config = sync_config,
-        .enable_hint = true
-    };
-    new_table->skiplist = ppdb_skiplist_create(&sl_config);
-    if (!new_table->skiplist) {
-        ppdb_sync_destroy(&new_table->sync);
+    ppdb_error_t err = ppdb_sync_init(&new_table->sync);
+    if (err != PPDB_OK) {
         free(new_table);
-        return PPDB_ERR_NO_MEMORY;
+        return err;
     }
 
-    // 初始化性能监控
-    ppdb_metrics_init(&new_table->metrics);
+    // 创建跳表
+    err = ppdb_skiplist_create(&new_table->skiplist);
+    if (err != PPDB_OK) {
+        ppdb_sync_destroy(&new_table->sync);
+        free(new_table);
+        return err;
+    }
 
-    new_table->max_size = size_limit;
-    atomic_init(&new_table->current_size, 0);
-    atomic_init(&new_table->is_immutable, false);
+    // 初始化其他字段
+    new_table->size = size;
+    new_table->used = 0;
+    new_table->is_immutable = false;
+    ppdb_metrics_init(&new_table->metrics);
 
     *table = new_table;
     return PPDB_OK;
 }
 
+// 销毁内存表
 void ppdb_memtable_destroy(ppdb_memtable_t* table) {
     if (!table) return;
 
-    if (table->skiplist) {
-        ppdb_skiplist_destroy(table->skiplist);
-        table->skiplist = NULL;
-    }
-
+    ppdb_skiplist_destroy(table->skiplist);
     ppdb_sync_destroy(&table->sync);
     ppdb_metrics_destroy(&table->metrics);
     free(table);
 }
 
-ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table, const uint8_t* key, size_t key_len,
-                              const uint8_t* value, size_t value_len) {
-    if (!table || !key || !value) return PPDB_ERR_INVALID_ARG;
+// 写入键值对
+ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
+                              const void* key, size_t key_len,
+                              const void* value, size_t value_len) {
+    if (!table || !key || !value) return PPDB_ERR_NULL_POINTER;
+    if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
 
-    // 记录操作开始
+    // 开始监控
     ppdb_metrics_begin_op(&table->metrics);
-    
-    // 检查大小限制
-    if (atomic_load(&table->current_size) >= table->max_size) {
+
+    // 检查是否可写
+    if (table->is_immutable) {
+        ppdb_metrics_end_op(&table->metrics, 0);
+        return PPDB_ERR_IMMUTABLE;
+    }
+
+    // 检查空间
+    size_t entry_size = key_len + value_len + sizeof(ppdb_skiplist_node_t);
+    if (table->used + entry_size > table->size) {
         ppdb_metrics_end_op(&table->metrics, 0);
         return PPDB_ERR_FULL;
     }
 
-    // 检查是否不可变
-    if (atomic_load(&table->is_immutable)) {
+    // 写入跳表
+    ppdb_error_t err = ppdb_skiplist_put(table->skiplist,
+                                        (const uint8_t*)key, key_len,
+                                        (const uint8_t*)value, value_len);
+    if (err == PPDB_OK) {
+        atomic_fetch_add(&table->used, entry_size);
+    }
+
+    ppdb_metrics_end_op(&table->metrics, now_us());
+    return err;
+}
+
+// 读取键值对
+ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
+                              const void* key, size_t key_len,
+                              void** value, size_t* value_len) {
+    if (!table || !key || !value || !value_len) return PPDB_ERR_NULL_POINTER;
+    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
+
+    // 开始监控
+    ppdb_metrics_begin_op(&table->metrics);
+
+    // 从跳表读取
+    ppdb_error_t err = ppdb_skiplist_get(table->skiplist,
+                                        (const uint8_t*)key, key_len,
+                                        (uint8_t**)value, value_len);
+
+    ppdb_metrics_end_op(&table->metrics, now_us());
+    return err;
+}
+
+// 删除键值对
+ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
+                                 const void* key, size_t key_len) {
+    if (!table || !key) return PPDB_ERR_NULL_POINTER;
+    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
+
+    // 开始监控
+    ppdb_metrics_begin_op(&table->metrics);
+
+    // 检查是否可写
+    if (table->is_immutable) {
         ppdb_metrics_end_op(&table->metrics, 0);
         return PPDB_ERR_IMMUTABLE;
     }
 
-    // 尝试插入
-    size_t entry_size = key_len + value_len + sizeof(ppdb_skiplist_node_t);
-    int result = ppdb_skiplist_insert(table->skiplist, key, key_len, value, value_len);
-    
-    if (result == PPDB_OK) {
-        atomic_fetch_add(&table->current_size, entry_size);
-        ppdb_metrics_end_op(&table->metrics, 1);
-        return PPDB_OK;
-    }
+    // 从跳表删除
+    ppdb_error_t err = ppdb_skiplist_delete(table->skiplist,
+                                           (const uint8_t*)key, key_len);
 
-    ppdb_metrics_end_op(&table->metrics, 0);
-    return PPDB_ERR_INTERNAL;
+    ppdb_metrics_end_op(&table->metrics, now_us());
+    return err;
 }
 
-ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table, const uint8_t* key, size_t key_len,
-                              uint8_t** value, size_t* value_len) {
-    if (!table || !key || !value || !value_len) return PPDB_ERR_INVALID_ARG;
-
-    ppdb_metrics_begin_op(&table->metrics);
-
-    int result = ppdb_skiplist_find(table->skiplist, key, key_len, 
-                                  (void**)value, value_len);
-
-    if (result == PPDB_OK) {
-        ppdb_metrics_end_op(&table->metrics, 1);
-        return PPDB_OK;
-    } else if (result == PPDB_NOT_FOUND) {
-        ppdb_metrics_end_op(&table->metrics, 0);
-        return PPDB_ERR_NOT_FOUND;
-    }
-
-    ppdb_metrics_end_op(&table->metrics, 0);
-    return PPDB_ERR_INTERNAL;
-}
-
-ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table, const uint8_t* key, size_t key_len) {
-    if (!table || !key) return PPDB_ERR_INVALID_ARG;
-
-    ppdb_metrics_begin_op(&table->metrics);
-
-    // 检查是否不可变
-    if (atomic_load(&table->is_immutable)) {
-        ppdb_metrics_end_op(&table->metrics, 0);
-        return PPDB_ERR_IMMUTABLE;
-    }
-
-    int result = ppdb_skiplist_remove(table->skiplist, key, key_len);
-    
-    if (result == PPDB_OK) {
-        ppdb_metrics_end_op(&table->metrics, 1);
-        return PPDB_OK;
-    } else if (result == PPDB_NOT_FOUND) {
-        ppdb_metrics_end_op(&table->metrics, 0);
-        return PPDB_ERR_NOT_FOUND;
-    }
-
-    ppdb_metrics_end_op(&table->metrics, 0);
-    return PPDB_ERR_INTERNAL;
-}
-
+// 获取当前大小
 size_t ppdb_memtable_size(ppdb_memtable_t* table) {
     if (!table) return 0;
-    return atomic_load(&table->current_size);
+    return atomic_load(&table->used);
 }
 
+// 获取最大大小
 size_t ppdb_memtable_max_size(ppdb_memtable_t* table) {
     if (!table) return 0;
-    return table->max_size;
+    return table->size;
 }
 
+// 检查是否不可变
 bool ppdb_memtable_is_immutable(ppdb_memtable_t* table) {
-    if (!table) return true;
+    if (!table) return false;
     return atomic_load(&table->is_immutable);
 }
 
-void ppdb_memtable_set_immutable(ppdb_memtable_t* table) {
-    if (!table) return;
+// 设置为不可变
+ppdb_error_t ppdb_memtable_set_immutable(ppdb_memtable_t* table) {
+    if (!table) return PPDB_ERR_NULL_POINTER;
     atomic_store(&table->is_immutable, true);
+    return PPDB_OK;
 }
 
-ppdb_metrics_t ppdb_memtable_get_metrics(ppdb_memtable_t* table) {
-    if (!table) return (ppdb_metrics_t){0};
-    return table->metrics;
+// 获取性能指标
+const ppdb_metrics_t* ppdb_memtable_get_metrics(ppdb_memtable_t* table) {
+    if (!table) return NULL;
+    return &table->metrics;
 }

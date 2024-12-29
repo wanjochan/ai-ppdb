@@ -46,7 +46,7 @@ if not exist "%AR%" (
 set COMMON_FLAGS=-Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer
 set DEBUG_FLAGS=-g -O0 -DDEBUG
 set RELEASE_FLAGS=-O2 -DNDEBUG
-set CFLAGS=%COMMON_FLAGS% %DEBUG_FLAGS% -I"%INCLUDE_DIR%" -I"%COSMO%" -I"%SRC_DIR%"
+set CFLAGS=%COMMON_FLAGS% %DEBUG_FLAGS% -I"%INCLUDE_DIR%" -I"%COSMO%" -I"%SRC_DIR%" -I"%PROJECT_ROOT%"
 
 :: Linker options
 set LDFLAGS=-static -nostdlib -Wl,-T,"%COSMO%\ape.lds" -Wl,--gc-sections -fuse-ld=bfd
@@ -72,7 +72,9 @@ pushd "%OBJ_DIR%"
 echo Compiling common modules...
 for %%f in ("%SRC_DIR%\common\*.c") do (
     echo   Compiling %%f...
-    "%GCC%" %CFLAGS% -c "%%f"
+    pushd "%SRC_DIR%"
+    "%GCC%" %CFLAGS% -c "%%f" -o "%OBJ_DIR%\%%~nf.o"
+    popd
     if errorlevel 1 (
         echo Error compiling %%f
         popd
@@ -84,7 +86,9 @@ for %%f in ("%SRC_DIR%\common\*.c") do (
 echo Compiling KVStore modules...
 for %%f in ("%SRC_DIR%\kvstore\*.c") do (
     echo   Compiling %%f...
-    "%GCC%" %CFLAGS% -c "%%f"
+    pushd "%SRC_DIR%"
+    "%GCC%" %CFLAGS% -c "%%f" -o "%OBJ_DIR%\%%~nf.o"
+    popd
     if errorlevel 1 (
         echo Error compiling %%f
         popd
@@ -94,7 +98,9 @@ for %%f in ("%SRC_DIR%\kvstore\*.c") do (
 
 :: Compile main program
 echo Compiling main program...
-"%GCC%" %CFLAGS% -c "%SRC_DIR%\main.c"
+pushd "%SRC_DIR%"
+"%GCC%" %CFLAGS% -c "main.c" -o "%OBJ_DIR%\main.o"
+popd
 if errorlevel 1 (
     echo Error compiling main.c
     popd

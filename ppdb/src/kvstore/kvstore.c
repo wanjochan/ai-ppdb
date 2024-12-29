@@ -58,8 +58,8 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
     memcpy(new_store->db_path, config->data_dir, path_len);
     new_store->db_path[path_len] = '\0';
 
-    // 初始化互斥锁
-    mutex_init(&new_store->mutex);
+    // 初始化同步原语
+    ppdb_sync_init(&new_store->sync);
 
     // 创建数据目录
     if (!ppdb_fs_dir_exists(config->data_dir)) {
@@ -124,7 +124,7 @@ static void cleanup_store(ppdb_kvstore_t* store) {
         store->monitor = NULL;
     }
 
-    mutex_destroy(&store->mutex);
+    ppdb_sync_destroy(&store->sync);
     free(store);
 }
 
@@ -189,9 +189,9 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
     if (store->using_sharded) {
         err = ppdb_wal_write_lockfree(store->wal, PPDB_WAL_RECORD_PUT, key, key_len, value, value_len);
     } else {
-        mutex_lock_raw(&store->mutex);
+        ppdb_sync_lock(&store->sync);
         err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_PUT, key, key_len, value, value_len);
-        mutex_unlock_raw(&store->mutex);
+        ppdb_sync_unlock(&store->sync);
     }
 
     if (err != PPDB_OK) {
@@ -203,9 +203,9 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
     if (store->using_sharded) {
         err = ppdb_memtable_put_lockfree(store->table, key, key_len, value, value_len);
     } else {
-        mutex_lock_raw(&store->mutex);
+        ppdb_sync_lock(&store->sync);
         err = ppdb_memtable_put(store->table, key, key_len, value, value_len);
-        mutex_unlock_raw(&store->mutex);
+        ppdb_sync_unlock(&store->sync);
     }
 
     if (err == PPDB_ERR_FULL) {
@@ -232,9 +232,9 @@ ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
     if (store->using_sharded) {
         err = ppdb_memtable_get_lockfree(store->table, key, key_len, value, value_len);
     } else {
-        mutex_lock_raw(&store->mutex);
+        ppdb_sync_lock(&store->sync);
         err = ppdb_memtable_get(store->table, key, key_len, value, value_len);
-        mutex_unlock_raw(&store->mutex);
+        ppdb_sync_unlock(&store->sync);
     }
 
     uint64_t latency_us = now_us() - start_time;
@@ -256,9 +256,9 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
     if (store->using_sharded) {
         err = ppdb_wal_write_lockfree(store->wal, PPDB_WAL_RECORD_DELETE, key, key_len, NULL, 0);
     } else {
-        mutex_lock_raw(&store->mutex);
+        ppdb_sync_lock(&store->sync);
         err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_DELETE, key, key_len, NULL, 0);
-        mutex_unlock_raw(&store->mutex);
+        ppdb_sync_unlock(&store->sync);
     }
 
     if (err != PPDB_OK) {
@@ -270,9 +270,9 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
     if (store->using_sharded) {
         err = ppdb_memtable_delete_lockfree(store->table, key, key_len);
     } else {
-        mutex_lock_raw(&store->mutex);
+        ppdb_sync_lock(&store->sync);
         err = ppdb_memtable_delete(store->table, key, key_len);
-        mutex_unlock_raw(&store->mutex);
+        ppdb_sync_unlock(&store->sync);
     }
 
     uint64_t latency_us = now_us() - start_time;
@@ -291,4 +291,26 @@ void ppdb_kvstore_close(ppdb_kvstore_t* store) {
 void ppdb_kvstore_destroy(ppdb_kvstore_t* store) {
     if (!store) return;
     cleanup_store(store);
+}
+
+// 处理内存表满的情况
+static ppdb_error_t handle_memtable_full(ppdb_kvstore_t* store,
+                                        const void* key, size_t key_len,
+                                        const void* value, size_t value_len) {
+    if (!store || !key || !value) return PPDB_ERR_NULL_POINTER;
+    if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
+
+    // 切换内存表
+    ppdb_error_t err = check_and_switch_memtable(store);
+    if (err != PPDB_OK) return err;
+
+    // 重试写入
+    if (store->using_sharded) {
+        return ppdb_memtable_put_lockfree(store->table, key, key_len, value, value_len);
+    } else {
+        ppdb_sync_lock(&store->sync);
+        err = ppdb_memtable_put(store->table, key, key_len, value, value_len);
+        ppdb_sync_unlock(&store->sync);
+        return err;
+    }
 }

@@ -7,17 +7,18 @@
 #include "kvstore_memtable.h"
 #include "kvstore_wal.h"
 #include "kvstore_monitor.h"
+#include "common/sync.h"
 
 // KVStore内部结构
 struct ppdb_kvstore {
-    mutex_t mutex;                  // 互斥锁（放在前面以优化对齐）
-    ppdb_memtable_t* table;         // 当前内存表
-    ppdb_wal_t* wal;                // WAL日志
-    ppdb_monitor_t* monitor;        // 监控器
-    char db_path[256];              // 数据库路径
-    bool using_sharded;             // 是否使用分片
-    bool adaptive_enabled;          // 是否启用自适应
-    bool is_locked;                 // 是否已锁定
+    ppdb_sync_t sync;              // 同步原语（放在前面以优化对齐）
+    ppdb_memtable_t* table;        // 当前内存表
+    ppdb_wal_t* wal;               // WAL日志
+    ppdb_monitor_t* monitor;       // 监控器
+    char db_path[256];             // 数据库路径
+    bool using_sharded;            // 是否使用分片
+    bool adaptive_enabled;         // 是否启用自适应
+    bool is_locked;               // 是否已锁定
 };
 
 // 内部函数声明

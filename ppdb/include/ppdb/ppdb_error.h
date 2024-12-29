@@ -22,7 +22,8 @@ typedef enum {
     PPDB_ERR_PATH_TOO_LONG = 14,// 路径过长
     PPDB_ERR_CLOSED = 15,       // 已关闭
     PPDB_ERR_TOO_LARGE = 16,    // 数据过大
-    PPDB_ERR_UNKNOWN = 17       // 未知错误
+    PPDB_ERR_INVALID_STATE = 17, // 无效状态
+    PPDB_ERR_UNKNOWN = 18       // 未知错误
 } ppdb_error_t;
 
 // 获取错误描述

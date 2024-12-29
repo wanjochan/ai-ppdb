@@ -12,6 +12,9 @@ as warm-up, in ppdb/, you need to review all .md in docs/ and .c in src/;
 run scripts\build_ppdb.bat and do fix after detail planned;
 during this process, if any key progress or plan changed, you MUST update related documents  (for example, update the PLAN.md etc);
 ALWAYS plan before action to save time；
+新增文件或函数前可以就近先找一下，有可能已经写好了只是路径或位置问题（但也要确认不是恰巧同名）；
+我们用的是cosompolitan跨平台底层；
+
 
 # warmup
 

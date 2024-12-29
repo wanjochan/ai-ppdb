@@ -13,8 +13,12 @@
   - [ ] 紧凑数据结构
   - [ ] 缓存共享机制
   - [x] 无锁操作接口
-  - [ ] 内存表满处理机制
-  - [ ] 自动切换策略
+  - [x] 内存表满处理机制
+  - [x] 自动切换策略
+  - [ ] 修复类型定义问题
+    - [ ] 完善 skiplist.h 接口
+    - [ ] 修复 metrics.h 中的原子类型
+    - [ ] 统一函数签名
 
 - [ ] WAL改进
   - [ ] 基于段的管理
@@ -26,19 +30,18 @@
 - [ ] 同步原语重构
   ```c
   typedef struct ppdb_sync {
-      union {
-          atomic_int atomic;
-          mutex_t mutex;
-      } impl;
-      ppdb_sync_config_t config;
-      ppdb_ref_count_t* ref_count;
+      mutex_t mutex;
+      atomic_bool is_locked;
   } ppdb_sync_t;
   ```
-  - [ ] 基础同步类型实现
-    - [ ] mutex_t 类型定义
-    - [ ] mutex 基本操作
-    - [ ] 原子操作封装
-  - [ ] 无锁/互斥模式
+  - [x] 基础同步类型实现
+    - [x] mutex_t 类型定义
+    - [x] mutex 基本操作
+    - [x] 原子操作封装
+  - [x] 统一使用 ppdb_sync_t
+    - [x] KVStore 同步改造
+    - [ ] MemTable 同步改造
+    - [ ] WAL 同步改造
   - [ ] 分片锁优化
   - [ ] 引用计数管理
 
@@ -117,16 +120,18 @@
 ## 4. 下一步任务
 
 ### 4.1 紧急任务
-1. 实现同步原语基础功能
-   - mutex_t 类型定义
-   - mutex_init/destroy
-   - mutex_lock/unlock
-   - mutex_lock_raw/unlock_raw
+1. 完成同步原语统一
+   - [x] KVStore 使用 ppdb_sync_t
+   - [ ] MemTable 使用 ppdb_sync_t
+   - [ ] WAL 使用 ppdb_sync_t
+   - [ ] 其他组件同步改造
 
-2. 实现内存表管理功能
-   - handle_memtable_full
-   - check_and_switch_memtable
-   - 内存表切换策略
+2. 修复内存表相关问题
+   - 完善 skiplist.h 接口定义
+   - 修复 metrics.h 中的原子类型
+   - 统一函数签名
+   - 实现缺失的函数
+   - 修复返回值问题
 
 3. 实现无锁版本的函数
    - memtable_put_lockfree
