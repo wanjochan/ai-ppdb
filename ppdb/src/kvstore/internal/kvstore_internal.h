@@ -2,13 +2,14 @@
 #define PPDB_KVSTORE_INTERNAL_H
 
 #include <cosmopolitan.h>
-#include "ppdb/kvstore.h"
-#include "ppdb/memtable.h"
-#include "ppdb/wal.h"
-#include "ppdb/monitor.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "kvstore_memtable.h"
+#include "kvstore_wal.h"
+#include "kvstore_monitor.h"
 
 // KVStore内部结构
-typedef struct ppdb_kvstore {
+struct ppdb_kvstore {
     char db_path[256];              // 数据库路径
     ppdb_memtable_t* table;         // 当前内存表
     ppdb_wal_t* wal;                // WAL日志
@@ -17,6 +18,6 @@ typedef struct ppdb_kvstore {
     bool adaptive_enabled;          // 是否启用自适应
     mutex_t mutex;                  // 互斥锁
     bool is_locked;                 // 是否已锁定
-} ppdb_kvstore_t;
+};
 
 #endif // PPDB_KVSTORE_INTERNAL_H 

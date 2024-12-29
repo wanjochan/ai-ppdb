@@ -1,11 +1,12 @@
 #include <cosmopolitan.h>
-#include "ppdb/kvstore.h"
-#include "ppdb/memtable.h"
-#include "ppdb/wal.h"
-#include "ppdb/monitor.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_kvstore.h"
 #include "internal/kvstore_internal.h"
 #include "internal/kvstore_fs.h"
 #include "internal/kvstore_logger.h"
+#include "internal/kvstore_memtable.h"
+#include "internal/kvstore_wal.h"
+#include "internal/kvstore_monitor.h"
 
 // 创建内存表
 static ppdb_error_t create_memtable(size_t size, ppdb_memtable_t** table, bool use_sharding) {
