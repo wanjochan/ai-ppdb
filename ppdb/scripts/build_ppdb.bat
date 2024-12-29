@@ -29,38 +29,43 @@ if not exist ..\build (
     mkdir ..\build
 )
 
-:: 编译源文件
-echo Compiling source files...
-for /r ..\src %%f in (*.c) do (
-    echo   Checking %%f...
-    echo %%f | findstr /i /c:"backup" > nul
+:: 编译通用模块
+echo Compiling common modules...
+for %%f in (..\src\common\*.c) do (
+    echo   Compiling %%f...
+    "%GCC%" %CFLAGS% -c "%%f"
     if errorlevel 1 (
-        echo   Compiling %%f...
-        "%GCC%" %CFLAGS% -c "%%f"
-        if errorlevel 1 (
-            echo Error compiling %%f
-            exit /b 1
-        )
-    ) else (
-        echo   Skipping backup file: %%f
+        echo Error compiling %%f
+        exit /b 1
     )
+)
+
+:: 编译KVStore模块
+echo Compiling KVStore modules...
+for %%f in (..\src\kvstore\*.c) do (
+    echo   Compiling %%f...
+    "%GCC%" %CFLAGS% -c "%%f"
+    if errorlevel 1 (
+        echo Error compiling %%f
+        exit /b 1
+    )
+)
+
+:: 编译主程序
+echo Compiling main program...
+"%GCC%" %CFLAGS% -c ..\src\main.c
+if errorlevel 1 (
+    echo Error compiling main.c
+    exit /b 1
 )
 
 :: 创建静态库
 echo Creating static library...
 "%AR%" rcs ..\build\libppdb.a *.o
-if errorlevel 1 (
-    echo Error creating library
-    exit /b 1
-)
 
-:: 编译主程序
-echo Building main program...
-"%GCC%" %CFLAGS% %LDFLAGS% ..\src\main.c -o ..\build\ppdb.exe -L ..\build -lppdb %LIBS%
-if errorlevel 1 (
-    echo Error building main program
-    exit /b 1
-)
+:: 链接可执行文件
+echo Linking executable...
+"%GCC%" %LDFLAGS% *.o %LIBS% -o ..\build\ppdb.exe
 
 :: 添加 APE 自修改支持
 echo Adding APE self-modify support...

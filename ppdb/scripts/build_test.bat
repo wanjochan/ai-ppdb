@@ -25,13 +25,33 @@ if not exist ..\build\libppdb.a (
     )
 )
 
+:: 编译测试框架
+echo Compiling test framework...
+"%GCC%" %CFLAGS% -c ..\test\white\test_framework.c
+if errorlevel 1 (
+    echo Error compiling test framework
+    exit /b 1
+)
+
 :: 编译测试文件
 echo Compiling test files...
+for %%f in (..\test\white\test_*.c) do (
+    :: 跳过test_framework.c和test_*_main.c
+    echo %%f | findstr /i /c:"test_framework.c" /c:"test_.*_main.c" > nul
+    if errorlevel 1 (
+        echo   Compiling %%f...
+        "%GCC%" %CFLAGS% -c "%%f"
+        if errorlevel 1 (
+            echo Error compiling %%f
+            exit /b 1
+        )
+    )
+)
 
-:: 编译单元测试
-echo   Compiling unit tests...
-for /r ..\test\unit %%f in (*.c) do (
-    echo     Compiling %%f...
+:: 编译测试主程序
+echo Compiling test main programs...
+for %%f in (..\test\white\test_*_main.c) do (
+    echo   Compiling %%f...
     "%GCC%" %CFLAGS% -c "%%f"
     if errorlevel 1 (
         echo Error compiling %%f
@@ -39,52 +59,26 @@ for /r ..\test\unit %%f in (*.c) do (
     )
 )
 
-:: 编译集成测试
-echo   Compiling integration tests...
-for /r ..\test\integration %%f in (*.c) do (
-    echo     Compiling %%f...
-    "%GCC%" %CFLAGS% -c "%%f"
+:: 链接测试程序
+echo Linking test programs...
+for %%f in (test_*_main.o) do (
+    set "test_name=%%~nf"
+    set "test_name=!test_name:_main=!"
+    echo   Linking !test_name!.exe...
+    "%GCC%" %LDFLAGS% "%%f" !test_name!.o test_framework.o ..\build\libppdb.a %LIBS% -o ..\build\!test_name!.exe
+    
+    :: 添加 APE 自修改支持
+    echo   Adding APE self-modify support to !test_name!...
+    copy /b ..\build\!test_name!.exe + %COSMO%\ape-copy-self.o ..\build\!test_name!.com
     if errorlevel 1 (
-        echo Error compiling %%f
+        echo Error adding APE support to !test_name!
         exit /b 1
     )
-)
-
-:: 构建测试程序
-echo Building test program...
-"%GCC%" %CFLAGS% %LDFLAGS% ..\test\test_main.c *.o -o ..\build\ppdb_test.exe -L ..\build -lppdb %LIBS%
-if errorlevel 1 (
-    echo Error building test program
-    exit /b 1
-)
-
-:: 添加 APE 自修改支持
-echo Adding APE self-modify support...
-copy /b ..\build\ppdb_test.exe + %COSMO%\ape-copy-self.o ..\build\ppdb_test.com
-if errorlevel 1 (
-    echo Error adding APE support
-    exit /b 1
 )
 
 :: 清理中间文件
 echo Cleaning up...
 del *.o
 
-:: 运行测试
-echo Running tests...
-echo   Running unit tests...
-..\build\ppdb_test.com --unit
-if errorlevel 1 (
-    echo Unit tests failed
-    exit /b 1
-)
-
-echo   Running integration tests...
-..\build\ppdb_test.com --integration
-if errorlevel 1 (
-    echo Integration tests failed
-    exit /b 1
-)
-
-echo All tests passed successfully!
-echo Test Binary: ..\build\ppdb_test.com
+echo Test build completed successfully!
+echo Test binaries in: ..\build\

@@ -45,4 +45,7 @@ size_t ppdb_memtable_memory_usage(ppdb_memtable_t* table);
 // 获取数据条数
 size_t ppdb_memtable_size(ppdb_memtable_t* table);
 
+// 获取性能指标
+ppdb_metrics_t* ppdb_memtable_get_metrics(ppdb_memtable_t* table);
+
 #endif // PPDB_MEMTABLE_H
