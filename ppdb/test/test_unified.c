@@ -1,8 +1,8 @@
 #include "test_framework.h"
-#include "ppdb/kvstore/common/sync_unified.h"
-#include "ppdb/kvstore/skiplist/skiplist_unified.h"
-#include "ppdb/kvstore/memtable/memtable_unified.h"
-#include "ppdb/kvstore/wal/wal_unified.h"
+#include "ppdb/kvstore/common/sync.h"
+#include "ppdb/kvstore/skiplist/skiplist.h"
+#include "ppdb/kvstore/memtable/memtable.h"
+#include "ppdb/kvstore/wal/wal.h"
 
 // 同步机制测试
 void test_sync_unified(void) {

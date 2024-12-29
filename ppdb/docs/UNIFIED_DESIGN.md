@@ -1,6 +1,6 @@
-# PPDB 统一设计文档
+# PPDB 设计文档
 
-## 1. 同步机制 (sync_unified)
+## 1. 同步机制 (sync)
 
 ### 1.1 设计目标
 - 统一无锁和互斥锁接口
@@ -23,7 +23,7 @@ typedef struct ppdb_sync_config {
 - 分片锁：减少锁竞争，提高并发度
 - 自适应自旋：平衡延迟和CPU使用
 
-## 2. 跳表实现 (skiplist_unified)
+## 2. 跳表实现 (skiplist)
 
 ### 2.1 设计目标
 - 统一的接口
@@ -41,7 +41,7 @@ typedef struct ppdb_sync_config {
 - 查找：O(log N)
 - 空间复杂度：O(N)
 
-## 3. 内存表 (memtable_unified)
+## 3. 内存表 (memtable)
 
 ### 3.1 设计目标
 - 基于统一跳表
@@ -59,7 +59,7 @@ typedef struct ppdb_sync_config {
 - 并发控制
 - 内存限制
 
-## 4. WAL实现 (wal_unified)
+## 4. WAL实现 (wal)
 
 ### 4.1 设计目标
 - 高性能日志写入
