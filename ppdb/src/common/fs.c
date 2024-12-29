@@ -1,6 +1,6 @@
 #include <cosmopolitan.h>
 #include "ppdb/fs.h"
-#include "ppdb/error.h"
+#include "ppdb/ppdb_error.h"
 #include "ppdb/logger.h"
 
 bool ppdb_fs_dir_exists(const char* path) {

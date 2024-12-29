@@ -2,7 +2,7 @@
 #define PPDB_KVSTORE_FS_H
 
 #include <cosmopolitan.h>
-#include "ppdb/error.h"
+#include "ppdb/ppdb_error.h"
 
 // 检查目录是否存在
 bool ppdb_fs_dir_exists(const char* path);

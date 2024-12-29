@@ -1,206 +1,219 @@
-#include <cosmopolitan.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 #include "test_framework.h"
-#include <ppdb/wal.h>
-#include <ppdb/error.h>
-#include <ppdb/logger.h>
-#include <ppdb/fs.h>
+#include "test_plan.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "src/kvstore/internal/kvstore_wal.h"
+#include "src/kvstore/internal/kvstore_memtable.h"
 
-// Test WAL filesystem operations
-static int test_wal_fs_ops(void) {
-    ppdb_log_info("Testing WAL filesystem operations...");
-    
-    const char* test_dir = "test_wal_fs.db";
-    cleanup_test_dir(test_dir);
-    
-    // Create directory
-    ppdb_error_t err = ppdb_ensure_directory(test_dir);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create directory");
-    
-    // Initialize WAL
-    ppdb_wal_config_t config = {
-        .dir_path = {0}
-    };
-    strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
-    
-    ppdb_wal_t* wal = NULL;
-    err = ppdb_wal_create(&config, &wal);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
-    TEST_ASSERT(wal != NULL, "WAL pointer is NULL");
-    
-    // Close WAL
-    ppdb_wal_destroy(wal);
-    
-    cleanup_test_dir(test_dir);
-    return 0;
-}
+#define TEST_DIR "./tmp_test_wal"
+#define MAX_KEY_SIZE 64
+#define MAX_VALUE_SIZE 128
 
-// Test WAL write operations
-static int test_wal_write(void) {
-    ppdb_log_info("Testing WAL write operations...");
-    
-    const char* test_dir = "test_wal_write.db";
-    cleanup_test_dir(test_dir);
-    
-    // Initialize WAL
-    ppdb_wal_config_t config = {
-        .dir_path = {0}
-    };
-    strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
-    
-    ppdb_wal_t* wal = NULL;
-    ppdb_error_t err = ppdb_wal_create(&config, &wal);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
-    
-    // Write data
-    const uint8_t* key = (const uint8_t*)"test_key";
-    const uint8_t* value = (const uint8_t*)"test_value";
-    err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, key, strlen((const char*)key), value, strlen((const char*)value));
-    TEST_ASSERT(err == PPDB_OK, "Failed to write to WAL");
-    
-    // Close WAL
-    ppdb_wal_destroy(wal);
-    
-    cleanup_test_dir(test_dir);
-    return 0;
-}
-
-// Test WAL recovery
-static int test_wal_recovery(void) {
-    ppdb_log_info("Testing WAL recovery...");
-    
-    const char* test_dir = "test_wal_recovery.db";
-    cleanup_test_dir(test_dir);
-    
-    // Initialize WAL
-    ppdb_wal_config_t config = {
-        .dir_path = {0}
-    };
-    strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
-    
-    // First session: write data
-    {
-        ppdb_wal_t* wal = NULL;
-        ppdb_error_t err = ppdb_wal_create(&config, &wal);
-        TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
-        
-        const uint8_t* key = (const uint8_t*)"recovery_key";
-        const uint8_t* value = (const uint8_t*)"recovery_value";
-        err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, key, strlen((const char*)key), value, strlen((const char*)value));
-        TEST_ASSERT(err == PPDB_OK, "Failed to write to WAL");
-        
-        ppdb_wal_close(wal);
+// WAL资源清理函数
+static void cleanup_wal(void* ptr) {
+    ppdb_wal_t* wal = (ppdb_wal_t*)ptr;
+    if (wal) {
+        ppdb_wal_close_lockfree(wal);
+        ppdb_wal_destroy_lockfree(wal);
     }
-    
-    // Second session: recover data
-    {
-        ppdb_wal_t* wal = NULL;
-        ppdb_memtable_t* memtable = NULL;
-        ppdb_error_t err;
-        
-        // Create memtable
-        err = ppdb_memtable_create(4096, &memtable);
-        TEST_ASSERT(err == PPDB_OK, "Failed to create memtable");
-        
-        // Open WAL and recover
-        err = ppdb_wal_create(&config, &wal);
-        TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
-        
-        err = ppdb_wal_recover(wal, &memtable);
-        TEST_ASSERT(err == PPDB_OK, "Failed to recover from WAL");
-        
-        // Verify recovered data
-        const uint8_t* key = (const uint8_t*)"recovery_key";
-        uint8_t* recovered_value = NULL;
-        size_t value_size = 0;
-        err = ppdb_memtable_get(memtable, key, strlen((const char*)key), &recovered_value, &value_size);
-        TEST_ASSERT(err == PPDB_OK, "Failed to get value from memtable");
-        TEST_ASSERT(value_size == strlen("recovery_value"), "Recovered value size does not match");
-        TEST_ASSERT(memcmp(recovered_value, "recovery_value", value_size) == 0, "Recovered value does not match");
-        
-        // Cleanup
-        ppdb_wal_destroy(wal);
-        ppdb_memtable_destroy(memtable);
-    }
-    
-    cleanup_test_dir(test_dir);
-    return 0;
 }
 
-// WAL test suite definition
-static const test_case_t wal_test_cases[] = {
-    {"fs_ops", test_wal_fs_ops},
-    {"write", test_wal_write},
-    {"recovery", test_wal_recovery}
-};
-
-// Export WAL test suite
-const test_suite_t wal_suite = {
-    .name = "WAL",
-    .cases = wal_test_cases,
-    .num_cases = sizeof(wal_test_cases) / sizeof(wal_test_cases[0])
-};
-
-void test_wal_basic_ops(void) {
-    printf("Testing WAL basic operations...\n");
-
-    // 创建 WAL
-    const char* test_dir = "test_wal_basic.db.wal";
-    cleanup_test_dir(test_dir);
-    ppdb_wal_t* wal = NULL;
+// 基本写入测试
+static int test_wal_basic_write(void) {
+    // 创建WAL
+    ppdb_wal_t* wal;
     ppdb_wal_config_t config = {
-        .dir_path = {0},
-        .segment_size = 16384,
-        .sync_write = true,
-        .mode = PPDB_MODE_LOCKED
+        .dir = TEST_DIR,
+        .sync_mode = PPDB_SYNC_MODE_ASYNC
     };
-    strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
-    ppdb_error_t err = ppdb_wal_create(&config, &wal);
-    assert(err == PPDB_OK);
-    assert(wal != NULL);
-
-    // 测试写入记录
+    
+    ppdb_error_t err = ppdb_wal_create_lockfree(&config, &wal);
+    TEST_ASSERT_OK(err, "Failed to create WAL");
+    TEST_TRACK(wal, "wal", cleanup_wal);
+    
+    // 写入测试数据
     const char* test_key = "test_key";
     const char* test_value = "test_value";
-    err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT, (const uint8_t*)test_key, strlen(test_key),
-                        (const uint8_t*)test_value, strlen(test_value));
-    assert(err == PPDB_OK);
-
-    // 关闭 WAL
-    ppdb_wal_close(wal);
-
-    // 重新打开 WAL 并恢复
-    ppdb_memtable_t* table = NULL;
-    err = ppdb_memtable_create(4096, &table);
-    assert(err == PPDB_OK);
-    assert(table != NULL);
-
-    err = ppdb_wal_create(&config, &wal);
-    assert(err == PPDB_OK);
-    assert(wal != NULL);
-
-    err = ppdb_wal_recover(wal, &table);
-    assert(err == PPDB_OK);
-
-    // 验证恢复的数据
-    size_t value_size = 0;
-    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
-                           NULL, &value_size);
-    assert(err == PPDB_OK);
-    assert(value_size == strlen(test_value));
-
-    // 获取值
-    uint8_t* value_buf = NULL;
-    size_t actual_size = 0;
-    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
-                           &value_buf, &actual_size);
-    assert(err == PPDB_OK);
-    assert(actual_size == strlen(test_value));
-    assert(value_buf != NULL);
-    assert(memcmp(value_buf, test_value, actual_size) == 0);
-    free(value_buf);
-
-    // 销毁资源
-    ppdb_wal_close(wal);
+    
+    err = ppdb_wal_write_lockfree(wal, PPDB_WAL_RECORD_PUT,
+        test_key, strlen(test_key),
+        test_value, strlen(test_value));
+    TEST_ASSERT_OK(err, "Failed to write to WAL");
+    
+    // 创建memtable验证
+    ppdb_memtable_t* table;
+    ppdb_memtable_config_t table_config = {
+        .size = 1024 * 1024,
+        .dir = TEST_DIR
+    };
+    
+    err = ppdb_memtable_create(&table_config, &table);
+    TEST_ASSERT_OK(err, "Failed to create memtable");
+    
+    // 恢复WAL到memtable
+    err = ppdb_wal_recover_lockfree(wal, table);
+    TEST_ASSERT_OK(err, "Failed to recover WAL");
+    
+    // 验证数据
+    const void* value;
+    size_t value_size;
+    err = ppdb_memtable_get(table, test_key, strlen(test_key), &value, &value_size);
+    TEST_ASSERT_OK(err, "Failed to get value from memtable");
+    TEST_ASSERT(value_size == strlen(test_value), "Value size mismatch");
+    TEST_ASSERT(memcmp(value, test_value, value_size) == 0, "Value content mismatch");
+    
     ppdb_memtable_destroy(table);
-    cleanup_test_dir(test_dir);
-} 
+    return 0;
+}
+
+// 删除记录测试
+static int test_wal_delete(void) {
+    // 创建WAL
+    ppdb_wal_t* wal;
+    ppdb_wal_config_t config = {
+        .dir = TEST_DIR,
+        .sync_mode = PPDB_SYNC_MODE_ASYNC
+    };
+    
+    ppdb_error_t err = ppdb_wal_create_lockfree(&config, &wal);
+    TEST_ASSERT_OK(err, "Failed to create WAL");
+    TEST_TRACK(wal, "wal", cleanup_wal);
+    
+    // 写入然后删除
+    const char* test_key = "test_key";
+    const char* test_value = "test_value";
+    
+    err = ppdb_wal_write_lockfree(wal, PPDB_WAL_RECORD_PUT,
+        test_key, strlen(test_key),
+        test_value, strlen(test_value));
+    TEST_ASSERT_OK(err, "Failed to write to WAL");
+    
+    err = ppdb_wal_write_lockfree(wal, PPDB_WAL_RECORD_DELETE,
+        test_key, strlen(test_key), NULL, 0);
+    TEST_ASSERT_OK(err, "Failed to delete from WAL");
+    
+    // 创建memtable验证
+    ppdb_memtable_t* table;
+    ppdb_memtable_config_t table_config = {
+        .size = 1024 * 1024,
+        .dir = TEST_DIR
+    };
+    
+    err = ppdb_memtable_create(&table_config, &table);
+    TEST_ASSERT_OK(err, "Failed to create memtable");
+    
+    // 恢复WAL到memtable
+    err = ppdb_wal_recover_lockfree(wal, table);
+    TEST_ASSERT_OK(err, "Failed to recover WAL");
+    
+    // 验证数据被删除
+    const void* value;
+    size_t value_size;
+    err = ppdb_memtable_get(table, test_key, strlen(test_key), &value, &value_size);
+    TEST_ASSERT(err == PPDB_NOT_FOUND, "Key should be deleted");
+    
+    ppdb_memtable_destroy(table);
+    return 0;
+}
+
+// 恢复测试
+static int test_wal_recovery(void) {
+    // 创建WAL
+    ppdb_wal_t* wal;
+    ppdb_wal_config_t config = {
+        .dir = TEST_DIR,
+        .sync_mode = PPDB_SYNC_MODE_ASYNC
+    };
+    
+    ppdb_error_t err = ppdb_wal_create_lockfree(&config, &wal);
+    TEST_ASSERT_OK(err, "Failed to create WAL");
+    TEST_TRACK(wal, "wal", cleanup_wal);
+    
+    // 写入多条记录
+    const char* keys[] = {"key1", "key2", "key3"};
+    const char* values[] = {"value1", "value2", "value3"};
+    const int num_records = 3;
+    
+    for (int i = 0; i < num_records; i++) {
+        err = ppdb_wal_write_lockfree(wal, PPDB_WAL_RECORD_PUT,
+            keys[i], strlen(keys[i]),
+            values[i], strlen(values[i]));
+        TEST_ASSERT_OK(err, "Failed to write record %d", i);
+    }
+    
+    // 关闭WAL
+    ppdb_wal_close_lockfree(wal);
+    
+    // 重新打开WAL
+    err = ppdb_wal_create_lockfree(&config, &wal);
+    TEST_ASSERT_OK(err, "Failed to reopen WAL");
+    TEST_TRACK(wal, "wal", cleanup_wal);
+    
+    // 创建memtable验证
+    ppdb_memtable_t* table;
+    ppdb_memtable_config_t table_config = {
+        .size = 1024 * 1024,
+        .dir = TEST_DIR
+    };
+    
+    err = ppdb_memtable_create(&table_config, &table);
+    TEST_ASSERT_OK(err, "Failed to create memtable");
+    
+    // 恢复WAL到memtable
+    err = ppdb_wal_recover_lockfree(wal, table);
+    TEST_ASSERT_OK(err, "Failed to recover WAL");
+    
+    // 验证所有记录
+    for (int i = 0; i < num_records; i++) {
+        const void* value;
+        size_t value_size;
+        err = ppdb_memtable_get(table, keys[i], strlen(keys[i]), &value, &value_size);
+        TEST_ASSERT_OK(err, "Failed to get record %d", i);
+        TEST_ASSERT(value_size == strlen(values[i]), "Value size mismatch for record %d", i);
+        TEST_ASSERT(memcmp(value, values[i], value_size) == 0, 
+            "Value content mismatch for record %d", i);
+    }
+    
+    ppdb_memtable_destroy(table);
+    return 0;
+}
+
+// 注册WAL测试
+void register_wal_tests(void) {
+    static const test_case_t cases[] = {
+        {
+            .name = "test_wal_basic_write",
+            .fn = test_wal_basic_write,
+            .timeout_seconds = 30,
+            .skip = false,
+            .description = "测试WAL基本写入功能"
+        },
+        {
+            .name = "test_wal_delete",
+            .fn = test_wal_delete,
+            .timeout_seconds = 30,
+            .skip = false,
+            .description = "测试WAL删除记录功能"
+        },
+        {
+            .name = "test_wal_recovery",
+            .fn = test_wal_recovery,
+            .timeout_seconds = 30,
+            .skip = false,
+            .description = "测试WAL恢复功能"
+        }
+    };
+    
+    static const test_suite_t suite = {
+        .name = "WAL Tests",
+        .cases = cases,
+        .num_cases = sizeof(cases) / sizeof(cases[0]),
+        .setup = NULL,
+        .teardown = NULL
+    };
+    
+    run_test_suite(&suite);
+}

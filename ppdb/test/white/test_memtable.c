@@ -137,7 +137,7 @@ static int test_memtable_iterator(void) {
     
     for (size_t i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++) {
         err = ppdb_memtable_put(table, 
-                               (const uint8_t*)pairs[i][0], strlen(pairs[i][0]),
+                               (const uint8_t*)pairs[i][0], strlen(pairs[i][0]), 
                                (const uint8_t*)pairs[i][1], strlen(pairs[i][1]));
         TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
     }
@@ -197,4 +197,4 @@ const test_suite_t memtable_suite = {
     .name = "MemTable",
     .cases = memtable_test_cases,
     .num_cases = sizeof(memtable_test_cases) / sizeof(memtable_test_cases[0])
-}; 
+};

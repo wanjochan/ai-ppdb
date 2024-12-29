@@ -13,6 +13,8 @@
   - [ ] 紧凑数据结构
   - [ ] 缓存共享机制
   - [x] 无锁操作接口
+  - [ ] 内存表满处理机制
+  - [ ] 自动切换策略
 
 - [ ] WAL改进
   - [ ] 基于段的管理
@@ -21,7 +23,7 @@
   - [x] 无锁操作接口
 
 ### 1.2 并发控制
-- [x] 同步原语重构
+- [ ] 同步原语重构
   ```c
   typedef struct ppdb_sync {
       union {
@@ -32,9 +34,13 @@
       ppdb_ref_count_t* ref_count;
   } ppdb_sync_t;
   ```
-  - [x] 无锁/互斥模式
-  - [x] 分片锁优化
-  - [x] 引用计数管理
+  - [ ] 基础同步类型实现
+    - [ ] mutex_t 类型定义
+    - [ ] mutex 基本操作
+    - [ ] 原子操作封装
+  - [ ] 无锁/互斥模式
+  - [ ] 分片锁优化
+  - [ ] 引用计数管理
 
 - [ ] 内存管理改进
   ```c
@@ -111,22 +117,28 @@
 ## 4. 下一步任务
 
 ### 4.1 紧急任务
-1. 实现无锁版本的函数
+1. 实现同步原语基础功能
+   - mutex_t 类型定义
+   - mutex_init/destroy
+   - mutex_lock/unlock
+   - mutex_lock_raw/unlock_raw
+
+2. 实现内存表管理功能
+   - handle_memtable_full
+   - check_and_switch_memtable
+   - 内存表切换策略
+
+3. 实现无锁版本的函数
    - memtable_put_lockfree
    - memtable_get_lockfree
    - memtable_delete_lockfree
    - wal_write_lockfree
    - wal_recover_lockfree
 
-2. 完善监控系统实现
+4. 完善监控系统实现
    - monitor_op_start/end
    - monitor_should_switch
    - 性能指标收集
-
-3. 修复迭代器接口
-   - 统一返回值类型
-   - 完善错误处理
-   - 添加迭代器状态检查
 
 ### 4.2 待办任务
 1. 补充单元测试

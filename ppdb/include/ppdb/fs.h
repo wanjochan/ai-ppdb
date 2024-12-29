@@ -2,7 +2,7 @@
 #define PPDB_FS_H
 
 #include <cosmopolitan.h>
-#include "error.h"
+#include "ppdb_error.h"
 #include "defs.h"
 
 // 检查目录是否存在

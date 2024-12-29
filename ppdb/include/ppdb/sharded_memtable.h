@@ -2,7 +2,7 @@
 #define PPDB_SHARDED_MEMTABLE_H
 
 #include <cosmopolitan.h>
-#include "ppdb/error.h"
+#include "ppdb/ppdb_error.h"
 #include "ppdb/defs.h"
 
 // 分片配置

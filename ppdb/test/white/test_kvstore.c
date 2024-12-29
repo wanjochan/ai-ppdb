@@ -315,3 +315,229 @@ test_suite_t kvstore_suite = {
     },
     .num_cases = 4
 };
+
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
+#include "test_framework.h"
+#include "test_plan.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "src/kvstore/internal/kvstore_internal.h"
+
+#define TEST_DIR "./tmp_test_kvstore"
+#define MAX_KEY_SIZE 64
+#define MAX_VALUE_SIZE 128
+
+// kvstore资源清理函数
+static void cleanup_kvstore(void* ptr) {
+    ppdb_kvstore_t* store = (ppdb_kvstore_t*)ptr;
+    if (store) {
+        ppdb_kvstore_close(store);
+    }
+}
+
+// 基本操作测试
+static int test_kvstore_basic(void) {
+    // 创建kvstore
+    ppdb_kvstore_t* store;
+    ppdb_kvstore_config_t config = {
+        .dir = TEST_DIR,
+        .memtable_size = 1024 * 1024,  // 1MB
+        .cache_size = 1024 * 1024,     // 1MB
+        .sync_mode = PPDB_SYNC_MODE_ASYNC
+    };
+    
+    ppdb_error_t err = ppdb_kvstore_open(&config, &store);
+    TEST_ASSERT_OK(err, "Failed to open kvstore");
+    TEST_TRACK(store, "kvstore", cleanup_kvstore);
+    
+    // 写入测试数据
+    const char* test_key = "test_key";
+    const char* test_value = "test_value";
+    
+    err = ppdb_kvstore_put(store, test_key, strlen(test_key),
+        test_value, strlen(test_value));
+    TEST_ASSERT_OK(err, "Failed to put value");
+    
+    // 读取数据
+    void* value;
+    size_t value_size;
+    err = ppdb_kvstore_get(store, test_key, strlen(test_key),
+        &value, &value_size);
+    TEST_ASSERT_OK(err, "Failed to get value");
+    TEST_ASSERT(value_size == strlen(test_value), "Value size mismatch");
+    TEST_ASSERT(memcmp(value, test_value, value_size) == 0,
+        "Value content mismatch");
+    
+    free(value);
+    
+    // 删除数据
+    err = ppdb_kvstore_delete(store, test_key, strlen(test_key));
+    TEST_ASSERT_OK(err, "Failed to delete value");
+    
+    // 验证删除
+    err = ppdb_kvstore_get(store, test_key, strlen(test_key),
+        &value, &value_size);
+    TEST_ASSERT(err == PPDB_NOT_FOUND, "Key should be deleted");
+    
+    return 0;
+}
+
+// 批量操作测试
+static int test_kvstore_batch(void) {
+    // 创建kvstore
+    ppdb_kvstore_t* store;
+    ppdb_kvstore_config_t config = {
+        .dir = TEST_DIR,
+        .memtable_size = 1024 * 1024,
+        .cache_size = 1024 * 1024,
+        .sync_mode = PPDB_SYNC_MODE_ASYNC
+    };
+    
+    ppdb_error_t err = ppdb_kvstore_open(&config, &store);
+    TEST_ASSERT_OK(err, "Failed to open kvstore");
+    TEST_TRACK(store, "kvstore", cleanup_kvstore);
+    
+    // 创建批量操作
+    ppdb_batch_t* batch;
+    err = ppdb_batch_create(&batch);
+    TEST_ASSERT_OK(err, "Failed to create batch");
+    
+    // 添加多个操作
+    const char* keys[] = {"key1", "key2", "key3"};
+    const char* values[] = {"value1", "value2", "value3"};
+    const int num_records = 3;
+    
+    for (int i = 0; i < num_records; i++) {
+        err = ppdb_batch_put(batch, keys[i], strlen(keys[i]),
+            values[i], strlen(values[i]));
+        TEST_ASSERT_OK(err, "Failed to add put to batch");
+    }
+    
+    // 执行批量操作
+    err = ppdb_kvstore_write_batch(store, batch);
+    TEST_ASSERT_OK(err, "Failed to write batch");
+    
+    // 验证所有记录
+    for (int i = 0; i < num_records; i++) {
+        void* value;
+        size_t value_size;
+        err = ppdb_kvstore_get(store, keys[i], strlen(keys[i]),
+            &value, &value_size);
+        TEST_ASSERT_OK(err, "Failed to get record %d", i);
+        TEST_ASSERT(value_size == strlen(values[i]),
+            "Value size mismatch for record %d", i);
+        TEST_ASSERT(memcmp(value, values[i], value_size) == 0,
+            "Value content mismatch for record %d", i);
+        free(value);
+    }
+    
+    ppdb_batch_destroy(batch);
+    return 0;
+}
+
+// 迭代器测试
+static int test_kvstore_iterator(void) {
+    // 创建kvstore
+    ppdb_kvstore_t* store;
+    ppdb_kvstore_config_t config = {
+        .dir = TEST_DIR,
+        .memtable_size = 1024 * 1024,
+        .cache_size = 1024 * 1024,
+        .sync_mode = PPDB_SYNC_MODE_ASYNC
+    };
+    
+    ppdb_error_t err = ppdb_kvstore_open(&config, &store);
+    TEST_ASSERT_OK(err, "Failed to open kvstore");
+    TEST_TRACK(store, "kvstore", cleanup_kvstore);
+    
+    // 写入多条记录
+    const char* keys[] = {"key1", "key2", "key3"};
+    const char* values[] = {"value1", "value2", "value3"};
+    const int num_records = 3;
+    
+    for (int i = 0; i < num_records; i++) {
+        err = ppdb_kvstore_put(store, keys[i], strlen(keys[i]),
+            values[i], strlen(values[i]));
+        TEST_ASSERT_OK(err, "Failed to put record %d", i);
+    }
+    
+    // 创建迭代器
+    ppdb_iterator_t* iter;
+    err = ppdb_kvstore_create_iterator(store, &iter);
+    TEST_ASSERT_OK(err, "Failed to create iterator");
+    
+    // 验证所有记录
+    int count = 0;
+    while (ppdb_iterator_valid(iter)) {
+        const void* key;
+        size_t key_size;
+        const void* value;
+        size_t value_size;
+        
+        err = ppdb_iterator_get(iter, &key, &key_size, &value, &value_size);
+        TEST_ASSERT_OK(err, "Failed to get iterator entry");
+        
+        bool found = false;
+        for (int i = 0; i < num_records; i++) {
+            if (key_size == strlen(keys[i]) &&
+                memcmp(key, keys[i], key_size) == 0) {
+                TEST_ASSERT(value_size == strlen(values[i]),
+                    "Value size mismatch for key %s", keys[i]);
+                TEST_ASSERT(memcmp(value, values[i], value_size) == 0,
+                    "Value content mismatch for key %s", keys[i]);
+                found = true;
+                break;
+            }
+        }
+        
+        TEST_ASSERT(found, "Found unexpected key");
+        count++;
+        ppdb_iterator_next(iter);
+    }
+    
+    TEST_ASSERT(count == num_records,
+        "Iterator count mismatch: expected %d, got %d",
+        num_records, count);
+    
+    ppdb_iterator_destroy(iter);
+    return 0;
+}
+
+// 注册kvstore测试
+void register_kvstore_tests(void) {
+    static const test_case_t cases[] = {
+        {
+            .name = "test_kvstore_basic",
+            .fn = test_kvstore_basic,
+            .timeout_seconds = 30,
+            .skip = false,
+            .description = "测试kvstore基本操作"
+        },
+        {
+            .name = "test_kvstore_batch",
+            .fn = test_kvstore_batch,
+            .timeout_seconds = 30,
+            .skip = false,
+            .description = "测试kvstore批量操作"
+        },
+        {
+            .name = "test_kvstore_iterator",
+            .fn = test_kvstore_iterator,
+            .timeout_seconds = 30,
+            .skip = false,
+            .description = "测试kvstore迭代器"
+        }
+    };
+    
+    static const test_suite_t suite = {
+        .name = "KVStore Tests",
+        .cases = cases,
+        .num_cases = sizeof(cases) / sizeof(cases[0]),
+        .setup = NULL,
+        .teardown = NULL
+    };
+    
+    run_test_suite(&suite);
+}
