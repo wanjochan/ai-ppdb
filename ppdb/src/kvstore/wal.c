@@ -1,7 +1,6 @@
+#include <cosmopolitan.h>
 #include "internal/wal.h"
 #include "internal/sync.h"
-#include <stdlib.h>
-#include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
 

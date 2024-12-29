@@ -1,3 +1,4 @@
+#include <cosmopolitan.h>
 #include "sync.h"
 
 void ppdb_stripe_locks_init(ppdb_stripe_locks_t* locks, size_t count) {

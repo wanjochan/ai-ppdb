@@ -1,7 +1,8 @@
 #ifndef PPDB_MONITOR_H
 #define PPDB_MONITOR_H
 
-#include <stdint.h>
+#include <cosmopolitan.h>
+#include "sync.h"
 #include <stdatomic.h>
 #include <time.h>
 

@@ -1,9 +1,7 @@
 #ifndef PPDB_WAL_H
 #define PPDB_WAL_H
 
-#include <stddef.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include <cosmopolitan.h>
 #include "ppdb/error.h"
 #include "ppdb/defs.h"
 

@@ -6,16 +6,16 @@ set CROSS9=..\cross9\bin
 set GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe
 set AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe
 
-:: 编译选项
+:: Compilation options
 set COMMON_FLAGS=-Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer
 set DEBUG_FLAGS=-g -O0 -DDEBUG
 set CFLAGS=%COMMON_FLAGS% %DEBUG_FLAGS% -I ..\include -I %COSMO%
 
-:: 链接选项
+:: Linker options
 set LDFLAGS=-static -nostdlib -Wl,-T,%COSMO%\ape.lds -Wl,--gc-sections -fuse-ld=bfd
 set LIBS=%COSMO%\crt.o %COSMO%\ape.o %COSMO%\cosmopolitan.a
 
-:: 确保库已经构建
+:: Ensure library is built
 if not exist ..\build\libppdb.a (
     echo Building library first...
     call build_ppdb.bat
@@ -25,7 +25,7 @@ if not exist ..\build\libppdb.a (
     )
 )
 
-:: 编译测试框架
+:: Compile test framework
 echo Compiling test framework...
 "%GCC%" %CFLAGS% -c ..\test\white\test_framework.c
 if errorlevel 1 (
@@ -33,10 +33,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: 编译测试文件
+:: Compile test files
 echo Compiling test files...
 for %%f in (..\test\white\test_*.c) do (
-    :: 跳过test_framework.c和test_*_main.c
+    :: Skip test_framework.c and test_*_main.c
     echo %%f | findstr /i /c:"test_framework.c" /c:"test_.*_main.c" > nul
     if errorlevel 1 (
         echo   Compiling %%f...
@@ -48,7 +48,7 @@ for %%f in (..\test\white\test_*.c) do (
     )
 )
 
-:: 编译测试主程序
+:: Compile test main programs
 echo Compiling test main programs...
 for %%f in (..\test\white\test_*_main.c) do (
     echo   Compiling %%f...
@@ -59,7 +59,7 @@ for %%f in (..\test\white\test_*_main.c) do (
     )
 )
 
-:: 链接测试程序
+:: Link test programs
 echo Linking test programs...
 for %%f in (test_*_main.o) do (
     set "test_name=%%~nf"
@@ -67,7 +67,7 @@ for %%f in (test_*_main.o) do (
     echo   Linking !test_name!.exe...
     "%GCC%" %LDFLAGS% "%%f" !test_name!.o test_framework.o ..\build\libppdb.a %LIBS% -o ..\build\!test_name!.exe
     
-    :: 添加 APE 自修改支持
+    :: Add APE self-modify support
     echo   Adding APE self-modify support to !test_name!...
     copy /b ..\build\!test_name!.exe + %COSMO%\ape-copy-self.o ..\build\!test_name!.com
     if errorlevel 1 (
@@ -76,7 +76,7 @@ for %%f in (test_*_main.o) do (
     )
 )
 
-:: 清理中间文件
+:: Clean up intermediate files
 echo Cleaning up...
 del *.o
 

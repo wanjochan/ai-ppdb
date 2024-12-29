@@ -1,8 +1,18 @@
+试试全局过一下再fix
+
+as warm-up, in ppdb/, you need to review all .md in docs/ and .c in src/;
+从底层往上每一层分析出可能的严重问题并列举更新到合适的文档;
+
+and then run scripts/build.bat and do fix action after detail planned
+
+during this process, if any key progress or plan changed, you MUST update related documents  (for example, update the plan/progress etc);
+
+ALWAYS plan before action to save time；
 # warmup
 
 as warm-up, in ppdb/, you need to review all .md in docs/ and .c in src/;
 
-and then run scripts/build.bat and fix;
+and then run scripts/build*.bat and do fix action after detail planned
 
 during this process, if any key progress or plan changed, you MUST update related documents  (for example, update the plan/progress etc);
 

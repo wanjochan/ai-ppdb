@@ -1,7 +1,6 @@
+#include <cosmopolitan.h>
 #include "internal/skiplist.h"
 #include "internal/sync.h"
-#include <stdlib.h>
-#include <string.h>
 
 // Node structure
 typedef struct skiplist_node {

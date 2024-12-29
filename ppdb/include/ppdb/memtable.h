@@ -1,10 +1,9 @@
-#ifndef PPDB_MEMTABLE_H_
-#define PPDB_MEMTABLE_H_
+#ifndef PPDB_MEMTABLE_H
+#define PPDB_MEMTABLE_H
 
-#include <stddef.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include <cosmopolitan.h>
 #include "ppdb/error.h"
+#include "ppdb/defs.h"
 
 // 前向声明
 typedef struct ppdb_memtable_t ppdb_memtable_t;
@@ -31,4 +30,4 @@ ppdb_error_t ppdb_memtable_iterator_get(ppdb_memtable_iterator_t* iter,
                                        const uint8_t** key, size_t* key_len,
                                        const uint8_t** value, size_t* value_len);
 
-#endif // PPDB_MEMTABLE_H_ 
+#endif // PPDB_MEMTABLE_H 

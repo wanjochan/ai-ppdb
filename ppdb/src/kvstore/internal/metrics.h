@@ -1,7 +1,7 @@
 #ifndef PPDB_METRICS_H
 #define PPDB_METRICS_H
 
-#include <stdint.h>
+#include <cosmopolitan.h>
 #include <time.h>
 #include "sync.h"
 

@@ -1,234 +1,168 @@
-# PPDB 运维手册
+# PPDB 维护指南
 
-## 1. 日常运维
+## 日志管理
 
-### 1.1 服务管理
-```bash
-# 启动服务
-systemctl start ppdb
+### 日志配置
+- **日志级别**
+  - DEBUG：详细调试信息
+  - INFO：一般操作信息
+  - WARN：警告消息
+  - ERROR：错误条件
+  - FATAL：严重故障
 
-# 停止服务
-systemctl stop ppdb
+- **日志轮转**
+  - 基于大小的轮转（默认：100MB）
+  - 基于时间的轮转（默认：每日）
+  - 旧日志压缩
+  - 保留策略（默认：30天）
 
-# 重启服务
-systemctl restart ppdb
+### 日志分析
+- **常见模式**
+  - 错误模式识别
+  - 性能瓶颈检测
+  - 资源使用分析
+  - 安全事件检测
 
-# 查看服务状态
-systemctl status ppdb
-```
+- **工具和脚本**
+  - 日志解析工具
+  - 模式匹配工具
+  - 可视化脚本
+  - 告警生成
 
-### 1.2 日志管理
-```bash
-# 查看实时日志
-tail -f /var/log/ppdb/ppdb.log
+## 性能监控
 
-# 日志轮转
-logrotate /etc/logrotate.d/ppdb
+### 关键指标
+- **系统级别**
+  - CPU 使用率
+  - 内存消耗
+  - 磁盘 I/O
+  - 网络流量
 
-# 日志分析
-grep "ERROR" /var/log/ppdb/ppdb.log
-```
+- **数据库级别**
+  - 查询延迟
+  - 吞吐量
+  - 缓存命中率
+  - 写放大
 
-## 2. 监控运维
+- **操作级别**
+  - WAL 写入速度
+  - 压缩速度
+  - 内存表刷新率
+  - 读写比例
 
-### 2.1 系统监控
-```bash
-# 查看系统资源
-top
-htop
-iostat
-vmstat
+### 监控工具
+- **内置监控**
+  - 性能计数器
+  - 状态端点
+  - 健康检查
+  - 指标导出
 
-# 查看网络连接
-netstat -anp | grep ppdb
-```
+- **外部集成**
+  - Prometheus 支持
+  - Grafana 仪表板
+  - 告警管理器设置
+  - 日志聚合
 
-### 2.2 性能监控
-```bash
-# 查看性能指标
-curl http://localhost:7000/metrics
+## 故障恢复
 
-# 性能分析
-perf record -p $(pgrep ppdb)
-perf report
-```
+### 常见故障
+- **硬件故障**
+  - 磁盘故障
+  - 内存错误
+  - 网络问题
+  - 电源故障
 
-## 3. 备份恢复
+- **软件故障**
+  - 进程崩溃
+  - 数据损坏
+  - 版本冲突
+  - 资源耗尽
 
-### 3.1 数据备份
-```bash
-# 创建快照
-ppdb-cli snapshot create
+### 恢复流程
+1. **初始评估**
+   - 检查系统日志
+   - 验证硬件状态
+   - 收集错误消息
+   - 记录症状
 
-# 备份数据
-tar -czf ppdb-backup-$(date +%Y%m%d).tar.gz /var/lib/ppdb/data
+2. **数据完整性检查**
+   - 运行一致性检查
+   - 验证 WAL 完整性
+   - 检查文件校验和
+   - 验证索引
 
-# 备份配置
-cp -r /etc/ppdb /etc/ppdb.bak
-```
+3. **恢复步骤**
+   - 应用 WAL 记录
+   - 重建损坏的表
+   - 从备份恢复
+   - 验证恢复
 
-### 3.2 数据恢复
-```bash
-# 恢复数据
-tar -xzf ppdb-backup-20231225.tar.gz -C /var/lib/ppdb/
+4. **后续处理**
+   - 更新文档
+   - 审查根本原因
+   - 实施预防措施
+   - 更新监控
 
-# 恢复配置
-cp -r /etc/ppdb.bak/* /etc/ppdb/
-```
+## 预防性维护
 
-## 4. 集群运维
+### 定期任务
+- **每日**
+  - 日志审查
+  - 备份验证
+  - 性能检查
+  - 空间使用监控
 
-### 4.1 节点管理
-```bash
-# 查看节点状态
-ppdb-cli cluster status
+- **每周**
+  - 完整性检查
+  - 索引优化
+  - 缓存清理
+  - 配置审查
 
-# 添加节点
-ppdb-cli cluster add-node --host node2 --port 7000
+- **每月**
+  - 容量规划
+  - 趋势分析
+  - 安全审计
+  - 备份测试
 
-# 移除节点
-ppdb-cli cluster remove-node node2:7000
-```
+### 最佳实践
+- **配置管理**
+  - 版本控制
+  - 变更文档
+  - 回滚计划
+  - 测试程序
 
-### 4.2 数据迁移
-```bash
-# 启动数据迁移
-ppdb-cli migrate start --source node1 --target node2
+- **资源管理**
+  - 容量规划
+  - 增长监控
+  - 资源分配
+  - 优化机会
 
-# 查看迁移进度
-ppdb-cli migrate status
-```
+## 紧急处理
 
-## 5. 故障处理
+### 高负载处理
+1. 识别瓶颈
+2. 应用临时限制
+3. 扩展资源
+4. 监控恢复
 
-### 5.1 常见问题
-1. 服务无法启动
-```bash
-# 检查错误日志
-journalctl -u ppdb -n 100
+### 数据损坏
+1. 停止写入
+2. 评估损害
+3. 从备份恢复
+4. 验证完整性
 
-# 检查端口占用
-netstat -tulpn | grep 7000
+### 系统崩溃
+1. 收集崩溃转储
+2. 审查日志
+3. 应用恢复程序
+4. 验证系统状态
 
-# 检查文件权限
-ls -l /var/lib/ppdb/
-```
-
-2. 性能下降
-```bash
-# 检查系统负载
-uptime
-
-# 检查IO状态
-iostat -x 1
-
-# 检查网络状态
-iftop
-```
-
-### 5.2 故障恢复
-1. 数据损坏
-```bash
-# 检查数据文件
-ppdb-cli check /var/lib/ppdb/data
-
-# 从备份恢复
-ppdb-cli restore backup-20231225
-```
-
-2. 节点故障
-```bash
-# 隔离故障节点
-ppdb-cli cluster isolate node2:7000
-
-# 恢复节点
-ppdb-cli cluster recover node2:7000
-```
-
-## 6. 升级维护
-
-### 6.1 版本升级
-```bash
-# 1. 备份数据
-ppdb-cli backup create
-
-# 2. 停止服务
-systemctl stop ppdb
-
-# 3. 更新软件包
-dpkg -i ppdb_1.1.0_amd64.deb
-
-# 4. 启动服务
-systemctl start ppdb
-
-# 5. 验证升级
-ppdb-cli version
-```
-
-### 6.2 配置更新
-```bash
-# 1. 备份配置
-cp /etc/ppdb/ppdb.conf /etc/ppdb/ppdb.conf.bak
-
-# 2. 修改配置
-vim /etc/ppdb/ppdb.conf
-
-# 3. 验证配置
-ppdb-cli check-config /etc/ppdb/ppdb.conf
-
-# 4. 重载配置
-ppdb-cli reload
-```
-
-## 7. 性能优化
-
-### 7.1 系统优化
-```bash
-# 调整系统参数
-sysctl -w vm.swappiness=10
-sysctl -w vm.dirty_ratio=40
-sysctl -w vm.dirty_background_ratio=10
-
-# 调整文件描述符
-ulimit -n 65535
-```
-
-### 7.2 数据库优化
-```yaml
-# ppdb.conf
-
-# 内存配置
-memory:
-  cache_size: 4GB
-  write_buffer: 64MB
-
-# 存储配置
-storage:
-  compression: true
-  block_size: 4KB
-  
-# 性能配置
-performance:
-  sync_write: false
-  batch_size: 1000
-```
-
-## 8. 安全维护
-
-### 8.1 访问控制
-```bash
-# 更新访问令牌
-ppdb-cli token rotate
-
-# 查看访问日志
-tail -f /var/log/ppdb/access.log
-```
-
-### 8.2 安全审计
-```bash
-# 查看审计日志
-ausearch -p $(pgrep ppdb)
-
-# 检查文件完整性
-tripwire --check
-```
+## 维护清单
+- [ ] 审查系统日志
+- [ ] 检查磁盘使用
+- [ ] 验证备份状态
+- [ ] 监控性能指标
+- [ ] 更新文档
+- [ ] 测试恢复程序
+- [ ] 审查安全设置
+- [ ] 检查资源利用率

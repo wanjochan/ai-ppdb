@@ -1,9 +1,9 @@
 #ifndef PPDB_SHARDED_MEMTABLE_H
 #define PPDB_SHARDED_MEMTABLE_H
 
-#include <stddef.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include <cosmopolitan.h>
+#include "ppdb/error.h"
+#include "ppdb/defs.h"
 
 // 分片配置
 typedef struct {

@@ -1,3 +1,4 @@
+#include <cosmopolitan.h>
 #include "internal/memtable.h"
 #include "ppdb/error.h"
 #include "ppdb/logger.h"
