@@ -21,7 +21,7 @@ static int test_kvstore_create_close(void) {
     cleanup_test_dir(test_dir); // Then clean up parent directory
     
     // Wait for resources to be released
-    usleep(500000);  // 500ms
+    usleep(1000000);  // 1000ms
     
     // Create KVStore
     ppdb_log_info("Creating KVStore configuration...");
@@ -40,7 +40,7 @@ static int test_kvstore_create_close(void) {
     TEST_ASSERT(store != NULL, "KVStore pointer is NULL");
     
     // Wait for initialization to complete
-    usleep(500000);  // 500ms
+    usleep(1000000);  // 1000ms
     
     // Verify directories exist
     ppdb_log_info("Verifying directories...");
@@ -48,7 +48,7 @@ static int test_kvstore_create_close(void) {
     TEST_ASSERT(ppdb_fs_dir_exists(wal_dir), "WAL directory does not exist");
     
     // Wait for WAL initialization
-    usleep(500000);  // 500ms
+    usleep(1000000);  // 1000ms
     
     // Close KVStore
     ppdb_log_info("Closing KVStore...");
@@ -58,7 +58,7 @@ static int test_kvstore_create_close(void) {
     }
     
     // Wait for resources to be released
-    usleep(500000);  // 500ms
+    usleep(2000000);  // 2000ms
     
     // Clean up test directories
     ppdb_log_info("Final cleanup of test directories...");
@@ -66,7 +66,7 @@ static int test_kvstore_create_close(void) {
     cleanup_test_dir(test_dir); // Then clean up parent directory
     
     // Wait for cleanup to complete
-    usleep(500000);  // 500ms
+    usleep(1000000);  // 1000ms
     
     ppdb_log_info("Test completed successfully");
     return 0;

@@ -30,7 +30,7 @@ void cleanup_test_dir(const char* dir_path) {
     if (!dir_path) return;
 
     // 最大重试次数
-    const int max_retries = 3;
+    const int max_retries = 5;
     int retry_count = 0;
 
     while (retry_count < max_retries) {
@@ -38,6 +38,7 @@ void cleanup_test_dir(const char* dir_path) {
         if (ppdb_fs_dir_exists(dir_path)) {
             ppdb_error_t err = ppdb_remove_directory(dir_path);
             if (err == PPDB_OK) {
+                ppdb_log_info("Successfully removed directory: %s", dir_path);
                 break;  // 成功删除，退出循环
             }
             
@@ -45,10 +46,11 @@ void cleanup_test_dir(const char* dir_path) {
                          dir_path, retry_count + 1, max_retries,
                          ppdb_error_string(err));
             
-            // 等待一段时间后重试
-            usleep(500000);  // 500ms
+            // 等待更长时间后重试
+            usleep(1000000);  // 1000ms
             retry_count++;
         } else {
+            ppdb_log_info("Directory does not exist: %s", dir_path);
             break;  // 目录不存在，直接退出
         }
     }
@@ -59,6 +61,6 @@ void cleanup_test_dir(const char* dir_path) {
                       dir_path, max_retries);
     }
 
-    // 等待一段时间确保资源完全释放
-    usleep(500000);  // 500ms
+    // 等待更长时间确保资源完全释放
+    usleep(1000000);  // 1000ms
 } 

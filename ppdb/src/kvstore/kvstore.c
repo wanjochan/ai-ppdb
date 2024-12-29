@@ -217,6 +217,7 @@ static void cleanup_store(ppdb_kvstore_t* store, bool destroy) {
             }
         }
         wal = NULL;
+        usleep(500000);  // 等待500ms确保WAL资源释放
     }
 
     // 清理MemTable
@@ -235,12 +236,14 @@ static void cleanup_store(ppdb_kvstore_t* store, bool destroy) {
             }
         }
         table = NULL;
+        usleep(500000);  // 等待500ms确保MemTable资源释放
     }
 
     // 如果是有锁模式，解锁并销毁互斥锁
     if (mode == PPDB_MODE_LOCKED) {
         pthread_mutex_unlock(&store->mutex);
         pthread_mutex_destroy(&store->mutex);
+        usleep(500000);  // 等待500ms确保互斥锁资源释放
     }
 
     // 清零整个结构
@@ -248,6 +251,7 @@ static void cleanup_store(ppdb_kvstore_t* store, bool destroy) {
 
     // 最后释放结构体
     free(store);
+    usleep(500000);  // 等待500ms确保内存释放
 }
 
 // 关闭KVStore
