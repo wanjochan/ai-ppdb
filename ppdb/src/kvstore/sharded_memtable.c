@@ -19,41 +19,70 @@ static uint32_t get_shard_index(const sharded_memtable_t* table,
     return hash & ((1 << table->config.shard_bits) - 1);
 }
 
-// Sharded memtable structure
+// 分片内存表结构
 struct sharded_memtable_t {
-    shard_config_t config;     // Shard configuration
-    atomic_skiplist_t** shards;  // Shard array
-    ppdb_sync_t* sync;         // Global synchronization
-    ppdb_sync_t** shard_syncs; // Shard synchronization
-    atomic_size_t total_size;         // Total element count
+    shard_config_t config;          // 分片配置
+    ppdb_skiplist_t** shards;       // 分片数组
+    ppdb_sync_t sync;               // 全局同步
+    ppdb_sync_t* shard_syncs;       // 分片同步数组
+    atomic_size_t total_size;       // 总元素数
+    atomic_bool is_immutable;       // 是否不可变
 };
 
-// Create sharded memtable
+// 创建分片内存表
 sharded_memtable_t* sharded_memtable_create(const shard_config_t* config) {
-    sharded_memtable_t* table = (sharded_memtable_t*)malloc(sizeof(sharded_memtable_t));
+    if (!config || config->shard_bits > 16) return NULL;
+
+    sharded_memtable_t* table = aligned_alloc(64, sizeof(sharded_memtable_t));
     if (!table) {
         ppdb_log_error("Failed to allocate sharded memtable");
         return NULL;
     }
 
-    // Copy configuration
+    // 复制配置
     memcpy(&table->config, config, sizeof(shard_config_t));
+    uint32_t shard_count = 1 << config->shard_bits;
 
-    // Allocate shard array
-    table->shards = (atomic_skiplist_t**)malloc(config->shard_count * sizeof(atomic_skiplist_t*));
+    // 分配分片数组
+    table->shards = aligned_alloc(64, shard_count * sizeof(ppdb_skiplist_t*));
     if (!table->shards) {
         free(table);
         ppdb_log_error("Failed to allocate shards array");
         return NULL;
     }
 
-    // Initialize each shard
-    for (uint32_t i = 0; i < config->shard_count; i++) {
-        table->shards[i] = atomic_skiplist_create();
+    // 初始化同步原语
+    ppdb_sync_config_t sync_config = PPDB_SYNC_DEFAULT_CONFIG;
+    ppdb_sync_init(&table->sync, &sync_config);
+
+    // 初始化分片同步
+    table->shard_syncs = aligned_alloc(64, shard_count * sizeof(ppdb_sync_t));
+    if (!table->shard_syncs) {
+        ppdb_sync_destroy(&table->sync);
+        free(table->shards);
+        free(table);
+        ppdb_log_error("Failed to allocate shard syncs array");
+        return NULL;
+    }
+
+    // 初始化每个分片
+    for (uint32_t i = 0; i < shard_count; i++) {
+        ppdb_sync_init(&table->shard_syncs[i], &sync_config);
+
+        ppdb_skiplist_config_t sl_config = {
+            .max_level = 12,
+            .sync_config = sync_config,
+            .enable_hint = true
+        };
+        table->shards[i] = ppdb_skiplist_create(&sl_config);
+        
         if (!table->shards[i]) {
             for (uint32_t j = 0; j < i; j++) {
-                atomic_skiplist_destroy(table->shards[j]);
+                ppdb_skiplist_destroy(table->shards[j]);
+                ppdb_sync_destroy(&table->shard_syncs[j]);
             }
+            ppdb_sync_destroy(&table->sync);
+            free(table->shard_syncs);
             free(table->shards);
             free(table);
             ppdb_log_error("Failed to create skiplist for shard %u", i);
@@ -61,238 +90,178 @@ sharded_memtable_t* sharded_memtable_create(const shard_config_t* config) {
         }
     }
 
-    // Initialize global synchronization
-    table->sync = ppdb_sync_create();
-    if (!table->sync) {
-        for (uint32_t i = 0; i < config->shard_count; i++) {
-            atomic_skiplist_destroy(table->shards[i]);
-        }
-        free(table->shards);
-        free(table);
-        ppdb_log_error("Failed to create global sync");
-        return NULL;
-    }
-
-    // Initialize shard synchronization
-    table->shard_syncs = (ppdb_sync_t**)malloc(config->shard_count * sizeof(ppdb_sync_t*));
-    if (!table->shard_syncs) {
-        ppdb_sync_destroy(table->sync);
-        for (uint32_t i = 0; i < config->shard_count; i++) {
-            atomic_skiplist_destroy(table->shards[i]);
-        }
-        free(table->shards);
-        free(table);
-        ppdb_log_error("Failed to allocate shard syncs array");
-        return NULL;
-    }
-    for (uint32_t i = 0; i < config->shard_count; i++) {
-        table->shard_syncs[i] = ppdb_sync_create();
-        if (!table->shard_syncs[i]) {
-            ppdb_sync_destroy(table->sync);
-            for (uint32_t j = 0; j < i; j++) {
-                ppdb_sync_destroy(table->shard_syncs[j]);
-            }
-            free(table->shard_syncs);
-            for (uint32_t j = 0; j < config->shard_count; j++) {
-                atomic_skiplist_destroy(table->shards[j]);
-            }
-            free(table->shards);
-            free(table);
-            ppdb_log_error("Failed to create shard sync for shard %u", i);
-            return NULL;
-        }
-    }
-
     atomic_init(&table->total_size, 0);
+    atomic_init(&table->is_immutable, false);
+
     return table;
 }
 
-// Destroy sharded memtable
+// 销毁分片内存表
 void sharded_memtable_destroy(sharded_memtable_t* table) {
     if (!table) return;
 
-    // Destroy all shards
-    for (uint32_t i = 0; i < table->config.shard_count; i++) {
-        atomic_skiplist_destroy(table->shards[i]);
+    uint32_t shard_count = 1 << table->config.shard_bits;
+
+    // 销毁所有分片
+    for (uint32_t i = 0; i < shard_count; i++) {
+        if (table->shards[i]) {
+            ppdb_skiplist_destroy(table->shards[i]);
+        }
+        ppdb_sync_destroy(&table->shard_syncs[i]);
     }
 
-    // Destroy shard synchronization
-    for (uint32_t i = 0; i < table->config.shard_count; i++) {
-        ppdb_sync_destroy(table->shard_syncs[i]);
-    }
+    ppdb_sync_destroy(&table->sync);
     free(table->shard_syncs);
-
-    // Destroy global synchronization
-    ppdb_sync_destroy(table->sync);
-
     free(table->shards);
     free(table);
 }
 
-// Insert key-value pair
+// 插入键值对
 int sharded_memtable_put(sharded_memtable_t* table, const uint8_t* key, size_t key_len,
                         const uint8_t* value, size_t value_len) {
-    if (!table || !key || !value) {
-        return -1;
+    if (!table || !key || !value) return PPDB_ERR_INVALID_ARG;
+
+    // 检查是否不可变
+    if (atomic_load(&table->is_immutable)) {
+        return PPDB_ERR_IMMUTABLE;
     }
 
-    // Get global lock
-    ppdb_sync_lock(table->sync);
+    // 获取分片索引
+    uint32_t shard_idx = get_shard_index(table, key, key_len);
+    ppdb_skiplist_t* shard = table->shards[shard_idx];
 
-    uint32_t shard_index = get_shard_index(table, key, key_len);
-    atomic_skiplist_t* shard = table->shards[shard_index];
-
-    // Get shard lock
-    ppdb_sync_lock(table->shard_syncs[shard_index]);
-
-    // Check if shard size exceeds limit
-    if (atomic_skiplist_size(shard) >= table->config.max_size) {
-        ppdb_sync_unlock(table->shard_syncs[shard_index]);
-        ppdb_sync_unlock(table->sync);
-        ppdb_log_error("Shard %u is full", shard_index);
-        return -2;
+    // 尝试插入
+    int result = ppdb_skiplist_insert(shard, key, key_len, value, value_len);
+    
+    if (result == PPDB_OK) {
+        size_t entry_size = key_len + value_len + sizeof(ppdb_skiplist_node_t);
+        atomic_fetch_add(&table->total_size, entry_size);
+        return PPDB_OK;
     }
 
-    int result = atomic_skiplist_put(shard, key, key_len, value, value_len);
-    if (result == 0) {
-        atomic_fetch_add_explicit(&table->total_size, 1, memory_order_relaxed);
-    }
-
-    // Release shard lock
-    ppdb_sync_unlock(table->shard_syncs[shard_index]);
-
-    // Release global lock
-    ppdb_sync_unlock(table->sync);
-
-    return result;
+    return PPDB_ERR_INTERNAL;
 }
 
-// Delete key-value pair
+// 删除键值对
 int sharded_memtable_delete(sharded_memtable_t* table, const uint8_t* key, size_t key_len) {
-    if (!table || !key) {
-        return -1;
+    if (!table || !key) return PPDB_ERR_INVALID_ARG;
+
+    // 检查是否不可变
+    if (atomic_load(&table->is_immutable)) {
+        return PPDB_ERR_IMMUTABLE;
     }
 
-    // Get global lock
-    ppdb_sync_lock(table->sync);
+    // 获取分片索引
+    uint32_t shard_idx = get_shard_index(table, key, key_len);
+    ppdb_skiplist_t* shard = table->shards[shard_idx];
 
-    uint32_t shard_index = get_shard_index(table, key, key_len);
-    atomic_skiplist_t* shard = table->shards[shard_index];
-
-    // Get shard lock
-    ppdb_sync_lock(table->shard_syncs[shard_index]);
-
-    int result = atomic_skiplist_delete(shard, key, key_len);
-    if (result == 0) {
-        atomic_fetch_sub_explicit(&table->total_size, 1, memory_order_relaxed);
+    int result = ppdb_skiplist_remove(shard, key, key_len);
+    
+    if (result == PPDB_OK) {
+        return PPDB_OK;
+    } else if (result == PPDB_NOT_FOUND) {
+        return PPDB_ERR_NOT_FOUND;
     }
 
-    // Release shard lock
-    ppdb_sync_unlock(table->shard_syncs[shard_index]);
-
-    // Release global lock
-    ppdb_sync_unlock(table->sync);
-
-    return result;
+    return PPDB_ERR_INTERNAL;
 }
 
-// Find key-value pair
+// 查找键值对
 int sharded_memtable_get(sharded_memtable_t* table, const uint8_t* key, size_t key_len,
-                        uint8_t* value, size_t* value_len) {
-    if (!table || !key || !value || !value_len) {
-        return -1;
+                        uint8_t** value, size_t* value_len) {
+    if (!table || !key || !value || !value_len) return PPDB_ERR_INVALID_ARG;
+
+    // 获取分片索引
+    uint32_t shard_idx = get_shard_index(table, key, key_len);
+    ppdb_skiplist_t* shard = table->shards[shard_idx];
+
+    int result = ppdb_skiplist_find(shard, key, key_len, (void**)value, value_len);
+    
+    if (result == PPDB_OK) {
+        return PPDB_OK;
+    } else if (result == PPDB_NOT_FOUND) {
+        return PPDB_ERR_NOT_FOUND;
     }
 
-    // Get global lock
-    ppdb_sync_lock(table->sync);
-
-    uint32_t shard_index = get_shard_index(table, key, key_len);
-    atomic_skiplist_t* shard = table->shards[shard_index];
-
-    // Get shard lock
-    ppdb_sync_lock(table->shard_syncs[shard_index]);
-
-    int result = atomic_skiplist_get(shard, key, key_len, value, value_len);
-
-    // Release shard lock
-    ppdb_sync_unlock(table->shard_syncs[shard_index]);
-
-    // Release global lock
-    ppdb_sync_unlock(table->sync);
-
-    return result;
+    return PPDB_ERR_INTERNAL;
 }
 
-// Get total element count
+// 获取总元素数
 size_t sharded_memtable_size(sharded_memtable_t* table) {
     if (!table) return 0;
-
-    // Get global lock
-    ppdb_sync_lock(table->sync);
-
-    size_t size = atomic_load_explicit(&table->total_size, memory_order_relaxed);
-
-    // Release global lock
-    ppdb_sync_unlock(table->sync);
-
-    return size;
+    return atomic_load(&table->total_size);
 }
 
-// Get element count of specified shard
+// 获取指定分片的元素数
 size_t sharded_memtable_shard_size(sharded_memtable_t* table, uint32_t shard_index) {
-    if (!table || shard_index >= table->config.shard_count) return 0;
-
-    // Get global lock
-    ppdb_sync_lock(table->sync);
-
-    size_t size = atomic_skiplist_size(table->shards[shard_index]);
-
-    // Release global lock
-    ppdb_sync_unlock(table->sync);
-
-    return size;
+    if (!table || shard_index >= (1u << table->config.shard_bits)) return 0;
+    return ppdb_skiplist_size(table->shards[shard_index]);
 }
 
-// Clear sharded memtable
+// 清空分片内存表
 void sharded_memtable_clear(sharded_memtable_t* table) {
     if (!table) return;
 
-    // Get global lock
-    ppdb_sync_lock(table->sync);
+    uint32_t shard_count = 1 << table->config.shard_bits;
 
-    for (uint32_t i = 0; i < table->config.shard_count; i++) {
-        // Get shard lock
-        ppdb_sync_lock(table->shard_syncs[i]);
-
-        atomic_skiplist_clear(table->shards[i]);
-
-        // Release shard lock
-        ppdb_sync_unlock(table->shard_syncs[i]);
+    // 销毁并重新创建所有分片
+    ppdb_sync_config_t sync_config = PPDB_SYNC_DEFAULT_CONFIG;
+    for (uint32_t i = 0; i < shard_count; i++) {
+        ppdb_skiplist_destroy(table->shards[i]);
+        
+        ppdb_skiplist_config_t sl_config = {
+            .max_level = 12,
+            .sync_config = sync_config,
+            .enable_hint = true
+        };
+        table->shards[i] = ppdb_skiplist_create(&sl_config);
+        
+        if (!table->shards[i]) {
+            ppdb_log_error("Failed to recreate skiplist for shard %u", i);
+            continue;
+        }
     }
 
-    atomic_store_explicit(&table->total_size, 0, memory_order_relaxed);
-
-    // Release global lock
-    ppdb_sync_unlock(table->sync);
+    atomic_store(&table->total_size, 0);
 }
 
-// Iterate through sharded memtable
+// 遍历分片内存表
 void sharded_memtable_foreach(sharded_memtable_t* table, memtable_visitor_t visitor, void* ctx) {
     if (!table || !visitor) return;
 
-    // Get global lock
-    ppdb_sync_lock(table->sync);
+    uint32_t shard_count = 1 << table->config.shard_bits;
 
-    for (uint32_t i = 0; i < table->config.shard_count; i++) {
-        // Get shard lock
-        ppdb_sync_lock(table->shard_syncs[i]);
+    // 遍历每个分片
+    for (uint32_t i = 0; i < shard_count; i++) {
+        ppdb_skiplist_t* shard = table->shards[i];
+        ppdb_skiplist_iterator_t* iter = ppdb_skiplist_iterator_create(shard);
+        
+        if (!iter) continue;
 
-        atomic_skiplist_foreach(table->shards[i], (skiplist_visitor_t)visitor, ctx);
+        while (ppdb_skiplist_iterator_next(iter) == PPDB_OK) {
+            void* key;
+            void* value;
+            size_t key_len, value_len;
+            
+            if (ppdb_skiplist_iterator_get(iter, &key, &key_len, &value, &value_len) == PPDB_OK) {
+                visitor(key, key_len, value, value_len, ctx);
+                free(key);
+                free(value);
+            }
+        }
 
-        // Release shard lock
-        ppdb_sync_unlock(table->shard_syncs[i]);
+        ppdb_skiplist_iterator_destroy(iter);
     }
+}
 
-    // Release global lock
-    ppdb_sync_unlock(table->sync);
+// 设置为不可变
+void sharded_memtable_set_immutable(sharded_memtable_t* table) {
+    if (!table) return;
+    atomic_store(&table->is_immutable, true);
+}
+
+// 检查是否不可变
+bool sharded_memtable_is_immutable(sharded_memtable_t* table) {
+    if (!table) return true;
+    return atomic_load(&table->is_immutable);
 }

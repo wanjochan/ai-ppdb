@@ -6,37 +6,34 @@
 
 // WAL record header
 typedef struct wal_record_header {
-    uint32_t type;           // Record type
-    uint32_t key_size;       // Key size
-    uint32_t value_size;     // Value size
-    uint64_t sequence;       // Sequence number
-    uint32_t checksum;       // Checksum
-} wal_record_header_t;
+    uint32_t type;           // 记录类型
+    uint32_t key_size;       // 键大小
+    uint32_t value_size;     // 值大小
+    uint64_t sequence;       // 序列号
+    uint32_t checksum;       // 校验和
+} __attribute__((packed)) wal_record_header_t;
 
 // WAL buffer
 typedef struct wal_buffer {
-    char* data;              // Data
-    size_t size;            // Size
-    size_t used;            // Used size
-    bool in_use;            // Whether in use
+    char* data;              // 数据
+    atomic_size_t size;      // 大小
+    atomic_size_t used;      // 已用大小
+    atomic_bool in_use;      // 是否使用中
+    ppdb_sync_t sync;        // 同步原语
 } wal_buffer_t;
 
 // WAL structure
 struct ppdb_wal {
-    int fd;                  // File descriptor
-    char* filename;          // Filename
-    ppdb_wal_config_t config;// Configuration
-    ppdb_sync_t sync;       // Synchronization
-    wal_buffer_t* buffers;  // Buffer array
-    size_t buffer_count;    // Buffer count
-    size_t current_buffer;  // Current buffer
-    wal_group_t group;      // Group commit
-    bool enable_group_commit;// Enable group commit
-    uint32_t group_interval; // Group commit interval
-    bool enable_async_flush; // Enable async flush
-    bool enable_checksum;    // Enable checksum
-    uint64_t file_size;     // File size
-    bool closed;             // Whether closed
+    int fd;                  // 文件描述符
+    char* filename;          // 文件名
+    ppdb_wal_config_t config;// 配置
+    ppdb_sync_t sync;        // 同步原语
+    wal_buffer_t* buffers;   // 缓冲区数组
+    atomic_size_t buffer_count;    // 缓冲区数量
+    atomic_size_t current_buffer;  // 当前缓冲区
+    atomic_uint64_t next_sequence; // 下一个序列号
+    atomic_bool closed;            // 是否关闭
+    atomic_uint64_t file_size;     // 文件大小
 };
 
 // WAL recovery iterator
@@ -47,45 +44,41 @@ struct ppdb_wal_recovery_iter {
     size_t buffer_size;     // Buffer size
 };
 
-// Calculate checksum
-static uint32_t calculate_checksum(const void* data, size_t len) {
-    // TODO: Implement CRC32
-    return 0;
-}
-
 // Create WAL
 ppdb_wal_t* ppdb_wal_create(const char* filename, const ppdb_wal_config_t* config) {
     if (!filename || !config) return NULL;
 
-    ppdb_wal_t* wal = (ppdb_wal_t*)malloc(sizeof(ppdb_wal_t));
+    ppdb_wal_t* wal = aligned_alloc(64, sizeof(ppdb_wal_t));
     if (!wal) return NULL;
 
     // Initialize synchronization
-    if (ppdb_sync_init(&wal->sync, &config->sync_config) != 0) {
-        free(wal);
-        return NULL;
-    }
+    ppdb_sync_init(&wal->sync, &config->sync_config);
 
     // Open file
-    wal->fd = open(filename, O_RDWR | O_CREAT, 0644);
+    wal->fd = open(filename, O_RDWR | O_CREAT | O_APPEND, 0644);
     if (wal->fd < 0) {
         ppdb_sync_destroy(&wal->sync);
         free(wal);
         return NULL;
     }
 
+    // Copy configuration
+    memcpy(&wal->config, config, sizeof(ppdb_wal_config_t));
+    wal->filename = strdup(filename);
+
     // Initialize buffers
-    wal->buffer_count = 2;  // Double buffer
-    wal->buffers = malloc(sizeof(wal_buffer_t) * wal->buffer_count);
+    atomic_init(&wal->buffer_count, 2);  // Double buffer
+    wal->buffers = aligned_alloc(64, sizeof(wal_buffer_t) * 2);
     if (!wal->buffers) {
         close(wal->fd);
         ppdb_sync_destroy(&wal->sync);
+        free(wal->filename);
         free(wal);
         return NULL;
     }
 
-    for (size_t i = 0; i < wal->buffer_count; i++) {
-        wal->buffers[i].data = malloc(config->buffer_size);
+    for (size_t i = 0; i < 2; i++) {
+        wal->buffers[i].data = aligned_alloc(4096, config->buffer_size);
         if (!wal->buffers[i].data) {
             for (size_t j = 0; j < i; j++) {
                 free(wal->buffers[j].data);
@@ -93,22 +86,20 @@ ppdb_wal_t* ppdb_wal_create(const char* filename, const ppdb_wal_config_t* confi
             free(wal->buffers);
             close(wal->fd);
             ppdb_sync_destroy(&wal->sync);
+            free(wal->filename);
             free(wal);
             return NULL;
         }
-        wal->buffers[i].size = config->buffer_size;
-        wal->buffers[i].used = 0;
-        wal->buffers[i].in_use = false;
+        atomic_init(&wal->buffers[i].size, config->buffer_size);
+        atomic_init(&wal->buffers[i].used, 0);
+        atomic_init(&wal->buffers[i].in_use, false);
+        ppdb_sync_init(&wal->buffers[i].sync, &config->sync_config);
     }
 
-    wal->current_buffer = 0;
-    memset(&wal->group, 0, sizeof(wal->group));
-    wal->enable_group_commit = config->enable_group_commit;
-    wal->group_interval = config->group_commit_interval;
-    wal->enable_async_flush = config->enable_async_flush;
-    wal->enable_checksum = config->enable_checksum;
-    wal->file_size = lseek(wal->fd, 0, SEEK_END);
-    wal->closed = false;
+    atomic_init(&wal->current_buffer, 0);
+    atomic_init(&wal->next_sequence, 1);
+    atomic_init(&wal->closed, false);
+    atomic_init(&wal->file_size, 0);
 
     return wal;
 }
@@ -117,16 +108,22 @@ ppdb_wal_t* ppdb_wal_create(const char* filename, const ppdb_wal_config_t* confi
 void ppdb_wal_destroy(ppdb_wal_t* wal) {
     if (!wal) return;
 
-    // Flush all data
-    ppdb_wal_sync(wal);
+    // Mark as closed
+    atomic_store(&wal->closed, true);
 
-    // Release resources
-    for (size_t i = 0; i < wal->buffer_count; i++) {
+    // Wait for all buffer operations to complete
+    for (size_t i = 0; i < atomic_load(&wal->buffer_count); i++) {
+        while (atomic_load(&wal->buffers[i].in_use)) {
+            sched_yield();
+        }
+        ppdb_sync_destroy(&wal->buffers[i].sync);
         free(wal->buffers[i].data);
     }
-    free(wal->buffers);
-    close(wal->fd);
+
     ppdb_sync_destroy(&wal->sync);
+    free(wal->buffers);
+    free(wal->filename);
+    close(wal->fd);
     free(wal);
 }
 
@@ -135,117 +132,112 @@ int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
                     const void* key, size_t key_len,
                     const void* value, size_t value_len,
                     uint64_t sequence) {
-    if (!wal || !key || !value) return -1;
-
-    ppdb_sync_lock(&wal->sync);
-
-    if (wal->closed) {
-        ppdb_sync_unlock(&wal->sync);
-        return -1;
-    }
+    if (!wal || !key || (value_len > 0 && !value)) return PPDB_ERR_INVALID_ARG;
+    if (atomic_load(&wal->closed)) return PPDB_ERR_CLOSED;
 
     // Calculate record size
     size_t record_size = sizeof(wal_record_header_t) + key_len + value_len;
+    if (record_size > wal->config.buffer_size) return PPDB_ERR_TOO_LARGE;
 
-    // Get available buffer
-    wal_buffer_t* buffer = NULL;
-    for (size_t i = 0; i < wal->buffer_count; i++) {
-        if (!wal->buffers[i].in_use && wal->buffers[i].size >= record_size) {
-            buffer = &wal->buffers[i];
-            buffer->in_use = true;
-            break;
+    // Get current buffer
+    size_t current = atomic_load(&wal->current_buffer);
+    wal_buffer_t* buffer = &wal->buffers[current];
+
+    // Try to get buffer lock
+    if (!ppdb_sync_try_lock(&buffer->sync)) {
+        return PPDB_ERR_BUSY;
+    }
+
+    // Check buffer space
+    size_t used = atomic_load(&buffer->used);
+    if (used + record_size > atomic_load(&buffer->size)) {
+        // Switch to next buffer
+        size_t next = (current + 1) % atomic_load(&wal->buffer_count);
+        wal_buffer_t* next_buffer = &wal->buffers[next];
+
+        // Wait for next buffer to be available
+        while (atomic_load(&next_buffer->in_use)) {
+            sched_yield();
+        }
+
+        // Flush current buffer
+        if (used > 0) {
+            ssize_t written = write(wal->fd, buffer->data, used);
+            if (written != used) {
+                ppdb_sync_unlock(&buffer->sync);
+                return PPDB_ERR_IO;
+            }
+            atomic_fetch_add(&wal->file_size, written);
+            atomic_store(&buffer->used, 0);
+        }
+
+        // Switch buffer
+        atomic_store(&wal->current_buffer, next);
+        ppdb_sync_unlock(&buffer->sync);
+        buffer = next_buffer;
+        
+        if (!ppdb_sync_try_lock(&buffer->sync)) {
+            return PPDB_ERR_BUSY;
         }
     }
 
-    if (!buffer) {
-        ppdb_sync_unlock(&wal->sync);
-        return -1;
-    }
-
-    // Write record header
+    // Prepare record header
     wal_record_header_t header = {
         .type = type,
         .key_size = key_len,
         .value_size = value_len,
-        .sequence = sequence,
-        .checksum = 0
+        .sequence = sequence ? sequence : atomic_fetch_add(&wal->next_sequence, 1),
+        .checksum = 0  // TODO: Implement checksum
     };
 
-    if (wal->enable_checksum) {
-        header.checksum = calculate_checksum(key, key_len);
-        if (value) {
-            header.checksum ^= calculate_checksum(value, value_len);
-        }
+    // Write record
+    used = atomic_load(&buffer->used);
+    memcpy(buffer->data + used, &header, sizeof(header));
+    used += sizeof(header);
+    memcpy(buffer->data + used, key, key_len);
+    used += key_len;
+    if (value_len > 0) {
+        memcpy(buffer->data + used, value, value_len);
+        used += value_len;
     }
+    atomic_store(&buffer->used, used);
 
-    memcpy(buffer->data + buffer->used, &header, sizeof(header));
-    buffer->used += sizeof(header);
-
-    // Write key and value
-    memcpy(buffer->data + buffer->used, key, key_len);
-    buffer->used += key_len;
-
-    if (value) {
-        memcpy(buffer->data + buffer->used, value, value_len);
-        buffer->used += value_len;
-    }
-
-    // Sync if needed
-    if (!wal->enable_async_flush) {
-        if (write(wal->fd, buffer->data, buffer->used) != buffer->used) {
-            buffer->in_use = false;
-            buffer->used = 0;
-            ppdb_sync_unlock(&wal->sync);
-            return -1;
-        }
-        
-        if (wal->config.sync_write) {
-            fsync(wal->fd);
-        }
-    }
-
-    // Update file size
-    wal->file_size += buffer->used;
-
-    // Release buffer
-    buffer->in_use = false;
-    buffer->used = 0;
-
-    ppdb_sync_unlock(&wal->sync);
-    return 0;
+    ppdb_sync_unlock(&buffer->sync);
+    return PPDB_OK;
 }
 
 // Sync to disk
 int ppdb_wal_sync(ppdb_wal_t* wal) {
-    if (!wal) return -1;
+    if (!wal) return PPDB_ERR_INVALID_ARG;
+    if (atomic_load(&wal->closed)) return PPDB_ERR_CLOSED;
 
-    ppdb_sync_lock(&wal->sync);
+    // Get current buffer
+    size_t current = atomic_load(&wal->current_buffer);
+    wal_buffer_t* buffer = &wal->buffers[current];
 
-    // Write all buffers
-    for (size_t i = 0; i < wal->buffer_count; i++) {
-        wal_buffer_t* buffer = &wal->buffers[i];
-        if (buffer->used > 0) {
-            ssize_t written = write(wal->fd, buffer->data, buffer->used);
-            if (written != buffer->used) {
-                ppdb_sync_unlock(&wal->sync);
-                return -1;
-            }
-            buffer->used = 0;
-            buffer->in_use = false;
+    // Get buffer lock
+    ppdb_sync_lock(&buffer->sync);
+
+    // Write data
+    size_t used = atomic_load(&buffer->used);
+    if (used > 0) {
+        ssize_t written = write(wal->fd, buffer->data, used);
+        if (written != used) {
+            ppdb_sync_unlock(&buffer->sync);
+            return PPDB_ERR_IO;
         }
+        atomic_fetch_add(&wal->file_size, written);
+        atomic_store(&buffer->used, 0);
     }
 
     // Sync to disk
-    if (!wal->enable_async_flush) {
-        fsync(wal->fd);
+    if (fsync(wal->fd) != 0) {
+        ppdb_sync_unlock(&buffer->sync);
+        return PPDB_ERR_IO;
     }
 
-    // Reset group commit
-    wal->group.count = 0;
-    wal->group.committing = false;
-
-    ppdb_sync_unlock(&wal->sync);
-    return 0;
+    ppdb_sync_unlock(&buffer->sync);
+    return PPDB_OK;
 }
 
 // Create recovery iterator
@@ -277,7 +269,7 @@ void ppdb_wal_recovery_iter_destroy(ppdb_wal_recovery_iter_t* iter) {
 // Check if recovery iterator is valid
 bool ppdb_wal_recovery_iter_valid(ppdb_wal_recovery_iter_t* iter) {
     if (!iter || !iter->wal) return false;
-    return iter->position < iter->wal->file_size;
+    return iter->position < atomic_load(&iter->wal->file_size);
 }
 
 // Get next record
@@ -287,69 +279,55 @@ int ppdb_wal_recovery_iter_next(ppdb_wal_recovery_iter_t* iter,
                                void** value, size_t* value_len,
                                uint64_t* sequence) {
     if (!iter || !iter->wal || !type || !key || !key_len || !value || !value_len || !sequence) {
-        return -1;
+        return PPDB_ERR_INVALID_ARG;
     }
 
     // Read record header
     wal_record_header_t header;
-    ssize_t read_size = pread(iter->wal->fd, &header, sizeof(header), iter->position);
-    if (read_size != sizeof(header)) {
-        return -1;
+    ssize_t n = pread(iter->wal->fd, &header, sizeof(header), iter->position);
+    if (n != sizeof(header)) {
+        return PPDB_ERR_IO;
     }
 
-    // Validate record
-    if (header.key_size > iter->wal->config.max_record_size ||
-        header.value_size > iter->wal->config.max_record_size) {
-        return -1;
-    }
-
-    // Read key
+    // Allocate memory
     *key = malloc(header.key_size);
-    if (!*key) return -1;
-    read_size = pread(iter->wal->fd, *key, header.key_size, 
-                     iter->position + sizeof(header));
-    if (read_size != header.key_size) {
-        free(*key);
-        return -1;
-    }
+    if (!*key) return PPDB_ERR_NO_MEMORY;
 
-    // Read value if exists
     if (header.value_size > 0) {
         *value = malloc(header.value_size);
         if (!*value) {
             free(*key);
-            return -1;
-        }
-        read_size = pread(iter->wal->fd, *value, header.value_size,
-                         iter->position + sizeof(header) + header.key_size);
-        if (read_size != header.value_size) {
-            free(*key);
-            free(*value);
-            return -1;
+            return PPDB_ERR_NO_MEMORY;
         }
     } else {
         *value = NULL;
     }
 
-    // Verify checksum
-    uint32_t checksum = calculate_checksum(*key, header.key_size);
-    if (header.value_size > 0) {
-        checksum ^= calculate_checksum(*value, header.value_size);
-    }
-    if (checksum != header.checksum) {
+    // Read key and value
+    n = pread(iter->wal->fd, *key, header.key_size, 
+              iter->position + sizeof(header));
+    if (n != header.key_size) {
         free(*key);
-        if (*value) free(*value);
-        return -1;
+        free(*value);
+        return PPDB_ERR_IO;
     }
 
-    // Update output parameters
+    if (header.value_size > 0) {
+        n = pread(iter->wal->fd, *value, header.value_size,
+                 iter->position + sizeof(header) + header.key_size);
+        if (n != header.value_size) {
+            free(*key);
+            free(*value);
+            return PPDB_ERR_IO;
+        }
+    }
+
+    // Update position and return values
+    iter->position += sizeof(header) + header.key_size + header.value_size;
     *type = header.type;
     *key_len = header.key_size;
     *value_len = header.value_size;
     *sequence = header.sequence;
 
-    // Move to next record
-    iter->position += sizeof(header) + header.key_size + header.value_size;
-
-    return 0;
+    return PPDB_OK;
 }
