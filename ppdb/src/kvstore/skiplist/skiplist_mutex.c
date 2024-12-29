@@ -1,365 +1,438 @@
 #include <cosmopolitan.h>
 #include "ppdb/skiplist_mutex.h"
-#include "ppdb/logger.h"
 #include "ppdb/error.h"
+#include "ppdb/logger.h"
 
-#define MAX_LEVEL 32
-#define P 0.25
-
-// Skip list node structure
-typedef struct skiplist_node_t {
-    uint8_t* key;
-    size_t key_len;
-    uint8_t* value;
-    size_t value_len;
-    uint32_t level;
-    struct skiplist_node_t* next[1];  // Flexible array
-} skiplist_node_t;
-
-// Skip list structure with mutex
-typedef struct skiplist_t {
+// Complete structure definitions
+struct skiplist_t {
     skiplist_node_t* head;        // Head node
     atomic_size_t size;           // Number of nodes
     uint32_t max_level;           // Maximum level
     pthread_mutex_t mutex;        // Mutex for thread safety
-} skiplist_t;
+};
 
-// Iterator structure
-typedef struct skiplist_iterator_t {
+struct skiplist_iterator_t {
     skiplist_t* list;            // Associated skip list
     skiplist_node_t* current;    // Current node
     pthread_mutex_t* mutex;      // Reference to list mutex
-} skiplist_iterator_t;
+};
 
-// Create a node with given level
-static skiplist_node_t* create_node(uint32_t level,
+// Forward declarations
+static void destroy_node(skiplist_node_t* node);
+static uint32_t random_level(void);
+static int compare_keys(const uint8_t* key1, size_t key1_len,
+                       const uint8_t* key2, size_t key2_len);
+
+// Helper functions
+static skiplist_node_t* create_node(uint32_t height,
                                   const uint8_t* key, size_t key_len,
                                   const uint8_t* value, size_t value_len) {
-    size_t node_size = sizeof(skiplist_node_t) + level * sizeof(skiplist_node_t*);
-    skiplist_node_t* node = malloc(node_size);
+    if (height == 0 || height > MAX_LEVEL) {
+        ppdb_log_error("Invalid node height: %u", height);
+        return NULL;
+    }
+
+    // Calculate total size including the flexible array member
+    size_t node_size = sizeof(skiplist_node_t) + height * sizeof(skiplist_node_t*);
+    skiplist_node_t* node = NULL;
+    uint8_t* key_buf = NULL;
+    uint8_t* value_buf = NULL;
+
+    // Pre-allocate buffers to avoid memory leaks in error paths
+    if (key && key_len > 0) {
+        key_buf = (uint8_t*)malloc(key_len);
+        if (!key_buf) {
+            ppdb_log_error("Failed to allocate key buffer");
+            goto error;
+        }
+        memcpy(key_buf, key, key_len);
+    }
+
+    if (value && value_len > 0) {
+        value_buf = (uint8_t*)malloc(value_len);
+        if (!value_buf) {
+            ppdb_log_error("Failed to allocate value buffer");
+            goto error;
+        }
+        memcpy(value_buf, value, value_len);
+    }
+
+    // Allocate node after buffers are ready
+    node = (skiplist_node_t*)calloc(1, node_size);
     if (!node) {
         ppdb_log_error("Failed to allocate skiplist node");
-        return NULL;
+        goto error;
     }
 
-    // Allocate and copy key
-    node->key = malloc(key_len);
-    if (!node->key) {
-        ppdb_log_error("Failed to allocate key buffer");
-        free(node);
-        return NULL;
-    }
-
-    // Allocate and copy value
-    node->value = malloc(value_len);
-    if (!node->value) {
-        ppdb_log_error("Failed to allocate value buffer");
-        free(node->key);
-        free(node);
-        return NULL;
-    }
-
-    memcpy(node->key, key, key_len);
-    memcpy(node->value, value, value_len);
+    // Initialize node fields
+    node->height = height;
+    node->state = NODE_ACTIVE;
+    node->key = key_buf;
     node->key_len = key_len;
+    node->value = value_buf;
     node->value_len = value_len;
-    node->level = level;
 
-    // Initialize next pointers
-    for (uint32_t i = 0; i < level; i++) {
+    // Initialize all next pointers to NULL
+    for (uint32_t i = 0; i < height && i < MAX_LEVEL; i++) {
         node->next[i] = NULL;
     }
 
-    ppdb_log_debug("Created skiplist node: level=%u, key_len=%zu, value_len=%zu",
-                   level, key_len, value_len);
+    ppdb_log_debug("Created skiplist node: height=%u, key_len=%zu, value_len=%zu",
+                   height, key_len, value_len);
     return node;
+
+error:
+    // Clean up in error path
+    if (key_buf) free(key_buf);
+    if (value_buf) free(value_buf);
+    if (node) {
+        memset(node, 0, node_size);
+        free(node);
+    }
+    return NULL;
 }
 
-// Destroy a node
 static void destroy_node(skiplist_node_t* node) {
     if (!node) return;
-    free(node->key);
-    free(node->value);
+
+    // 获取节点大小
+    size_t node_size = sizeof(skiplist_node_t) + node->height * sizeof(skiplist_node_t*);
+
+    // 标记节点为已删除，防止其他线程访问
+    node->state = NODE_DELETED;
+
+    // 清除next指针防止悬空指针
+    for (uint32_t i = 0; i < node->height && i < MAX_LEVEL; i++) {
+        node->next[i] = NULL;
+    }
+
+    // 安全释放key
+    if (node->key) {
+        memset(node->key, 0, node->key_len);  // 清零敏感数据
+        free(node->key);
+        node->key = NULL;
+        node->key_len = 0;
+    }
+
+    // 安全释放value
+    if (node->value) {
+        memset(node->value, 0, node->value_len);  // 清零敏感数据
+        free(node->value);
+        node->value = NULL;
+        node->value_len = 0;
+    }
+
+    // 清零高度
+    node->height = 0;
+
+    // 清零整个节点结构
+    memset(node, 0, node_size);
+
+    // 最后释放节点
     free(node);
-    ppdb_log_debug("Destroyed skiplist node");
 }
 
-// Generate random level (thread-safe)
 static uint32_t random_level(void) {
     uint32_t level = 1;
-    while ((rand() & 0xFFFF) < (P * 0xFFFF) && level < MAX_LEVEL) {
+    while ((rand() & 0xFFFF) < (0xFFFF >> 1) && level < MAX_LEVEL) {
         level++;
     }
-    ppdb_log_debug("Generated random level: %u", level);
     return level;
 }
 
-// Compare two keys
 static int compare_keys(const uint8_t* key1, size_t key1_len,
                        const uint8_t* key2, size_t key2_len) {
+    if (!key1 || !key2) return 0;  // Special case for head node
     size_t min_len = key1_len < key2_len ? key1_len : key2_len;
     int result = memcmp(key1, key2, min_len);
     if (result != 0) return result;
-    return (int)key1_len - (int)key2_len;
+    if (key1_len < key2_len) return -1;
+    if (key1_len > key2_len) return 1;
+    return 0;
 }
 
-// Create skip list
+// Implementation of public functions
 skiplist_t* skiplist_create(void) {
-    skiplist_t* list = malloc(sizeof(skiplist_t));
+    // Allocate and zero initialize the skiplist structure
+    skiplist_t* list = (skiplist_t*)calloc(1, sizeof(skiplist_t));
     if (!list) {
         ppdb_log_error("Failed to allocate skiplist");
         return NULL;
     }
 
-    // Create head node
-    list->head = create_node(MAX_LEVEL, (uint8_t*)"", 0, (uint8_t*)"", 0);
-    if (!list->head) {
-        ppdb_log_error("Failed to create head node");
-        free(list);
-        return NULL;
-    }
-
+    // Initialize fields first
+    list->max_level = MAX_LEVEL;
     atomic_init(&list->size, 0);
-    list->max_level = 1;
+    list->head = NULL;
 
     // Initialize mutex
     if (pthread_mutex_init(&list->mutex, NULL) != 0) {
         ppdb_log_error("Failed to initialize mutex");
-        destroy_node(list->head);
         free(list);
         return NULL;
     }
 
-    ppdb_log_info("Created skiplist");
+    // Create head node with maximum height
+    list->head = create_node(MAX_LEVEL, NULL, 0, NULL, 0);
+    if (!list->head) {
+        ppdb_log_error("Failed to create head node");
+        pthread_mutex_destroy(&list->mutex);
+        free(list);
+        return NULL;
+    }
+
+    // Initialize all next pointers in head node to NULL
+    for (uint32_t i = 0; i < MAX_LEVEL; i++) {
+        list->head->next[i] = NULL;
+    }
+
+    // Set head node state
+    list->head->state = NODE_ACTIVE;
+    list->head->height = MAX_LEVEL;
+
+    ppdb_log_debug("Created skiplist");
     return list;
 }
 
-// Destroy skip list
 void skiplist_destroy(skiplist_t* list) {
     if (!list) return;
 
+    // 先加锁防止并发访问
     pthread_mutex_lock(&list->mutex);
 
-    // Free all nodes
-    skiplist_node_t* node = list->head;
-    while (node) {
-        skiplist_node_t* next = node->next[0];
-        destroy_node(node);
-        node = next;
+    // 保存头节点指针并清空list结构
+    skiplist_node_t* head = list->head;
+    list->head = NULL;
+    atomic_store(&list->size, 0);
+    list->max_level = 0;
+
+    // 解锁并销毁互斥锁
+    pthread_mutex_unlock(&list->mutex);
+    pthread_mutex_destroy(&list->mutex);
+
+    // 使用临时数组存储所有节点，避免在遍历时修改next指针
+    size_t capacity = atomic_load(&list->size) + 1;  // +1 for head node
+    skiplist_node_t** nodes = (skiplist_node_t**)calloc(capacity, sizeof(skiplist_node_t*));
+    if (!nodes) {
+        ppdb_log_error("Failed to allocate nodes array for cleanup");
+        return;  // 继续使用原始方法清理
     }
 
-    pthread_mutex_unlock(&list->mutex);
+    // 收集所有节点
+    size_t node_count = 0;
+    skiplist_node_t* current = head;
+    while (current && node_count < capacity) {
+        nodes[node_count++] = current;
+        current = current->next[0];
+    }
 
-    // Free mutex and list structure
-    pthread_mutex_destroy(&list->mutex);
+    // 安全地销毁每个节点
+    for (size_t i = 0; i < node_count; i++) {
+        if (nodes[i] == head) {
+            // 头节点特殊处理
+            size_t head_size = sizeof(skiplist_node_t) + MAX_LEVEL * sizeof(skiplist_node_t*);
+            memset(head->next, 0, MAX_LEVEL * sizeof(skiplist_node_t*));
+            head->height = 0;
+            head->state = NODE_DELETED;
+            if (head->key) {
+                memset(head->key, 0, head->key_len);
+                free(head->key);
+            }
+            if (head->value) {
+                memset(head->value, 0, head->value_len);
+                free(head->value);
+            }
+            head->key = NULL;
+            head->value = NULL;
+            head->key_len = 0;
+            head->value_len = 0;
+            memset(head, 0, head_size);
+            free(head);
+        } else {
+            destroy_node(nodes[i]);
+        }
+        nodes[i] = NULL;  // 防止重复释放
+    }
+
+    // 清理临时数组
+    free(nodes);
+
+    // 清零整个跳表结构
+    memset(list, 0, sizeof(skiplist_t));
+
+    // 最后释放跳表结构
     free(list);
-
-    ppdb_log_info("Destroyed skiplist");
 }
 
-// Insert/update key-value pair
 ppdb_error_t skiplist_put(skiplist_t* list,
                          const uint8_t* key, size_t key_len,
                          const uint8_t* value, size_t value_len) {
-    if (!list || !key || !value || key_len == 0 || value_len == 0) {
-        ppdb_log_error("Invalid parameters in skiplist_put");
+    if (!list || !key || !value) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    if (key_len == 0 || value_len == 0) {
         return PPDB_ERR_INVALID_ARG;
     }
 
     pthread_mutex_lock(&list->mutex);
 
-    // Find position
-    skiplist_node_t* update[MAX_LEVEL];
-    skiplist_node_t* current = list->head;
-
-    for (uint32_t i = list->max_level - 1; i < list->max_level; i--) {
-        while (current->next[i] &&
-               compare_keys(current->next[i]->key,
-                          current->next[i]->key_len,
-                          key, key_len) < 0) {
-            current = current->next[i];
-        }
-        update[i] = current;
-    }
-
-    current = current->next[0];
-
-    // Update existing key
-    if (current && compare_keys(current->key, current->key_len,
-                              key, key_len) == 0) {
-        uint8_t* new_value = malloc(value_len);
-        if (!new_value) {
-            ppdb_log_error("Failed to allocate new value buffer");
-            pthread_mutex_unlock(&list->mutex);
-            return PPDB_ERR_NO_MEMORY;
-        }
-
-        memcpy(new_value, value, value_len);
-        
-        // Save old value pointer before updating new value
-        uint8_t* old_value = current->value;
-        current->value = new_value;
-        current->value_len = value_len;
-        
-        // Finally free old value
-        free(old_value);
-        
-        ppdb_log_debug("Updated existing key in skiplist");
-        pthread_mutex_unlock(&list->mutex);
-        return PPDB_OK;
-    }
-
-    // Insert new node
-    uint32_t new_level = random_level();
-    skiplist_node_t* new_node = create_node(new_level, key, key_len,
-                                          value, value_len);
+    // Create new node
+    uint32_t level = random_level();
+    skiplist_node_t* new_node = create_node(level, key, key_len, value, value_len);
     if (!new_node) {
-        ppdb_log_error("Failed to create new node");
         pthread_mutex_unlock(&list->mutex);
         return PPDB_ERR_NO_MEMORY;
     }
 
-    if (new_level > list->max_level) {
-        for (uint32_t i = list->max_level; i < new_level; i++) {
-            update[i] = list->head;
-        }
-        list->max_level = new_level;
-    }
-
-    for (uint32_t i = 0; i < new_level; i++) {
-        new_node->next[i] = update[i]->next[i];
-        update[i]->next[i] = new_node;
-    }
-
-    atomic_fetch_add_explicit(&list->size, 1, memory_order_relaxed);
-    ppdb_log_debug("Inserted new key in skiplist");
-    pthread_mutex_unlock(&list->mutex);
-    return PPDB_OK;
-}
-
-// Get value corresponding to key
-ppdb_error_t skiplist_get(skiplist_t* list,
-                         const uint8_t* key, size_t key_len,
-                         uint8_t* value, size_t* value_len) {
-    if (!list || !key || !value_len) {
-        ppdb_log_error("Invalid parameters in skiplist_get");
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    pthread_mutex_lock(&list->mutex);
-
+    // Find position to insert
     skiplist_node_t* current = list->head;
-    skiplist_node_t* target = NULL;
-    
-    // Start searching from the highest level
-    for (int32_t level = (int32_t)list->max_level - 1; level >= 0; level--) {
-        while (current->next[level] &&
-               compare_keys(current->next[level]->key,
-                          current->next[level]->key_len,
-                          key, key_len) < 0) {
-            current = current->next[level];
-        }
-        if (current->next[level] &&
-            compare_keys(current->next[level]->key,
-                       current->next[level]->key_len,
-                       key, key_len) == 0) {
-            target = current->next[level];
-            break;
-        }
-    }
-
-    // If node is not found
-    if (!target) {
-        ppdb_log_debug("Key not found in skiplist");
-        pthread_mutex_unlock(&list->mutex);
-        return PPDB_ERR_NOT_FOUND;
-    }
-
-    // If node is found, first return value size
-    if (!value) {
-        *value_len = target->value_len;
-        pthread_mutex_unlock(&list->mutex);
-        return PPDB_OK;
-    }
-
-    if (*value_len < target->value_len) {
-        *value_len = target->value_len;
-        ppdb_log_error("Buffer too small for value");
-        pthread_mutex_unlock(&list->mutex);
-        return PPDB_ERR_BUFFER_TOO_SMALL;
-    }
-
-    // Copy value
-    memcpy(value, target->value, target->value_len);
-    *value_len = target->value_len;
-
-    ppdb_log_debug("Retrieved key from skiplist");
-    pthread_mutex_unlock(&list->mutex);
-    return PPDB_OK;
-}
-
-// Delete key-value pair
-ppdb_error_t skiplist_delete(skiplist_t* list,
-                            const uint8_t* key, size_t key_len) {
-    if (!list || !key || key_len == 0) {
-        ppdb_log_error("Invalid parameters in skiplist_delete");
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    pthread_mutex_lock(&list->mutex);
-
     skiplist_node_t* update[MAX_LEVEL];
-    skiplist_node_t* current = list->head;
-
-    for (int32_t i = (int32_t)list->max_level - 1; i >= 0; i--) {
+    for (int i = level - 1; i >= 0; i--) {
         while (current->next[i] &&
-               compare_keys(current->next[i]->key,
-                          current->next[i]->key_len,
+               compare_keys(current->next[i]->key, current->next[i]->key_len,
                           key, key_len) < 0) {
             current = current->next[i];
         }
         update[i] = current;
     }
 
+    // Check if key already exists
     current = current->next[0];
+    if (current && compare_keys(current->key, current->key_len,
+                              key, key_len) == 0) {
+        // Update value
+        uint8_t* new_value = malloc(value_len);
+        if (!new_value) {
+            destroy_node(new_node);
+            pthread_mutex_unlock(&list->mutex);
+            return PPDB_ERR_NO_MEMORY;
+        }
+        memcpy(new_value, value, value_len);
+        free(current->value);
+        current->value = new_value;
+        current->value_len = value_len;
+        destroy_node(new_node);
+    } else {
+        // Insert new node
+        for (uint32_t i = 0; i < level; i++) {
+            new_node->next[i] = update[i]->next[i];
+            update[i]->next[i] = new_node;
+        }
+        atomic_fetch_add(&list->size, 1);
+    }
+
+    pthread_mutex_unlock(&list->mutex);
+    return PPDB_OK;
+}
+
+ppdb_error_t skiplist_get(skiplist_t* list,
+                         const uint8_t* key, size_t key_len,
+                         uint8_t** value, size_t* value_len) {
+    if (!list || !key || !value_len) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    if (key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    pthread_mutex_lock(&list->mutex);
+
+    // Find node
+    skiplist_node_t* current = list->head;
+    for (int i = list->max_level - 1; i >= 0; i--) {
+        while (current->next[i] &&
+               compare_keys(current->next[i]->key, current->next[i]->key_len,
+                          key, key_len) < 0) {
+            current = current->next[i];
+        }
+    }
+    current = current->next[0];
+
+    // Check if key exists
     if (!current || compare_keys(current->key, current->key_len,
                                key, key_len) != 0) {
-        ppdb_log_debug("Key not found for deletion");
         pthread_mutex_unlock(&list->mutex);
         return PPDB_ERR_NOT_FOUND;
     }
 
-    for (uint32_t i = 0; i < list->max_level; i++) {
+    // Return value size if no buffer pointer provided
+    if (!value) {
+        *value_len = current->value_len;
+        pthread_mutex_unlock(&list->mutex);
+        return PPDB_OK;
+    }
+
+    // Allocate and copy value
+    uint8_t* new_value = (uint8_t*)malloc(current->value_len);
+    if (!new_value) {
+        pthread_mutex_unlock(&list->mutex);
+        return PPDB_ERR_NO_MEMORY;
+    }
+    memcpy(new_value, current->value, current->value_len);
+    *value = new_value;
+    *value_len = current->value_len;
+
+    pthread_mutex_unlock(&list->mutex);
+    return PPDB_OK;
+}
+
+ppdb_error_t skiplist_delete(skiplist_t* list,
+                            const uint8_t* key, size_t key_len) {
+    if (!list || !key) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    if (key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    pthread_mutex_lock(&list->mutex);
+
+    // Find node to delete
+    skiplist_node_t* current = list->head;
+    skiplist_node_t* update[MAX_LEVEL];
+    for (int i = list->max_level - 1; i >= 0; i--) {
+        while (current->next[i] &&
+               compare_keys(current->next[i]->key, current->next[i]->key_len,
+                          key, key_len) < 0) {
+            current = current->next[i];
+        }
+        update[i] = current;
+    }
+    current = current->next[0];
+
+    // Check if key exists
+    if (!current || compare_keys(current->key, current->key_len,
+                               key, key_len) != 0) {
+        pthread_mutex_unlock(&list->mutex);
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    // Update pointers
+    for (uint32_t i = 0; i < current->height; i++) {
         if (update[i]->next[i] != current) {
             break;
         }
         update[i]->next[i] = current->next[i];
     }
 
+    // Free node and update size
     destroy_node(current);
+    atomic_fetch_sub(&list->size, 1);
 
-    while (list->max_level > 1 && !list->head->next[list->max_level - 1]) {
-        list->max_level--;
-    }
-
-    atomic_fetch_sub_explicit(&list->size, 1, memory_order_relaxed);
-    ppdb_log_debug("Deleted key from skiplist");
     pthread_mutex_unlock(&list->mutex);
     return PPDB_OK;
 }
 
-// Get skip list size
 size_t skiplist_size(skiplist_t* list) {
     if (!list) return 0;
-    return atomic_load_explicit(&list->size, memory_order_relaxed);
+    return atomic_load(&list->size);
 }
 
-// Create iterator
 skiplist_iterator_t* skiplist_iterator_create(skiplist_t* list) {
-    if (!list) {
-        ppdb_log_error("Invalid list parameter in iterator_create");
-        return NULL;
-    }
+    if (!list) return NULL;
 
     skiplist_iterator_t* iter = malloc(sizeof(skiplist_iterator_t));
     if (!iter) {
@@ -368,43 +441,36 @@ skiplist_iterator_t* skiplist_iterator_create(skiplist_t* list) {
     }
 
     iter->list = list;
-    iter->current = list->head->next[0];  // Start from first actual node
+    iter->current = list->head;
     iter->mutex = &list->mutex;
 
-    ppdb_log_debug("Created skiplist iterator");
+    pthread_mutex_lock(iter->mutex);
     return iter;
 }
 
-// Destroy iterator
 void skiplist_iterator_destroy(skiplist_iterator_t* iter) {
     if (!iter) return;
-    ppdb_log_debug("Destroyed skiplist iterator");
+    pthread_mutex_unlock(iter->mutex);
+    memset(iter, 0, sizeof(skiplist_iterator_t));  // Zero out iterator
     free(iter);
 }
 
-// Get next key-value pair
 bool skiplist_iterator_next(skiplist_iterator_t* iter,
                           uint8_t** key, size_t* key_size,
                           uint8_t** value, size_t* value_size) {
-    if (!iter || !key || !key_size || !value || !value_size) {
-        ppdb_log_error("Invalid parameters in iterator_next");
-        return false;
-    }
+    if (!iter || !key || !key_size || !value || !value_size) return false;
 
-    pthread_mutex_lock(iter->mutex);
+    // Skip deleted nodes and move to next node
+    do {
+        iter->current = iter->current->next[0];
+        if (!iter->current) return false;  // Reached end of list
+    } while (iter->current->state == NODE_DELETED);
 
-    if (!iter->current) {
-        pthread_mutex_unlock(iter->mutex);
-        return false;  // Already reached the end
-    }
-
+    // Return key and value
     *key = iter->current->key;
     *key_size = iter->current->key_len;
     *value = iter->current->value;
     *value_size = iter->current->value_len;
 
-    iter->current = iter->current->next[0];  // Move to the next node
-
-    pthread_mutex_unlock(iter->mutex);
     return true;
 }

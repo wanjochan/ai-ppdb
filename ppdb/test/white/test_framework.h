@@ -28,28 +28,18 @@ int run_test_suite(const test_suite_t* suite);
 void cleanup_test_dir(const char* dir_path);
 
 // Test assertion macros
-#define TEST_ASSERT(condition, message) \
+#define TEST_ASSERT(condition, ...) \
     do { \
         if (!(condition)) { \
-            ppdb_log_error("Assertion failed: %s", message); \
+            ppdb_log_error(__VA_ARGS__); \
             return 1; \
         } \
     } while (0)
 
 #define TEST_ASSERT_OK(err, message) \
-    do { \
-        if ((err) != PPDB_OK) { \
-            ppdb_log_error("Operation failed: %s (error: %d)", message, err); \
-            return 1; \
-        } \
-    } while (0)
+    TEST_ASSERT((err) == PPDB_OK, "Operation failed: %s (error: %s)", message, ppdb_error_string(err))
 
 #define TEST_ASSERT_NOT_NULL(ptr, message) \
-    do { \
-        if ((ptr) == NULL) { \
-            ppdb_log_error("Null pointer: %s", message); \
-            return 1; \
-        } \
-    } while (0)
+    TEST_ASSERT((ptr) != NULL, "Null pointer: %s", message)
 
 #endif // PPDB_TEST_FRAMEWORK_H

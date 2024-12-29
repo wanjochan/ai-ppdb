@@ -1,5 +1,20 @@
-# 
+# warmup
 
+as warm-up, in ppdb/, you need to review all .md in docs/ and .c in src/;
+
+and then run scripts/build.bat and fix;
+
+during this process, if any key progress or plan changed, you MUST update related documents  (for example, update the plan/progress etc);
+
+ALWAYS plan before action to save time；
+
+continue, remember, always plan before action to save time
+#
+
+现在函数对齐了，可以先运行build.bat并修复下
+
+好，再对比下 skiplist_mutex.c 和 skiplist_lockfree.c 两个文件，
+先把对齐后的函数的参数也对齐一下
 
 
 之后的重构（把代码重命名为 {mod}_{[mutex|lockfree]}.{c|h}，现在继续对内部内容对齐
@@ -9,6 +24,8 @@ memtable_mutex.c 和 memtable_lockfree.c
 wal_mutex.c 和 wal_lockfree.c
 
 先做个计划
+
+运行了很久，是卡在某个测试吗？
 
 
 # cursor rules (update in ide settings)
@@ -27,7 +44,7 @@ Always respond in 中文,而且尽量简洁（concise）但要精准（precise�
 如果有P0问题则先修复，然后再按【目前主流程】执行一次
 
 【目前主流程】
-  {本轮模型
+  {本轮目标）
 准备先顺序运行一次，但遇到问题不用修改文件！！！先按问题的严重程序指定计划并列出来（比如说P0最严重），如果有P0问题就回到【本轮执行】。
 
 【注意事项】
@@ -36,7 +53,7 @@ Always respond in 中文,而且尽量简洁（concise）但要精准（precise�
 
 
 
-#
+# chn to eng
 源码中所有的中文注释换成英文的，这个工作量不小，先做计划表再一次过改
 
 安排执行，但如果遇到功能太明显的干脆把注释去掉

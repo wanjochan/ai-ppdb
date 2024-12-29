@@ -4,6 +4,26 @@
 #include <cosmopolitan.h>
 #include "ppdb/error.h"
 
+// Constants
+#define MAX_LEVEL 32
+
+// Node states
+typedef enum {
+    NODE_ACTIVE = 0,
+    NODE_DELETED = 1
+} node_state_t;
+
+// Skip list node structure
+typedef struct skiplist_node_t {
+    uint8_t* key;
+    size_t key_len;
+    uint8_t* value;
+    size_t value_len;
+    node_state_t state;
+    uint32_t height;
+    struct skiplist_node_t* next[];  // Flexible array member
+} skiplist_node_t;
+
 // Skip list structure
 typedef struct skiplist_t skiplist_t;
 
@@ -17,7 +37,7 @@ ppdb_error_t skiplist_put(skiplist_t* list,
 
 ppdb_error_t skiplist_get(skiplist_t* list,
                 const uint8_t* key, size_t key_len,
-                uint8_t* value, size_t* value_len);
+                uint8_t** value, size_t* value_len);
 
 ppdb_error_t skiplist_delete(skiplist_t* list,
                    const uint8_t* key, size_t key_len);

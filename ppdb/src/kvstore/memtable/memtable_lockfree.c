@@ -29,9 +29,15 @@ ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** 
     return PPDB_OK;
 }
 
+void ppdb_memtable_close_lockfree(ppdb_memtable_t* table) {
+    // 无锁版本不需要特殊的关闭操作
+    (void)table;
+}
+
 void ppdb_memtable_destroy_lockfree(ppdb_memtable_t* table) {
     if (!table) return;
     atomic_skiplist_destroy(table->list);
+    memset(table, 0, sizeof(ppdb_memtable_t));  // 清零内存
     free(table);
 }
 

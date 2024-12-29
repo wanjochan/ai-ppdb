@@ -25,38 +25,103 @@ struct ppdb_memtable_iterator_t {
 // 创建 MemTable
 ppdb_error_t ppdb_memtable_create(size_t size_limit, ppdb_memtable_t** table) {
     if (!table) {
+        ppdb_log_error("Invalid argument: table is NULL");
         return PPDB_ERR_NULL_POINTER;
     }
 
-    ppdb_memtable_t* new_table = (ppdb_memtable_t*)malloc(sizeof(ppdb_memtable_t));
+    if (size_limit == 0) {
+        ppdb_log_error("Invalid argument: size_limit is 0");
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // Allocate and zero initialize the memtable structure
+    ppdb_memtable_t* new_table = (ppdb_memtable_t*)calloc(1, sizeof(ppdb_memtable_t));
     if (!new_table) {
+        ppdb_log_error("Failed to allocate memtable");
         return PPDB_ERR_NO_MEMORY;
     }
 
+    // Initialize fields first
     new_table->size_limit = size_limit;
     new_table->current_size = 0;
-    new_table->list = skiplist_create();
-    if (!new_table->list) {
-        free(new_table);
-        return PPDB_ERR_NO_MEMORY;
-    }
+    new_table->list = NULL;
 
+    // Initialize mutex
     if (pthread_mutex_init(&new_table->mutex, NULL) != 0) {
-        skiplist_destroy(new_table->list);
+        ppdb_log_error("Failed to initialize mutex");
         free(new_table);
         return PPDB_ERR_MUTEX_ERROR;
     }
 
+    // Create skiplist
+    new_table->list = skiplist_create();
+    if (!new_table->list) {
+        ppdb_log_error("Failed to create skiplist");
+        pthread_mutex_destroy(&new_table->mutex);
+        free(new_table);
+        return PPDB_ERR_NO_MEMORY;
+    }
+
     *table = new_table;
+    ppdb_log_debug("Created memtable with size limit: %zu", size_limit);
     return PPDB_OK;
 }
 
-// 销毁 MemTable
+// 关闭 MemTable（保留数据）
+void ppdb_memtable_close(ppdb_memtable_t* table) {
+    if (!table) return;
+
+    // 先加锁
+    pthread_mutex_lock(&table->mutex);
+
+    // 保存指针
+    skiplist_t* list = table->list;
+    table->list = NULL;
+    table->current_size = 0;
+    table->size_limit = 0;
+
+    // 解锁并销毁互斥锁
+    pthread_mutex_unlock(&table->mutex);
+    pthread_mutex_destroy(&table->mutex);
+
+    // 销毁skiplist
+    if (list) {
+        skiplist_destroy(list);
+    }
+
+    // 清零整个结构体
+    memset(table, 0, sizeof(ppdb_memtable_t));
+
+    // 释放结构体
+    free(table);
+}
+
+// 销毁 MemTable（释放所有资源）
 void ppdb_memtable_destroy(ppdb_memtable_t* table) {
     if (!table) return;
 
+    // 先加锁
+    pthread_mutex_lock(&table->mutex);
+
+    // 保存指针
+    skiplist_t* list = table->list;
+    table->list = NULL;
+    table->current_size = 0;
+    table->size_limit = 0;
+
+    // 解锁并销毁互斥锁
+    pthread_mutex_unlock(&table->mutex);
     pthread_mutex_destroy(&table->mutex);
-    skiplist_destroy(table->list);
+
+    // 销毁skiplist
+    if (list) {
+        skiplist_destroy(list);
+    }
+
+    // 清零整个结构体
+    memset(table, 0, sizeof(ppdb_memtable_t));
+
+    // 释放结构体
     free(table);
 }
 
@@ -68,6 +133,10 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
         return PPDB_ERR_NULL_POINTER;
     }
 
+    if (key_len == 0 || value_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
     pthread_mutex_lock(&table->mutex);
 
     // 检查大小限制
@@ -75,9 +144,8 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
     size_t new_size = table->current_size + entry_size;
 
     // 先获取旧值的大小(如果存在)
-    uint8_t temp_value[1];
     size_t old_value_size = 0;
-    ppdb_error_t get_ret = skiplist_get(table->list, key, key_len, temp_value, &old_value_size);
+    ppdb_error_t get_ret = skiplist_get(table->list, key, key_len, NULL, &old_value_size);
     if (get_ret == PPDB_OK) {
         // 如果键已存在,减去旧值的大小
         size_t old_entry_size = key_len + old_value_size + sizeof(size_t) * 2;
@@ -133,24 +201,13 @@ ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
         return PPDB_OK;
     }
 
-    // 分配内存
-    *value = (uint8_t*)malloc(required_size);
-    if (!*value) {
-        pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NO_MEMORY;
-    }
-
     // 获取值
-    size_t actual_size = required_size;
-    ret = skiplist_get(table->list, key, key_len, *value, &actual_size);
+    ret = skiplist_get(table->list, key, key_len, value, value_len);
     if (ret != PPDB_OK) {
-        free(*value);
-        *value = NULL;
         pthread_mutex_unlock(&table->mutex);
         return ret;
     }
 
-    *value_len = actual_size;
     pthread_mutex_unlock(&table->mutex);
     return PPDB_OK;
 }
@@ -164,34 +221,29 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
 
     pthread_mutex_lock(&table->mutex);
 
-    // 先获取值的大小
-    size_t value_size = 0;
-    ppdb_error_t get_ret = skiplist_get(table->list, key, key_len, NULL, &value_size);
-    if (get_ret == PPDB_ERR_NOT_FOUND) {
-        pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NOT_FOUND;
-    } else if (get_ret != PPDB_OK) {
-        pthread_mutex_unlock(&table->mutex);
-        return get_ret;
-    }
-
     // 删除键值对
     ppdb_error_t ret = skiplist_delete(table->list, key, key_len);
-    if (ret != PPDB_OK) {
-        pthread_mutex_unlock(&table->mutex);
-        return ret;
-    }
-
-    // 更新当前大小
-    size_t entry_size = key_len + value_size + sizeof(size_t) * 2;
-    if (table->current_size >= entry_size) {
-        table->current_size -= entry_size;
-    } else {
-        table->current_size = 0;
+    if (ret == PPDB_OK) {
+        // 更新当前大小
+        size_t value_size = 0;
+        ppdb_error_t size_err = skiplist_get(table->list, key, key_len, NULL, &value_size);
+        if (size_err == PPDB_OK) {
+            // 如果键仍然存在,说明删除失败
+            ret = PPDB_ERR_INTERNAL;
+            ppdb_log_error("Key still exists after deletion in memtable");
+        } else {
+            // 更新当前大小，包括键值对的总大小
+            size_t entry_size = key_len + value_size + sizeof(size_t) * 2;
+            if (table->current_size >= entry_size) {
+                table->current_size -= entry_size;
+            } else {
+                table->current_size = 0;
+            }
+        }
     }
 
     pthread_mutex_unlock(&table->mutex);
-    return PPDB_OK;
+    return ret;
 }
 
 // 获取MemTable的当前大小

@@ -9,6 +9,7 @@ typedef struct ppdb_memtable_iterator_t ppdb_memtable_iterator_t;
 
 // 有锁版本
 ppdb_error_t ppdb_memtable_create(size_t size_limit, ppdb_memtable_t** table);
+void ppdb_memtable_close(ppdb_memtable_t* table);
 void ppdb_memtable_destroy(ppdb_memtable_t* table);
 ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table, const uint8_t* key, size_t key_len, const uint8_t* value, size_t value_len);
 ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table, const uint8_t* key, size_t key_len, uint8_t** value, size_t* value_len);
@@ -18,6 +19,7 @@ size_t ppdb_memtable_max_size(ppdb_memtable_t* table);
 
 // 无锁版本
 ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** table);
+void ppdb_memtable_close_lockfree(ppdb_memtable_t* table);
 void ppdb_memtable_destroy_lockfree(ppdb_memtable_t* table);
 ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table, const uint8_t* key, size_t key_len, const uint8_t* value, size_t value_len);
 ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* table, const uint8_t* key, size_t key_len, uint8_t** value, size_t* value_len);

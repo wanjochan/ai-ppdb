@@ -24,42 +24,42 @@ static int test_memtable_basic_ops(void) {
     // 创建 MemTable
     ppdb_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_memtable_create(4096, &table);
-    assert(err == PPDB_OK);
-    assert(table != NULL);
+    TEST_ASSERT(err == PPDB_OK, "Failed to create MemTable");
+    TEST_ASSERT(table != NULL, "MemTable pointer is NULL");
 
     // 测试插入和获取
     const char* test_key = "test_key";
     const char* test_value = "test_value";
     err = ppdb_memtable_put(table, (const uint8_t*)test_key, strlen(test_key),
                            (const uint8_t*)test_value, strlen(test_value));
-    assert(err == PPDB_OK);
+    TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
 
     // 先获取值的大小
     size_t value_size = 0;
     err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
                            NULL, &value_size);
-    assert(err == PPDB_OK);
-    assert(value_size == strlen(test_value));
+    TEST_ASSERT(err == PPDB_OK, "Failed to get value size");
+    TEST_ASSERT(value_size == strlen(test_value), "Value size mismatch");
 
     // 获取值
     uint8_t* value_buf = NULL;
     size_t actual_size = 0;
     err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
                            &value_buf, &actual_size);
-    assert(err == PPDB_OK);
-    assert(actual_size == strlen(test_value));
-    assert(value_buf != NULL);
-    assert(memcmp(value_buf, test_value, actual_size) == 0);
+    TEST_ASSERT(err == PPDB_OK, "Failed to get value");
+    TEST_ASSERT(actual_size == strlen(test_value), "Value size mismatch");
+    TEST_ASSERT(value_buf != NULL, "Value buffer is NULL");
+    TEST_ASSERT(memcmp(value_buf, test_value, actual_size) == 0, "Value content mismatch");
     free(value_buf);
 
     // 测试删除
     err = ppdb_memtable_delete(table, (const uint8_t*)test_key, strlen(test_key));
-    assert(err == PPDB_OK);
+    TEST_ASSERT(err == PPDB_OK, "Failed to delete key");
 
     // 验证删除后无法获取
     err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
                            NULL, &value_size);
-    assert(err == PPDB_ERR_NOT_FOUND);
+    TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key still exists after deletion");
 
     // 销毁 MemTable
     ppdb_memtable_destroy(table);

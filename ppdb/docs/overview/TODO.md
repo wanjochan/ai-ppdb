@@ -1,5 +1,106 @@
 # PPDB TODO List
 
+## Recent Updates
+- Fixed potential deadlock issues in resource cleanup:
+  - Improved cleanup order in KVStore close/destroy
+  - Enhanced MemTable cleanup process to avoid mutex deadlock
+  - Fixed skiplist cleanup to prevent lock contention
+  - Separated pointer clearing and resource destruction
+  - Added proper cleanup sequence documentation
+  - Improved error handling in cleanup process
+  - Enhanced thread safety in cleanup operations
+  - Fixed mutex destruction order
+  - Added better cleanup logging
+  - Standardized cleanup patterns
+
+- Fixed several code warnings and potential issues:
+  - Fixed type mismatch in skiplist_mutex.c by changing height field to uint32_t
+  - Added path length safety checks in WAL operations (both mutex and lockfree versions)
+  - Enhanced file system path handling with buffer overflow protection
+  - Improved error handling for path length issues
+  - Added path length checks in KVStore WAL configuration
+  - Fixed all snprintf buffer overflow risks
+  - Fixed variable redefinition issues in WAL implementation
+  - Improved type consistency in WAL path handling
+  - Fixed mutex destruction order in KVStore cleanup
+  - Improved KVStore initialization process
+  - Fixed field initialization order in KVStore
+  - Removed incorrect field from KVStore structure
+  - Unified WAL segment file naming format
+  - Added WAL segment ID overflow checks
+  - Standardized WAL-related constants
+  - Fixed KVStore test configuration structure usage
+  - Fixed component initialization order in KVStore creation
+  - Improved memory management in WAL recovery process
+  - Fixed WAL recovery error handling
+  - Enhanced WAL lockfree recovery process
+  - Added better error logging in WAL operations
+  - Fixed test directory cleanup process
+  - Added proper WAL directory cleanup in tests
+  - Fixed resource cleanup timing in tests
+  - Enhanced KVStore cleanup process
+  - Added memory zeroing before freeing
+  - Improved WAL initialization process
+  - Fixed WAL resource cleanup
+  - Enhanced MemTable cleanup process
+  - Fixed MemTable memory management
+  - Improved skiplist node cleanup
+  - Enhanced skiplist memory management
+  - Fixed function declarations in skiplist
+
+- Potential issues found in filesystem operations:
+  - File system operations lack proper error handling for permission issues
+  - Directory removal has fixed retry counts and delays
+  - Path handling needs more robust sanitization
+  - Missing atomic operations for critical file operations
+  - Need better handling of file system full conditions
+  - Consider adding file system operation timeout mechanism
+  - Should add file system operation metrics collection
+
+- Critical issues found in KVStore implementation:
+  - Memory leaks possible in error paths during store creation
+  - Race conditions in cleanup process
+  - Hardcoded sleep delays need to be replaced with proper synchronization
+  - Missing transaction support for multi-key operations
+  - No background compaction mechanism
+  - Memory table size management needs improvement
+  - WAL recovery process lacks proper error recovery
+  - Missing data consistency verification after recovery
+  - Need better error handling in cleanup process
+
+- WAL implementation issues discovered:
+  - Hardcoded sleep delays in WAL operations need proper synchronization
+  - WAL segment rotation lacks proper error handling
+  - Missing WAL compression support
+  - WAL archival process needs improvement
+  - No WAL truncation mechanism
+  - WAL recovery lacks checksum verification
+  - Missing WAL replication support
+  - WAL segment size management needs optimization
+  - WAL cleanup process needs better error handling
+
+- Build system improvements needed:
+  - Missing incremental build support
+  - No dependency tracking
+  - Build configuration not flexible enough
+  - Missing clean target
+  - No install target
+  - Test execution needs timeout mechanism
+  - Missing cross-platform support
+  - No version control in build process
+  - Build artifacts need better organization
+
+- Critical issues found in skiplist implementation:
+  - Memory leaks in node creation error paths
+  - Race conditions in node deletion
+  - Unsafe memory access in iterator operations
+  - Missing bounds checking in level generation
+  - Inefficient memory management in node creation
+  - No memory pool for node allocation
+  - Missing node reference counting
+  - Iterator invalidation issues
+  - Potential ABA problems in node updates
+
 ## 已完成工作
 
 ### 基础设施
@@ -170,3 +271,57 @@
    [ ] API文档
    [ ] 运维手册
    [ ] 性能报告
+```
+
+## 修复计划
+
+### 第一阶段：关键安全问题（高优先级）
+1. 内存安全
+   [x] 修复跳表节点创建中的内存泄漏
+   [ ] 实现节点引用计数
+   [ ] 修复迭代器中的不安全内存访问
+   [ ] 改进内存管理策略
+
+2. 并发安全
+   [x] 修复节点删除中的竞态条件
+   [ ] 解决节点更新中的ABA问题
+   [ ] 改进锁的粒度
+   [ ] 实现更安全的迭代器失效处理
+
+3. 资源管理
+   [ ] 实现内存池
+   [ ] 改进文件句柄管理
+   [ ] 优化WAL段管理
+   [ ] 实现资源限制机制
+
+### 第二阶段：性能优化（中优先级）
+1. 内存优化
+   [ ] 实现节点内存池
+   [ ] 优化内存分配策略
+   [ ] 实现内存预分配
+
+2. 并发优化
+   [ ] 实现细粒度锁
+   [ ] 优化锁竞争
+   [ ] 实现无锁数据结构
+
+3. IO优化
+   [ ] 实现异步IO
+   [ ] 优化WAL写入
+   [ ] 实现批量操作
+
+### 第三阶段：可靠性提升（低优先级）
+1. 错误处理
+   [ ] 完善错误恢复机制
+   [ ] 改进错误日志
+   [ ] 实现故障注入测试
+
+2. 监控和诊断
+   [ ] 实现性能指标收集
+   [ ] 添加调试日志
+   [ ] 实现健康检查
+
+3. 测试完善
+   [ ] 添加单元测试
+   [ ] 实现压力测试
+   [ ] 添加并发测试

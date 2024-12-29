@@ -4,8 +4,13 @@
 #include "ppdb/error.h"
 #include "ppdb/ref_count.h"
 
-#define MAX_LEVEL 32
 #define P 0.25
+
+// Forward declarations
+static void destroy_node(skiplist_node_t* node);
+static uint32_t random_level(void);
+static int compare_keys(const uint8_t* key1, size_t key1_len,
+                       const uint8_t* key2, size_t key2_len);
 
 // Generate random level (thread-safe)
 static uint32_t random_level(void) {
@@ -103,19 +108,35 @@ atomic_skiplist_t* atomic_skiplist_create(void) {
     return list;
 }
 
+// Destroy lock-free skip list node
+static void destroy_node(skiplist_node_t* node) {
+    if (node) {
+        if (node->key) {
+            memset(node->key, 0, node->key_len);  // 清零键
+            free(node->key);
+        }
+        if (node->value) {
+            memset(node->value, 0, node->value_len);  // 清零值
+            free(node->value);
+        }
+        memset(node, 0, sizeof(skiplist_node_t) + (node->level - 1) * sizeof(skiplist_node_t*));  // 清零节点
+        free(node);
+    }
+}
+
 // Destroy lock-free skip list
 void atomic_skiplist_destroy(atomic_skiplist_t* list) {
     if (!list) return;
 
     skiplist_node_t* current = list->head;
     while (current) {
-        skiplist_node_t* next = atomic_load_explicit(&current->next[0], memory_order_acquire);
-        ref_count_dec(current->ref_count);  // This will free the node when count reaches 0
+        skiplist_node_t* next = atomic_load(&current->next[0]);
+        destroy_node(current);
         current = next;
     }
 
+    memset(list, 0, sizeof(atomic_skiplist_t));  // 清零跳表结构
     free(list);
-    ppdb_log_info("Destroyed lock-free skiplist");
 }
 
 // Get value corresponding to key
@@ -244,7 +265,7 @@ ppdb_error_t atomic_skiplist_put(atomic_skiplist_t* list,
 
 // Delete key-value pair
 ppdb_error_t atomic_skiplist_delete(atomic_skiplist_t* list,
-                                  const uint8_t* key, size_t key_len) {
+                                const uint8_t* key, size_t key_len) {
     if (!list || !key || key_len == 0) {
         ppdb_log_error("Invalid parameters in skiplist_delete");
         return PPDB_ERR_INVALID_ARG;
@@ -254,56 +275,97 @@ ppdb_error_t atomic_skiplist_delete(atomic_skiplist_t* list,
     skiplist_node_t* current = list->head;
     skiplist_node_t* target = NULL;
 
-    // Find node to delete
+    // Find node to delete with retries
+    int retries = 0;
+    const int max_retries = 3;
+    do {
+        // Find node to delete
+        for (int32_t i = (int32_t)list->max_level - 1; i >= 0; i--) {
+            skiplist_node_t* next;
+            do {
+                next = atomic_load_explicit(&current->next[i], memory_order_acquire);
+                if (!next || compare_keys(key, key_len, next->key, next->key_len) < 0) {
+                    update[i] = current;
+                    break;
+                }
+                if (compare_keys(key, key_len, next->key, next->key_len) == 0) {
+                    target = next;
+                    update[i] = current;
+                    break;
+                }
+                current = next;
+            } while (1);
+        }
+
+        if (!target) {
+            ppdb_log_debug("Key not found in skiplist");
+            return PPDB_ERR_NOT_FOUND;
+        }
+
+        // Mark node as deleted
+        uint32_t expected = NODE_VALID;
+        if (atomic_compare_exchange_strong_explicit(
+                &target->state,
+                &expected,
+                NODE_DELETED,
+                memory_order_release,
+                memory_order_relaxed)) {
+            break;
+        }
+
+        // If node is already deleted, retry
+        if (expected == NODE_DELETED) {
+            if (retries++ >= max_retries) {
+                ppdb_log_error("Max retries reached for deletion");
+                return PPDB_ERR_INTERNAL;
+            }
+            current = list->head;
+            target = NULL;
+            continue;
+        }
+    } while (retries < max_retries);
+
+    // Update pointers with retries
+    for (uint32_t i = 0; i < target->level; i++) {
+        skiplist_node_t* next;
+        int level_retries = 0;
+        do {
+            next = atomic_load_explicit(&target->next[i], memory_order_acquire);
+            if (atomic_compare_exchange_weak_explicit(
+                    &update[i]->next[i],
+                    &target,
+                    next,
+                    memory_order_release,
+                    memory_order_relaxed)) {
+                break;
+            }
+            if (level_retries++ >= max_retries) {
+                ppdb_log_error("Max retries reached for pointer update at level %d", i);
+                return PPDB_ERR_INTERNAL;
+            }
+        } while (1);
+    }
+
+    atomic_fetch_sub_explicit(&list->size, 1, memory_order_release);
+    ref_count_dec(target->ref_count);  // This will free the node when count reaches 0
+
+    // Verify deletion
+    current = list->head;
     for (int32_t i = (int32_t)list->max_level - 1; i >= 0; i--) {
         skiplist_node_t* next;
         do {
             next = atomic_load_explicit(&current->next[i], memory_order_acquire);
             if (!next || compare_keys(key, key_len, next->key, next->key_len) < 0) {
-                update[i] = current;
                 break;
             }
-            if (compare_keys(key, key_len, next->key, next->key_len) == 0) {
-                target = next;
-                update[i] = current;
-                break;
+            if (compare_keys(key, key_len, next->key, next->key_len) == 0 &&
+                atomic_load_explicit(&next->state, memory_order_acquire) == NODE_VALID) {
+                ppdb_log_error("Key still exists after deletion in skiplist");
+                return PPDB_ERR_INTERNAL;
             }
             current = next;
         } while (1);
     }
-
-    if (!target || atomic_load(&target->state) == NODE_DELETED) {
-        ppdb_log_debug("Key not found for deletion");
-        return PPDB_ERR_NOT_FOUND;
-    }
-
-    // Mark node as deleted
-    uint32_t expected = NODE_VALID;
-    if (!atomic_compare_exchange_strong_explicit(
-            &target->state,
-            &expected,
-            NODE_DELETED,
-            memory_order_release,
-            memory_order_relaxed)) {
-        ppdb_log_debug("Node already deleted");
-        return PPDB_ERR_NOT_FOUND;
-    }
-
-    // Update pointers
-    for (uint32_t i = 0; i < target->level; i++) {
-        skiplist_node_t* next;
-        do {
-            next = atomic_load_explicit(&target->next[i], memory_order_acquire);
-        } while (!atomic_compare_exchange_weak_explicit(
-            &update[i]->next[i],
-            &target,
-            next,
-            memory_order_release,
-            memory_order_relaxed));
-    }
-
-    atomic_fetch_sub_explicit(&list->size, 1, memory_order_relaxed);
-    ref_count_dec(target->ref_count);  // This will free the node when count reaches 0
 
     ppdb_log_debug("Deleted key from skiplist");
     return PPDB_OK;
