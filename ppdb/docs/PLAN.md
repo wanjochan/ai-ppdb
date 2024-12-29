@@ -3,131 +3,152 @@
 ## 1. 核心问题与优先级
 
 ### 1.1 紧急重要
-1. 数据完整性
-   - CRC32校验实现
-   - 数据校验点机制
-   - 完整性验证流程
-
-2. 内存管理 
-   - 内存池实现
-   - 内存碎片优化
-   - 内存使用限制
-
-3. 并发控制 
-   - 死锁预防机制
-   - 迭代器线程安全
+1. 同步原语重构
+   - 统一的同步接口
+   - 无锁和互斥两种模式
    - 分片锁优化
-   - 自适应切换机制
+   - 引用计数管理
+
+2. 数据结构改造
+   - 无锁跳表实现
+   - 分片内存表优化
+   - WAL无锁改造
+   - 迭代器线程安全
+
+3. 性能优化
+   - 分片策略优化
+   - 自旋参数调优
+   - 内存布局优化
+   - 缓存行对齐
 
 ### 1.2 重要不紧急
-1. 性能优化 
-   - 布隆过滤器
-   - 自适应退避策略
-   - IO性能优化
-   - 压缩算法实现
-   - 性能监控系统
+1. 内存管理
+   ```c
+   // 引用计数
+   typedef struct ppdb_ref_count {
+       atomic_uint count;
+       ppdb_sync_t sync;
+   } ppdb_ref_count_t;
 
-2. 可靠性增强
+   // 内存池
+   typedef struct ppdb_mempool {
+       void* chunks;
+       size_t chunk_size;
+       atomic_size_t used;
+       ppdb_stripe_locks_t* locks;
+   } ppdb_mempool_t;
+   ```
+
+2. 监控系统
+   ```c
+   // 性能指标
+   typedef struct ppdb_perf_metrics {
+       atomic_uint64_t contention_count;
+       atomic_uint64_t wait_time_us;
+       atomic_uint64_t shard_usage[MAX_SHARDS];
+   } ppdb_perf_metrics_t;
+   ```
+
+3. 可靠性增强
    - 错误处理完善
    - 恢复机制增强
    - WAL持久化优化
 
 ### 1.3 其他任务
-1. 监控与工具
-   - 性能指标收集
-   - 调试工具开发
-   - 压力测试框架
+1. 测试框架
+   - 并发测试
+   - 性能基准测试
+   - 压力测试
+   - 内存泄漏检测
 
-2. 高级特性
-   - 高级压缩算法
-   - 智能提交策略
+2. 工具开发
    - 性能分析工具
+   - 内存使用分析
+   - 死锁检测工具
 
 ## 2. 具体实现计划
 
-### 2.1 第一阶段（1个月）
-1. 数据完整性
+### 2.1 第一阶段（2周）
+1. 同步原语重构
    ```c
-   typedef struct ppdb_checkpoint {
-       uint64_t sequence;
-       uint64_t timestamp;
-       uint32_t checksum;
-   } ppdb_checkpoint_t;
+   // 同步配置
+   typedef struct ppdb_sync_config {
+       bool use_lockfree;
+       uint32_t stripe_count;
+       uint32_t spin_count;
+       uint32_t backoff_us;
+       bool enable_ref_count;
+   } ppdb_sync_config_t;
+
+   // 同步原语
+   typedef struct ppdb_sync {
+       union {
+           atomic_int atomic;
+           mutex_t mutex;
+       } impl;
+       ppdb_sync_config_t config;
+       ppdb_ref_count_t* ref_count;
+   } ppdb_sync_t;
    ```
 
-2. 内存优化 
+2. 跳表改造
    ```c
-   typedef struct ppdb_mempool {
-       void* chunks;
-       size_t chunk_size;
-       atomic_size_t used;
-       ppdb_sync_t lock;
-   } ppdb_mempool_t;
+   // 跳表节点
+   typedef struct skiplist_node {
+       ppdb_sync_t sync;
+       void* key;
+       uint32_t key_len;
+       void* value;
+       uint32_t value_len;
+       uint32_t level;
+       struct skiplist_node* next[];
+   } skiplist_node_t;
    ```
 
-3. 并发控制 
+### 2.2 第二阶段（2周）
+1. 内存表改造
    ```c
-   // 基础锁结构
-   typedef struct ppdb_rw_lock {
-       atomic_int readers;
-       ppdb_sync_t write_lock;
-   } ppdb_rw_lock_t;
-
-   // 性能监控结构
-   typedef struct ppdb_perf_metrics {
-       atomic_uint_least64_t op_count;
-       atomic_uint_least64_t total_latency_us;
-       atomic_uint_least64_t max_latency_us;
-       atomic_uint_least64_t lock_contentions;
-       atomic_uint_least64_t lock_wait_us;
-   } ppdb_perf_metrics_t;
-
-   // 监控器结构
-   typedef struct ppdb_monitor {
-       ppdb_perf_metrics_t current;
-       ppdb_perf_metrics_t previous;
-       atomic_bool should_switch;
-       time_t window_start_ms;
-       int cpu_cores;
-   } ppdb_monitor_t;
+   // 分片内存表
+   typedef struct {
+       shard_config_t config;
+       ppdb_skiplist_t** shards;
+       ppdb_stripe_locks_t* locks;
+       atomic_size_t total_size;
+   } sharded_memtable_t;
    ```
 
-### 2.2 第二阶段（2个月）
-1. 性能优化 
-   - 实现布隆过滤器
-   - 优化IO策略
-   - 实现基础压缩
+2. WAL改造
+   ```c
+   // WAL结构
+   typedef struct {
+       int fd;
+       ppdb_sync_t sync;
+       wal_buffer_t* buffers;
+       atomic_uint64_t sequence;
+   } ppdb_wal_t;
+   ```
 
-2. 可靠性增强
-   - 完善错误处理
-   - 增强恢复机制
-   - 优化WAL性能
+### 2.3 第三阶段（2周）
+1. 性能优化
+   - 分片数量优化
+   - 自旋参数调优
+   - 内存布局优化
+   - 缓存行对齐
 
-### 2.3 第三阶段（3个月）
-1. 功能扩展
-   - MVCC实现
-   - 复制功能
-   - 监控系统
+2. 测试开发
+   - 单元测试
+   - 并发测试
+   - 性能测试
+   - 压力测试
 
-2. 工具支持
-   - 调试工具集
-   - 维护工具集
-   - 测试框架
+### 2.4 第四阶段（2周）
+1. 工具开发
+   - 性能分析工具
+   - 内存分析工具
+   - 死锁检测工具
 
-## 3. 风险评估
-
-### 3.1 技术风险
-- 内存池实现影响现有代码
-- 并发控制复杂度
-- 性能优化效果
-
-### 3.2 应对策略
-1. 增量式改进
-   - 小步快跑
-   - 持续集成
-   - 及时回滚
-
-2. 质量保证
-   - 完整测试覆盖
-   - 性能基准测试
-   - 压力测试验证
+2. 文档完善
+   - 设计文档更新
+   - API文档补充
+   - 性能调优指南
+   - 最佳实践指南

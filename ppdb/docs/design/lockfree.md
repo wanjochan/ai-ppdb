@@ -5,10 +5,13 @@
 > - 整体设计见 `overview/DESIGN.md`
 > - 开发规范见 `overview/DEVELOPMENT.md`
 
-# PPDB 无锁版本设计文档
-
 ## 实现状态
 ✅ 已完成基本实现
+- [x] 统一同步原语 (sync)
+  - [x] 互斥锁模式
+  - [x] 无锁模式
+  - [x] 分片锁优化
+  - [x] 引用计数管理
 - [x] 无锁跳表（atomic_skiplist）
   - [x] 原子操作支持
   - [x] 引用计数内存管理
@@ -21,8 +24,8 @@
 ## 1. 设计目标
 
 ### 1.1 功能目标
-- 提供与有锁版本相同的功能接口
-- 支持完全无锁的并发操作
+- 提供统一的同步原语接口
+- 支持互斥锁和无锁两种模式
 - 保证线程安全和数据一致性
 - 支持高性能的读写操作
 
@@ -34,29 +37,55 @@
 
 ## 2. 核心组件设计
 
-### 2.1 无锁跳表
+### 2.1 同步原语
 ```c
 // 节点状态
-typedef enum {
+typedef enum ppdb_node_state {
     NODE_VALID = 0,      // 正常节点
     NODE_DELETED = 1,    // 已标记删除
     NODE_INSERTING = 2   // 正在插入
-} node_state_t;
+} ppdb_node_state_t;
 
-// 节点结构
-struct skiplist_node {
-    ref_count_t* ref_count;                     // 引用计数
-    char* key;                                  // 键
-    uint32_t key_len;                          // 键长度
-    void* value;                               // 值
-    uint32_t value_len;                        // 值长度
-    atomic_uint state;                         // 节点状态
-    uint32_t level;                            // 节点层数
-    _Atomic(struct skiplist_node*) next[];     // 后继节点数组
-};
+// 引用计数
+typedef struct ppdb_ref_count {
+    atomic_uint count;   // 引用计数值
+} ppdb_ref_count_t;
+
+// 同步配置
+typedef struct ppdb_sync_config {
+    bool use_lockfree;        // 是否使用无锁模式
+    uint32_t stripe_count;    // 分片锁数量
+    uint32_t spin_count;      // 自旋次数
+    uint32_t backoff_us;      // 退避时间
+    bool enable_ref_count;    // 是否启用引用计数
+} ppdb_sync_config_t;
+
+// 同步原语
+typedef struct ppdb_sync {
+    union {
+        atomic_int atomic;
+        mutex_t mutex;
+    } impl;
+    ppdb_sync_config_t config;
+    ppdb_ref_count_t* ref_count;
+} ppdb_sync_t;
 ```
 
-### 2.2 分片内存表
+### 2.2 无锁跳表
+```c
+// 跳表节点
+typedef struct skiplist_node {
+    ppdb_sync_t sync;         // 同步原语
+    void* key;                // 键
+    uint32_t key_len;         // 键长度
+    void* value;              // 值
+    uint32_t value_len;       // 值长度
+    uint32_t level;           // 节点层数
+    struct skiplist_node* next[]; // 后继节点数组
+} skiplist_node_t;
+```
+
+### 2.3 分片内存表
 ```c
 // 分片配置
 typedef struct {
@@ -65,11 +94,12 @@ typedef struct {
     uint32_t max_size;         // 每个分片的最大大小
 } shard_config_t;
 
-// 分片内存表结构
+// 分片内存表
 typedef struct {
     shard_config_t config;     // 分片配置
-    atomic_skiplist_t** shards; // 分片数组
-    atomic_uint total_size;    // 总元素个数
+    ppdb_skiplist_t** shards;  // 分片数组
+    ppdb_stripe_locks_t* locks; // 分片锁
+    atomic_size_t total_size;  // 总元素个数
 } sharded_memtable_t;
 ```
 
@@ -81,14 +111,16 @@ typedef struct {
 - 原子操作保证线程安全
 
 ### 3.2 并发控制
-- 使用原子操作代替锁
-- CAS操作保证一致性
-- 分片减少竞争
+- 统一的同步原语接口
+- 支持互斥锁和无锁两种模式
+- 分片锁减少竞争
+- 自旋和退避策略优化
 
 ### 3.3 性能优化
-- 分片策略优化
-- 原子操作优化
+- 分片数量优化为2的幂
+- 缓存行对齐优化
 - 内存布局优化
+- 原子操作优化
 
 ## 4. 下一步计划
 1. 实现无锁WAL
@@ -100,44 +132,28 @@ typedef struct {
 ## 5. 监控和诊断
 
 ### 5.1 性能指标
-- 操作延迟统计
-- 吞吐量监控
-- 内存使用跟踪
-- 并发度量度
+- 竞争次数统计
+- 等待时间统计
+- 分片使用率统计
 
 ### 5.2 调试支持
-- 详细日志记录
-- 状态跟踪
-- 异常诊断
-- 性能分析
+- DEBUG模式下的详细统计
+- 节点状态跟踪
+- 引用计数监控
 
-## 6. 测试策略
+## 6. 注意事项
 
-### 6.1 功能测试
-- 单元测试
-- 集成测试
-- 并发测试
-- 故障注入
+### 6.1 内存屏障
+- 确保原子操作的正确性
+- 避免编译器和CPU重排序
+- 正确使用内存序
 
-### 6.2 性能测试
-- 基准测试
-- 压力测试
-- 长稳测试
-- 极限测试
+### 6.2 ABA问题
+- 使用引用计数避免ABA
+- 延迟删除节点
+- 标记删除状态
 
-## 7. 注意事项
-
-### 7.1 内存管理
-- 确保正确的内存释放
-- 避免内存泄漏
-- 处理内存耗尽情况
-
-### 7.2 并发安全
-- 保证操作原子性
-- 处理ABA问题
-- 避免死锁和活锁
-
-### 7.3 错误处理
-- 优雅降级
-- 错误恢复
-- 异常处理
+### 6.3 性能调优
+- 合理设置分片数量
+- 优化自旋参数
+- 调整退避策略

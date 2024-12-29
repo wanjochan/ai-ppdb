@@ -41,13 +41,38 @@ static uint32_t murmur_hash2(const void* key, size_t len) {
     return h;
 }
 
+// 引用计数实现
+void ppdb_ref_init(ppdb_ref_count_t* ref) {
+    atomic_init(&ref->count, 1);
+}
+
+void ppdb_ref_inc(ppdb_ref_count_t* ref) {
+    atomic_fetch_add(&ref->count, 1);
+}
+
+bool ppdb_ref_dec(ppdb_ref_count_t* ref) {
+    uint32_t old = atomic_fetch_sub(&ref->count, 1);
+    return old == 1;  // 返回是否应该释放
+}
+
+uint32_t ppdb_ref_get(ppdb_ref_count_t* ref) {
+    return atomic_load(&ref->count);
+}
+
 void ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config) {
     memcpy(&sync->config, config, sizeof(ppdb_sync_config_t));
     
     if (config->use_lockfree) {
-        atomic_init(&sync->impl.atomic, 0);
+        atomic_init(&sync->impl.atomic, NODE_VALID);
     } else {
         mutex_init(&sync->impl.mutex);
+    }
+    
+    if (config->enable_ref_count) {
+        sync->ref_count = malloc(sizeof(ppdb_ref_count_t));
+        if (sync->ref_count) {
+            ppdb_ref_init(sync->ref_count);
+        }
     }
     
     #ifdef PPDB_DEBUG
@@ -60,11 +85,15 @@ void ppdb_sync_destroy(ppdb_sync_t* sync) {
     if (!sync->config.use_lockfree) {
         mutex_destroy(&sync->impl.mutex);
     }
+    
+    if (sync->ref_count) {
+        free(sync->ref_count);
+    }
 }
 
 bool ppdb_sync_try_lock(ppdb_sync_t* sync) {
     if (sync->config.use_lockfree) {
-        return atomic_compare_exchange_strong(&sync->impl.atomic, &(int){0}, 1);
+        return atomic_compare_exchange_strong(&sync->impl.atomic, &(int){NODE_VALID}, NODE_LOCKED);
     } else {
         return mutex_trylock(&sync->impl.mutex) == 0;
     }
@@ -89,7 +118,7 @@ void ppdb_sync_lock(ppdb_sync_t* sync) {
     
     // 自旋失败后强制获取锁
     if (sync->config.use_lockfree) {
-        while (!atomic_compare_exchange_strong(&sync->impl.atomic, &(int){0}, 1)) {
+        while (!atomic_compare_exchange_strong(&sync->impl.atomic, &(int){NODE_VALID}, NODE_LOCKED)) {
             usleep(sync->config.backoff_us);
         }
     } else {
@@ -105,13 +134,48 @@ void ppdb_sync_lock(ppdb_sync_t* sync) {
 
 void ppdb_sync_unlock(ppdb_sync_t* sync) {
     if (sync->config.use_lockfree) {
-        atomic_store(&sync->impl.atomic, 0);
+        atomic_store(&sync->impl.atomic, NODE_VALID);
     } else {
         mutex_unlock(&sync->impl.mutex);
     }
 }
 
-// 分片锁实现
+// 节点状态API实现
+bool ppdb_sync_is_valid(ppdb_sync_t* sync) {
+    if (!sync->config.use_lockfree) {
+        return true;
+    }
+    return atomic_load(&sync->impl.atomic) == NODE_VALID;
+}
+
+bool ppdb_sync_mark_deleted(ppdb_sync_t* sync) {
+    if (!sync->config.use_lockfree) {
+        return false;
+    }
+    int expected = NODE_VALID;
+    return atomic_compare_exchange_strong(&sync->impl.atomic, 
+                                       &expected, NODE_DELETED);
+}
+
+bool ppdb_sync_mark_inserting(ppdb_sync_t* sync) {
+    if (!sync->config.use_lockfree) {
+        return false;
+    }
+    int expected = NODE_VALID;
+    return atomic_compare_exchange_strong(&sync->impl.atomic,
+                                       &expected, NODE_INSERTING);
+}
+
+// 分片锁优化实现
+static inline uint32_t optimize_stripe_count(uint32_t count) {
+    // 确保分片数是2的幂
+    uint32_t optimized = 1;
+    while (optimized < count) {
+        optimized <<= 1;
+    }
+    return optimized;
+}
+
 ppdb_stripe_locks_t* ppdb_stripe_locks_create(const ppdb_sync_config_t* config) {
     if (config->stripe_count == 0) {
         return NULL;
@@ -122,16 +186,21 @@ ppdb_stripe_locks_t* ppdb_stripe_locks_create(const ppdb_sync_config_t* config) 
         return NULL;
     }
     
-    stripes->count = config->stripe_count;
-    stripes->mask = config->stripe_count - 1;  // 必须是2的幂
-    stripes->locks = calloc(config->stripe_count, sizeof(ppdb_sync_t));
+    // 优化分片数量
+    uint32_t optimized_count = optimize_stripe_count(config->stripe_count);
+    stripes->count = optimized_count;
+    stripes->mask = optimized_count - 1;
+    
+    // 内存布局优化: 将锁对齐到缓存行
+    size_t aligned_size = (sizeof(ppdb_sync_t) + 63) & ~63;
+    stripes->locks = aligned_alloc(64, aligned_size * optimized_count);
     
     if (!stripes->locks) {
         free(stripes);
         return NULL;
     }
     
-    for (uint32_t i = 0; i < config->stripe_count; i++) {
+    for (uint32_t i = 0; i < optimized_count; i++) {
         ppdb_sync_init(&stripes->locks[i], config);
     }
     
