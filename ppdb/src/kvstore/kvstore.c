@@ -73,19 +73,19 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
                   config->dir_path,
                   config->mode == PPDB_MODE_LOCKFREE ? "lock-free" : "locked");
 
-    // 分配KVStore结构
+    // Allocate KVStore structure
     ppdb_kvstore_t* new_store = (ppdb_kvstore_t*)calloc(1, sizeof(ppdb_kvstore_t));
     if (!new_store) {
         ppdb_log_error("Failed to allocate KVStore");
         return PPDB_ERR_NO_MEMORY;
     }
 
-    // 初始化基本字段
-    new_store->mode = config->mode;  // 先设置模式，这样cleanup_store才能正确工作
+    // Initialize basic fields
+    new_store->mode = config->mode;  // Set mode first so cleanup_store works correctly
     new_store->table = NULL;
     new_store->wal = NULL;
 
-    // 复制配置
+    // Copy configuration
     size_t db_path_len = strlen(config->dir_path);
     if (db_path_len >= sizeof(new_store->db_path)) {
         ppdb_log_error("Directory path too long");
@@ -95,7 +95,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
     memcpy(new_store->db_path, config->dir_path, db_path_len);
     new_store->db_path[db_path_len] = '\0';
 
-    // 初始化互斥锁
+    // Initialize mutex
     if (config->mode == PPDB_MODE_LOCKED) {
         if (pthread_mutex_init(&new_store->mutex, NULL) != 0) {
             ppdb_log_error("Failed to initialize mutex");
@@ -104,7 +104,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
         }
     }
 
-    // 创建目录
+    // Create directory
     if (!ppdb_fs_dir_exists(config->dir_path)) {
         ppdb_error_t err = ppdb_ensure_directory(config->dir_path);
         if (err != PPDB_OK) {
@@ -114,10 +114,10 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
         }
     }
 
-    // 等待目录创建完成
+    // Wait for directory creation to complete
     usleep(100000);  // 100ms
 
-    // 创建MemTable
+    // Create MemTable
     ppdb_error_t err = create_memtable(config->mode, config->memtable_size, &new_store->table);
     if (err != PPDB_OK) {
         ppdb_log_error("Failed to create MemTable: %s", ppdb_error_string(err));
@@ -125,14 +125,14 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
         return err;
     }
 
-    // 等待MemTable创建完成
+    // Wait for MemTable creation to complete
     usleep(100000);  // 100ms
 
-    // 创建WAL
+    // Create WAL
     ppdb_wal_config_t wal_config = {
         .dir_path = {0},
         .segment_size = WAL_SEGMENT_SIZE,
-        .sync_write = true,  // 默认同步写入
+        .sync_write = true,  // Default to synchronous write
         .mode = config->mode
     };
 
@@ -157,10 +157,10 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
         return err;
     }
 
-    // 等待WAL创建完成
+    // Wait for WAL creation to complete
     usleep(100000);  // 100ms
 
-    // 从WAL恢复数据
+    // Recover data from WAL
     if (config->mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_wal_recover_lockfree(new_store->wal, &new_store->table);
     } else {
@@ -173,7 +173,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
         return err;
     }
 
-    // 等待WAL恢复完成
+    // Wait for WAL recovery to complete
     usleep(100000);  // 100ms
 
     *store = new_store;
@@ -184,24 +184,24 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
 static void cleanup_store(ppdb_kvstore_t* store, bool destroy) {
     if (!store) return;
 
-    // 保存模式和指针
+    // Save mode and pointers
     ppdb_mode_t mode = store->mode;
     ppdb_wal_t* wal = store->wal;
     ppdb_memtable_t* table = store->table;
 
-    // 清空指针防止重复释放
+    // Clear pointers to prevent double-free
     store->wal = NULL;
     store->table = NULL;
 
-    // 如果是有锁模式，先加锁
+    // If locked mode, lock first
     if (mode == PPDB_MODE_LOCKED) {
         pthread_mutex_lock(&store->mutex);
     }
 
-    // 清零敏感数据
+    // Zero out sensitive data
     memset(store->db_path, 0, sizeof(store->db_path));
 
-    // 先清理WAL
+    // Clean up WAL
     if (wal) {
         if (destroy) {
             if (mode == PPDB_MODE_LOCKFREE) {
@@ -217,10 +217,10 @@ static void cleanup_store(ppdb_kvstore_t* store, bool destroy) {
             }
         }
         wal = NULL;
-        usleep(500000);  // 等待500ms确保WAL资源释放
+        usleep(500000);  // Wait 500ms to ensure WAL resources are released
     }
 
-    // 清理MemTable
+    // Clean up MemTable
     if (table) {
         if (destroy) {
             if (mode == PPDB_MODE_LOCKFREE) {
@@ -236,34 +236,32 @@ static void cleanup_store(ppdb_kvstore_t* store, bool destroy) {
             }
         }
         table = NULL;
-        usleep(500000);  // 等待500ms确保MemTable资源释放
+        usleep(500000);  // Wait 500ms to ensure MemTable resources are released
     }
 
-    // 如果是有锁模式，解锁并销毁互斥锁
+    // If locked mode, unlock and destroy mutex
     if (mode == PPDB_MODE_LOCKED) {
         pthread_mutex_unlock(&store->mutex);
         pthread_mutex_destroy(&store->mutex);
-        usleep(500000);  // 等待500ms确保互斥锁资源释放
+        usleep(500000);  // Wait 500ms to ensure mutex resources are released
     }
 
-    // 清零整个结构
+    // Zero out entire structure
     memset(store, 0, sizeof(ppdb_kvstore_t));
 
-    // 最后释放结构体
+    // Finally, free the structure
     free(store);
-    usleep(500000);  // 等待500ms确保内存释放
+    usleep(500000);  // Wait 500ms to ensure memory is released
 }
 
-// 关闭KVStore
+// Close KVStore
 void ppdb_kvstore_close(ppdb_kvstore_t* store) {
-    if (!store) return;
-    cleanup_store(store, false);
+    if (store) cleanup_store(store, false);
 }
 
-// 销毁KVStore及其所有数据
+// Destroy KVStore and all its data
 void ppdb_kvstore_destroy(ppdb_kvstore_t* store) {
-    if (!store) return;
-    cleanup_store(store, true);
+    if (store) cleanup_store(store, true);
 }
 
 static ppdb_error_t handle_memtable_full(ppdb_kvstore_t* store, 
@@ -274,14 +272,14 @@ static ppdb_error_t handle_memtable_full(ppdb_kvstore_t* store,
                        ppdb_memtable_max_size_lockfree(store->table) : 
                        ppdb_memtable_max_size(store->table);
 
-    // 创建新的MemTable
+    // Create new MemTable
     ppdb_error_t err = create_memtable(store->mode, size_limit, &new_table);
     if (err != PPDB_OK) {
         ppdb_log_error("Failed to create new MemTable: %s", ppdb_error_string(err));
         return err;
     }
 
-    // 将旧的MemTable持久化（这里简化处理，实际应该写入SSTable）
+    // Persist old MemTable (simplified, should write to SSTable)
     if (store->mode == PPDB_MODE_LOCKFREE) {
         ppdb_memtable_destroy_lockfree(store->table);
     } else {
@@ -289,7 +287,7 @@ static ppdb_error_t handle_memtable_full(ppdb_kvstore_t* store,
     }
     store->table = new_table;
 
-    // 重试写入
+    // Retry write
     if (store->mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_memtable_put_lockfree(store->table, key, key_len, value, value_len);
     } else {
@@ -313,7 +311,7 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 
     lock_if_needed(store);
 
-    // 先写WAL
+    // Write to WAL
     ppdb_error_t err;
     if (store->mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_wal_write_lockfree(store->wal, PPDB_WAL_RECORD_PUT, key, key_len, value, value_len);
@@ -327,7 +325,7 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
         return err;
     }
 
-    // 写入MemTable
+    // Write to MemTable
     if (store->mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_memtable_put_lockfree(store->table, key, key_len, value, value_len);
     } else {
@@ -335,7 +333,7 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
     }
 
     if (err == PPDB_ERR_FULL) {
-        // 处理MemTable已满的情况
+        // Handle MemTable full case
         err = handle_memtable_full(store, key, key_len, value, value_len);
     }
 
@@ -358,7 +356,7 @@ ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
 
     lock_if_needed(store);
 
-    // 从MemTable中读取
+    // Read from MemTable
     ppdb_error_t err;
     if (store->mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_memtable_get_lockfree(store->table, key, key_len, value, value_len);
@@ -384,7 +382,7 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
 
     lock_if_needed(store);
 
-    // 先写WAL
+    // Write to WAL
     ppdb_error_t err;
     if (store->mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_wal_write_lockfree(store->wal, PPDB_WAL_RECORD_DELETE, key, key_len, NULL, 0);
@@ -398,7 +396,7 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
         return err;
     }
 
-    // 从MemTable中删除
+    // Delete from MemTable
     if (store->mode == PPDB_MODE_LOCKFREE) {
         err = ppdb_memtable_delete_lockfree(store->table, key, key_len);
     } else {

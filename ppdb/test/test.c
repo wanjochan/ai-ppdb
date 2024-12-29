@@ -233,15 +233,107 @@ void test_performance(void) {
     ppdb_memtable_destroy(table);
 }
 
-int main(void) {
-    TEST_INIT();
-    
-    TEST_RUN(test_sync_unified);
-    TEST_RUN(test_skiplist_unified);
-    TEST_RUN(test_memtable_unified);
-    TEST_RUN(test_wal_unified);
-    TEST_RUN(test_performance);
-    
-    TEST_REPORT();
-    return TEST_EXIT_CODE();
+// 测试用例列表
+typedef struct {
+    const char* name;
+    void (*fn)(void);
+} test_case_t;
+
+static test_case_t test_cases[] = {
+    {"sync", test_sync_unified},
+    {"skiplist", test_skiplist_unified},
+    {"memtable", test_memtable_unified},
+    {"wal", test_wal_unified},
+    {"performance", test_performance},
+    {NULL, NULL}  // 结束标记
+};
+
+// 打印帮助信息
+static void print_usage(void) {
+    printf("Usage: test [options] [test_name]\n");
+    printf("Options:\n");
+    printf("  --list     List all available tests\n");
+    printf("  --all      Run all tests\n");
+    printf("  --help     Show this help message\n");
+    printf("\nAvailable tests:\n");
+    for (test_case_t* test = test_cases; test->name != NULL; test++) {
+        printf("  %s\n", test->name);
+    }
+}
+
+int main(int argc, char* argv[]) {
+    // 初始化日志
+    ppdb_log_config_t log_config = {
+        .enabled = true,
+        .outputs = PPDB_LOG_CONSOLE,
+        .types = PPDB_LOG_TYPE_ALL,
+        .async_mode = false,
+        .buffer_size = 4096,
+        .log_file = NULL,
+        .level = PPDB_LOG_DEBUG
+    };
+    ppdb_log_init(&log_config);
+
+    // 如果没有参数,显示帮助信息
+    if (argc < 2) {
+        print_usage();
+        return 1;
+    }
+
+    // 处理命令行参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
+            print_usage();
+            return 0;
+        }
+        else if (strcmp(argv[i], "--list") == 0) {
+            printf("Available tests:\n");
+            for (test_case_t* test = test_cases; test->name != NULL; test++) {
+                printf("  %s\n", test->name);
+            }
+            return 0;
+        }
+        else if (strcmp(argv[i], "--all") == 0) {
+            // 运行所有测试
+            int failed = 0;
+            for (test_case_t* test = test_cases; test->name != NULL; test++) {
+                printf("\nRunning test: %s\n", test->name);
+                test->fn();
+                if (ppdb_test_get_failed_count() > failed) {
+                    failed = ppdb_test_get_failed_count();
+                    printf("Test %s failed\n", test->name);
+                } else {
+                    printf("Test %s passed\n", test->name);
+                }
+            }
+            return failed;
+        }
+        else {
+            // 查找并运行指定的测试
+            bool found = false;
+            for (test_case_t* test = test_cases; test->name != NULL; test++) {
+                if (strcmp(argv[i], test->name) == 0) {
+                    printf("\nRunning test: %s\n", test->name);
+                    test->fn();
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                printf("Error: Unknown test '%s'\n", argv[i]);
+                print_usage();
+                return 1;
+            }
+        }
+    }
+
+    int failed = ppdb_test_get_failed_count();
+    if (failed > 0) {
+        printf("\n%d test(s) failed\n", failed);
+    } else {
+        printf("\nAll tests passed\n");
+    }
+
+    ppdb_log_shutdown();
+    return failed;
 }

@@ -4,31 +4,31 @@
 #include "ppdb/logger.h"
 #include "ppdb/kvstore.h"
 
-// 打印帮助信息
+// Print help information
 static void print_usage(void) {
-    printf("PPDB - 高性能键值存储引擎\n");
-    printf("\n用法:\n");
-    printf("  ppdb [选项] <命令> [参数...]\n");
-    printf("\n选项:\n");
-    printf("  --mode <locked|lockfree>  运行模式 (默认: locked)\n");
-    printf("  --dir <path>             数据目录路径 (默认: db)\n");
-    printf("  --memtable-size <bytes>  内存表大小 (默认: 1MB)\n");
-    printf("  --l0-size <bytes>        L0层文件大小 (默认: 1MB)\n");
-    printf("  --help                   显示此帮助信息\n");
-    printf("\n命令:\n");
-    printf("  put <key> <value>        存储键值对\n");
-    printf("  get <key>                获取键对应的值\n");
-    printf("  delete <key>             删除键值对\n");
-    printf("  list                     列出所有键值对\n");
-    printf("  stats                    显示数据库统计信息\n");
-    printf("  server                   启动 HTTP API 服务器\n");
-    printf("\n示例:\n");
+    printf("PPDB - High Performance Key-Value Storage Engine\n");
+    printf("\nUsage:\n");
+    printf("  ppdb [options] <command> [arguments...]\n");
+    printf("\nOptions:\n");
+    printf("  --mode <locked|lockfree>  Operation mode (default: locked)\n");
+    printf("  --dir <path>             Data directory path (default: db)\n");
+    printf("  --memtable-size <bytes>  Memtable size (default: 1MB)\n");
+    printf("  --l0-size <bytes>        L0 file size (default: 1MB)\n");
+    printf("  --help                   Show this help message\n");
+    printf("\nCommands:\n");
+    printf("  put <key> <value>        Store a key-value pair\n");
+    printf("  get <key>                Get value by key\n");
+    printf("  delete <key>             Delete a key-value pair\n");
+    printf("  list                     List all key-value pairs\n");
+    printf("  stats                    Show database statistics\n");
+    printf("  server                   Start HTTP API server\n");
+    printf("\nExamples:\n");
     printf("  ppdb --mode lockfree put mykey myvalue\n");
     printf("  ppdb get mykey\n");
     printf("  ppdb --dir /path/to/db server\n");
 }
 
-// 解析命令行参数
+// Command line options structure
 typedef struct {
     ppdb_mode_t mode;
     char dir_path[256];
@@ -39,8 +39,9 @@ typedef struct {
     char value[1024];
 } cli_options_t;
 
+// Parse command line arguments
 static void parse_options(int argc, char* argv[], cli_options_t* opts) {
-    // 设置默认值
+    // Set default values
     opts->mode = PPDB_MODE_LOCKED;
     strncpy(opts->dir_path, "db", sizeof(opts->dir_path) - 1);
     opts->memtable_size = 1024 * 1024;  // 1MB
@@ -49,7 +50,7 @@ static void parse_options(int argc, char* argv[], cli_options_t* opts) {
     memset(opts->key, 0, sizeof(opts->key));
     memset(opts->value, 0, sizeof(opts->value));
 
-    // 解析命令行参数
+    // Parse arguments
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
             print_usage();
@@ -66,11 +67,11 @@ static void parse_options(int argc, char* argv[], cli_options_t* opts) {
             i++;
         }
         else if (strcmp(argv[i], "--memtable-size") == 0 && i + 1 < argc) {
-            opts->memtable_size = atol(argv[i + 1]);
+            opts->memtable_size = atoi(argv[i + 1]);
             i++;
         }
         else if (strcmp(argv[i], "--l0-size") == 0 && i + 1 < argc) {
-            opts->l0_size = atol(argv[i + 1]);
+            opts->l0_size = atoi(argv[i + 1]);
             i++;
         }
         else if (opts->command[0] == '\0') {
@@ -85,27 +86,27 @@ static void parse_options(int argc, char* argv[], cli_options_t* opts) {
     }
 }
 
-// 执行命令
+// Execute command
 static int execute_command(ppdb_kvstore_t* store, const cli_options_t* opts) {
     ppdb_error_t err;
     
     if (strcmp(opts->command, "put") == 0) {
         if (opts->key[0] == '\0' || opts->value[0] == '\0') {
-            printf("错误: put 命令需要 key 和 value 参数\n");
+            printf("Error: put command requires key and value arguments\n");
             return 1;
         }
         err = ppdb_kvstore_put(store, 
                               (const uint8_t*)opts->key, strlen(opts->key),
                               (const uint8_t*)opts->value, strlen(opts->value));
         if (err != PPDB_OK) {
-            printf("错误: 存储键值对失败: %s\n", ppdb_error_string(err));
+            printf("Error storing key-value pair: %s\n", ppdb_error_string(err));
             return 1;
         }
-        printf("成功: 已存储键值对\n");
+        printf("Successfully stored key-value pair\n");
     }
     else if (strcmp(opts->command, "get") == 0) {
         if (opts->key[0] == '\0') {
-            printf("错误: get 命令需要 key 参数\n");
+            printf("Error: get command requires key argument\n");
             return 1;
         }
         uint8_t* value = NULL;
@@ -114,11 +115,11 @@ static int execute_command(ppdb_kvstore_t* store, const cli_options_t* opts) {
                               (const uint8_t*)opts->key, strlen(opts->key),
                               &value, &value_size);
         if (err == PPDB_ERR_NOT_FOUND) {
-            printf("未找到键: %s\n", opts->key);
+            printf("Key not found\n");
             return 1;
         }
         if (err != PPDB_OK) {
-            printf("错误: 获取值失败: %s\n", ppdb_error_string(err));
+            printf("Error getting value: %s\n", ppdb_error_string(err));
             return 1;
         }
         printf("%.*s\n", (int)value_size, value);
@@ -126,31 +127,31 @@ static int execute_command(ppdb_kvstore_t* store, const cli_options_t* opts) {
     }
     else if (strcmp(opts->command, "delete") == 0) {
         if (opts->key[0] == '\0') {
-            printf("错误: delete 命令需要 key 参数\n");
+            printf("Error: delete command requires key argument\n");
             return 1;
         }
         err = ppdb_kvstore_delete(store, 
                                  (const uint8_t*)opts->key, strlen(opts->key));
         if (err != PPDB_OK) {
-            printf("错误: 删除键值对失败: %s\n", ppdb_error_string(err));
+            printf("Error deleting key: %s\n", ppdb_error_string(err));
             return 1;
         }
-        printf("成功: 已删除键值对\n");
+        printf("Successfully deleted key\n");
     }
     else if (strcmp(opts->command, "stats") == 0) {
-        printf("数据库统计信息:\n");
-        printf("- 运行模式: %s\n", opts->mode == PPDB_MODE_LOCKFREE ? "无锁" : "加锁");
-        printf("- 数据目录: %s\n", opts->dir_path);
-        printf("- MemTable 大小限制: %zu bytes\n", opts->memtable_size);
-        printf("- L0 文件大小限制: %zu bytes\n", opts->l0_size);
-        // TODO: 添加更多统计信息
+        printf("Database statistics:\n");
+        printf("- Operation mode: %s\n", opts->mode == PPDB_MODE_LOCKFREE ? "lock-free" : "locked");
+        printf("- Data directory: %s\n", opts->dir_path);
+        printf("- Memtable size limit: %zu bytes\n", opts->memtable_size);
+        printf("- L0 file size limit: %zu bytes\n", opts->l0_size);
+        // TODO: Add more statistics
     }
     else if (strcmp(opts->command, "server") == 0) {
-        printf("HTTP API 服务器功能尚未实现\n");
+        printf("HTTP API server functionality not implemented\n");
         return 1;
     }
     else {
-        printf("错误: 未知命令: %s\n", opts->command);
+        printf("Error: unknown command '%s'\n", opts->command);
         print_usage();
         return 1;
     }
@@ -159,19 +160,19 @@ static int execute_command(ppdb_kvstore_t* store, const cli_options_t* opts) {
 }
 
 int main(int argc, char* argv[]) {
-    // 如果没有参数，显示帮助信息
+    // Show help if no arguments
     if (argc == 1) {
         print_usage();
         return 0;
     }
 
-    // 解析命令行参数
+    // Parse command line options
     cli_options_t opts;
     parse_options(argc, argv, &opts);
 
-    // 如果没有指定命令，显示错误
+    // Check if command is specified
     if (opts.command[0] == '\0') {
-        printf("错误: 未指定命令\n");
+        printf("Error: no command specified\n");
         print_usage();
         return 1;
     }
@@ -179,7 +180,7 @@ int main(int argc, char* argv[]) {
     ppdb_log_info("PPDB starting...");
     ppdb_log_info("Running in %s mode", opts.mode == PPDB_MODE_LOCKFREE ? "lock-free" : "locked");
 
-    // 创建 KVStore 配置
+    // Create KVStore configuration
     ppdb_kvstore_config_t config = {
         .dir_path = {0},
         .memtable_size = opts.memtable_size,
@@ -189,10 +190,10 @@ int main(int argc, char* argv[]) {
         .mode = opts.mode
     };
     
-    // 安全地复制目录路径
+    // Safely copy directory path
     snprintf(config.dir_path, sizeof(config.dir_path), "%s", opts.dir_path);
 
-    // 创建 KVStore
+    // Create KVStore
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_create(&config, &store);
     if (err != PPDB_OK) {
@@ -202,10 +203,10 @@ int main(int argc, char* argv[]) {
 
     ppdb_log_info("PPDB started successfully");
 
-    // 执行命令
+    // Execute command
     int ret = execute_command(store, &opts);
 
-    // 清理资源
+    // Clean up
     ppdb_kvstore_destroy(store);
 
     return ret;

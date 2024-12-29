@@ -1,14 +1,14 @@
 #include <cosmopolitan.h>
 #include "internal/metrics.h"
 
-// 获取当前时间戳(微秒)
+// Get current timestamp (microseconds)
 static uint64_t get_timestamp_us() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
 }
 
-// 初始化性能指标
+// Initialize performance metrics
 void ppdb_metrics_init(ppdb_metrics_t* metrics) {
     if (!metrics) return;
     
@@ -23,13 +23,13 @@ void ppdb_metrics_init(ppdb_metrics_t* metrics) {
     metrics->ops_per_sec = 0.0;
 }
 
-// 销毁性能指标
+// Destroy performance metrics
 void ppdb_metrics_destroy(ppdb_metrics_t* metrics) {
     if (!metrics) return;
     ppdb_sync_destroy(&metrics->sync);
 }
 
-// 记录操作开始
+// Record operation start
 void ppdb_metrics_begin_op(ppdb_metrics_t* metrics) {
     if (!metrics) return;
     
@@ -41,23 +41,23 @@ void ppdb_metrics_begin_op(ppdb_metrics_t* metrics) {
     ppdb_sync_unlock(&metrics->sync);
 }
 
-// 记录操作结束
+// Record operation end
 void ppdb_metrics_end_op(ppdb_metrics_t* metrics, size_t size_delta) {
     if (!metrics) return;
     
-    static const time_t UPDATE_INTERVAL = 1; // 1秒更新一次吞吐量
+    static const time_t UPDATE_INTERVAL = 1; // Update throughput every 1 second
     
     uint64_t end_time = get_timestamp_us();
     time_t current_time = time(NULL);
     
     ppdb_sync_lock(&metrics->sync);
     
-    // 更新基本指标
+    // Update operation count and size
     metrics->total_ops++;
     metrics->current_size += size_delta;
     metrics->active_threads--;
     
-    // 计算吞吐量
+    // Update throughput if interval has elapsed
     time_t time_diff = current_time - metrics->last_update;
     if (time_diff >= UPDATE_INTERVAL) {
         uint64_t ops_diff = metrics->total_ops - metrics->last_ops;
@@ -69,7 +69,7 @@ void ppdb_metrics_end_op(ppdb_metrics_t* metrics, size_t size_delta) {
     ppdb_sync_unlock(&metrics->sync);
 }
 
-// 获取当前吞吐量
+// Get current throughput
 double ppdb_metrics_get_throughput(ppdb_metrics_t* metrics) {
     if (!metrics) return 0.0;
     
@@ -80,7 +80,7 @@ double ppdb_metrics_get_throughput(ppdb_metrics_t* metrics) {
     return throughput;
 }
 
-// 获取平均延迟
+// Get average latency
 double ppdb_metrics_get_avg_latency(ppdb_metrics_t* metrics) {
     if (!metrics) return 0.0;
     
@@ -93,7 +93,7 @@ double ppdb_metrics_get_avg_latency(ppdb_metrics_t* metrics) {
     return avg_latency;
 }
 
-// 获取活跃线程数
+// Get active thread count
 uint32_t ppdb_metrics_get_active_threads(ppdb_metrics_t* metrics) {
     if (!metrics) return 0;
     
@@ -104,7 +104,7 @@ uint32_t ppdb_metrics_get_active_threads(ppdb_metrics_t* metrics) {
     return threads;
 }
 
-// 获取当前数据大小
+// Get current data size
 size_t ppdb_metrics_get_size(ppdb_metrics_t* metrics) {
     if (!metrics) return 0;
     

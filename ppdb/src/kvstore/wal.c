@@ -5,69 +5,69 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-// WAL记录头
+// WAL record header
 typedef struct wal_record_header {
-    uint32_t type;           // 记录类型
-    uint32_t key_size;       // 键大小
-    uint32_t value_size;     // 值大小
-    uint64_t sequence;       // 序列号
-    uint32_t checksum;       // 校验和
+    uint32_t type;           // Record type
+    uint32_t key_size;       // Key size
+    uint32_t value_size;     // Value size
+    uint64_t sequence;       // Sequence number
+    uint32_t checksum;       // Checksum
 } wal_record_header_t;
 
-// WAL缓冲区
+// WAL buffer
 typedef struct wal_buffer {
-    char* data;              // 数据
-    size_t size;            // 大小
-    size_t used;            // 已使用
-    bool in_use;            // 是否使用中
+    char* data;              // Data
+    size_t size;            // Size
+    size_t used;            // Used size
+    bool in_use;            // Whether in use
 } wal_buffer_t;
 
-// WAL结构
+// WAL structure
 struct ppdb_wal {
-    int fd;                  // 文件描述符
-    char* filename;          // 文件名
-    ppdb_wal_config_t config;// 配置
-    ppdb_sync_t sync;       // 同步机制
-    wal_buffer_t* buffers;  // 缓冲区数组
-    size_t buffer_count;    // 缓冲区数量
-    size_t current_buffer;  // 当前缓冲区
-    wal_group_t group;      // 组提交
-    bool enable_group_commit;// 启用组提交
-    uint32_t group_interval; // 组提交间隔
-    bool enable_async_flush; // 启用异步刷盘
-    bool enable_checksum;    // 启用校验和
-    uint64_t file_size;     // 文件大小
-    bool closed;             // 是否关闭
+    int fd;                  // File descriptor
+    char* filename;          // Filename
+    ppdb_wal_config_t config;// Configuration
+    ppdb_sync_t sync;       // Synchronization
+    wal_buffer_t* buffers;  // Buffer array
+    size_t buffer_count;    // Buffer count
+    size_t current_buffer;  // Current buffer
+    wal_group_t group;      // Group commit
+    bool enable_group_commit;// Enable group commit
+    uint32_t group_interval; // Group commit interval
+    bool enable_async_flush; // Enable async flush
+    bool enable_checksum;    // Enable checksum
+    uint64_t file_size;     // File size
+    bool closed;             // Whether closed
 };
 
-// WAL恢复迭代器
+// WAL recovery iterator
 struct ppdb_wal_recovery_iter {
-    ppdb_wal_t* wal;        // WAL指针
-    off_t position;         // 当前位置
-    char* buffer;           // 读取缓冲区
-    size_t buffer_size;     // 缓冲区大小
+    ppdb_wal_t* wal;        // WAL pointer
+    off_t position;         // Current position
+    char* buffer;           // Read buffer
+    size_t buffer_size;     // Buffer size
 };
 
-// 计算校验和
+// Calculate checksum
 static uint32_t calculate_checksum(const void* data, size_t len) {
-    // TODO: 实现CRC32
+    // TODO: Implement CRC32
     return 0;
 }
 
-// 创建WAL
+// Create WAL
 ppdb_wal_t* ppdb_wal_create(const char* filename, const ppdb_wal_config_t* config) {
     if (!filename || !config) return NULL;
 
     ppdb_wal_t* wal = (ppdb_wal_t*)malloc(sizeof(ppdb_wal_t));
     if (!wal) return NULL;
 
-    // 初始化同步机制
+    // Initialize synchronization
     if (ppdb_sync_init(&wal->sync, &config->sync_config) != 0) {
         free(wal);
         return NULL;
     }
 
-    // 打开文件
+    // Open file
     wal->fd = open(filename, O_RDWR | O_CREAT, 0644);
     if (wal->fd < 0) {
         ppdb_sync_destroy(&wal->sync);
@@ -75,8 +75,8 @@ ppdb_wal_t* ppdb_wal_create(const char* filename, const ppdb_wal_config_t* confi
         return NULL;
     }
 
-    // 初始化缓冲区
-    wal->buffer_count = 2;  // 双缓冲
+    // Initialize buffers
+    wal->buffer_count = 2;  // Double buffer
     wal->buffers = malloc(sizeof(wal_buffer_t) * wal->buffer_count);
     if (!wal->buffers) {
         close(wal->fd);
@@ -114,14 +114,14 @@ ppdb_wal_t* ppdb_wal_create(const char* filename, const ppdb_wal_config_t* confi
     return wal;
 }
 
-// 销毁WAL
+// Destroy WAL
 void ppdb_wal_destroy(ppdb_wal_t* wal) {
     if (!wal) return;
 
-    // 刷新所有数据
+    // Flush all data
     ppdb_wal_sync(wal);
 
-    // 释放资源
+    // Release resources
     for (size_t i = 0; i < wal->buffer_count; i++) {
         free(wal->buffers[i].data);
     }
@@ -131,24 +131,24 @@ void ppdb_wal_destroy(ppdb_wal_t* wal) {
     free(wal);
 }
 
-// 追加记录
+// Append record
 int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
                     const void* key, size_t key_len,
                     const void* value, size_t value_len,
                     uint64_t sequence) {
-    if (!wal || !key || !value) return PPDB_ERROR;
+    if (!wal || !key || !value) return -1;
 
     ppdb_sync_lock(&wal->sync);
 
     if (wal->closed) {
         ppdb_sync_unlock(&wal->sync);
-        return PPDB_ERROR;
+        return -1;
     }
 
-    // 计算记录大小
+    // Calculate record size
     size_t record_size = sizeof(wal_record_header_t) + key_len + value_len;
 
-    // 获取可用缓冲区
+    // Get available buffer
     wal_buffer_t* buffer = NULL;
     for (size_t i = 0; i < wal->buffer_count; i++) {
         if (!wal->buffers[i].in_use && wal->buffers[i].size >= record_size) {
@@ -160,10 +160,10 @@ int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
 
     if (!buffer) {
         ppdb_sync_unlock(&wal->sync);
-        return PPDB_ERROR;
+        return -1;
     }
 
-    // 写入记录头
+    // Write record header
     wal_record_header_t header = {
         .type = type,
         .key_size = key_len,
@@ -182,7 +182,7 @@ int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
     memcpy(buffer->data + buffer->used, &header, sizeof(header));
     buffer->used += sizeof(header);
 
-    // 写入键值
+    // Write key and value
     memcpy(buffer->data + buffer->used, key, key_len);
     buffer->used += key_len;
 
@@ -191,13 +191,13 @@ int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
         buffer->used += value_len;
     }
 
-    // 同步写入
+    // Sync if needed
     if (!wal->enable_async_flush) {
         if (write(wal->fd, buffer->data, buffer->used) != buffer->used) {
             buffer->in_use = false;
             buffer->used = 0;
             ppdb_sync_unlock(&wal->sync);
-            return PPDB_ERROR;
+            return -1;
         }
         
         if (wal->config.sync_write) {
@@ -205,51 +205,51 @@ int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
         }
     }
 
-    // 更新文件大小
+    // Update file size
     wal->file_size += buffer->used;
 
-    // 释放缓冲区
+    // Release buffer
     buffer->in_use = false;
     buffer->used = 0;
 
     ppdb_sync_unlock(&wal->sync);
-    return PPDB_OK;
+    return 0;
 }
 
-// 同步到磁盘
+// Sync to disk
 int ppdb_wal_sync(ppdb_wal_t* wal) {
-    if (!wal) return PPDB_ERROR;
+    if (!wal) return -1;
 
     ppdb_sync_lock(&wal->sync);
 
-    // 写入所有缓冲区
+    // Write all buffers
     for (size_t i = 0; i < wal->buffer_count; i++) {
         wal_buffer_t* buffer = &wal->buffers[i];
         if (buffer->used > 0) {
             ssize_t written = write(wal->fd, buffer->data, buffer->used);
             if (written != buffer->used) {
                 ppdb_sync_unlock(&wal->sync);
-                return PPDB_ERROR;
+                return -1;
             }
             buffer->used = 0;
             buffer->in_use = false;
         }
     }
 
-    // 刷新到磁盘
+    // Sync to disk
     if (!wal->enable_async_flush) {
         fsync(wal->fd);
     }
 
-    // 重置组提交
+    // Reset group commit
     wal->group.count = 0;
     wal->group.committing = false;
 
     ppdb_sync_unlock(&wal->sync);
-    return PPDB_OK;
+    return 0;
 }
 
-// 创建恢复迭代器
+// Create recovery iterator
 ppdb_wal_recovery_iter_t* ppdb_wal_recovery_iter_create(ppdb_wal_t* wal) {
     if (!wal) return NULL;
 
@@ -268,77 +268,89 @@ ppdb_wal_recovery_iter_t* ppdb_wal_recovery_iter_create(ppdb_wal_t* wal) {
     return iter;
 }
 
-// 销毁恢复迭代器
+// Destroy recovery iterator
 void ppdb_wal_recovery_iter_destroy(ppdb_wal_recovery_iter_t* iter) {
     if (!iter) return;
     free(iter->buffer);
     free(iter);
 }
 
-// 恢复迭代器是否有效
+// Check if recovery iterator is valid
 bool ppdb_wal_recovery_iter_valid(ppdb_wal_recovery_iter_t* iter) {
     if (!iter || !iter->wal) return false;
     return iter->position < iter->wal->file_size;
 }
 
-// 获取下一条记录
+// Get next record
 int ppdb_wal_recovery_iter_next(ppdb_wal_recovery_iter_t* iter,
                                ppdb_wal_record_type_t* type,
                                void** key, size_t* key_len,
                                void** value, size_t* value_len,
                                uint64_t* sequence) {
     if (!iter || !iter->wal || !type || !key || !key_len || !value || !value_len || !sequence) {
-        return PPDB_ERROR;
+        return -1;
     }
 
-    // 读取记录头
+    // Read record header
     wal_record_header_t header;
     ssize_t read_size = pread(iter->wal->fd, &header, sizeof(header), iter->position);
     if (read_size != sizeof(header)) {
-        return PPDB_ERROR;
+        return -1;
     }
 
-    // 校验记录
-    if (iter->wal->enable_checksum) {
-        // TODO: 验证校验和
+    // Validate record
+    if (header.key_size > iter->wal->config.max_record_size ||
+        header.value_size > iter->wal->config.max_record_size) {
+        return -1;
     }
 
-    // 读取key
+    // Read key
     *key = malloc(header.key_size);
-    if (!*key) return PPDB_ERROR;
+    if (!*key) return -1;
     read_size = pread(iter->wal->fd, *key, header.key_size, 
                      iter->position + sizeof(header));
     if (read_size != header.key_size) {
         free(*key);
-        return PPDB_ERROR;
+        return -1;
     }
 
-    // 读取value
-    if (header.type == WAL_RECORD_PUT) {
+    // Read value if exists
+    if (header.value_size > 0) {
         *value = malloc(header.value_size);
         if (!*value) {
             free(*key);
-            return PPDB_ERROR;
+            return -1;
         }
         read_size = pread(iter->wal->fd, *value, header.value_size,
                          iter->position + sizeof(header) + header.key_size);
         if (read_size != header.value_size) {
             free(*key);
             free(*value);
-            return PPDB_ERROR;
+            return -1;
         }
     } else {
         *value = NULL;
     }
 
-    // 更新返回值
+    // Verify checksum
+    uint32_t checksum = calculate_checksum(*key, header.key_size);
+    if (header.value_size > 0) {
+        checksum ^= calculate_checksum(*value, header.value_size);
+    }
+    if (checksum != header.checksum) {
+        free(*key);
+        if (*value) free(*value);
+        return -1;
+    }
+
+    // Update output parameters
     *type = header.type;
     *key_len = header.key_size;
     *value_len = header.value_size;
     *sequence = header.sequence;
 
-    // 移动位置
+    // Move to next record
     iter->position += sizeof(header) + header.key_size + header.value_size;
 
-    return PPDB_OK;
+    return 0;
 }
