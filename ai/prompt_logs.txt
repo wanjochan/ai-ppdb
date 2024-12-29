@@ -1,0 +1,42 @@
+# 
+
+
+
+之后的重构（把代码重命名为 {mod}_{[mutex|lockfree]}.{c|h}，现在继续对内部内容对齐
+从 skiplist_mutex.c 和 skiplist_lockfree.c 开始
+现在到
+memtable_mutex.c 和 memtable_lockfree.c
+wal_mutex.c 和 wal_lockfree.c
+
+先做个计划
+
+
+# cursor rules (update in ide settings)
+```
+Always respond in 中文,而且尽量简洁（concise）但要精准（precise）
+但特别注意代码中的注释默认全部用英文！
+```
+
+# 构建并修复
+运行build.bat然后修复下
+
+#
+=========
+
+【本轮执行】
+如果有P0问题则先修复，然后再按【目前主流程】执行一次
+
+【目前主流程】
+  {本轮模型
+准备先顺序运行一次，但遇到问题不用修改文件！！！先按问题的严重程序指定计划并列出来（比如说P0最严重），如果有P0问题就回到【本轮执行】。
+
+【注意事项】
+新增文件或函数前可以就近先找一下，有可能已经写好了只是路径或位置问题（但也要确认不是恰巧同名）；
+我们用的是cosompolitan跨平台底层；
+
+
+
+#
+源码中所有的中文注释换成英文的，这个工作量不小，先做计划表再一次过改
+
+安排执行，但如果遇到功能太明显的干脆把注释去掉

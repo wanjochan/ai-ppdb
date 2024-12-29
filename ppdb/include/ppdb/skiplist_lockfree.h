@@ -2,6 +2,7 @@
 #define PPDB_SKIPLIST_LOCKFREE_H
 
 #include <cosmopolitan.h>
+#include "ppdb/error.h"
 
 #define MAX_LEVEL 32
 
@@ -30,28 +31,43 @@ typedef struct atomic_skiplist_t {
     uint32_t max_level;
 } atomic_skiplist_t;
 
-// Visitor callback function type for traversal
-typedef bool (*skiplist_visitor_t)(const uint8_t* key, size_t key_len,
-                                 const uint8_t* value, size_t value_len,
-                                 void* ctx);
+// Lock-free skip list iterator structure
+typedef struct atomic_skiplist_iterator_t {
+    atomic_skiplist_t* list;
+    skiplist_node_t* current;
+    struct ref_count_t* ref_count;
+} atomic_skiplist_iterator_t;
 
 // Basic operations
 atomic_skiplist_t* atomic_skiplist_create(void);
 void atomic_skiplist_destroy(atomic_skiplist_t* list);
 
-int atomic_skiplist_put(atomic_skiplist_t* list,
+ppdb_error_t atomic_skiplist_put(atomic_skiplist_t* list,
                        const uint8_t* key, size_t key_len,
                        const uint8_t* value, size_t value_len);
 
-int atomic_skiplist_get(atomic_skiplist_t* list,
+ppdb_error_t atomic_skiplist_get(atomic_skiplist_t* list,
                        const uint8_t* key, size_t key_len,
                        uint8_t* value, size_t* value_len);
 
-int atomic_skiplist_delete(atomic_skiplist_t* list,
+ppdb_error_t atomic_skiplist_delete(atomic_skiplist_t* list,
                          const uint8_t* key, size_t key_len);
 
 size_t atomic_skiplist_size(atomic_skiplist_t* list);
 void atomic_skiplist_clear(atomic_skiplist_t* list);
+
+// Iterator operations
+atomic_skiplist_iterator_t* atomic_skiplist_iterator_create(atomic_skiplist_t* list);
+void atomic_skiplist_iterator_destroy(atomic_skiplist_iterator_t* iter);
+bool atomic_skiplist_iterator_valid(atomic_skiplist_iterator_t* iter);
+bool atomic_skiplist_iterator_next(atomic_skiplist_iterator_t* iter,
+                                uint8_t** key, size_t* key_size,
+                                uint8_t** value, size_t* value_size);
+
+// Visitor callback function type for traversal
+typedef bool (*skiplist_visitor_t)(const uint8_t* key, size_t key_len,
+                                 const uint8_t* value, size_t value_len,
+                                 void* ctx);
 
 // Traverse the skip list with visitor pattern
 void atomic_skiplist_foreach(atomic_skiplist_t* list,

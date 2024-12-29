@@ -2,6 +2,7 @@
 #define PPDB_SKIPLIST_MUTEX_H
 
 #include <cosmopolitan.h>
+#include "ppdb/error.h"
 
 // Skip list structure
 typedef struct skiplist_t skiplist_t;
@@ -10,15 +11,15 @@ typedef struct skiplist_t skiplist_t;
 skiplist_t* skiplist_create(void);
 void skiplist_destroy(skiplist_t* list);
 
-int skiplist_put(skiplist_t* list,
+ppdb_error_t skiplist_put(skiplist_t* list,
                 const uint8_t* key, size_t key_len,
                 const uint8_t* value, size_t value_len);
 
-int skiplist_get(skiplist_t* list,
+ppdb_error_t skiplist_get(skiplist_t* list,
                 const uint8_t* key, size_t key_len,
                 uint8_t* value, size_t* value_len);
 
-int skiplist_delete(skiplist_t* list,
+ppdb_error_t skiplist_delete(skiplist_t* list,
                    const uint8_t* key, size_t key_len);
 
 size_t skiplist_size(skiplist_t* list);

@@ -77,8 +77,8 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
     // 先获取旧值的大小(如果存在)
     uint8_t temp_value[1];
     size_t old_value_size = 0;
-    int get_ret = skiplist_get(table->list, key, key_len, temp_value, &old_value_size);
-    if (get_ret == 0) {
+    ppdb_error_t get_ret = skiplist_get(table->list, key, key_len, temp_value, &old_value_size);
+    if (get_ret == PPDB_OK) {
         // 如果键已存在,减去旧值的大小
         size_t old_entry_size = key_len + old_value_size + sizeof(size_t) * 2;
         new_size = table->current_size - old_entry_size + entry_size;
@@ -92,10 +92,10 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
     }
 
     // 插入跳表
-    int ret = skiplist_put(table->list, key, key_len, value, value_len);
-    if (ret != 0) {
+    ppdb_error_t ret = skiplist_put(table->list, key, key_len, value, value_len);
+    if (ret != PPDB_OK) {
         pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NO_MEMORY;
+        return ret;  // 返回具体的错误码
     }
 
     // 更新当前大小
@@ -109,20 +109,21 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
 ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
                               const uint8_t* key, size_t key_len,
                               uint8_t** value, size_t* value_len) {
-    if (!table || !key || !value_len) return PPDB_ERR_NULL_POINTER;
+    if (!table || !key || !value_len) {
+        return PPDB_ERR_INVALID_ARG;
+    }
 
     pthread_mutex_lock(&table->mutex);
 
     // 先查询值的大小
     size_t required_size = 0;
-    int ret = skiplist_get(table->list, key, key_len, NULL, &required_size);
-    if (ret == 1) {
+    ppdb_error_t ret = skiplist_get(table->list, key, key_len, NULL, &required_size);
+    if (ret == PPDB_ERR_NOT_FOUND) {
         pthread_mutex_unlock(&table->mutex);
         return PPDB_ERR_NOT_FOUND;
-    }
-    if (ret != 0) {
+    } else if (ret != PPDB_OK) {
         pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NO_MEMORY;
+        return ret;
     }
 
     // 如果只是查询大小
@@ -142,11 +143,11 @@ ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
     // 获取值
     size_t actual_size = required_size;
     ret = skiplist_get(table->list, key, key_len, *value, &actual_size);
-    if (ret != 0) {
+    if (ret != PPDB_OK) {
         free(*value);
         *value = NULL;
         pthread_mutex_unlock(&table->mutex);
-        return ret == 1 ? PPDB_ERR_NOT_FOUND : PPDB_ERR_NO_MEMORY;
+        return ret;
     }
 
     *value_len = actual_size;
@@ -158,7 +159,7 @@ ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
 ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
                                  const uint8_t* key, size_t key_len) {
     if (!table || !key) {
-        return PPDB_ERR_NULL_POINTER;
+        return PPDB_ERR_INVALID_ARG;
     }
 
     pthread_mutex_lock(&table->mutex);
@@ -166,20 +167,20 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
     // 先获取值的大小
     uint8_t temp_value[1];
     size_t value_size = 0;
-    int get_ret = skiplist_get(table->list, key, key_len, temp_value, &value_size);
-    if (get_ret == 1) {
+    ppdb_error_t get_ret = skiplist_get(table->list, key, key_len, temp_value, &value_size);
+    if (get_ret == PPDB_ERR_NOT_FOUND) {
         pthread_mutex_unlock(&table->mutex);
         return PPDB_ERR_NOT_FOUND;
+    } else if (get_ret != PPDB_OK) {
+        pthread_mutex_unlock(&table->mutex);
+        return get_ret;
     }
 
     // 删除键值对
-    int ret = skiplist_delete(table->list, key, key_len);
-    if (ret == 1) {
+    ppdb_error_t ret = skiplist_delete(table->list, key, key_len);
+    if (ret != PPDB_OK) {
         pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NOT_FOUND;
-    } else if (ret != 0) {
-        pthread_mutex_unlock(&table->mutex);
-        return PPDB_ERR_NO_MEMORY;
+        return ret;
     }
 
     // 更新当前大小
