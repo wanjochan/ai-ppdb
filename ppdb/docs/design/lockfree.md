@@ -1,3 +1,10 @@
+# PPDB 无锁实现设计
+
+> 本文档详细说明了 PPDB 的无锁数据结构设计和实现。它是性能优化的关键组件，负责提供高并发访问能力。相关文档：
+> - MemTable 设计见 `design/memtable.md`
+> - 整体设计见 `overview/DESIGN.md`
+> - 开发规范见 `overview/DEVELOPMENT.md`
+
 # PPDB 无锁版本设计文档
 
 ## 实现状态
@@ -133,4 +140,4 @@ typedef struct {
 ### 7.3 错误处理
 - 优雅降级
 - 错误恢复
-- 异常处理 
+- 异常处理

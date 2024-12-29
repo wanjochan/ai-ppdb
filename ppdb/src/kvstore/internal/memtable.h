@@ -1,8 +1,8 @@
 #ifndef PPDB_MEMTABLE_H
 #define PPDB_MEMTABLE_H
 
-#include "ppdb/common/sync.h"
-#include "ppdb/skiplist/skiplist.h"
+#include "sync.h"
+#include "skiplist.h"
 
 // MemTable配置
 typedef struct ppdb_memtable_config {

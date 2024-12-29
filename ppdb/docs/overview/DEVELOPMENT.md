@@ -1,5 +1,10 @@
 # PPDB 开发指南
 
+> 本文档是 PPDB 的开发指南，主要包含开发环境配置、编码规范和错误处理等内容。它与 `BUILD.md` 互补，共同构成开发者必读文档。相关文档：
+> - 构建步骤详见 `overview/BUILD.md`
+> - 代码改进计划见 `overview/REFACTOR.md`
+> - 系统设计见 `overview/DESIGN.md`
+
 ## 1. 开发环境配置
 
 ### 1.1 编译环境
@@ -208,4 +213,4 @@ void test_case() {
 - `--gc-sections`: 移除未使用的代码段
 - `-z,max-page-size=0x1000`: 设置页面大小
 - `-fuse-ld=bfd`: 使用 BFD 链接器
-- `-T ape.lds`: 使用自定义链接器脚本 
+- `-T ape.lds`: 使用自定义链接器脚本

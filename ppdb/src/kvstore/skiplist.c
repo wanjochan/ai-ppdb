@@ -1,10 +1,7 @@
-#include "ppdb/skiplist/skiplist.h"
-#include "ppdb/common/sync.h"
+#include "internal/skiplist.h"
+#include "internal/sync.h"
 #include <stdlib.h>
 #include <string.h>
-
-#define MAX_LEVEL 32
-#define SKIPLIST_P 0.25
 
 // 节点结构
 typedef struct skiplist_node {

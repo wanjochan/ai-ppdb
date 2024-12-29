@@ -2,7 +2,8 @@
 #define PPDB_SHARDED_MEMTABLE_H
 
 #include <cosmopolitan.h>
-#include "ppdb/atomic_skiplist.h"
+#include "sync.h"
+#include "skiplist.h"
 
 // 分片配置
 typedef struct {

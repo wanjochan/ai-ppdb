@@ -1,44 +1,34 @@
-#ifndef PPDB_TYPES_H
-#define PPDB_TYPES_H
+#ifndef PPDB_TYPES_H_
+#define PPDB_TYPES_H_
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
-#include "defs.h"
-#include "error.h"
+#include <cosmopolitan.h>
 
-// 基础数据类型定义
+// 运行模式
+typedef enum {
+    PPDB_MODE_LOCKED,    // 使用互斥锁
+    PPDB_MODE_LOCKFREE   // 使用无锁数据结构
+} ppdb_mode_t;
+
+// 压缩算法
+typedef enum {
+    PPDB_COMPRESSION_NONE,    // 不压缩
+    PPDB_COMPRESSION_SNAPPY,  // Snappy压缩
+    PPDB_COMPRESSION_LZ4,     // LZ4压缩
+    PPDB_COMPRESSION_ZSTD     // ZSTD压缩
+} ppdb_compression_t;
+
+// 统计信息
 typedef struct {
-    uint8_t* data;
-    size_t size;
-} ppdb_slice_t;
-
-// 配置相关结构
-typedef struct {
-    size_t cache_size;        // 缓存大小
-    bool sync_write;          // 同步写入
-    uint32_t max_file_size;   // 最大文件大小
-    uint32_t block_size;      // 块大小
-} ppdb_config_t;
-
-// 迭代器接口
-typedef struct ppdb_iterator ppdb_iterator_t;
-struct ppdb_iterator {
-    void* internal;
-    bool (*valid)(const ppdb_iterator_t*);
-    void (*next)(ppdb_iterator_t*);
-    ppdb_slice_t (*key)(const ppdb_iterator_t*);
-    ppdb_slice_t (*value)(const ppdb_iterator_t*);
-    void (*destroy)(ppdb_iterator_t*);
-};
-
-// 统计信息结构
-typedef struct {
-    size_t mem_usage;         // 内存使用量
-    size_t total_keys;        // 键总数
-    uint64_t read_ops;        // 读操作次数
-    uint64_t write_ops;       // 写操作次数
-    uint64_t delete_ops;      // 删除操作次数
+    uint64_t get_count;       // Get操作次数
+    uint64_t put_count;       // Put操作次数
+    uint64_t delete_count;    // Delete操作次数
+    uint64_t get_hits;        // Get命中次数
+    uint64_t get_misses;      // Get未命中次数
+    uint64_t bytes_written;   // 写入字节数
+    uint64_t bytes_read;      // 读取字节数
+    uint64_t compactions;     // 压缩次数
+    uint64_t merges;          // 合并次数
+    uint64_t errors;          // 错误次数
 } ppdb_stats_t;
 
-#endif // PPDB_TYPES_H 
+#endif // PPDB_TYPES_H_ 

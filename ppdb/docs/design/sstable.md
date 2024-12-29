@@ -1,4 +1,9 @@
-# SSTable 设计文档
+# PPDB SSTable 设计
+
+> 本文档详细说明了 PPDB 的 SSTable（Sorted String Table）设计和实现。它是存储引擎的持久化组件，负责磁盘数据的组织和管理。相关文档：
+> - MemTable 设计见 `design/memtable.md`
+> - WAL 设计见 `design/wal.md`
+> - 整体设计见 `overview/DESIGN.md`
 
 ## 1. 概述
 

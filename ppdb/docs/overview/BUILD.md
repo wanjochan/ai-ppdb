@@ -1,5 +1,10 @@
 # PPDB 构建指南
 
+> 本文档详细说明了 PPDB 的构建环境、步骤和选项。它与 `DEVELOPMENT.md` 互补，前者关注构建过程，后者关注开发规范。相关文档：
+> - 开发规范见 `overview/DEVELOPMENT.md`
+> - 系统设计见 `overview/DESIGN.md`
+> - 代码改进计划见 `overview/REFACTOR.md`
+
 ## 1. 构建环境
 
 ### 1.1 环境要求

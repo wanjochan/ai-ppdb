@@ -1,4 +1,9 @@
-# 成员管理设计
+# PPDB 成员管理设计
+
+> 本文档描述了 PPDB 的节点发现和成员管理机制。它是分布式系统中节点管理的具体实现方案。相关文档：
+> - 分布式架构见 `design/distributed.md`
+> - 共识协议见 `design/consensus.md`
+> - 整体设计见 `overview/DESIGN.md`
 
 ## 1. 概述
 

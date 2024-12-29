@@ -1,4 +1,9 @@
-# Raft 共识协议实现
+# PPDB 共识协议实现
+
+> 本文档详细说明了 PPDB 中 Raft 共识协议的实现方案。它是分布式一致性的核心实现文档。相关文档：
+> - 分布式架构见 `design/distributed.md`
+> - 成员管理见 `design/membership.md`
+> - 整体设计见 `overview/DESIGN.md`
 
 ## 1. 概述
 

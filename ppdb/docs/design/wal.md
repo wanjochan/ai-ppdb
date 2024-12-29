@@ -1,3 +1,10 @@
+# PPDB WAL 设计
+
+> 本文档详细说明了 PPDB 的 WAL（Write Ahead Log）设计和实现。它是存储引擎的持久化日志，负责保证数据的可靠性和一致性。相关文档：
+> - MemTable 设计见 `design/memtable.md`
+> - SSTable 设计见 `design/sstable.md`
+> - 整体设计见 `overview/DESIGN.md`
+
 # WAL (Write-Ahead Logging) 实现文档
 
 ## 1. 概述
@@ -171,4 +178,4 @@ if (err == PPDB_ERR_KEY_NOT_FOUND) {
 
 3. 监控和统计
    - 添加性能指标
-   - 实现状态监控 
+   - 实现状态监控

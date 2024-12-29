@@ -1,8 +1,9 @@
 #ifndef PPDB_SHARDED_MEMTABLE_H
 #define PPDB_SHARDED_MEMTABLE_H
 
-#include <cosmopolitan.h>
-#include "ppdb/atomic_skiplist.h"
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 // 分片配置
 typedef struct {
@@ -11,12 +12,8 @@ typedef struct {
     uint32_t max_size;         // 每个分片的最大大小
 } shard_config_t;
 
-// 分片内存表结构
-typedef struct {
-    shard_config_t config;     // 分片配置
-    atomic_skiplist_t** shards; // 分片数组
-    atomic_uint total_size;    // 总元素个数
-} sharded_memtable_t;
+// 前向声明
+typedef struct sharded_memtable_t sharded_memtable_t;
 
 // 创建分片内存表
 sharded_memtable_t* sharded_memtable_create(const shard_config_t* config);

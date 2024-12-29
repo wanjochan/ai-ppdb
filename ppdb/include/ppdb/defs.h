@@ -1,6 +1,8 @@
 #ifndef PPDB_DEFS_H
 #define PPDB_DEFS_H
 
+#include "types.h"
+
 // 路径长度限制
 #define MAX_PATH_LENGTH 256
 
@@ -14,11 +16,5 @@
 // 键值大小限制
 #define MAX_KEY_SIZE (64 * 1024)     // 64KB
 #define MAX_VALUE_SIZE (1024 * 1024) // 1MB
-
-// 运行模式
-typedef enum {
-    PPDB_MODE_LOCKED = 0,   // 使用互斥锁
-    PPDB_MODE_LOCKFREE = 1  // 无锁模式
-} ppdb_mode_t;
 
 #endif // PPDB_DEFS_H 

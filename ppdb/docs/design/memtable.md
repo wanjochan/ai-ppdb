@@ -1,3 +1,11 @@
+# PPDB MemTable 设计
+
+> 本文档详细说明了 PPDB 的内存表（MemTable）设计和实现。它是存储引擎的核心组件之一，负责内存中的数据组织。相关文档：
+> - WAL 设计见 `design/wal.md`
+> - SSTable 设计见 `design/sstable.md`
+> - 无锁实现见 `design/lockfree.md`
+> - 整体设计见 `overview/DESIGN.md`
+
 # MemTable 设计文档
 
 ## 实现状态

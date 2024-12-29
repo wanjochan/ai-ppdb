@@ -1,4 +1,5 @@
-#include "ppdb/wal/wal.h"
+#include "internal/wal.h"
+#include "internal/sync.h"
 #include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
@@ -21,19 +22,11 @@ typedef struct wal_buffer {
     bool in_use;            // 是否使用中
 } wal_buffer_t;
 
-// WAL组提交
-typedef struct wal_group {
-    struct {
-        void* data;          // 数据
-        size_t size;         // 大小
-    } records[16];           // 记录数组
-    size_t count;            // 记录数量
-    bool committing;         // 是否提交中
-} wal_group_t;
-
 // WAL结构
 struct ppdb_wal {
     int fd;                  // 文件描述符
+    char* filename;          // 文件名
+    ppdb_wal_config_t config;// 配置
     ppdb_sync_t sync;       // 同步机制
     wal_buffer_t* buffers;  // 缓冲区数组
     size_t buffer_count;    // 缓冲区数量
@@ -44,6 +37,7 @@ struct ppdb_wal {
     bool enable_async_flush; // 启用异步刷盘
     bool enable_checksum;    // 启用校验和
     uint64_t file_size;     // 文件大小
+    bool closed;             // 是否关闭
 };
 
 // WAL恢复迭代器
@@ -115,6 +109,7 @@ ppdb_wal_t* ppdb_wal_create(const char* filename, const ppdb_wal_config_t* confi
     wal->enable_async_flush = config->enable_async_flush;
     wal->enable_checksum = config->enable_checksum;
     wal->file_size = lseek(wal->fd, 0, SEEK_END);
+    wal->closed = false;
 
     return wal;
 }
@@ -141,11 +136,34 @@ int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
                     const void* key, size_t key_len,
                     const void* value, size_t value_len,
                     uint64_t sequence) {
-    if (!wal || !key || (type == WAL_RECORD_PUT && !value)) return PPDB_ERROR;
+    if (!wal || !key || !value) return PPDB_ERROR;
 
     ppdb_sync_lock(&wal->sync);
 
-    // 准备记录头
+    if (wal->closed) {
+        ppdb_sync_unlock(&wal->sync);
+        return PPDB_ERROR;
+    }
+
+    // 计算记录大小
+    size_t record_size = sizeof(wal_record_header_t) + key_len + value_len;
+
+    // 获取可用缓冲区
+    wal_buffer_t* buffer = NULL;
+    for (size_t i = 0; i < wal->buffer_count; i++) {
+        if (!wal->buffers[i].in_use && wal->buffers[i].size >= record_size) {
+            buffer = &wal->buffers[i];
+            buffer->in_use = true;
+            break;
+        }
+    }
+
+    if (!buffer) {
+        ppdb_sync_unlock(&wal->sync);
+        return PPDB_ERROR;
+    }
+
+    // 写入记录头
     wal_record_header_t header = {
         .type = type,
         .key_size = key_len,
@@ -154,53 +172,45 @@ int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
         .checksum = 0
     };
 
-    // 计算总大小
-    size_t total_size = sizeof(header) + key_len + value_len;
-
-    // 检查缓冲区空间
-    wal_buffer_t* buffer = &wal->buffers[wal->current_buffer];
-    if (buffer->used + total_size > buffer->size) {
-        // 切换缓冲区
-        wal->current_buffer = (wal->current_buffer + 1) % wal->buffer_count;
-        buffer = &wal->buffers[wal->current_buffer];
-        if (buffer->in_use) {
-            // 等待缓冲区可用
-            ppdb_wal_sync(wal);
+    if (wal->enable_checksum) {
+        header.checksum = calculate_checksum(key, key_len);
+        if (value) {
+            header.checksum ^= calculate_checksum(value, value_len);
         }
-        buffer->used = 0;
     }
 
-    // 写入记录头
     memcpy(buffer->data + buffer->used, &header, sizeof(header));
     buffer->used += sizeof(header);
 
-    // 写入key
+    // 写入键值
     memcpy(buffer->data + buffer->used, key, key_len);
     buffer->used += key_len;
 
-    // 写入value
-    if (type == WAL_RECORD_PUT) {
+    if (value) {
         memcpy(buffer->data + buffer->used, value, value_len);
         buffer->used += value_len;
     }
 
-    // 计算校验和
-    if (wal->enable_checksum) {
-        header.checksum = calculate_checksum(buffer->data + buffer->used - total_size,
-                                          total_size - sizeof(header.checksum));
-        memcpy(buffer->data + buffer->used - total_size, &header, sizeof(header));
-    }
-
-    // 组提交
-    if (wal->enable_group_commit) {
-        wal->group.records[wal->group.count].data = buffer->data + buffer->used - total_size;
-        wal->group.records[wal->group.count].size = total_size;
-        wal->group.count++;
-
-        if (wal->group.count >= 16) {
-            ppdb_wal_sync(wal);
+    // 同步写入
+    if (!wal->enable_async_flush) {
+        if (write(wal->fd, buffer->data, buffer->used) != buffer->used) {
+            buffer->in_use = false;
+            buffer->used = 0;
+            ppdb_sync_unlock(&wal->sync);
+            return PPDB_ERROR;
+        }
+        
+        if (wal->config.sync_write) {
+            fsync(wal->fd);
         }
     }
+
+    // 更新文件大小
+    wal->file_size += buffer->used;
+
+    // 释放缓冲区
+    buffer->in_use = false;
+    buffer->used = 0;
 
     ppdb_sync_unlock(&wal->sync);
     return PPDB_OK;

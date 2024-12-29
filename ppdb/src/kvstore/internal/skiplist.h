@@ -1,7 +1,7 @@
 #ifndef PPDB_SKIPLIST_H
 #define PPDB_SKIPLIST_H
 
-#include "ppdb/common/sync.h"
+#include "sync.h"
 
 // 跳表配置
 typedef struct ppdb_skiplist_config {

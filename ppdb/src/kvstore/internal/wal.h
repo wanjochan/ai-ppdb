@@ -1,7 +1,7 @@
 #ifndef PPDB_WAL_H
 #define PPDB_WAL_H
 
-#include "ppdb/common/sync.h"
+#include "sync.h"
 
 // WAL记录类型
 typedef enum {

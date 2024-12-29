@@ -1,4 +1,9 @@
-# 分布式系统设计
+# PPDB 分布式架构设计
+
+> 本文档描述了 PPDB 的分布式系统架构设计，包括节点管理、数据分片、复制策略等核心内容。它是分布式相关设计的总纲。相关文档：
+> - 共识协议实现见 `design/consensus.md`
+> - 成员管理实现见 `design/membership.md`
+> - 整体架构见 `overview/DESIGN.md`
 
 ## 1. 概述
 

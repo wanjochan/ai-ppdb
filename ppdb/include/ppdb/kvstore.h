@@ -3,14 +3,8 @@
 
 #include <cosmopolitan.h>
 #include "error.h"
+#include "types.h"
 #include "defs.h"
-
-// 压缩算法
-typedef enum {
-    PPDB_COMPRESSION_NONE = 0,  // 不压缩
-    PPDB_COMPRESSION_SNAPPY,    // Snappy压缩
-    PPDB_COMPRESSION_LZ4        // LZ4压缩
-} ppdb_compression_t;
 
 // KVStore配置
 typedef struct {
