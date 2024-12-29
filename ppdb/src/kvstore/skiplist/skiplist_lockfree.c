@@ -1,5 +1,5 @@
 #include <cosmopolitan.h>
-#include "ppdb/atomic_skiplist.h"
+#include "ppdb/skiplist_lockfree.h"
 #include "ppdb/logger.h"
 #include "ppdb/ref_count.h"
 

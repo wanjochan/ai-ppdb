@@ -1,5 +1,6 @@
 #include <cosmopolitan.h>
-#include "ppdb/wal.h"
+#include "ppdb/wal_mutex.h"
+#include "ppdb/memtable_mutex.h"
 #include "ppdb/error.h"
 #include "ppdb/defs.h"
 #include "ppdb/memtable.h"

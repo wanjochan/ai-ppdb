@@ -1,8 +1,8 @@
 #include <cosmopolitan.h>
-#include "ppdb/memtable.h"
+#include "ppdb/memtable_lockfree.h"
+#include "ppdb/skiplist_lockfree.h"
 #include "ppdb/error.h"
 #include "ppdb/logger.h"
-#include "ppdb/atomic_skiplist.h"
 
 // 无锁MemTable结构
 struct ppdb_memtable_t {

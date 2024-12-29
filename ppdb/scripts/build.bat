@@ -25,9 +25,9 @@ REM 创建构建目录
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 REM 设置源文件
-set SRC_FILES=%ROOT_DIR%\src\kvstore\skiplist\skiplist.c %ROOT_DIR%\src\kvstore\skiplist\atomic_skiplist.c ^
-%ROOT_DIR%\src\kvstore\memtable\memtable.c %ROOT_DIR%\src\kvstore\memtable\atomic_memtable.c %ROOT_DIR%\src\kvstore\memtable\sharded_memtable.c ^
-%ROOT_DIR%\src\kvstore\wal\wal.c %ROOT_DIR%\src\kvstore\wal\atomic_wal.c %ROOT_DIR%\src\kvstore\kvstore.c ^
+set SRC_FILES=%ROOT_DIR%\src\kvstore\skiplist\skiplist_mutex.c %ROOT_DIR%\src\kvstore\skiplist\skiplist_lockfree.c ^
+%ROOT_DIR%\src\kvstore\memtable\memtable_mutex.c %ROOT_DIR%\src\kvstore\memtable\memtable_lockfree.c %ROOT_DIR%\src\kvstore\memtable\sharded_memtable.c ^
+%ROOT_DIR%\src\kvstore\wal\wal_mutex.c %ROOT_DIR%\src\kvstore\wal\wal_lockfree.c %ROOT_DIR%\src\kvstore\kvstore.c ^
 %ROOT_DIR%\src\common\logger.c %ROOT_DIR%\src\common\fs.c %ROOT_DIR%\src\common\ref_count\ref_count.c ^
 %ROOT_DIR%\src\main.c
 
@@ -48,7 +48,7 @@ for %%f in (%SRC_FILES%) do (
 REM Create static library
 echo Creating static library...
 cd /d "%BUILD_DIR%"
-"%ROOT_DIR%\cross9\bin\x86_64-pc-linux-gnu-ar.exe" rcs libppdb.a skiplist.o atomic_skiplist.o memtable.o atomic_memtable.o sharded_memtable.o wal.o atomic_wal.o kvstore.o logger.o fs.o ref_count.o
+"%ROOT_DIR%\cross9\bin\x86_64-pc-linux-gnu-ar.exe" rcs libppdb.a skiplist_mutex.o skiplist_lockfree.o memtable_mutex.o memtable_lockfree.o sharded_memtable.o wal_mutex.o wal_lockfree.o kvstore.o logger.o fs.o ref_count.o
 
 REM Link executable
 echo Linking executable...
