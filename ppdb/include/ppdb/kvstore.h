@@ -1,45 +1,43 @@
 #ifndef PPDB_KVSTORE_H
 #define PPDB_KVSTORE_H
 
-#include <cosmopolitan.h>
 #include "error.h"
-#include "types.h"
 #include "defs.h"
+#include "memtable.h"
+#include "wal.h"
+#include "monitor.h"
 
 // KVStore配置
-typedef struct {
-    char dir_path[MAX_PATH_LENGTH];  // 数据库目录路径
-    size_t memtable_size;            // MemTable大小限制
-    size_t l0_size;                  // L0文件大小限制
-    size_t l0_files;                 // L0文件数量限制
-    ppdb_compression_t compression;   // 压缩算法
-    ppdb_mode_t mode;               // 运行模式
+typedef struct ppdb_kvstore_config {
+    char data_dir[256];         // 数据目录
+    size_t memtable_size;       // 内存表大小限制
+    bool use_sharding;          // 是否使用分片
+    bool adaptive_sharding;     // 是否启用自适应分片
+    ppdb_wal_config_t wal;      // WAL配置
+    bool enable_compression;    // 是否启用压缩
+    bool enable_monitoring;     // 是否启用监控
 } ppdb_kvstore_config_t;
 
-// KVStore结构(不透明)
-typedef struct ppdb_kvstore_t ppdb_kvstore_t;
+// KVStore结构
+typedef struct ppdb_kvstore ppdb_kvstore_t;
 
 // 创建KVStore
 ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvstore_t** store);
 
-// 关闭KVStore
-void ppdb_kvstore_close(ppdb_kvstore_t* store);
-
-// 销毁KVStore及其所有数据
-void ppdb_kvstore_destroy(ppdb_kvstore_t* store);
-
-// 写入键值对
+// 基本操作
 ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
-                             const uint8_t* key, size_t key_len,
-                             const uint8_t* value, size_t value_len);
+                             const void* key, size_t key_len,
+                             const void* value, size_t value_len);
 
-// 读取键值对
 ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
-                             const uint8_t* key, size_t key_len,
-                             uint8_t** value, size_t* value_len);
+                             const void* key, size_t key_len,
+                             void** value, size_t* value_len);
 
-// 删除键值对
 ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
-                                const uint8_t* key, size_t key_len);
+                                const void* key, size_t key_len);
+
+// 生命周期管理
+void ppdb_kvstore_close(ppdb_kvstore_t* store);
+void ppdb_kvstore_destroy(ppdb_kvstore_t* store);
 
 #endif // PPDB_KVSTORE_H 

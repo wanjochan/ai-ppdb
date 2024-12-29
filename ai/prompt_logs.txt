@@ -1,4 +1,10 @@
-试试全局过一下再fix
+那现在运行一下
+cd ppdb\scripts && build_ppdb.bat
+把简单的问题先修复，而复杂的问题先调整计划到PLAN.md
+注意：构建工具都在的，可能目录不对调整一下就行的
+
+
+=====
 
 as warm-up, in ppdb/, you need to review all .md in docs/ and .c in src/;
 从底层往上每一层分析出可能的严重问题并列举更新到合适的文档;

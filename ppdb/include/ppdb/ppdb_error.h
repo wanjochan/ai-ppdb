@@ -1,5 +1,5 @@
-#ifndef PPDB_ERROR_H
-#define PPDB_ERROR_H
+#ifndef PPDB_PUBLIC_ERROR_H
+#define PPDB_PUBLIC_ERROR_H
 
 #include <cosmopolitan.h>
 
@@ -28,4 +28,4 @@ typedef enum {
 // 获取错误描述
 const char* ppdb_error_string(ppdb_error_t err);
 
-#endif // PPDB_ERROR_H
+#endif // PPDB_PUBLIC_ERROR_H 

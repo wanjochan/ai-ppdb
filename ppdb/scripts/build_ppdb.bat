@@ -1,6 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 
+:: Change to script directory
+pushd %~dp0
+
 set COSMO=..\cosmopolitan
 set CROSS9=..\cross9\bin
 set GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe
@@ -20,6 +23,7 @@ set LIBS=%COSMO%\crt.o %COSMO%\ape.o %COSMO%\cosmopolitan.a
 if not exist "%GCC%" (
     echo Error: Cross9 GCC not found at: %GCC%
     echo Please check your toolchain installation
+    popd
     exit /b 1
 )
 
@@ -36,6 +40,7 @@ for %%f in (..\src\common\*.c) do (
     "%GCC%" %CFLAGS% -c "%%f"
     if errorlevel 1 (
         echo Error compiling %%f
+        popd
         exit /b 1
     )
 )
@@ -47,6 +52,7 @@ for %%f in (..\src\kvstore\*.c) do (
     "%GCC%" %CFLAGS% -c "%%f"
     if errorlevel 1 (
         echo Error compiling %%f
+        popd
         exit /b 1
     )
 )
@@ -56,6 +62,7 @@ echo Compiling main program...
 "%GCC%" %CFLAGS% -c ..\src\main.c
 if errorlevel 1 (
     echo Error compiling main.c
+    popd
     exit /b 1
 )
 
@@ -72,6 +79,7 @@ echo Adding APE self-modify support...
 copy /b ..\build\ppdb.exe + %COSMO%\ape-copy-self.o ..\build\ppdb.com
 if errorlevel 1 (
     echo Error adding APE support
+    popd
     exit /b 1
 )
 
@@ -81,3 +89,5 @@ del *.o
 
 echo Build completed successfully!
 echo Binary: ..\build\ppdb.com
+
+popd
