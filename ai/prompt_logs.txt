@@ -1,12 +1,14 @@
 as warm-up, read INDEX.md and FILES.md in docs/, and PLAN.md in docs/;
 特别注意：我们用的是cosmopolitan底层，所以不需要用libc的头文件；构建工具都在的，遇到不在先停下来问我意见；如果你要新建文件也停下来问我意见; 如果没有严重的问题要处理也可以先停下来；
 
+===【尝试构建】
 运行了 ppdb\scripts\build_ppdb.bat之后，把问题按严重程度列出来，针对P0的做一个完整的修改计划，然后停下来等我确认后续动作；
-
+===
 
 exec ppdb\scripts\build_ppdb.bat and make a fix plan for the problems and wait for confirm;
 
-=== 修复关系
+again, check all
+=== 【修复关系】
 参考 build_ppdb.bat 和 FILES.md比对目前文件树中的文档和代码，看是否完全对上了；
 如果对上了，就全部的代码中的引用部分看看还有没有错了要修复的；
 如果没有修复了，可以停下来
