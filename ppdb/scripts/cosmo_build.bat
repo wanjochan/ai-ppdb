@@ -1,105 +1,79 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-rem Get parameters
-set "OUT_FILE=%~1"
-set "SOURCES=%~2"
-set "EXTRA_FLAGS=%~3"
+rem Set paths if not already set
+if "%ROOT_DIR%"=="" (
+    set "SCRIPT_DIR=%~dp0"
+    cd /d "%SCRIPT_DIR%\.."
+    set "ROOT_DIR=%CD%"
+)
+if "%BUILD_DIR%"=="" set "BUILD_DIR=%ROOT_DIR%\build"
+if "%COSMO%"=="" set "COSMO=%ROOT_DIR%\..\cosmopolitan"
+if "%CROSS9%"=="" set "CROSS9=%ROOT_DIR%\..\cross9\bin"
+if "%GCC%"=="" set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
+if "%AR%"=="" set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
+if "%OBJCOPY%"=="" set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
 
-echo.
-echo ===== Build Configuration =====
-echo Output file: %OUT_FILE%
-echo Source files: [%SOURCES%]
-echo Extra flags: [%EXTRA_FLAGS%]
-echo.
-
-rem Set paths
-set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%\.."
-set "ROOT_DIR=%CD%"
-set "BUILD_DIR=%ROOT_DIR%\build"
-set "INCLUDE_DIR=%ROOT_DIR%\include"
-set "COSMO=%ROOT_DIR%\..\cosmopolitan"
-set "CROSS9=%ROOT_DIR%\..\cross9\bin"
-set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
-set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
-set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
-
-rem Check directories and tools
+rem Check directories
 if not exist "%COSMO%" (
-    echo Error: Cosmopolitan directory not found
+    echo Error: Cosmopolitan directory not found at %COSMO%
     exit /b 1
 )
 
 if not exist "%CROSS9%" (
-    echo Error: Cross9 directory not found
+    echo Error: Cross9 directory not found at %CROSS9%
     exit /b 1
 )
 
 if not exist "%GCC%" (
-    echo Error: GCC not found
+    echo Error: GCC not found at %GCC%
     exit /b 1
 )
 
 if not exist "%AR%" (
-    echo Error: AR not found
+    echo Error: AR not found at %AR%
     exit /b 1
 )
 
 if not exist "%OBJCOPY%" (
-    echo Error: OBJCOPY not found
+    echo Error: OBJCOPY not found at %OBJCOPY%
     exit /b 1
 )
 
-rem Create build directory if not exists
+rem Create build directory
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-rem Set compilation flags
-set "COMMON_FLAGS=-Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
-set "DEBUG_FLAGS=-g -O0 -DDEBUG"
-set "CFLAGS=%COMMON_FLAGS% %DEBUG_FLAGS% -nostdinc -I%ROOT_DIR% -I%ROOT_DIR%\include -I%ROOT_DIR%\src -I%COSMO% -include %COSMO%\cosmopolitan.h %EXTRA_FLAGS%"
-set "LDFLAGS=-static -nostdlib -Wl,-T,%COSMO%\ape.lds -Wl,--gc-sections -fuse-ld=bfd -Wl,-z,max-page-size=0x1000 -no-pie"
-set "LIBS=%COSMO%\crt.o %COSMO%\ape.o %COSMO%\cosmopolitan.a"
+rem Set compilation flags if not already set
+if "%COMMON_FLAGS%"=="" set "COMMON_FLAGS=-Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
+if "%DEBUG_FLAGS%"=="" set "DEBUG_FLAGS=-g -O0 -DDEBUG"
 
-echo ===== Compilation Flags =====
-echo CFLAGS: %CFLAGS%
-echo LDFLAGS: %LDFLAGS%
-echo LIBS: %LIBS%
-echo.
+rem Build Cosmopolitan objects
+echo Building Cosmopolitan objects...
 
-rem Compile each source file to object file
-set "OBJ_FILES="
-for %%F in (%SOURCES%) do (
-    set "OBJ_FILE=%BUILD_DIR%\%%~nF.o"
-    echo Compiling %%F to !OBJ_FILE!...
-    "%GCC%" %CFLAGS% -c "%%F" -o "!OBJ_FILE!"
-    if errorlevel 1 (
-        echo Error: Failed to compile %%F
-        exit /b 1
-    )
-    set "OBJ_FILES=!OBJ_FILES! !OBJ_FILE!"
-)
+rem Copy necessary Cosmopolitan files
+echo Copying Cosmopolitan files...
+copy /Y "%COSMO%\ape.lds" "%BUILD_DIR%\" >nul
+copy /Y "%COSMO%\crt.o" "%BUILD_DIR%\" >nul
+copy /Y "%COSMO%\ape.o" "%BUILD_DIR%\" >nul
+copy /Y "%COSMO%\cosmopolitan.h" "%BUILD_DIR%\" >nul
+copy /Y "%COSMO%\cosmopolitan.a" "%BUILD_DIR%\" >nul
 
-echo.
-echo ===== Linking =====
-echo Object files: [%OBJ_FILES%]
-echo.
-
-rem Link object files
-echo Linking...
-"%GCC%" %LDFLAGS% %OBJ_FILES% %LIBS% -o "%BUILD_DIR%\%OUT_FILE%.dbg"
 if errorlevel 1 (
-    echo Error: Linking failed
+    echo Error: Failed to copy Cosmopolitan files
     exit /b 1
 )
 
-rem Convert to APE format
-echo Converting to APE format...
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\%OUT_FILE%.dbg" "%BUILD_DIR%\%OUT_FILE%.exe"
-if errorlevel 1 (
-    echo Error: objcopy failed
-    exit /b 1
-)
+echo Cosmopolitan build completed successfully
 
-echo Build completed successfully
-endlocal & exit /b 0 
+rem Export environment variables back to parent script
+endlocal & (
+    set "ROOT_DIR=%ROOT_DIR%"
+    set "BUILD_DIR=%BUILD_DIR%"
+    set "COSMO=%COSMO%"
+    set "CROSS9=%CROSS9%"
+    set "GCC=%GCC%"
+    set "AR=%AR%"
+    set "OBJCOPY=%OBJCOPY%"
+    set "COMMON_FLAGS=%COMMON_FLAGS%"
+    set "DEBUG_FLAGS=%DEBUG_FLAGS%"
+) 
