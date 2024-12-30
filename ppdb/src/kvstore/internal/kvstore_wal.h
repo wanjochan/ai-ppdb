@@ -72,14 +72,6 @@ typedef struct ppdb_wal_recovery_iter {
     ppdb_kv_pair_t current;
 } ppdb_wal_recovery_iter_t;
 
-// 错误码定义
-#define PPDB_ERROR_INVALID_ARGUMENT PPDB_ERR_INVALID_ARG
-#define PPDB_ERROR_ITERATOR_END PPDB_ERR_NOT_FOUND
-#define PPDB_ERROR_OK PPDB_OK
-#define PPDB_ERROR_BUFFER_TOO_SMALL PPDB_ERR_NO_MEMORY
-#define PPDB_ERROR_CLOSED PPDB_ERR_CLOSED
-#define PPDB_ERROR_CHECKSUM PPDB_ERR_CHECKSUM
-
 // 函数声明
 ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal);
 void ppdb_wal_destroy(ppdb_wal_t* wal);
