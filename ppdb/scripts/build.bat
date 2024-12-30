@@ -92,7 +92,7 @@ if "%TEST_TYPE%"=="test42" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test memtable "src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\common\logger.c test\white\test_framework.c" "test\white\storage\test_memtable.c"
     if exist "%BUILD_DIR%\memtable_test.exe" "%BUILD_DIR%\memtable_test.exe"
 ) else if "%TEST_TYPE%"=="wal" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test wal "src\kvstore\wal.c src\kvstore\sync.c src\common\logger.c src\common\error.c src\common\fs.c test\white\test_framework.c" "test\white\storage\test_wal.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test wal "src\kvstore\wal.c src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\common\logger.c src\common\error.c src\common\fs.c test\white\test_framework.c" "test\white\storage\test_wal.c"
     if exist "%BUILD_DIR%\wal_test.exe" "%BUILD_DIR%\wal_test.exe"
 ) else if "%TEST_TYPE%"=="ppdb" (
     echo Building PPDB main program...
