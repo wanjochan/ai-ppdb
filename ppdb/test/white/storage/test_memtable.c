@@ -72,7 +72,7 @@ static void* concurrent_worker(void* arg) {
 }
 
 // 基本操作测试
-static void test_basic_ops(void) {
+static int test_basic_ops(void) {
     ppdb_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
     TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
@@ -113,10 +113,11 @@ static void test_basic_ops(void) {
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after delete");
 
     ppdb_memtable_destroy(table);
+    return 0;
 }
 
 // 分片测试
-static void test_sharding(void) {
+static int test_sharding(void) {
     ppdb_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
     TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
@@ -156,10 +157,11 @@ static void test_sharding(void) {
     }
 
     ppdb_memtable_destroy(table);
+    return 0;
 }
 
 // 并发操作测试
-static void test_concurrent_ops(void) {
+static int test_concurrent_ops(void) {
     ppdb_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
     TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
@@ -182,6 +184,7 @@ static void test_concurrent_ops(void) {
     }
 
     ppdb_memtable_destroy(table);
+    return 0;
 }
 
 int main(void) {

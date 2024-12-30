@@ -27,7 +27,9 @@ static void timeout_handler(int signo) {
 
 // 初始化测试框架
 void test_framework_init(void) {
-    if (g_test_state.initialized) return;
+    if (g_test_state.initialized) {
+        return;
+    }
     
     // 初始化日志系统
     ppdb_log_config_t log_config = {
@@ -82,7 +84,9 @@ void test_framework_init(void) {
 
 // 清理测试框架
 void test_framework_cleanup(void) {
-    if (!g_test_state.initialized) return;
+    if (!g_test_state.initialized) {
+        return;
+    }
     
     g_test_state.stats.end_time = clock();
     test_print_stats();
@@ -92,7 +96,9 @@ void test_framework_cleanup(void) {
 
 // 运行单个测试用例
 int run_test_case(const test_case_t* test_case) {
-    if (!test_case) return -1;
+    if (!test_case) {
+        return -1;
+    }
     
     // 设置当前测试名称
     strncpy(current_test_name, test_case->name, sizeof(current_test_name) - 1);
@@ -132,7 +138,9 @@ int run_test_case(const test_case_t* test_case) {
 
 // 运行测试套件
 int run_test_suite(const test_suite_t* suite) {
-    if (!suite) return -1;
+    if (!suite) {
+        return -1;
+    }
     
     // 打印套件信息
     ppdb_log_info("Running test suite: %s", suite->name);
@@ -178,12 +186,22 @@ bool test_framework_should_run(test_type_t type) {
 
 // 打印测试统计信息
 void test_print_stats(void) {
-    double duration = (double)(g_test_state.stats.end_time - g_test_state.stats.start_time) 
-        / CLOCKS_PER_SEC;
+    double duration = (double)(g_test_state.stats.end_time - g_test_state.stats.start_time) / CLOCKS_PER_SEC;
     
     ppdb_log_info("Test Results:");
     ppdb_log_info("  Total Cases: %d", test_case_count);
     ppdb_log_info("  Failed: %d", test_case_failed);
     ppdb_log_info("  Duration: %.2f seconds", duration);
     ppdb_log_info("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
+}
+
+// 获取测试结果
+int test_get_result(void) {
+    ppdb_log_info("Test Results:");
+    ppdb_log_info("  Total Cases: %d", test_case_count);
+    ppdb_log_info("  Failed: %d", test_case_failed);
+    ppdb_log_info("  Duration: %.2f seconds", (double)(clock() - g_test_state.stats.start_time) / CLOCKS_PER_SEC);
+    ppdb_log_info("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
+    
+    return test_case_failed;
 }

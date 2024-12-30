@@ -63,12 +63,18 @@ const ppdb_metrics_t* ppdb_memtable_get_metrics(ppdb_memtable_t* table) {
 
 // 创建内存表
 ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** table) {
-    if (!table) return PPDB_ERR_NULL_POINTER;
-    if (size_limit == 0) return PPDB_ERR_INVALID_ARG;
+    if (!table) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (size_limit == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
 
     // 分配内存表结构
     ppdb_memtable_t* new_table = calloc(1, sizeof(ppdb_memtable_t));
-    if (!new_table) return PPDB_ERR_OUT_OF_MEMORY;
+    if (!new_table) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
 
     // 分配基础内存表结构
     new_table->basic = calloc(1, sizeof(ppdb_memtable_basic_t));
@@ -125,7 +131,9 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
 
 // 销毁内存表
 void ppdb_memtable_destroy_basic(ppdb_memtable_t* table) {
-    if (!table) return;
+    if (!table) {
+        return;
+    }
     
     // 销毁基础结构
     if (table->basic) {
@@ -151,9 +159,15 @@ void ppdb_memtable_destroy_basic(ppdb_memtable_t* table) {
 ppdb_error_t ppdb_memtable_put_basic(ppdb_memtable_t* table,
                                     const void* key, size_t key_len,
                                     const void* value, size_t value_len) {
-    if (!table || !table->basic || !key || !value) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
-    if (table->is_immutable) return PPDB_ERR_IMMUTABLE;
+    if (!table || !table->basic || !key || !value) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0 || value_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+    if (table->is_immutable) {
+        return PPDB_ERR_IMMUTABLE;
+    }
 
     // 计算所需总空间
     size_t total_size = key_len + value_len + PPDB_SKIPLIST_NODE_SIZE;
@@ -193,8 +207,12 @@ ppdb_error_t ppdb_memtable_put_basic(ppdb_memtable_t* table,
 ppdb_error_t ppdb_memtable_get_basic(ppdb_memtable_t* table,
                                     const void* key, size_t key_len,
                                     void** value, size_t* value_len) {
-    if (!table || !table->basic || !key || !value_len) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
+    if (!table || !table->basic || !key || !value_len) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
 
     ppdb_error_t err;
     if ((err = ppdb_sync_lock(&table->basic->sync)) != PPDB_OK) {
@@ -219,9 +237,15 @@ ppdb_error_t ppdb_memtable_get_basic(ppdb_memtable_t* table,
 // 删除键值对
 ppdb_error_t ppdb_memtable_delete_basic(ppdb_memtable_t* table,
                                        const void* key, size_t key_len) {
-    if (!table || !table->basic || !key) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
-    if (table->is_immutable) return PPDB_ERR_IMMUTABLE;
+    if (!table || !table->basic || !key) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+    if (table->is_immutable) {
+        return PPDB_ERR_IMMUTABLE;
+    }
 
     ppdb_error_t err;
     if ((err = ppdb_sync_lock(&table->basic->sync)) != PPDB_OK) {

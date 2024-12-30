@@ -133,14 +133,26 @@ int test_spinlock(void) {
     
     // 基本操作测试
     ppdb_error_t err = ppdb_sync_init(&sync, &config);
-    if (err != PPDB_OK) return -1;
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to initialize spinlock: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     // 加锁解锁测试
     err = ppdb_sync_lock(&sync);
-    if (err != PPDB_OK) return -1;
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to lock spinlock: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     err = ppdb_sync_unlock(&sync);
-    if (err != PPDB_OK) return -1;
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to unlock spinlock: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     // 多线程竞争测试
     pthread_t threads[NUM_THREADS];
@@ -152,18 +164,30 @@ int test_spinlock(void) {
         thread_data[i].counter = &counter;
         thread_data[i].num_iterations = ITERATIONS_PER_THREAD;
         int ret = pthread_create(&threads[i], NULL, mutex_thread_func, &thread_data[i]);
-        if (ret != 0) return -1;
+        if (ret != 0) {
+            ppdb_log_error("Failed to create thread %d: %d", i, ret);
+            ASSERT_EQ(ret, 0);
+            return -1;
+        }
     }
     
     for (int i = 0; i < NUM_THREADS; i++) {
         int ret = pthread_join(threads[i], NULL);
-        if (ret != 0) return -1;
+        if (ret != 0) {
+            ppdb_log_error("Failed to join thread %d: %d", i, ret);
+            ASSERT_EQ(ret, 0);
+            return -1;
+        }
     }
     
-    if (counter != NUM_THREADS * ITERATIONS_PER_THREAD) return -1;
+    ASSERT_EQ(counter, NUM_THREADS * ITERATIONS_PER_THREAD);
     
     err = ppdb_sync_destroy(&sync);
-    if (err != PPDB_OK) return -1;
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to destroy spinlock: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     return 0;
 }
@@ -205,7 +229,11 @@ int test_rwlock(void) {
     
     // 基本操作测试
     ppdb_error_t err = ppdb_sync_init(&sync, &config);
-    if (err != PPDB_OK) return -1;
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to initialize rwlock: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     // 读写锁测试
     #define NUM_READERS 8
@@ -225,7 +253,11 @@ int test_rwlock(void) {
         reader_data[i].counter = &counter;
         reader_data[i].num_iterations = READ_ITERATIONS;
         int ret = pthread_create(&readers[i], NULL, rwlock_read_thread, &reader_data[i]);
-        if (ret != 0) return -1;
+        if (ret != 0) {
+            ppdb_log_error("Failed to create reader thread %d: %d", i, ret);
+            ASSERT_EQ(ret, 0);
+            return -1;
+        }
     }
     
     // 创建写线程
@@ -234,23 +266,39 @@ int test_rwlock(void) {
         writer_data[i].counter = &counter;
         writer_data[i].num_iterations = WRITE_ITERATIONS;
         int ret = pthread_create(&writers[i], NULL, rwlock_write_thread, &writer_data[i]);
-        if (ret != 0) return -1;
+        if (ret != 0) {
+            ppdb_log_error("Failed to create writer thread %d: %d", i, ret);
+            ASSERT_EQ(ret, 0);
+            return -1;
+        }
     }
     
     // 等待所有线程完成
     for (int i = 0; i < NUM_READERS; i++) {
         int ret = pthread_join(readers[i], NULL);
-        if (ret != 0) return -1;
+        if (ret != 0) {
+            ppdb_log_error("Failed to join reader thread %d: %d", i, ret);
+            ASSERT_EQ(ret, 0);
+            return -1;
+        }
     }
     for (int i = 0; i < NUM_WRITERS; i++) {
         int ret = pthread_join(writers[i], NULL);
-        if (ret != 0) return -1;
+        if (ret != 0) {
+            ppdb_log_error("Failed to join writer thread %d: %d", i, ret);
+            ASSERT_EQ(ret, 0);
+            return -1;
+        }
     }
     
-    if (counter != NUM_WRITERS * WRITE_ITERATIONS) return -1;
+    ASSERT_EQ(counter, NUM_WRITERS * WRITE_ITERATIONS);
     
     err = ppdb_sync_destroy(&sync);
-    if (err != PPDB_OK) return -1;
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to destroy rwlock: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     return 0;
 }
@@ -262,6 +310,7 @@ int test_file_sync(void) {
     int fd = open(test_file, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) {
         ppdb_log_error("Failed to create test file: %s (errno: %d)", test_file, errno);
+        ASSERT_TRUE(fd >= 0);
         return -1;
     }
     ppdb_log_info("Created test file: %s", test_file);
@@ -271,6 +320,7 @@ int test_file_sync(void) {
     ssize_t written = write(fd, data, strlen(data));
     if (written != (ssize_t)strlen(data)) {
         ppdb_log_error("Failed to write test data (errno: %d)", errno);
+        ASSERT_EQ(written, (ssize_t)strlen(data));
         close(fd);
         remove(test_file);
         return -1;
@@ -282,7 +332,8 @@ int test_file_sync(void) {
     ppdb_error_t err = ppdb_sync_file(test_file);
     ppdb_log_info("File sync result: %s (%d)", ppdb_error_string(err), err);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to sync file: %s", test_file);
+        ppdb_log_error("Failed to sync file: %s (%s)", test_file, ppdb_error_string(err));
+        ASSERT_EQ(err, PPDB_OK);
         remove(test_file);
         return -1;
     }
@@ -291,6 +342,7 @@ int test_file_sync(void) {
     fd = open(test_file, O_RDWR | O_CLOEXEC);
     if (fd < 0) {
         ppdb_log_error("Failed to open test file for reading: %s (errno: %d)", test_file, errno);
+        ASSERT_TRUE(fd >= 0);
         remove(test_file);
         return -1;
     }
@@ -300,7 +352,8 @@ int test_file_sync(void) {
     ppdb_log_info("File descriptor sync result: %s (%d)", ppdb_error_string(err), err);
     close(fd);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to sync file descriptor: %d", fd);
+        ppdb_log_error("Failed to sync file descriptor: %d (%s)", fd, ppdb_error_string(err));
+        ASSERT_EQ(err, PPDB_OK);
         remove(test_file);
         return -1;
     }
