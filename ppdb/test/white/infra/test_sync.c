@@ -259,7 +259,7 @@ int test_rwlock(void) {
 int test_file_sync(void) {
     // 创建临时文件
     const char* test_file = "test_sync.tmp";
-    int fd = open(test_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(test_file, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
     if (fd < 0) {
         ppdb_log_error("Failed to create test file: %s (errno: %d)", test_file, errno);
         return -1;
@@ -288,7 +288,7 @@ int test_file_sync(void) {
     }
     
     // 测试文件描述符同步
-    fd = open(test_file, O_RDWR);
+    fd = open(test_file, O_RDWR | O_CLOEXEC);
     if (fd < 0) {
         ppdb_log_error("Failed to open test file for reading: %s (errno: %d)", test_file, errno);
         remove(test_file);

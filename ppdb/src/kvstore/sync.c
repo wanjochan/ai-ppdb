@@ -203,12 +203,14 @@ ppdb_error_t ppdb_sync_file(const char* filename) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    int fd = open(filename, O_RDWR);
+    // 使用 Cosmopolitan 的 POSIX 兼容层
+    int fd = open(filename, O_RDWR | O_CLOEXEC);
     if (fd < 0) {
         ppdb_log_error("Failed to open file for sync: %s (errno: %d)", filename, errno);
         return PPDB_ERR_IO;
     }
 
+    // fsync 在 Cosmopolitan 中是跨平台的
     int ret = fsync(fd);
     close(fd);
 
@@ -226,6 +228,7 @@ ppdb_error_t ppdb_sync_fd(int fd) {
         return PPDB_ERR_INVALID_ARG;
     }
 
+    // fsync 在 Cosmopolitan 中是跨平台的
     int ret = fsync(fd);
     if (ret != 0) {
         ppdb_log_error("Failed to sync file descriptor: %d (errno: %d)", fd, errno);

@@ -128,5 +128,6 @@ bool test_framework_should_run(test_type_t type);
 // 测试套件管理
 int run_test_suite(const test_suite_t* suite);
 int run_test_case(const test_case_t* test_case);
+void test_print_stats(void);
 
 #endif // PPDB_TEST_FRAMEWORK_H
