@@ -18,7 +18,7 @@ rem Set include paths
 set INCLUDE_PATHS=-I%~dp0..\include -I%~dp0..\src -I%~dp0.. -I%COSMO%
 
 rem Set compiler flags
-set CFLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables
+set CFLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables -include %COSMO%\cosmopolitan.h
 set LDFLAGS=-static -nostdlib -Wl,-T,%COSMO%\ape.lds -Wl,--gc-sections -fuse-ld=bfd -Wl,-z,max-page-size=0x1000
 set LIBS=%COSMO%\crt.o %COSMO%\ape.o %COSMO%\cosmopolitan.a
 
@@ -68,8 +68,10 @@ echo Creating static library...
 
 rem Link executable
 echo Linking executable...
+%GCC% %LDFLAGS% -o ppdb.exe.dbg main.o libppdb.a %LIBS%
 
-@rem TODO !!! "%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe" -S -O binary ....
-%GCC% %LDFLAGS% -o ppdb.exe main.o libppdb.a %LIBS%
+rem Process with objcopy for cosmopolitan format
+echo Processing for cosmopolitan format...
+"%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe" -S -O binary ppdb.exe.dbg ppdb.exe
 
 cd ..

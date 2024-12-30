@@ -12,23 +12,53 @@ static int test_create_destroy(void) {
     
     // 创建内存表
     err = ppdb_memtable_create(1024, &table);
-    TEST_ASSERT_OK(err, "Failed to create memtable");
-    TEST_ASSERT_NOT_NULL(table, "Memtable pointer is NULL");
-    TEST_ASSERT_NOT_NULL(table->basic, "Basic memtable structure is NULL");
-    TEST_ASSERT_NOT_NULL(table->basic->skiplist, "Skiplist is NULL");
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to create memtable: %s", ppdb_error_string(err));
+        return 1;
+    }
+    
+    if (!table) {
+        ppdb_log_error("Memtable pointer is NULL");
+        return 1;
+    }
+    
+    if (!table->basic) {
+        ppdb_log_error("Basic memtable structure is NULL");
+        ppdb_memtable_destroy(table);
+        return 1;
+    }
+    
+    if (!table->basic->skiplist) {
+        ppdb_log_error("Skiplist is NULL");
+        ppdb_memtable_destroy(table);
+        return 1;
+    }
     
     // 检查初始状态
     size_t size = ppdb_memtable_size_basic(table);
-    TEST_ASSERT(size == 0, "Initial size should be 0");
+    if (size != 0) {
+        ppdb_log_error("Initial size should be 0, got %zu", size);
+        ppdb_memtable_destroy(table);
+        return 1;
+    }
     
     size_t max_size = ppdb_memtable_max_size_basic(table);
-    TEST_ASSERT(max_size == 1024, "Wrong max size");
+    if (max_size != 1024) {
+        ppdb_log_error("Wrong max size: expected 1024, got %zu", max_size);
+        ppdb_memtable_destroy(table);
+        return 1;
+    }
     
     bool is_immutable = ppdb_memtable_is_immutable_basic(table);
-    TEST_ASSERT(!is_immutable, "Should not be immutable initially");
+    if (is_immutable) {
+        ppdb_log_error("Should not be immutable initially");
+        ppdb_memtable_destroy(table);
+        return 1;
+    }
     
     // 销毁内存表
     ppdb_memtable_destroy(table);
+    table = NULL;
     return 0;
 }
 
@@ -68,8 +98,12 @@ static int test_put_get(void) {
     TEST_ASSERT(memcmp(retrieved_value, value, value_len) == 0, "Retrieved value content mismatch");
 
     // 清理
-    free(retrieved_value);
+    if (retrieved_value) {
+        free(retrieved_value);
+        retrieved_value = NULL;
+    }
     ppdb_memtable_destroy(table);
+    table = NULL;
     return 0;
 }
 
@@ -105,8 +139,12 @@ static int test_delete(void) {
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after delete");
     
     // 清理
-    if (retrieved_value) free(retrieved_value);
+    if (retrieved_value) {
+        free(retrieved_value);
+        retrieved_value = NULL;
+    }
     ppdb_memtable_destroy(table);
+    table = NULL;
     return 0;
 }
 
@@ -137,6 +175,7 @@ static int test_size_limit(void) {
 
     // 清理
     ppdb_memtable_destroy(table);
+    table = NULL;
     return 0;
 }
 
@@ -177,8 +216,12 @@ static int test_update(void) {
     TEST_ASSERT(memcmp(retrieved_value, value2, value2_len) == 0, "Retrieved value content mismatch");
 
     // 清理
-    free(retrieved_value);
+    if (retrieved_value) {
+        free(retrieved_value);
+        retrieved_value = NULL;
+    }
     ppdb_memtable_destroy(table);
+    table = NULL;
     return 0;
 }
 

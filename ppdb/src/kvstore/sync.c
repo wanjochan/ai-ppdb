@@ -79,9 +79,14 @@ ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config)
         return PPDB_ERR_INVALID_ARG;
     }
 
-    sync->type = config->type;
-    int ret;
+    // 清零同步原语结构
+    memset(sync, 0, sizeof(ppdb_sync_t));
 
+    // 设置同步类型
+    sync->type = config->type;
+
+    // 根据类型初始化
+    int ret;
     switch (config->type) {
         case PPDB_SYNC_MUTEX: {
             pthread_mutexattr_t attr;
@@ -126,7 +131,7 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    int ret;
+    int ret = 0;
     switch (sync->type) {
         case PPDB_SYNC_MUTEX:
             ret = pthread_mutex_destroy(&sync->mutex);
@@ -136,6 +141,7 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
             break;
         case PPDB_SYNC_SPINLOCK:
             // 自旋锁不需要特殊销毁
+            atomic_flag_clear(&sync->spinlock);
             break;
         case PPDB_SYNC_RWLOCK:
             ret = pthread_rwlock_destroy(&sync->rwlock);
@@ -147,6 +153,8 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
             return PPDB_ERR_INVALID_ARG;
     }
 
+    // 清零同步原语结构
+    memset(sync, 0, sizeof(ppdb_sync_t));
     return PPDB_OK;
 }
 

@@ -198,14 +198,17 @@
 
 ### 测试入口
 - `test_main.c` - 主测试入口
+  - 负责初始化测试环境
+  - 运行所有测试用例
+  - 输出测试结果
 - `test_kvstore_main.c` - KVStore测试入口
 - `test_memtable_main.c` - 内存表测试入口
+- `test_metrics_main.c` - 性能指标测试入口
+- `test_recovery_main.c` - 恢复机制测试入口
+- `test_resource_main.c` - 资源管理测试入口
+- `test_stress_main.c` - 压力测试入口
 - `test_wal_main.c` - WAL测试入口
 - `test_wal_concurrent_main.c` - WAL并发测试入口
-- `test_metrics_main.c` - 性能指标测试入口
-- `test_resource_main.c` - 资源管理测试入口
-- `test_recovery_main.c` - 恢复机制测试入口
-- `test_stress_main.c` - 压力测试入口
 
 ### 黑盒测试 (test/black/)
 - `scenarios/` - 场景测试用例

@@ -33,7 +33,7 @@ ppdb_error_t ppdb_skiplist_create(ppdb_skiplist_t** list,
     }
 
     // 分配跳表结构
-    ppdb_skiplist_t* new_list = aligned_alloc(64, sizeof(ppdb_skiplist_t));
+    ppdb_skiplist_t* new_list = calloc(1, sizeof(ppdb_skiplist_t));
     if (!new_list) {
         return PPDB_ERR_OUT_OF_MEMORY;
     }
@@ -71,16 +71,24 @@ ppdb_error_t ppdb_skiplist_create(ppdb_skiplist_t** list,
 // 销毁跳表
 void ppdb_skiplist_destroy(ppdb_skiplist_t* list) {
     if (!list) return;
-
-    // 释放所有节点
-    ppdb_skiplist_node_t* current = list->head;
-    while (current) {
-        ppdb_skiplist_node_t* next = current->next[0];
-        destroy_node(current);
-        current = next;
+    
+    // 销毁所有节点
+    if (list->head) {
+        ppdb_skiplist_node_t* current = list->head;
+        ppdb_skiplist_node_t* next = NULL;
+        
+        while (current) {
+            next = current->next[0];
+            destroy_node(current);
+            current = next;
+        }
+        list->head = NULL;
     }
-
+    
+    // 销毁同步原语
     ppdb_sync_destroy(&list->sync);
+    
+    // 释放跳表结构
     free(list);
 }
 
@@ -94,7 +102,7 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
     size_t node_size = sizeof(ppdb_skiplist_node_t) + level * sizeof(ppdb_skiplist_node_t*);
     
     // 分配节点内存（包括next数组）
-    ppdb_skiplist_node_t* node = aligned_alloc(64, node_size);
+    ppdb_skiplist_node_t* node = calloc(1, node_size);
     if (!node) return NULL;
 
     // 初始化next数组指针
@@ -103,7 +111,7 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
 
     // 分配键值内存
     if (key && key_len > 0) {
-        node->key = aligned_alloc(64, key_len);
+        node->key = malloc(key_len);
         if (!node->key) {
             free(node);
             return NULL;
@@ -116,7 +124,7 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
     }
 
     if (value && value_len > 0) {
-        node->value = aligned_alloc(64, value_len);
+        node->value = malloc(value_len);
         if (!node->value) {
             if (node->key) free(node->key);
             free(node);
@@ -136,9 +144,20 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
 // 销毁节点
 static void destroy_node(ppdb_skiplist_node_t* node) {
     if (!node) return;
-    if (node->key) free(node->key);
-    if (node->value) free(node->value);
-    // 不需要单独释放next数组，因为它是和node一起分配的
+    
+    // 释放键
+    if (node->key) {
+        free(node->key);
+        node->key = NULL;
+    }
+    
+    // 释放值
+    if (node->value) {
+        free(node->value);
+        node->value = NULL;
+    }
+    
+    // 释放节点（next数组是和node一起分配的）
     free(node);
 }
 
@@ -177,13 +196,15 @@ ppdb_error_t ppdb_skiplist_put(ppdb_skiplist_t* list,
     // 如果键已存在，更新值
     if (current && list->compare(current->key, current->key_len,
                                 key, key_len) == 0) {
-        void* new_value = malloc(value_len);
+        void* new_value = aligned_alloc(64, value_len);
         if (!new_value) {
             return PPDB_ERR_OUT_OF_MEMORY;
         }
 
         memcpy(new_value, value, value_len);
-        free(current->value);
+        if (current->value) {
+            free(current->value);
+        }
         current->value = new_value;
         current->value_len = value_len;
         return PPDB_OK;
@@ -233,7 +254,7 @@ ppdb_error_t ppdb_skiplist_get(ppdb_skiplist_t* list,
     // 检查是否找到
     if (current && list->compare(current->key, current->key_len,
                                 key, key_len) == 0) {
-        *value = malloc(current->value_len);
+        *value = aligned_alloc(64, current->value_len);
         if (!*value) {
             return PPDB_ERR_OUT_OF_MEMORY;
         }
@@ -380,12 +401,12 @@ ppdb_error_t ppdb_skiplist_iterator_next(ppdb_skiplist_iterator_t* iter,
     }
 
     // 复制键值对
-    *key = malloc(iter->current->key_len);
+    *key = aligned_alloc(64, iter->current->key_len);
     if (!*key) {
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
-    *value = malloc(iter->current->value_len);
+    *value = aligned_alloc(64, iter->current->value_len);
     if (!*value) {
         free(*key);
         return PPDB_ERR_OUT_OF_MEMORY;
@@ -416,7 +437,7 @@ ppdb_error_t ppdb_skiplist_iterator_get(ppdb_skiplist_iterator_t* iter,
     }
 
     // 复制键
-    pair->key = malloc(iter->current->key_len);
+    pair->key = aligned_alloc(64, iter->current->key_len);
     if (!pair->key) {
         return PPDB_ERR_OUT_OF_MEMORY;
     }
@@ -424,7 +445,7 @@ ppdb_error_t ppdb_skiplist_iterator_get(ppdb_skiplist_iterator_t* iter,
     pair->key_size = iter->current->key_len;
 
     // 复制值
-    pair->value = malloc(iter->current->value_len);
+    pair->value = aligned_alloc(64, iter->current->value_len);
     if (!pair->value) {
         free(pair->key);
         return PPDB_ERR_OUT_OF_MEMORY;
@@ -470,14 +491,16 @@ ppdb_error_t ppdb_skiplist_put_lockfree(ppdb_skiplist_t* list,
     if (current && list->compare(current->key, current->key_len,
                                key, key_len) == 0) {
         // 更新现有节点的值
-        void* new_value = malloc(value_len);
+        void* new_value = aligned_alloc(64, value_len);
         if (!new_value) {
             destroy_node(new_node);
             return PPDB_ERR_OUT_OF_MEMORY;
         }
 
         memcpy(new_value, value, value_len);
-        free(current->value);
+        if (current->value) {
+            free(current->value);
+        }
         current->value = new_value;
         current->value_len = value_len;
 
@@ -522,7 +545,7 @@ ppdb_error_t ppdb_skiplist_get_lockfree(ppdb_skiplist_t* list,
     // 检查是否找到
     if (current && list->compare(current->key, current->key_len,
                                key, key_len) == 0) {
-        *value = malloc(current->value_len);
+        *value = aligned_alloc(64, current->value_len);
         if (!*value) {
             return PPDB_ERR_OUT_OF_MEMORY;
         }

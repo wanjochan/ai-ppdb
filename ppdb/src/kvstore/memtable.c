@@ -67,11 +67,11 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     if (size_limit == 0) return PPDB_ERR_INVALID_ARG;
 
     // 分配内存表结构
-    ppdb_memtable_t* new_table = aligned_alloc(64, sizeof(ppdb_memtable_t));
+    ppdb_memtable_t* new_table = calloc(1, sizeof(ppdb_memtable_t));
     if (!new_table) return PPDB_ERR_OUT_OF_MEMORY;
 
     // 分配基础内存表结构
-    new_table->basic = aligned_alloc(64, sizeof(ppdb_memtable_basic_t));
+    new_table->basic = calloc(1, sizeof(ppdb_memtable_basic_t));
     if (!new_table->basic) {
         free(new_table);
         return PPDB_ERR_OUT_OF_MEMORY;
@@ -83,7 +83,6 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     atomic_init(&new_table->current_size, 0);
     new_table->shard_count = 1;
     new_table->is_immutable = false;
-    memset(&new_table->metrics, 0, sizeof(ppdb_metrics_t));
 
     // 初始化基础内存表
     new_table->basic->skiplist = NULL;
@@ -126,21 +125,24 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
 
 // 销毁内存表
 void ppdb_memtable_destroy_basic(ppdb_memtable_t* table) {
-    if (!table || !table->basic) return;
-
-    // 先销毁跳表
-    if (table->basic->skiplist) {
-        ppdb_skiplist_destroy(table->basic->skiplist);
-        table->basic->skiplist = NULL;
+    if (!table) return;
+    
+    // 销毁基础结构
+    if (table->basic) {
+        // 销毁跳表
+        if (table->basic->skiplist) {
+            ppdb_skiplist_destroy(table->basic->skiplist);
+            table->basic->skiplist = NULL;
+        }
+        
+        // 销毁同步原语
+        ppdb_sync_destroy(&table->basic->sync);
+        
+        // 释放基础结构
+        free(table->basic);
+        table->basic = NULL;
     }
-
-    // 销毁同步原语
-    ppdb_sync_destroy(&table->basic->sync);
-
-    // 释放基础结构
-    free(table->basic);
-    table->basic = NULL;
-
+    
     // 释放内存表结构
     free(table);
 }
