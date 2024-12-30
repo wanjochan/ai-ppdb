@@ -299,3 +299,115 @@ void ppdb_skiplist_clear(ppdb_skiplist_t* list) {
                         sizeof(ppdb_skiplist_node_t) + 
                         list->max_level * sizeof(ppdb_skiplist_node_t*);
 }
+
+// 创建迭代器
+ppdb_error_t ppdb_skiplist_iterator_create(ppdb_skiplist_t* list,
+                                        ppdb_skiplist_iterator_t** iter,
+                                        const ppdb_sync_config_t* sync_config) {
+    if (!list || !iter || !sync_config) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    ppdb_skiplist_iterator_t* new_iter = aligned_alloc(64, sizeof(ppdb_skiplist_iterator_t));
+    if (!new_iter) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 初始化迭代器
+    new_iter->list = list;
+    new_iter->current = list->head;
+    new_iter->valid = true;
+    memset(&new_iter->current_pair, 0, sizeof(ppdb_kv_pair_t));
+
+    // 初始化同步原语
+    ppdb_error_t err = ppdb_sync_init(&new_iter->sync, sync_config);
+    if (err != PPDB_OK) {
+        free(new_iter);
+        return err;
+    }
+
+    *iter = new_iter;
+    return PPDB_OK;
+}
+
+// 销毁迭代器
+void ppdb_skiplist_iterator_destroy(ppdb_skiplist_iterator_t* iter) {
+    if (!iter) return;
+    ppdb_sync_destroy(&iter->sync);
+    free(iter);
+}
+
+// 迭代器移动到下一个元素
+ppdb_error_t ppdb_skiplist_iterator_next(ppdb_skiplist_iterator_t* iter,
+                                      void** key, size_t* key_len,
+                                      void** value, size_t* value_len) {
+    if (!iter || !key || !key_len || !value || !value_len) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    if (!iter->valid) {
+        return PPDB_ERR_ITERATOR_END;
+    }
+
+    // 移动到下一个节点
+    iter->current = iter->current->next[0];
+    if (!iter->current) {
+        iter->valid = false;
+        return PPDB_ERR_ITERATOR_END;
+    }
+
+    // 复制键值对
+    *key = malloc(iter->current->key_len);
+    if (!*key) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    *value = malloc(iter->current->value_len);
+    if (!*value) {
+        free(*key);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    memcpy(*key, iter->current->key, iter->current->key_len);
+    memcpy(*value, iter->current->value, iter->current->value_len);
+    *key_len = iter->current->key_len;
+    *value_len = iter->current->value_len;
+
+    return PPDB_OK;
+}
+
+// 检查迭代器是否有效
+bool ppdb_skiplist_iterator_valid(ppdb_skiplist_iterator_t* iter) {
+    return iter && iter->valid;
+}
+
+// 获取迭代器当前键值对
+ppdb_error_t ppdb_skiplist_iterator_get(ppdb_skiplist_iterator_t* iter,
+                                     ppdb_kv_pair_t* pair) {
+    if (!iter || !pair) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    if (!iter->valid || !iter->current) {
+        return PPDB_ERR_ITERATOR_END;
+    }
+
+    // 复制键
+    pair->key = malloc(iter->current->key_len);
+    if (!pair->key) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    memcpy(pair->key, iter->current->key, iter->current->key_len);
+    pair->key_size = iter->current->key_len;
+
+    // 复制值
+    pair->value = malloc(iter->current->value_len);
+    if (!pair->value) {
+        free(pair->key);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    memcpy(pair->value, iter->current->value, iter->current->value_len);
+    pair->value_size = iter->current->value_len;
+
+    return PPDB_OK;
+}
