@@ -112,38 +112,6 @@
 ## 5. 性能调优指南
 
 ### 5.1 配置优化
-```c
-// 高吞吐量配置
-ppdb_sync_config_t sync_config = {
-    .use_lockfree = true,
-    .stripe_count = 16,     // CPU核心数的2倍
-    .spin_count = 1000,
-    .backoff_us = 100
-};
-
-// 低延迟配置
-ppdb_sync_config_t sync_config = {
-    .use_lockfree = true,
-    .stripe_count = 32,     // CPU核心数的4倍
-    .spin_count = 2000,
-    .backoff_us = 50
-};
-
-// 内存优化配置
-ppdb_memtable_config_t mem_config = {
-    .max_size = 1024 * 1024 * 1024,  // 1GB
-    .enable_compression = true,
-    .enable_bloom_filter = true
-};
-
-// WAL优化配置
-ppdb_wal_config_t wal_config = {
-    .buffer_size = 4 * 1024 * 1024,  // 4MB
-    .enable_group_commit = true,
-    .group_commit_interval = 10,      // 10ms
-    .enable_async_flush = true
-};
-```
 
 ### 5.2 硬件建议
 - CPU: 推荐16核心以上

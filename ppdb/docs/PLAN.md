@@ -46,14 +46,6 @@
   - [ ] 引用计数管理
 
 - [ ] 内存管理改进
-  ```c
-  typedef struct ppdb_mempool {
-      void* chunks;
-      size_t chunk_size;
-      atomic_size_t used;
-      ppdb_stripe_locks_t* locks;
-  } ppdb_mempool_t;
-  ```
   - [ ] 内存池优化
   - [ ] 资源限制
   - [ ] 垃圾回收

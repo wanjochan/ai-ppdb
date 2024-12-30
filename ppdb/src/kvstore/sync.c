@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "internal/sync.h"
 
-// MurmurHash2 
+// MurmurHash2 , from previous codes, may useful later
 static uint32_t murmur_hash2(const void* key, size_t len) {
     const uint32_t m = 0x5bd1e995;
     const uint32_t seed = 0x1234ABCD;

@@ -84,14 +84,6 @@ PPDB 的目标是成为一个跨平台、自组织的分布式去中心化数据
 - 性能统计和监控
 
 #### 主要组件
-```c
-typedef struct ppdb_sync_config {
-    bool use_lockfree;        // 是否使用无锁模式
-    uint32_t stripe_count;    // 分片锁数量
-    uint32_t spin_count;      // 自旋次数
-    uint32_t backoff_us;      // 退避时间
-} ppdb_sync_config_t;
-```
 
 #### 性能特性
 - 无锁模式：适用于低竞争场景

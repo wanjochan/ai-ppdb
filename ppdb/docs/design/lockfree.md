@@ -38,70 +38,10 @@
 ## 2. 核心组件设计
 
 ### 2.1 同步原语
-```c
-// 节点状态
-typedef enum ppdb_node_state {
-    NODE_VALID = 0,      // 正常节点
-    NODE_DELETED = 1,    // 已标记删除
-    NODE_INSERTING = 2   // 正在插入
-} ppdb_node_state_t;
-
-// 引用计数
-typedef struct ppdb_ref_count {
-    atomic_uint count;   // 引用计数值
-} ppdb_ref_count_t;
-
-// 同步配置
-typedef struct ppdb_sync_config {
-    bool use_lockfree;        // 是否使用无锁模式
-    uint32_t stripe_count;    // 分片锁数量
-    uint32_t spin_count;      // 自旋次数
-    uint32_t backoff_us;      // 退避时间
-    bool enable_ref_count;    // 是否启用引用计数
-} ppdb_sync_config_t;
-
-// 同步原语
-typedef struct ppdb_sync {
-    union {
-        atomic_int atomic;
-        mutex_t mutex;
-    } impl;
-    ppdb_sync_config_t config;
-    ppdb_ref_count_t* ref_count;
-} ppdb_sync_t;
-```
 
 ### 2.2 无锁跳表
-```c
-// 跳表节点
-typedef struct skiplist_node {
-    ppdb_sync_t sync;         // 同步原语
-    void* key;                // 键
-    uint32_t key_len;         // 键长度
-    void* value;              // 值
-    uint32_t value_len;       // 值长度
-    uint32_t level;           // 节点层数
-    struct skiplist_node* next[]; // 后继节点数组
-} skiplist_node_t;
-```
 
 ### 2.3 分片内存表
-```c
-// 分片配置
-typedef struct {
-    uint32_t shard_bits;       // 分片位数
-    uint32_t shard_count;      // 分片数量
-    uint32_t max_size;         // 每个分片的最大大小
-} shard_config_t;
-
-// 分片内存表
-typedef struct {
-    shard_config_t config;     // 分片配置
-    ppdb_skiplist_t** shards;  // 分片数组
-    ppdb_stripe_locks_t* locks; // 分片锁
-    atomic_size_t total_size;  // 总元素个数
-} sharded_memtable_t;
-```
 
 ## 3. 实现细节
 

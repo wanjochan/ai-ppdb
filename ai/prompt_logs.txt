@@ -1,7 +1,8 @@
-review INDEX.md and FILES.md in docs/, and PLAN.md in docs/;
+as warm-up, read INDEX.md and FILES.md in docs/, and PLAN.md in docs/;
 
-run ppdb\scripts\build_ppdb.bat and make a fix plan and wait for confirm;
+exec ppdb\scripts\build_ppdb.bat and make a fix plan for the problems and wait for confirm;
 
+why added hash.c?? reuse the function in sync.c and sync.h
 
 wait
 
