@@ -46,6 +46,7 @@
 - `kvstore_memtable.h` - 内存表实现
 - `kvstore_sharded_memtable.h` - 分片内存表实现
 - `kvstore_wal.h` - WAL 实现
+- `kvstore_wal_types.h` - WAL 相关类型定义
 
 ### 辅助组件
 - `kvstore_monitor.h` - 监控系统实现
@@ -182,6 +183,7 @@
 - `test_wal.c` - WAL测试
 
 ### WAL专项测试 (test/white/wal/)
+- `basic_test.c` - WAL基础功能测试
 - `test_concurrent.c` - WAL并发测试
 
 ### 功能测试 (test/white/)
@@ -209,8 +211,16 @@
 - `scenarios/` - 场景测试用例
 - `system/` - 系统测试用例
 - `unit/` - 单元测试用例
-- `integration/` - 集成测试用例
-- `performance/` - 性能测试用例
+- `integration/test_system.c` - 系统集成测试
+  * 完整工作流测试
+  * 数据恢复测试
+  * 并发操作测试
+- `performance/benchmark.c` - 性能测试用例
+  * Memtable性能测试（读写延迟和吞吐量）
+  * WAL性能测试（同步/异步写入对比）
+  * 压缩性能测试（启用/禁用压缩对比）
+  * 批量操作测试（批量vs单个操作）
+  * 并发性能测试（多线程扩展性）
 
 ### 测试说明
 1. 测试分层：

@@ -83,21 +83,36 @@ ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config)
     int ret;
 
     switch (config->type) {
-        case PPDB_SYNC_MUTEX:
-            ret = pthread_mutex_init(&sync->mutex, NULL);
+        case PPDB_SYNC_MUTEX: {
+            pthread_mutexattr_t attr;
+            ret = pthread_mutexattr_init(&attr);
+            if (ret != 0) {
+                return PPDB_ERR_MUTEX_ERROR;
+            }
+            pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+            ret = pthread_mutex_init(&sync->mutex, &attr);
+            pthread_mutexattr_destroy(&attr);
             if (ret != 0) {
                 return PPDB_ERR_MUTEX_ERROR;
             }
             break;
+        }
         case PPDB_SYNC_SPINLOCK:
             atomic_flag_clear(&sync->spinlock);
             break;
-        case PPDB_SYNC_RWLOCK:
-            ret = pthread_rwlock_init(&sync->rwlock, NULL);
+        case PPDB_SYNC_RWLOCK: {
+            pthread_rwlockattr_t attr;
+            ret = pthread_rwlockattr_init(&attr);
+            if (ret != 0) {
+                return PPDB_ERR_MUTEX_ERROR;
+            }
+            ret = pthread_rwlock_init(&sync->rwlock, &attr);
+            pthread_rwlockattr_destroy(&attr);
             if (ret != 0) {
                 return PPDB_ERR_MUTEX_ERROR;
             }
             break;
+        }
         default:
             return PPDB_ERR_INVALID_ARG;
     }
@@ -173,6 +188,7 @@ ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
         case PPDB_SYNC_SPINLOCK:
             while (atomic_flag_test_and_set(&sync->spinlock)) {
                 // 自旋等待
+                microsleep(1);  // 短暂休眠以减少CPU占用
             }
             break;
         case PPDB_SYNC_RWLOCK:

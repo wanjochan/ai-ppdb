@@ -32,6 +32,7 @@ ppdb_error_t ppdb_skiplist_create(ppdb_skiplist_t** list,
         return PPDB_ERR_INVALID_ARG;
     }
 
+    // 分配跳表结构
     ppdb_skiplist_t* new_list = aligned_alloc(64, sizeof(ppdb_skiplist_t));
     if (!new_list) {
         return PPDB_ERR_OUT_OF_MEMORY;
@@ -50,12 +51,17 @@ ppdb_error_t ppdb_skiplist_create(ppdb_skiplist_t** list,
         return err;
     }
 
-    // 创建头节点
+    // 创建头节点（不包含实际数据）
     new_list->head = create_node(NULL, 0, NULL, 0, new_list->max_level);
     if (!new_list->head) {
         ppdb_sync_destroy(&new_list->sync);
         free(new_list);
         return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 初始化头节点的next数组
+    for (int i = 0; i < new_list->max_level; i++) {
+        new_list->head->next[i] = NULL;
     }
 
     *list = new_list;
@@ -82,25 +88,23 @@ void ppdb_skiplist_destroy(ppdb_skiplist_t* list) {
 static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
                                       const void* value, size_t value_len,
                                       int level) {
-    // 计算节点大小
-    size_t node_size = sizeof(ppdb_skiplist_node_t);
+    if (level <= 0) return NULL;
+
+    // 计算节点大小（包括next数组）
+    size_t node_size = sizeof(ppdb_skiplist_node_t) + level * sizeof(ppdb_skiplist_node_t*);
     
-    // 分配节点内存
+    // 分配节点内存（包括next数组）
     ppdb_skiplist_node_t* node = aligned_alloc(64, node_size);
     if (!node) return NULL;
 
-    // 分配 next 数组内存
-    node->next = aligned_alloc(64, level * sizeof(ppdb_skiplist_node_t*));
-    if (!node->next) {
-        free(node);
-        return NULL;
-    }
+    // 初始化next数组指针
+    node->next = (ppdb_skiplist_node_t**)((char*)node + sizeof(ppdb_skiplist_node_t));
+    memset(node->next, 0, level * sizeof(ppdb_skiplist_node_t*));
 
     // 分配键值内存
     if (key && key_len > 0) {
-        node->key = malloc(key_len);
+        node->key = aligned_alloc(64, key_len);
         if (!node->key) {
-            free(node->next);
             free(node);
             return NULL;
         }
@@ -112,10 +116,9 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
     }
 
     if (value && value_len > 0) {
-        node->value = malloc(value_len);
+        node->value = aligned_alloc(64, value_len);
         if (!node->value) {
-            free(node->key);
-            free(node->next);
+            if (node->key) free(node->key);
             free(node);
             return NULL;
         }
@@ -127,17 +130,15 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
     }
 
     node->level = level;
-    memset(node->next, 0, level * sizeof(ppdb_skiplist_node_t*));
-
     return node;
 }
 
 // 销毁节点
 static void destroy_node(ppdb_skiplist_node_t* node) {
     if (!node) return;
-    free(node->key);
-    free(node->value);
-    free(node->next);
+    if (node->key) free(node->key);
+    if (node->value) free(node->value);
+    // 不需要单独释放next数组，因为它是和node一起分配的
     free(node);
 }
 

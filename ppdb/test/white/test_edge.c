@@ -132,22 +132,145 @@ static void test_max_value_length(void) {
 
 #include "test_framework.h"
 #include "ppdb/ppdb_kvstore.h"
+#include "kvstore/internal/kvstore_internal.h"
+
+#define LARGE_KEY_SIZE (16 * 1024)    // 16KB key
+#define LARGE_VALUE_SIZE (64 * 1024)  // 64KB value
+#define SMALL_BUFFER_SIZE 16          // 小缓冲区用于测试溢出
 
 // 内存满测试
 static int test_edge_memory_full(void) {
-    // TODO: 实现内存满时的边界测试
+    ppdb_kvstore_t* store = NULL;
+    int err;
+
+    // 创建一个内存限制较小的 KVStore
+    ppdb_config_t config = {
+        .memtable_size = 1024 * 1024,  // 1MB
+        .enable_wal = false            // 禁用WAL以便测试纯内存表行为
+    };
+
+    err = ppdb_kvstore_create(&store, &config);
+    TEST_ASSERT_OK(err, "Failed to create kvstore");
+    TEST_ASSERT_NOT_NULL(store, "KVStore is null");
+
+    // 准备大value数据
+    char* large_value = malloc(LARGE_VALUE_SIZE);
+    TEST_ASSERT_NOT_NULL(large_value, "Failed to allocate large value");
+    memset(large_value, 'A', LARGE_VALUE_SIZE - 1);
+    large_value[LARGE_VALUE_SIZE - 1] = '\0';
+
+    // 不断写入直到内存满
+    char key[32];
+    int i = 0;
+    while (1) {
+        snprintf(key, sizeof(key), "large_key_%d", i++);
+        err = ppdb_kvstore_put(store, key, strlen(key), large_value, LARGE_VALUE_SIZE);
+        
+        if (err == PPDB_MEMTABLE_FULL) {
+            // 预期的错误，测试通过
+            break;
+        } else if (err != PPDB_OK) {
+            TEST_ASSERT(0, "Unexpected error: %s", ppdb_error_string(err));
+            break;
+        }
+
+        // 防止无限循环
+        if (i > 1000) {
+            TEST_ASSERT(0, "Failed to fill memtable after 1000 iterations");
+            break;
+        }
+    }
+
+    // 验证读取仍然工作
+    char value[LARGE_VALUE_SIZE];
+    snprintf(key, sizeof(key), "large_key_0");
+    err = ppdb_kvstore_get(store, key, strlen(key), value, sizeof(value));
+    TEST_ASSERT_OK(err, "Failed to read after memtable full");
+    TEST_ASSERT(strcmp(value, large_value) == 0, "Data corruption detected");
+
+    free(large_value);
+    ppdb_kvstore_destroy(store);
     return 0;
 }
 
 // 大键值测试
 static int test_edge_large_keys(void) {
-    // TODO: 实现大键值的边界测试
+    ppdb_kvstore_t* store = NULL;
+    int err;
+
+    err = ppdb_kvstore_create(&store, NULL);
+    TEST_ASSERT_OK(err, "Failed to create kvstore");
+    TEST_ASSERT_NOT_NULL(store, "KVStore is null");
+
+    // 准备大key和value
+    char* large_key = malloc(LARGE_KEY_SIZE);
+    char* large_value = malloc(LARGE_VALUE_SIZE);
+    TEST_ASSERT_NOT_NULL(large_key, "Failed to allocate large key");
+    TEST_ASSERT_NOT_NULL(large_value, "Failed to allocate large value");
+
+    memset(large_key, 'K', LARGE_KEY_SIZE - 1);
+    memset(large_value, 'V', LARGE_VALUE_SIZE - 1);
+    large_key[LARGE_KEY_SIZE - 1] = '\0';
+    large_value[LARGE_VALUE_SIZE - 1] = '\0';
+
+    // 测试大key和value的写入
+    err = ppdb_kvstore_put(store, large_key, LARGE_KEY_SIZE, large_value, LARGE_VALUE_SIZE);
+    TEST_ASSERT_OK(err, "Failed to write large key-value");
+
+    // 测试读取
+    char* read_value = malloc(LARGE_VALUE_SIZE);
+    TEST_ASSERT_NOT_NULL(read_value, "Failed to allocate read buffer");
+
+    err = ppdb_kvstore_get(store, large_key, LARGE_KEY_SIZE, read_value, LARGE_VALUE_SIZE);
+    TEST_ASSERT_OK(err, "Failed to read large key-value");
+    TEST_ASSERT(memcmp(large_value, read_value, LARGE_VALUE_SIZE) == 0, "Data corruption in large value");
+
+    // 测试小缓冲区读取（应该返回缓冲区太小错误）
+    char small_buffer[SMALL_BUFFER_SIZE];
+    err = ppdb_kvstore_get(store, large_key, LARGE_KEY_SIZE, small_buffer, SMALL_BUFFER_SIZE);
+    TEST_ASSERT(err == PPDB_BUFFER_TOO_SMALL, "Expected buffer too small error");
+
+    free(large_key);
+    free(large_value);
+    free(read_value);
+    ppdb_kvstore_destroy(store);
     return 0;
 }
 
 // 空键值测试
 static int test_edge_empty_keys(void) {
-    // TODO: 实现空键值的边界测试
+    ppdb_kvstore_t* store = NULL;
+    int err;
+
+    err = ppdb_kvstore_create(&store, NULL);
+    TEST_ASSERT_OK(err, "Failed to create kvstore");
+    TEST_ASSERT_NOT_NULL(store, "KVStore is null");
+
+    // 测试空key
+    char value[] = "test_value";
+    err = ppdb_kvstore_put(store, "", 0, value, strlen(value));
+    TEST_ASSERT(err == PPDB_INVALID_KEY, "Expected invalid key error for empty key");
+
+    // 测试空value
+    char key[] = "test_key";
+    err = ppdb_kvstore_put(store, key, strlen(key), "", 0);
+    TEST_ASSERT_OK(err, "Failed to write empty value");
+
+    // 测试NULL key
+    err = ppdb_kvstore_put(store, NULL, 0, value, strlen(value));
+    TEST_ASSERT(err == PPDB_INVALID_KEY, "Expected invalid key error for NULL key");
+
+    // 测试NULL value
+    err = ppdb_kvstore_put(store, key, strlen(key), NULL, 0);
+    TEST_ASSERT(err == PPDB_INVALID_VALUE, "Expected invalid value error for NULL value");
+
+    // 测试读取空value
+    char read_value[16];
+    err = ppdb_kvstore_get(store, key, strlen(key), read_value, sizeof(read_value));
+    TEST_ASSERT_OK(err, "Failed to read empty value");
+    TEST_ASSERT(strlen(read_value) == 0, "Empty value corrupted");
+
+    ppdb_kvstore_destroy(store);
     return 0;
 }
 

@@ -8,7 +8,9 @@ as warm-up, read INDEX.md and FILES.md in docs/, and PLAN.md in docs/;
 ===
 
 ##不是哦，之前构建成功过的，工具都在的，可能只是路径问题
-stop,这些工具都在的了，你查一下
+stop,这些工具都在代码仓的了，你查一下
+
+cosmopolitan底层哦
 
 ===【尝试构建】
 运行了 ppdb\scripts\build_ppdb.bat之后，

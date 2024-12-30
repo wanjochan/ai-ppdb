@@ -35,17 +35,40 @@ static struct {
     size_t resource_count;
     bool initialized;
     jmp_buf timeout_jmp;
+    test_type_t test_type;
 } g_test_state = {0};
 
-// 超时信号处理
+// 段错误处理函数
+static void segv_handler(int signo) {
+    (void)signo;
+    ppdb_log_error("Segmentation fault in test: %s", current_test_name);
+    test_cleanup_resources();
+    exit(1);
+}
+
+// 超时处理函数
 static void timeout_handler(int signo) {
     (void)signo;
-    siglongjmp(g_test_state.timeout_jmp, 1);
+    ppdb_log_error("Test timeout: %s", current_test_name);
+    test_cleanup_resources();
+    longjmp(g_test_state.timeout_jmp, 1);
 }
 
 // 初始化测试框架
 void test_framework_init(void) {
     if (g_test_state.initialized) return;
+    
+    // 初始化日志系统
+    ppdb_log_config_t log_config = {
+        .enabled = true,
+        .level = PPDB_LOG_DEBUG,
+        .outputs = PPDB_LOG_CONSOLE,
+        .types = PPDB_LOG_TYPE_ALL,
+        .log_file = NULL,
+        .async_mode = false,
+        .buffer_size = 4096
+    };
+    ppdb_log_init(&log_config);
     
     // 设置默认配置
     g_test_state.config.thread_count = DEFAULT_THREADS;
@@ -63,12 +86,48 @@ void test_framework_init(void) {
     
     // 初始化统计
     memset(&g_test_state.stats, 0, sizeof(test_stats_t));
+    g_test_state.stats.start_time = clock();
     
     // 初始化资源跟踪
     g_test_state.resource_count = 0;
     
-    // 设置超时处理
-    sigaction(SIGALRM, &(struct sigaction){.sa_handler = timeout_handler}, NULL);
+    // 设置信号处理
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = timeout_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    
+    if (sigaction(SIGALRM, &sa, NULL) != 0) {
+        ppdb_log_error("Failed to set SIGALRM handler");
+        return;
+    }
+    
+    // 设置段错误处理
+    sa.sa_handler = segv_handler;
+    if (sigaction(SIGSEGV, &sa, NULL) != 0) {
+        ppdb_log_error("Failed to set SIGSEGV handler");
+        return;
+    }
+    
+    // 创建临时目录
+    cleanup_test_dir(g_test_state.config.temp_dir);
+    
+    // 设置默认测试类型
+    char* test_type_env = getenv("TEST_TYPE");
+    if (test_type_env) {
+        if (strcmp(test_type_env, "unit") == 0) {
+            g_test_state.test_type = TEST_TYPE_UNIT;
+        } else if (strcmp(test_type_env, "integration") == 0) {
+            g_test_state.test_type = TEST_TYPE_INTEGRATION;
+        } else if (strcmp(test_type_env, "stress") == 0) {
+            g_test_state.test_type = TEST_TYPE_STRESS;
+        } else {
+            g_test_state.test_type = TEST_TYPE_ALL;
+        }
+    } else {
+        g_test_state.test_type = TEST_TYPE_ALL;
+    }
     
     g_test_state.initialized = true;
 }
@@ -80,20 +139,26 @@ void test_framework_cleanup(void) {
     test_cleanup_resources();
     cleanup_test_dir(g_test_state.config.temp_dir);
     
+    g_test_state.stats.end_time = clock();
+    test_print_stats();
+    
     g_test_state.initialized = false;
 }
 
 // 配置管理
 void test_set_config(const test_config_t* config) {
+    if (!config) return;
     memcpy(&g_test_state.config, config, sizeof(test_config_t));
 }
 
 void test_get_config(test_config_t* config) {
+    if (!config) return;
     memcpy(config, &g_test_state.config, sizeof(test_config_t));
 }
 
 // 错误注入
 void test_set_error_injection(const error_injection_t* config) {
+    if (!config) return;
     memcpy(&g_test_state.error_injection, config, sizeof(error_injection_t));
 }
 
@@ -132,6 +197,7 @@ void test_cleanup_resources(void) {
         resource_tracker_t* tracker = &g_test_state.resources[i];
         if (tracker->cleanup && tracker->ptr) {
             tracker->cleanup(tracker->ptr);
+            tracker->ptr = NULL;
         }
     }
     g_test_state.resource_count = 0;
@@ -147,6 +213,7 @@ void test_end_stats(void) {
 }
 
 void test_get_stats(test_stats_t* stats) {
+    if (!stats) return;
     memcpy(stats, &g_test_state.stats, sizeof(test_stats_t));
 }
 
@@ -176,6 +243,9 @@ int run_single_test(const test_case_t* test) {
         ppdb_log_info("Description: %s", test->description);
     }
     
+    // 设置当前测试名称
+    strlcpy(current_test_name, test->name, sizeof(current_test_name));
+    
     // 设置超时
     int timeout = test->timeout_seconds > 0 ? 
         test->timeout_seconds : g_test_state.config.timeout_seconds;
@@ -197,8 +267,10 @@ int run_single_test(const test_case_t* test) {
     g_test_state.stats.total_cases++;
     if (result == 0) {
         g_test_state.stats.passed_cases++;
+        strlcpy(current_test_result, "PASS", sizeof(current_test_result));
     } else {
         g_test_state.stats.failed_cases++;
+        strlcpy(current_test_result, "FAIL", sizeof(current_test_result));
     }
     
     // 清理资源
@@ -241,36 +313,19 @@ int run_test_suite(const test_suite_t* suite) {
 void cleanup_test_dir(const char* dir_path) {
     if (!dir_path) return;
     
-    char cmd[256];
-    strlcpy(cmd, "rm -rf ", sizeof(cmd));
-    strlcat(cmd, dir_path, sizeof(cmd));
-    system(cmd);
+    // 先尝试删除目录
+    rmdir(dir_path);
     
+    // 创建新目录
     mkdir(dir_path, 0755);
 }
 
-void test_case_start(const char* test_name) {
-    strlcpy(current_test_name, test_name, sizeof(current_test_name));
-    strlcpy(current_test_result, "PASS", sizeof(current_test_result));
-    test_case_count++;
-}
-
-void test_case_fail(const char* fmt, ...) {
-    strlcpy(current_test_result, "FAIL", sizeof(current_test_result));
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(current_test_message, sizeof(current_test_message), fmt, args);
-    va_end(args);
-    test_case_failed++;
-}
-
-// 当前测试类型
-static test_type_t current_test_type = TEST_TYPE_ALL;
-
+// 设置测试类型
 void test_framework_set_type(test_type_t type) {
-    current_test_type = type;
+    g_test_state.test_type = type;
 }
 
+// 检查是否应该运行某个测试
 bool test_framework_should_run(test_type_t type) {
-    return current_test_type == TEST_TYPE_ALL || current_test_type == type;
+    return g_test_state.test_type == TEST_TYPE_ALL || g_test_state.test_type == type;
 }
