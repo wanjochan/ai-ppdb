@@ -48,11 +48,14 @@ if "%TEST_TYPE%"=="42" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test 42 ""
     if exist "%BUILD_DIR%\42_test.exe" "%BUILD_DIR%\42_test.exe"
 ) else if "%TEST_TYPE%"=="sync" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test sync "src\kvstore\sync.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test sync "src\kvstore\sync.c test\white\test_framework.c" "test\white\infra\test_sync.c"
     if exist "%BUILD_DIR%\sync_test.exe" "%BUILD_DIR%\sync_test.exe"
 ) else if "%TEST_TYPE%"=="skiplist" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test skiplist "src\kvstore\skiplist.c src\kvstore\sync.c"
     if exist "%BUILD_DIR%\skiplist_test.exe" "%BUILD_DIR%\skiplist_test.exe"
+) else if "%TEST_TYPE%"=="memtable" (
+    if "%NEED_REBUILD%"=="1" call :build_simple_test memtable "src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\common\logger.c test\white\test_framework.c" "test\white\storage\test_memtable.c"
+    if exist "%BUILD_DIR%\memtable_test.exe" "%BUILD_DIR%\memtable_test.exe"
 ) else (
     if "%TEST_TYPE%"=="unit" (
         if "%NEED_REBUILD%"=="1" (
@@ -126,6 +129,7 @@ rem Function to build and run a simple test
 setlocal EnableDelayedExpansion
 set "TEST_NAME=%~1"
 set "EXTRA_SOURCES=%~2"
+set "TEST_FILE=%~3"
 
 echo Building %TEST_NAME% test...
 echo Extra sources: [%EXTRA_SOURCES%]
@@ -157,7 +161,11 @@ echo.
 echo ===== Compiling test file =====
 echo.
 set "TEST_OBJ=%BUILD_DIR%\test_%TEST_NAME%.o"
-set "TEST_SRC=test/white/test_%TEST_NAME%.c"
+if not "!TEST_FILE!"=="" (
+    set "TEST_SRC=!TEST_FILE!"
+) else (
+    set "TEST_SRC=test/white/test_%TEST_NAME%.c"
+)
 call :check_need_rebuild "!TEST_SRC!" "!TEST_OBJ!"
 if !errorlevel! equ 1 (
     echo Compiling !TEST_SRC!...

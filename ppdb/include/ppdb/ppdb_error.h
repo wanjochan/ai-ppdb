@@ -44,10 +44,12 @@ typedef enum ppdb_error {
     PPDB_ERR_WAL_CORRUPTED,        // WAL损坏
     PPDB_ERR_WAL_NOT_FOUND,        // WAL不存在
     PPDB_ERR_WAL_INVALID,          // WAL无效
+    PPDB_ERR_LOCK_FAILED,          // 加锁失败
+    PPDB_ERR_UNLOCK_FAILED,        // 解锁失败
     PPDB_ERR_UNKNOWN               // 未知错误
 } ppdb_error_t;
 
 // 错误码转字符串
 const char* ppdb_error_string(ppdb_error_t error);
 
-#endif // PPDB_ERROR_H 
+#endif // PPDB_ERROR_H

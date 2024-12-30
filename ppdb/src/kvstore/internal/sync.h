@@ -67,6 +67,24 @@ bool ppdb_sync_try_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync);
 
 /**
+ * @brief 读锁加锁操作
+ * @param sync 同步原语对象
+ * @return PPDB_OK 成功，其他值表示错误
+ * 
+ * 仅适用于读写锁模式
+ */
+ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync);
+
+/**
+ * @brief 读锁解锁操作
+ * @param sync 同步原语对象
+ * @return PPDB_OK 成功，其他值表示错误
+ * 
+ * 仅适用于读写锁模式
+ */
+ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync);
+
+/**
  * @brief 同步文件到磁盘
  * @param filename 文件名
  * @return PPDB_OK 成功，其他值表示错误

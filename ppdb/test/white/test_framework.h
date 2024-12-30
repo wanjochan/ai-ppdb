@@ -98,6 +98,7 @@ void test_start_stats(void);
 void test_end_stats(void);
 void test_get_stats(test_stats_t* stats);
 void test_print_stats(void);
+int test_get_result(void);
 
 // 运行测试
 int run_test_suite(const test_suite_t* suite);
@@ -112,7 +113,8 @@ void cleanup_test_dir(const char* dir_path);
         if (!(condition)) { \
             ppdb_log_error(__VA_ARGS__); \
             test_cleanup_resources(); \
-            return 1; \
+            test_case_failed++; \
+            return; \
         } \
     } while (0)
 
@@ -128,9 +130,12 @@ void cleanup_test_dir(const char* dir_path);
     test_track_resource(ptr, type, __FILE__, __LINE__, cleanup_fn)
 
 // 测试注册宏
-#define TEST_REGISTER(fn) test_register_case(#fn, fn, 0, false, "")
-#define TEST_REGISTER_FULL(fn, timeout, skip, desc) \
-    test_register_case(#fn, fn, timeout, skip, desc)
+#define RUN_TEST(fn) \
+    do { \
+        test_case_count++; \
+        strcpy(current_test_name, #fn); \
+        fn(); \
+    } while (0)
 
 // 测试类型枚举
 typedef enum {

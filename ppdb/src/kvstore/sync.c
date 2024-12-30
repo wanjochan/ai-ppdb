@@ -214,31 +214,42 @@ ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
 
 // 解锁
 ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
-    if (!sync) {
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    int ret;
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
     switch (sync->type) {
         case PPDB_SYNC_MUTEX:
-            ret = pthread_mutex_unlock(&sync->mutex);
-            if (ret != 0) {
-                return PPDB_ERR_MUTEX_ERROR;
-            }
+            pthread_mutex_unlock(&sync->mutex);
             break;
         case PPDB_SYNC_SPINLOCK:
-            atomic_flag_clear(&sync->spinlock);
+            atomic_store(&sync->spinlock, 0);
             break;
         case PPDB_SYNC_RWLOCK:
-            ret = pthread_rwlock_unlock(&sync->rwlock);
-            if (ret != 0) {
-                return PPDB_ERR_MUTEX_ERROR;
-            }
+            pthread_rwlock_unlock(&sync->rwlock);
             break;
         default:
             return PPDB_ERR_INVALID_ARG;
     }
+    
+    return PPDB_OK;
+}
 
+ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    if (sync->type != PPDB_SYNC_RWLOCK) return PPDB_ERR_INVALID_ARG;
+    
+    int err = pthread_rwlock_rdlock(&sync->rwlock);
+    if (err) return PPDB_ERR_LOCK_FAILED;
+    
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    if (sync->type != PPDB_SYNC_RWLOCK) return PPDB_ERR_INVALID_ARG;
+    
+    int err = pthread_rwlock_unlock(&sync->rwlock);
+    if (err) return PPDB_ERR_LOCK_FAILED;
+    
     return PPDB_OK;
 }
 

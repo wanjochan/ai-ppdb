@@ -222,11 +222,15 @@ void test_print_stats(void) {
         / CLOCKS_PER_SEC;
     
     ppdb_log_info("Test Results:");
-    ppdb_log_info("  Total Cases: %d", g_test_state.stats.total_cases);
-    ppdb_log_info("  Passed: %d", g_test_state.stats.passed_cases);
-    ppdb_log_info("  Failed: %d", g_test_state.stats.failed_cases);
+    ppdb_log_info("  Total Cases: %d", test_case_count);
+    ppdb_log_info("  Failed: %d", test_case_failed);
     ppdb_log_info("  Duration: %.2f seconds", duration);
     ppdb_log_info("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
+}
+
+// 获取测试结果
+int test_get_result(void) {
+    return test_case_failed;
 }
 
 // 运行单个测试

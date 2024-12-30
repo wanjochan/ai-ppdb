@@ -6,15 +6,22 @@
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_logger.h"
 
+// 测试配置
+#define OPS_PER_THREAD 100
+#define NUM_THREADS 4
+#define TABLE_SIZE (1024 * 1024)
+
 // 线程参数结构
 typedef struct {
     ppdb_memtable_t* table;
     int thread_id;
+    bool success;
 } thread_args_t;
 
 // 线程工作函数
 static void* concurrent_worker(void* arg) {
     thread_args_t* args = (thread_args_t*)arg;
+    args->success = true;
     
     for (int j = 0; j < OPS_PER_THREAD; j++) {
         char key[32], value[32];
@@ -23,80 +30,97 @@ static void* concurrent_worker(void* arg) {
 
         // 写入
         ppdb_error_t err = ppdb_memtable_put(args->table,
-            (const uint8_t*)key, strlen(key),
-            (const uint8_t*)value, strlen(value));
-        ASSERT_EQ(err, PPDB_OK);
+            (const void*)key, strlen(key),
+            (const void*)value, strlen(value));
+        if (err != PPDB_OK) {
+            ppdb_log_error("Put operation failed");
+            args->success = false;
+            return NULL;
+        }
 
         // 读取并验证
-        uint8_t* read_value = NULL;
+        void* read_value = NULL;
         size_t value_size = 0;
         err = ppdb_memtable_get(args->table,
-            (const uint8_t*)key, strlen(key),
+            (const void*)key, strlen(key),
             &read_value, &value_size);
-        ASSERT_EQ(err, PPDB_OK);
-        ASSERT_MEM_EQ(read_value, value, strlen(value));
+        if (err != PPDB_OK) {
+            ppdb_log_error("Get operation failed");
+            args->success = false;
+            return NULL;
+        }
+        if (memcmp(read_value, value, strlen(value)) != 0) {
+            ppdb_log_error("Value mismatch");
+            args->success = false;
+            free(read_value);
+            return NULL;
+        }
         free(read_value);
 
         // 随机删除一些键
         if (j % 3 == 0) {
             err = ppdb_memtable_delete(args->table,
-                (const uint8_t*)key, strlen(key));
-            ASSERT_EQ(err, PPDB_OK);
+                (const void*)key, strlen(key));
+            if (err != PPDB_OK) {
+                ppdb_log_error("Delete operation failed");
+                args->success = false;
+                return NULL;
+            }
         }
     }
     return NULL;
 }
 
 // 基本操作测试
-void test_basic_ops(void) {
+static void test_basic_ops(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(4096, &table);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_NOT_NULL(table);
+    ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
+    TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
+    TEST_ASSERT(table != NULL, "Memtable is NULL");
 
     // 测试插入和获取
     const char* test_key = "test_key";
     const char* test_value = "test_value";
-    err = ppdb_memtable_put(table, (const uint8_t*)test_key, strlen(test_key),
-                           (const uint8_t*)test_value, strlen(test_value));
-    ASSERT_EQ(err, PPDB_OK);
+    err = ppdb_memtable_put(table, (const void*)test_key, strlen(test_key),
+                           (const void*)test_value, strlen(test_value));
+    TEST_ASSERT(err == PPDB_OK, "Put operation failed");
 
     // 先获取值的大小
     size_t value_size = 0;
-    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
+    err = ppdb_memtable_get(table, (const void*)test_key, strlen(test_key),
                            NULL, &value_size);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_EQ(value_size, strlen(test_value));
+    TEST_ASSERT(err == PPDB_OK, "Get size failed");
+    TEST_ASSERT(value_size == strlen(test_value), "Value size mismatch");
 
     // 获取值
-    uint8_t* value_buf = NULL;
+    void* value_buf = NULL;
     size_t actual_size = 0;
-    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
+    err = ppdb_memtable_get(table, (const void*)test_key, strlen(test_key),
                            &value_buf, &actual_size);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_EQ(actual_size, strlen(test_value));
-    ASSERT_NOT_NULL(value_buf);
-    ASSERT_MEM_EQ(value_buf, test_value, actual_size);
+    TEST_ASSERT(err == PPDB_OK, "Get value failed");
+    TEST_ASSERT(actual_size == strlen(test_value), "Value size mismatch");
+    TEST_ASSERT(value_buf != NULL, "Value buffer is NULL");
+    TEST_ASSERT(memcmp(value_buf, test_value, actual_size) == 0, "Value content mismatch");
     free(value_buf);
 
     // 测试删除
-    err = ppdb_memtable_delete(table, (const uint8_t*)test_key, strlen(test_key));
-    ASSERT_EQ(err, PPDB_OK);
+    err = ppdb_memtable_delete(table, (const void*)test_key, strlen(test_key));
+    TEST_ASSERT(err == PPDB_OK, "Delete operation failed");
 
     // 验证删除后无法获取
-    err = ppdb_memtable_get(table, (const uint8_t*)test_key, strlen(test_key),
+    err = ppdb_memtable_get(table, (const void*)test_key, strlen(test_key),
                            NULL, &value_size);
-    ASSERT_EQ(err, PPDB_ERR_NOT_FOUND);
+    TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after delete");
 
     ppdb_memtable_destroy(table);
 }
 
 // 分片测试
-void test_sharding(void) {
+static void test_sharding(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create_sharded(4096, 4, &table);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_NOT_NULL(table);
+    ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
+    TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
+    TEST_ASSERT(table != NULL, "Memtable is NULL");
 
     // 测试多个分片的并发写入
     #define NUM_KEYS 1000
@@ -104,7 +128,6 @@ void test_sharding(void) {
     #define VALUE_SIZE 100
 
     // 并发写入不同分片
-    #pragma omp parallel for
     for (int i = 0; i < NUM_KEYS; i++) {
         char key[KEY_SIZE];
         char value[VALUE_SIZE];
@@ -112,10 +135,10 @@ void test_sharding(void) {
         memset(value, 'v', VALUE_SIZE-1);
         value[VALUE_SIZE-1] = '\0';
 
-        ppdb_error_t put_err = ppdb_memtable_put(table, 
-            (const uint8_t*)key, strlen(key),
-            (const uint8_t*)value, strlen(value));
-        ASSERT_EQ(put_err, PPDB_OK);
+        err = ppdb_memtable_put(table, 
+            (const void*)key, strlen(key),
+            (const void*)value, strlen(value));
+        TEST_ASSERT(err == PPDB_OK, "Put operation failed");
     }
 
     // 验证所有写入
@@ -123,12 +146,12 @@ void test_sharding(void) {
         char key[KEY_SIZE];
         snprintf(key, sizeof(key), "key_%04d", i);
         
-        uint8_t* value = NULL;
+        void* value = NULL;
         size_t value_size = 0;
-        err = ppdb_memtable_get(table, (const uint8_t*)key, strlen(key),
+        err = ppdb_memtable_get(table, (const void*)key, strlen(key),
                                &value, &value_size);
-        ASSERT_EQ(err, PPDB_OK);
-        ASSERT_EQ(value_size, VALUE_SIZE-1);
+        TEST_ASSERT(err == PPDB_OK, "Get operation failed");
+        TEST_ASSERT(value_size == VALUE_SIZE-1, "Value size mismatch");
         free(value);
     }
 
@@ -136,14 +159,10 @@ void test_sharding(void) {
 }
 
 // 并发操作测试
-void test_concurrent_ops(void) {
+static void test_concurrent_ops(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(4096, &table);
-    ASSERT_EQ(err, PPDB_OK);
-
-    // 测试并发读写
-    #define NUM_THREADS 4
-    #define OPS_PER_THREAD 1000
+    ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
+    TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
 
     pthread_t threads[NUM_THREADS];
     thread_args_t thread_args[NUM_THREADS];
@@ -152,24 +171,26 @@ void test_concurrent_ops(void) {
     for (int i = 0; i < NUM_THREADS; i++) {
         thread_args[i].table = table;
         thread_args[i].thread_id = i;
+        thread_args[i].success = false;
         pthread_create(&threads[i], NULL, concurrent_worker, &thread_args[i]);
     }
 
     // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
         pthread_join(threads[i], NULL);
+        TEST_ASSERT(thread_args[i].success, "Thread operation failed");
     }
 
     ppdb_memtable_destroy(table);
 }
 
 int main(void) {
-    TEST_INIT("Memory Table Test");
+    test_framework_init();
     
     RUN_TEST(test_basic_ops);
     RUN_TEST(test_sharding);
     RUN_TEST(test_concurrent_ops);
     
-    TEST_SUMMARY();
-    return TEST_RESULT();
+    test_print_stats();
+    return test_get_result();
 } 

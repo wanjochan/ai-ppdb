@@ -234,7 +234,7 @@ ppdb_error_t ppdb_skiplist_put(ppdb_skiplist_t* list,
 ppdb_error_t ppdb_skiplist_get(ppdb_skiplist_t* list,
                              const void* key, size_t key_len,
                              void** value, size_t* value_len) {
-    if (!list || !key || !value || !value_len) {
+    if (!list || !key || !value_len) {
         return PPDB_ERR_INVALID_ARG;
     }
 
@@ -252,18 +252,28 @@ ppdb_error_t ppdb_skiplist_get(ppdb_skiplist_t* list,
     current = current->next[0];
 
     // 检查是否找到
-    if (current && list->compare(current->key, current->key_len,
-                                key, key_len) == 0) {
-        *value = aligned_alloc(64, current->value_len);
-        if (!*value) {
-            return PPDB_ERR_OUT_OF_MEMORY;
-        }
-        memcpy(*value, current->value, current->value_len);
+    if (!current || list->compare(current->key, current->key_len,
+                                key, key_len) != 0) {
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    // 如果只需要获取大小
+    if (!value) {
         *value_len = current->value_len;
         return PPDB_OK;
     }
 
-    return PPDB_ERR_NOT_FOUND;
+    // 分配并复制值
+    void* new_value = malloc(current->value_len);
+    if (!new_value) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    memcpy(new_value, current->value, current->value_len);
+    *value = new_value;
+    *value_len = current->value_len;
+
+    return PPDB_OK;
 }
 
 // 删除键值对

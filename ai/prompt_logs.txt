@@ -5,16 +5,21 @@ as warm-up, read INDEX.md and FILES.md in docs/, and PLAN.md in docs/;
 按顺序执行（上一个测试没问题才进入下一个）：
 .\scripts\build_test.bat 42
 .\scripts\build_test.bat sync
+.\scripts\build_test.bat skiplist
+.\scripts\build_test.bat memtable
 
-把问题按严重程度列出来，做一个完整的修改计划，
+把问题按严重程度列出来，做一个完整的修改计划，然后再进行修复。修复后执行的顺序还是从42那个开始
+
+
 然后停下来等我确认后续动作；
-如果没有大的问题，那就把这个bat中的 sync和42两个分支的代码想办法重用一下
-===
+
+
+========
+
 
 ##不是哦，之前构建成功过的，工具都在的，可能只是路径问题
-stop,这些工具都在代码仓的了，你查一下
-
-cosmopolitan底层哦
+##stop,这些工具都在代码仓的了，你查一下
+##cosmopolitan底层哦
 
 ===【尝试构建】
 运行了 ppdb\scripts\build_ppdb.bat之后，

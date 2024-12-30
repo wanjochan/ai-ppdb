@@ -153,7 +153,7 @@ ppdb_error_t ppdb_memtable_put_basic(ppdb_memtable_t* table,
                                     const void* value, size_t value_len) {
     if (!table || !table->basic || !key || !value) return PPDB_ERR_NULL_POINTER;
     if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
-    if (table->is_immutable) return PPDB_ERR_MEMTABLE_IMMUTABLE;
+    if (table->is_immutable) return PPDB_ERR_IMMUTABLE;
 
     // 计算所需总空间
     size_t total_size = key_len + value_len + PPDB_SKIPLIST_NODE_SIZE;
@@ -193,7 +193,7 @@ ppdb_error_t ppdb_memtable_put_basic(ppdb_memtable_t* table,
 ppdb_error_t ppdb_memtable_get_basic(ppdb_memtable_t* table,
                                     const void* key, size_t key_len,
                                     void** value, size_t* value_len) {
-    if (!table || !table->basic || !key || !value || !value_len) return PPDB_ERR_NULL_POINTER;
+    if (!table || !table->basic || !key || !value_len) return PPDB_ERR_NULL_POINTER;
     if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     ppdb_error_t err;
@@ -221,7 +221,7 @@ ppdb_error_t ppdb_memtable_delete_basic(ppdb_memtable_t* table,
                                        const void* key, size_t key_len) {
     if (!table || !table->basic || !key) return PPDB_ERR_NULL_POINTER;
     if (key_len == 0) return PPDB_ERR_INVALID_ARG;
-    if (table->is_immutable) return PPDB_ERR_MEMTABLE_IMMUTABLE;
+    if (table->is_immutable) return PPDB_ERR_IMMUTABLE;
 
     ppdb_error_t err;
     if ((err = ppdb_sync_lock(&table->basic->sync)) != PPDB_OK) {

@@ -68,6 +68,9 @@ typedef struct ppdb_metrics {
     atomic_uint64_t total_bytes;       // 总字节数
     atomic_uint64_t total_keys;        // 总键数
     atomic_uint64_t total_values;      // 总值数
+    atomic_uint64_t bytes_written;     // 写入字节数
+    atomic_uint64_t bytes_read;        // 读取字节数
+    atomic_uint64_t get_miss_count;    // 读取未命中次数
 } ppdb_metrics_t;
 
 // 键值对
