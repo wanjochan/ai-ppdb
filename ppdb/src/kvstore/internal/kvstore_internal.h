@@ -7,7 +7,7 @@
 #include "kvstore_memtable.h"
 #include "kvstore_wal.h"
 #include "kvstore_monitor.h"
-#include "common/sync.h"
+#include "sync.h"
 
 // KVStore内部结构
 struct ppdb_kvstore {

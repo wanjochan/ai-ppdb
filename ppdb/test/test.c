@@ -1,5 +1,5 @@
 #include "test_framework.h"
-#include "ppdb/kvstore/common/sync.h"
+#include "ppdb/src/kvstore/internal/sync.h"
 #include "ppdb/kvstore/skiplist/skiplist.h"
 #include "ppdb/kvstore/memtable/memtable.h"
 #include "ppdb/kvstore/wal/wal.h"
