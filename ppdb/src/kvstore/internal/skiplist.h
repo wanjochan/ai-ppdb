@@ -6,16 +6,6 @@
 #include "ppdb/ppdb_types.h"
 #include "kvstore/internal/sync.h"
 
-// 跳表节点
-typedef struct ppdb_skiplist_node {
-    void* key;                      // 键
-    size_t key_len;                 // 键长度
-    void* value;                    // 值
-    size_t value_len;               // 值长度
-    struct ppdb_skiplist_node** next;  // 后继节点数组
-    int level;                      // 节点层数
-} ppdb_skiplist_node_t;
-
 // 跳表操作函数声明
 
 // 创建跳表
@@ -77,5 +67,17 @@ bool ppdb_skiplist_iterator_valid(ppdb_skiplist_iterator_t* iter);
 // 获取迭代器当前键值对
 ppdb_error_t ppdb_skiplist_iterator_get(ppdb_skiplist_iterator_t* iter,
                                       ppdb_kv_pair_t* pair);
+
+// 无锁操作函数
+ppdb_error_t ppdb_skiplist_put_lockfree(ppdb_skiplist_t* list,
+                                      const void* key, size_t key_len,
+                                      const void* value, size_t value_len);
+
+ppdb_error_t ppdb_skiplist_get_lockfree(ppdb_skiplist_t* list,
+                                      const void* key, size_t key_len,
+                                      void** value, size_t* value_len);
+
+ppdb_error_t ppdb_skiplist_delete_lockfree(ppdb_skiplist_t* list,
+                                         const void* key, size_t key_len);
 
 #endif // PPDB_SKIPLIST_H 

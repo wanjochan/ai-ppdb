@@ -2,7 +2,9 @@
 
 // 公共头文件
 #include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
 #include "ppdb/ppdb_kvstore.h"
+#include "ppdb/ppdb_fs.h"
 
 // 内部头文件
 #include "kvstore/internal/kvstore_types.h"
@@ -13,6 +15,9 @@
 #include "kvstore/internal/kvstore_wal.h"
 #include "kvstore/internal/kvstore_monitor.h"
 #include "kvstore/internal/kvstore_logger.h"
+#include "kvstore/internal/kvstore_impl.h"
+#include "kvstore/internal/sync.h"
+#include "kvstore/internal/metrics.h"
 
 // 创建内存表
 static ppdb_error_t create_memtable(size_t size, ppdb_memtable_t** table, bool use_sharding) {
@@ -200,10 +205,10 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 
     // 写入WAL
     if (store->using_sharded) {
-        err = ppdb_wal_write_lockfree(store->wal, PPDB_WAL_RECORD_PUT, key, key_len, value, value_len);
+        err = ppdb_wal_write_lockfree(store->wal, key, key_len, value, value_len);
     } else {
         ppdb_sync_lock(&store->sync);
-        err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_PUT, key, key_len, value, value_len);
+        err = ppdb_wal_write(store->wal, key, key_len, value, value_len);
         ppdb_sync_unlock(&store->sync);
     }
 
@@ -267,10 +272,10 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
 
     // 写入WAL
     if (store->using_sharded) {
-        err = ppdb_wal_write_lockfree(store->wal, PPDB_WAL_RECORD_DELETE, key, key_len, NULL, 0);
+        err = ppdb_wal_write_lockfree(store->wal, key, key_len, NULL, 0);
     } else {
         ppdb_sync_lock(&store->sync);
-        err = ppdb_wal_write(store->wal, PPDB_WAL_RECORD_DELETE, key, key_len, NULL, 0);
+        err = ppdb_wal_write(store->wal, key, key_len, NULL, 0);
         ppdb_sync_unlock(&store->sync);
     }
 

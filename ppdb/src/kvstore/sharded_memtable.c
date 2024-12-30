@@ -110,7 +110,7 @@ void ppdb_memtable_destroy_sharded(ppdb_memtable_t* table) {
 }
 
 // 写入键值对到分片内存表
-ppdb_error_t ppdb_memtable_put_sharded(ppdb_memtable_t* table,
+ppdb_error_t ppdb_memtable_put_sharded_basic(ppdb_memtable_t* table,
                                       const void* key, size_t key_len,
                                       const void* value, size_t value_len) {
     if (!table || !table->shards || !key || !value) return PPDB_ERR_NULL_POINTER;
@@ -142,7 +142,7 @@ ppdb_error_t ppdb_memtable_put_sharded(ppdb_memtable_t* table,
 }
 
 // 从分片内存表读取键值对
-ppdb_error_t ppdb_memtable_get_sharded(ppdb_memtable_t* table,
+ppdb_error_t ppdb_memtable_get_sharded_basic(ppdb_memtable_t* table,
                                       const void* key, size_t key_len,
                                       void** value, size_t* value_len) {
     if (!table || !table->shards || !key || !value || !value_len) return PPDB_ERR_NULL_POINTER;
@@ -165,7 +165,7 @@ ppdb_error_t ppdb_memtable_get_sharded(ppdb_memtable_t* table,
 }
 
 // 从分片内存表删除键值对
-ppdb_error_t ppdb_memtable_delete_sharded(ppdb_memtable_t* table,
+ppdb_error_t ppdb_memtable_delete_sharded_basic(ppdb_memtable_t* table,
                                          const void* key, size_t key_len) {
     if (!table || !table->shards || !key) return PPDB_ERR_NULL_POINTER;
     if (key_len == 0) return PPDB_ERR_INVALID_ARG;
@@ -186,5 +186,71 @@ ppdb_error_t ppdb_memtable_delete_sharded(ppdb_memtable_t* table,
     }
 
     ppdb_sync_unlock(&shard->sync);
+    return err;
+}
+
+// 无锁写入键值对
+ppdb_error_t ppdb_memtable_put_lockfree_basic(ppdb_memtable_t* table,
+                                            const void* key, size_t key_len,
+                                            const void* value, size_t value_len) {
+    if (!table || !table->shards || !key || !value) return PPDB_ERR_NULL_POINTER;
+    if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
+
+    size_t total_size = key_len + value_len + PPDB_SKIPLIST_NODE_SIZE;
+    if (table->current_size + total_size > table->size_limit) {
+        return PPDB_ERR_MEMTABLE_FULL;
+    }
+
+    // 获取目标分片
+    size_t shard_index = get_shard_index(key, key_len, table->shard_count);
+    ppdb_memtable_shard_t* shard = &table->shards[shard_index];
+
+    // 写入数据（无锁）
+    ppdb_error_t err = ppdb_skiplist_put_lockfree(shard->skiplist,
+                                                key, key_len,
+                                                value, value_len);
+    if (err == PPDB_OK) {
+        atomic_fetch_add(&shard->size, total_size);
+        atomic_fetch_add(&table->current_size, total_size);
+    }
+
+    return err;
+}
+
+// 无锁读取键值对
+ppdb_error_t ppdb_memtable_get_lockfree_basic(ppdb_memtable_t* table,
+                                            const void* key, size_t key_len,
+                                            void** value, size_t* value_len) {
+    if (!table || !table->shards || !key || !value || !value_len) return PPDB_ERR_NULL_POINTER;
+    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
+
+    // 获取目标分片
+    size_t shard_index = get_shard_index(key, key_len, table->shard_count);
+    ppdb_memtable_shard_t* shard = &table->shards[shard_index];
+
+    // 读取数据（无锁）
+    return ppdb_skiplist_get_lockfree(shard->skiplist,
+                                    key, key_len,
+                                    value, value_len);
+}
+
+// 无锁删除键值对
+ppdb_error_t ppdb_memtable_delete_lockfree_basic(ppdb_memtable_t* table,
+                                               const void* key, size_t key_len) {
+    if (!table || !table->shards || !key) return PPDB_ERR_NULL_POINTER;
+    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
+
+    // 获取目标分片
+    size_t shard_index = get_shard_index(key, key_len, table->shard_count);
+    ppdb_memtable_shard_t* shard = &table->shards[shard_index];
+
+    // 删除数据（无锁）
+    ppdb_error_t err = ppdb_skiplist_delete_lockfree(shard->skiplist,
+                                                   key, key_len);
+    if (err == PPDB_OK) {
+        atomic_fetch_sub(&shard->size, key_len + PPDB_SKIPLIST_NODE_SIZE);
+        atomic_fetch_sub(&table->current_size, key_len + PPDB_SKIPLIST_NODE_SIZE);
+    }
+
     return err;
 }

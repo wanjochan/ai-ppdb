@@ -4,12 +4,21 @@
 #include "kvstore/internal/sync.h"
 #include "kvstore/internal/skiplist.h"
 
+// 默认比较函数
+int ppdb_skiplist_default_compare(const void* key1, size_t key1_len,
+                                const void* key2, size_t key2_len) {
+    size_t min_len = key1_len < key2_len ? key1_len : key2_len;
+    int result = memcmp(key1, key2, min_len);
+    if (result != 0) return result;
+    return (key1_len < key2_len) ? -1 : (key1_len > key2_len) ? 1 : 0;
+}
+
 // 内部函数声明
 static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
                                        const void* value, size_t value_len,
                                        int level);
 static void destroy_node(ppdb_skiplist_node_t* node);
-static int random_level(void);
+static int random_level(int max_level);
 
 // 创建跳表
 ppdb_error_t ppdb_skiplist_create(ppdb_skiplist_t** list,
@@ -120,9 +129,9 @@ static void destroy_node(ppdb_skiplist_node_t* node) {
 }
 
 // 生成随机层数
-static int random_level(void) {
+static int random_level(int max_level) {
     int level = 1;
-    while (level < PPDB_SKIPLIST_MAX_LEVEL && ((double)rand() / RAND_MAX) < 0.25) {
+    while (level < max_level && (rand() % 2) == 0) {
         level++;
     }
     return level;
@@ -167,7 +176,7 @@ ppdb_error_t ppdb_skiplist_put(ppdb_skiplist_t* list,
     }
 
     // 创建新节点
-    int level = random_level();
+    int level = random_level(list->max_level);
     ppdb_skiplist_node_t* new_node = create_node(key, key_len, value, value_len, level);
     if (!new_node) {
         return PPDB_ERR_OUT_OF_MEMORY;
@@ -409,5 +418,155 @@ ppdb_error_t ppdb_skiplist_iterator_get(ppdb_skiplist_iterator_t* iter,
     memcpy(pair->value, iter->current->value, iter->current->value_len);
     pair->value_size = iter->current->value_len;
 
+    return PPDB_OK;
+}
+
+// 无锁写入键值对
+ppdb_error_t ppdb_skiplist_put_lockfree(ppdb_skiplist_t* list,
+                                      const void* key, size_t key_len,
+                                      const void* value, size_t value_len) {
+    if (!list || !key || !value || key_len == 0 || value_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // 创建新节点
+    int level = random_level(list->max_level);
+    ppdb_skiplist_node_t* new_node = create_node(key, key_len, value, value_len, level);
+    if (!new_node) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 更新节点指针
+    ppdb_skiplist_node_t* current = list->head;
+    ppdb_skiplist_node_t* update[PPDB_SKIPLIST_MAX_LEVEL];
+    memset(update, 0, sizeof(update));
+
+    // 从最高层开始查找
+    for (int i = level - 1; i >= 0; i--) {
+        while (current->next[i] && 
+               list->compare(current->next[i]->key, current->next[i]->key_len,
+                           key, key_len) < 0) {
+            current = current->next[i];
+        }
+        update[i] = current;
+    }
+
+    // 检查是否已存在相同的键
+    current = current->next[0];
+    if (current && list->compare(current->key, current->key_len,
+                               key, key_len) == 0) {
+        // 更新现有节点的值
+        void* new_value = malloc(value_len);
+        if (!new_value) {
+            destroy_node(new_node);
+            return PPDB_ERR_OUT_OF_MEMORY;
+        }
+
+        memcpy(new_value, value, value_len);
+        free(current->value);
+        current->value = new_value;
+        current->value_len = value_len;
+
+        destroy_node(new_node);
+        return PPDB_OK;
+    }
+
+    // 插入新节点
+    for (int i = 0; i < level; i++) {
+        new_node->next[i] = update[i]->next[i];
+        update[i]->next[i] = new_node;
+    }
+
+    atomic_fetch_add(&list->size, 1);
+    atomic_fetch_add(&list->memory_usage, sizeof(ppdb_skiplist_node_t) + 
+                                        level * sizeof(ppdb_skiplist_node_t*) +
+                                        key_len + value_len);
+    return PPDB_OK;
+}
+
+// 无锁读取键值对
+ppdb_error_t ppdb_skiplist_get_lockfree(ppdb_skiplist_t* list,
+                                      const void* key, size_t key_len,
+                                      void** value, size_t* value_len) {
+    if (!list || !key || !value || !value_len || key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // 从最高层开始查找
+    ppdb_skiplist_node_t* current = list->head;
+    for (int i = list->max_level - 1; i >= 0; i--) {
+        while (current->next[i] && 
+               list->compare(current->next[i]->key, current->next[i]->key_len,
+                           key, key_len) < 0) {
+            current = current->next[i];
+        }
+    }
+
+    // 移动到下一个节点
+    current = current->next[0];
+
+    // 检查是否找到
+    if (current && list->compare(current->key, current->key_len,
+                               key, key_len) == 0) {
+        *value = malloc(current->value_len);
+        if (!*value) {
+            return PPDB_ERR_OUT_OF_MEMORY;
+        }
+
+        memcpy(*value, current->value, current->value_len);
+        *value_len = current->value_len;
+        return PPDB_OK;
+    }
+
+    return PPDB_ERR_NOT_FOUND;
+}
+
+// 无锁删除键值对
+ppdb_error_t ppdb_skiplist_delete_lockfree(ppdb_skiplist_t* list,
+                                         const void* key, size_t key_len) {
+    if (!list || !key || key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // 更新节点指针
+    ppdb_skiplist_node_t* current = list->head;
+    ppdb_skiplist_node_t* update[PPDB_SKIPLIST_MAX_LEVEL];
+    memset(update, 0, sizeof(update));
+
+    // 从最高层开始查找
+    for (int i = list->max_level - 1; i >= 0; i--) {
+        while (current->next[i] && 
+               list->compare(current->next[i]->key, current->next[i]->key_len,
+                           key, key_len) < 0) {
+            current = current->next[i];
+        }
+        update[i] = current;
+    }
+
+    // 移动到目标节点
+    current = current->next[0];
+
+    // 检查是否找到
+    if (!current || list->compare(current->key, current->key_len,
+                                key, key_len) != 0) {
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    // 更新指针
+    for (int i = 0; i < list->max_level; i++) {
+        if (update[i]->next[i] != current) {
+            break;
+        }
+        update[i]->next[i] = current->next[i];
+    }
+
+    size_t node_size = sizeof(ppdb_skiplist_node_t) + 
+                      current->level * sizeof(ppdb_skiplist_node_t*) +
+                      current->key_len + current->value_len;
+
+    atomic_fetch_sub(&list->size, 1);
+    atomic_fetch_sub(&list->memory_usage, node_size);
+
+    destroy_node(current);
     return PPDB_OK;
 }

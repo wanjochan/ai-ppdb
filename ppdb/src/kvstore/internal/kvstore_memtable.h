@@ -27,11 +27,14 @@ ppdb_error_t ppdb_memtable_delete_basic(ppdb_memtable_t* table, const void* key,
 // 分片内存表操作
 ppdb_error_t ppdb_memtable_create_sharded_basic(size_t size_limit, ppdb_memtable_t** table);
 void ppdb_memtable_destroy_sharded(ppdb_memtable_t* table);
-ppdb_error_t ppdb_memtable_put_sharded(ppdb_memtable_t* table, const void* key, size_t key_len, const void* value, size_t value_len);
-ppdb_error_t ppdb_memtable_get_sharded(ppdb_memtable_t* table, const void* key, size_t key_len, void** value, size_t* value_len);
-ppdb_error_t ppdb_memtable_delete_sharded(ppdb_memtable_t* table, const void* key, size_t key_len);
+ppdb_error_t ppdb_memtable_put_sharded_basic(ppdb_memtable_t* table, const void* key, size_t key_len, const void* value, size_t value_len);
+ppdb_error_t ppdb_memtable_get_sharded_basic(ppdb_memtable_t* table, const void* key, size_t key_len, void** value, size_t* value_len);
+ppdb_error_t ppdb_memtable_delete_sharded_basic(ppdb_memtable_t* table, const void* key, size_t key_len);
 
 // 无锁内存表操作
+ppdb_error_t ppdb_memtable_put_lockfree_basic(ppdb_memtable_t* table, const void* key, size_t key_len, const void* value, size_t value_len);
+ppdb_error_t ppdb_memtable_get_lockfree_basic(ppdb_memtable_t* table, const void* key, size_t key_len, void** value, size_t* value_len);
+ppdb_error_t ppdb_memtable_delete_lockfree_basic(ppdb_memtable_t* table, const void* key, size_t key_len);
 ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table, const void* key, size_t key_len, const void* value, size_t value_len);
 ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* table, const void* key, size_t key_len, void** value, size_t* value_len);
 ppdb_error_t ppdb_memtable_delete_lockfree(ppdb_memtable_t* table, const void* key, size_t key_len);
