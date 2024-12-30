@@ -1,7 +1,7 @@
 #ifndef PPDB_TEST_FRAMEWORK_H
 #define PPDB_TEST_FRAMEWORK_H
 
-#include <cosmopolitan.h>
+#include "cosmopolitan.h"
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_logger.h"
