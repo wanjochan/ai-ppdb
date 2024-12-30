@@ -1,5 +1,9 @@
 #include <cosmopolitan.h>
-#include "ppdb/memtable.h"
+#include "test_framework.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "kvstore/internal/kvstore_memtable.h"
 
 #define NUM_THREADS 4
 #define NUM_OPERATIONS 1000

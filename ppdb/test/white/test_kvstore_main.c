@@ -1,8 +1,9 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include <ppdb/kvstore.h>
-#include <ppdb/error.h>
-#include <ppdb/logger.h>
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "kvstore/internal/kvstore_logger.h"
 
 // Declare KVStore test suite
 extern test_suite_t kvstore_suite;

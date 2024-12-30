@@ -1,6 +1,51 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_memtable.h"
+#include "kvstore/internal/kvstore_logger.h"
+
+// 线程参数结构
+typedef struct {
+    ppdb_memtable_t* table;
+    int thread_id;
+} thread_args_t;
+
+// 线程工作函数
+static void* concurrent_worker(void* arg) {
+    thread_args_t* args = (thread_args_t*)arg;
+    
+    for (int j = 0; j < OPS_PER_THREAD; j++) {
+        char key[32], value[32];
+        snprintf(key, sizeof(key), "key_%d_%d", args->thread_id, j);
+        snprintf(value, sizeof(value), "value_%d_%d", args->thread_id, j);
+
+        // 写入
+        ppdb_error_t err = ppdb_memtable_put(args->table,
+            (const uint8_t*)key, strlen(key),
+            (const uint8_t*)value, strlen(value));
+        ASSERT_EQ(err, PPDB_OK);
+
+        // 读取并验证
+        uint8_t* read_value = NULL;
+        size_t value_size = 0;
+        err = ppdb_memtable_get(args->table,
+            (const uint8_t*)key, strlen(key),
+            &read_value, &value_size);
+        ASSERT_EQ(err, PPDB_OK);
+        ASSERT_MEM_EQ(read_value, value, strlen(value));
+        free(read_value);
+
+        // 随机删除一些键
+        if (j % 3 == 0) {
+            err = ppdb_memtable_delete(args->table,
+                (const uint8_t*)key, strlen(key));
+            ASSERT_EQ(err, PPDB_OK);
+        }
+    }
+    return NULL;
+}
 
 // 基本操作测试
 void test_basic_ops(void) {
@@ -101,48 +146,13 @@ void test_concurrent_ops(void) {
     #define OPS_PER_THREAD 1000
 
     pthread_t threads[NUM_THREADS];
-    struct {
-        ppdb_memtable_t* table;
-        int thread_id;
-    } thread_args[NUM_THREADS];
+    thread_args_t thread_args[NUM_THREADS];
 
     // 创建线程进行并发操作
     for (int i = 0; i < NUM_THREADS; i++) {
         thread_args[i].table = table;
         thread_args[i].thread_id = i;
-        pthread_create(&threads[i], NULL, [](void* arg) -> void* {
-            auto* args = (typeof(thread_args))arg;
-            
-            for (int j = 0; j < OPS_PER_THREAD; j++) {
-                char key[32], value[32];
-                snprintf(key, sizeof(key), "key_%d_%d", args->thread_id, j);
-                snprintf(value, sizeof(value), "value_%d_%d", args->thread_id, j);
-
-                // 写入
-                ppdb_error_t err = ppdb_memtable_put(args->table,
-                    (const uint8_t*)key, strlen(key),
-                    (const uint8_t*)value, strlen(value));
-                ASSERT_EQ(err, PPDB_OK);
-
-                // 读取并验证
-                uint8_t* read_value = NULL;
-                size_t value_size = 0;
-                err = ppdb_memtable_get(args->table,
-                    (const uint8_t*)key, strlen(key),
-                    &read_value, &value_size);
-                ASSERT_EQ(err, PPDB_OK);
-                ASSERT_MEM_EQ(read_value, value, strlen(value));
-                free(read_value);
-
-                // 随机删除一些键
-                if (j % 3 == 0) {
-                    err = ppdb_memtable_delete(args->table,
-                        (const uint8_t*)key, strlen(key));
-                    ASSERT_EQ(err, PPDB_OK);
-                }
-            }
-            return NULL;
-        }, &thread_args[i]);
+        pthread_create(&threads[i], NULL, concurrent_worker, &thread_args[i]);
     }
 
     // 等待所有线程完成

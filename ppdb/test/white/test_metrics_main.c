@@ -1,5 +1,8 @@
 #include <cosmopolitan.h>
-#include "test.h"
+#include "test_framework.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "kvstore/internal/metrics.h"
 
 extern void test_metrics_basic();
 extern void test_metrics_concurrent();

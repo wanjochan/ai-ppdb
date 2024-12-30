@@ -1,6 +1,10 @@
 #include <cosmopolitan.h>
-#include "ppdb/memtable.h"
-#include "ppdb/skiplist.h"
+#include "test_framework.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "kvstore/internal/kvstore_memtable.h"
+#include "kvstore/internal/skiplist.h"
 
 // 测试基本迭代
 static void test_basic_iteration(void) {

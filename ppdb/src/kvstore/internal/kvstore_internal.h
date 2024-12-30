@@ -4,10 +4,10 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_kvstore.h"
-#include "kvstore_memtable.h"
-#include "kvstore_wal.h"
-#include "kvstore_monitor.h"
-#include "sync.h"
+#include "kvstore/internal/kvstore_memtable.h"
+#include "kvstore/internal/kvstore_wal.h"
+#include "kvstore/internal/kvstore_monitor.h"
+#include "kvstore/internal/sync.h"
 
 // KVStore内部结构
 struct ppdb_kvstore {

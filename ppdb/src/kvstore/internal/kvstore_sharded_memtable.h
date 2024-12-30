@@ -3,7 +3,7 @@
 
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
-#include "kvstore_memtable.h"
+#include "kvstore/internal/kvstore_memtable.h"
 
 // 分片内存表类型
 typedef struct ppdb_sharded_memtable ppdb_sharded_memtable_t;

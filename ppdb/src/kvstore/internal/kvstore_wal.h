@@ -4,10 +4,10 @@
 #include "ppdb/ppdb_types.h"
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_kvstore.h"
-#include "kvstore_types.h"
-#include "sync.h"
-#include "metrics.h"
-#include "kvstore_memtable.h"
+#include "kvstore/internal/kvstore_types.h"
+#include "kvstore/internal/sync.h"
+#include "kvstore/internal/metrics.h"
+#include "kvstore/internal/kvstore_memtable.h"
 
 // WAL 魔数
 #define WAL_MAGIC 0x4C415750  // "PWAL"

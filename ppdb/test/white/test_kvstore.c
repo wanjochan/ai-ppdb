@@ -1,9 +1,18 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include <ppdb/kvstore.h>
-#include <ppdb/error.h>
-#include <ppdb/logger.h>
-#include <ppdb/fs.h>
+#include "test_plan.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "kvstore/internal/kvstore_internal.h"
+#include "kvstore/internal/kvstore_logger.h"
+#include "kvstore/internal/kvstore_fs.h"
+#include "kvstore/internal/kvstore_memtable.h"
+#include "kvstore/internal/kvstore_wal.h"
+
+#define TEST_DIR "./tmp_test_kvstore"
+#define MAX_KEY_SIZE 64
+#define MAX_VALUE_SIZE 128
 
 // Forward declaration of worker thread function
 static void* concurrent_worker(void* arg);
@@ -21,7 +30,7 @@ static int test_kvstore_create_close(void) {
     cleanup_test_dir(test_dir); // Then clean up parent directory
     
     // Wait for resources to be released
-    usleep(1000000);  // 1000ms
+    microsleep(1000000);  // 1000ms
     
     // Create KVStore
     ppdb_log_info("Creating KVStore configuration...");
@@ -30,8 +39,7 @@ static int test_kvstore_create_close(void) {
         .memtable_size = 4096,
         .mode = PPDB_MODE_LOCKED
     };
-    strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
-    config.dir_path[sizeof(config.dir_path) - 1] = '\0';  // Ensure null termination
+    strlcpy(config.dir_path, test_dir, sizeof(config.dir_path));
     
     ppdb_log_info("Creating KVStore instance...");
     ppdb_kvstore_t* store = NULL;
@@ -40,7 +48,7 @@ static int test_kvstore_create_close(void) {
     TEST_ASSERT(store != NULL, "KVStore pointer is NULL");
     
     // Wait for initialization to complete
-    usleep(1000000);  // 1000ms
+    microsleep(1000000);  // 1000ms
     
     // Verify directories exist
     ppdb_log_info("Verifying directories...");
@@ -48,7 +56,7 @@ static int test_kvstore_create_close(void) {
     TEST_ASSERT(ppdb_fs_dir_exists(wal_dir), "WAL directory does not exist");
     
     // Wait for WAL initialization
-    usleep(1000000);  // 1000ms
+    microsleep(1000000);  // 1000ms
     
     // Close KVStore
     ppdb_log_info("Closing KVStore...");
@@ -58,7 +66,7 @@ static int test_kvstore_create_close(void) {
     }
     
     // Wait for resources to be released
-    usleep(2000000);  // 2000ms
+    microsleep(2000000);  // 2000ms
     
     // Clean up test directories
     ppdb_log_info("Final cleanup of test directories...");
@@ -66,7 +74,7 @@ static int test_kvstore_create_close(void) {
     cleanup_test_dir(test_dir); // Then clean up parent directory
     
     // Wait for cleanup to complete
-    usleep(1000000);  // 1000ms
+    microsleep(1000000);  // 1000ms
     
     ppdb_log_info("Test completed successfully");
     return 0;
@@ -82,15 +90,14 @@ static ppdb_kvstore_t* create_test_kvstore(const char* test_dir, ppdb_mode_t mod
     cleanup_test_dir(test_dir); // 再清理父目录
     
     // 等待一小段时间确保所有资源都被释放
-    usleep(200000);  // 200ms
+    microsleep(200000);  // 200ms
     
     ppdb_kvstore_config_t config = {
         .dir_path = {0},
         .memtable_size = 4096,
         .mode = mode
     };
-    strncpy(config.dir_path, test_dir, sizeof(config.dir_path) - 1);
-    config.dir_path[sizeof(config.dir_path) - 1] = '\0';  // Ensure null termination
+    strlcpy(config.dir_path, test_dir, sizeof(config.dir_path));
     
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_create(&config, &store);
@@ -104,7 +111,7 @@ static ppdb_kvstore_t* create_test_kvstore(const char* test_dir, ppdb_mode_t mod
     }
 
     // 等待初始化完成
-    usleep(200000);  // 200ms
+    microsleep(200000);  // 200ms
     return store;
 }
 
@@ -315,19 +322,6 @@ test_suite_t kvstore_suite = {
     },
     .num_cases = 4
 };
-
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
-#include "test_framework.h"
-#include "test_plan.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_kvstore.h"
-#include "src/kvstore/internal/kvstore_internal.h"
-
-#define TEST_DIR "./tmp_test_kvstore"
-#define MAX_KEY_SIZE 64
-#define MAX_VALUE_SIZE 128
 
 // kvstore资源清理函数
 static void cleanup_kvstore(void* ptr) {
@@ -540,4 +534,18 @@ void register_kvstore_tests(void) {
     };
     
     run_test_suite(&suite);
+}
+
+static void generate_test_data(char* key, size_t key_size, 
+                             char* value, size_t value_size,
+                             int thread_id, int op_id) {
+    strlcpy(key, "key_", key_size);
+    strlcat(key, tostring(thread_id), key_size);
+    strlcat(key, "_", key_size);
+    strlcat(key, tostring(op_id), key_size);
+    
+    strlcpy(value, "value_", value_size);
+    strlcat(value, tostring(thread_id), value_size);
+    strlcat(value, "_", value_size);
+    strlcat(value, tostring(op_id), value_size);
 }

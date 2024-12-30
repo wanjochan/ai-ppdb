@@ -1,10 +1,12 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include <ppdb/wal.h>
-#include <ppdb/error.h>
-#include <ppdb/logger.h>
-#include <ppdb/fs.h>
-#include <ppdb/memtable.h>
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "kvstore/internal/kvstore_wal.h"
+#include "kvstore/internal/kvstore_memtable.h"
+#include "kvstore/internal/kvstore_logger.h"
+#include "kvstore/internal/kvstore_fs.h"
 
 #define NUM_THREADS 4
 #define NUM_OPERATIONS 1000

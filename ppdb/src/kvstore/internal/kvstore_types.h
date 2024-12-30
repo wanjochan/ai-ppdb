@@ -1,11 +1,15 @@
 #ifndef PPDB_KVSTORE_TYPES_H
 #define PPDB_KVSTORE_TYPES_H
 
+#include <cosmopolitan.h>
 #include "ppdb/ppdb_types.h"
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_kvstore.h"
-#include "kvstore/internal/sync.h"
-#include "kvstore/internal/skiplist.h"
+
+// Forward declarations
+typedef struct ppdb_sync ppdb_sync_t;
+typedef struct ppdb_skiplist ppdb_skiplist_t;
+typedef struct ppdb_metrics ppdb_metrics_t;
 
 // 内存表类型枚举
 typedef enum ppdb_memtable_type {

@@ -3,8 +3,10 @@
 
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
-#include "ppdb/src/kvstore/internal/sync.h"
-#include "ppdb/src/kvstore/internal/skiplist.h"
+#include "ppdb/ppdb_types.h"
+#include "kvstore/internal/kvstore_types.h"
+#include "kvstore/internal/sync.h"
+#include "kvstore/internal/skiplist.h"
 
 // 内存表类型
 typedef enum ppdb_memtable_type {

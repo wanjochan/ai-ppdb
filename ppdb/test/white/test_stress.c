@@ -1,12 +1,10 @@
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
-#include <pthread.h>
-#include <time.h>
+#include <cosmopolitan.h>
 #include "test_framework.h"
 #include "test_plan.h"
-#include "ppdb/kvstore.h"
-#include "ppdb/logger.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "kvstore/internal/kvstore_logger.h"
 
 // 压力测试配置
 #define STRESS_TEST_DIR "./tmp_test_stress"
@@ -39,7 +37,7 @@ typedef struct {
 // 生成随机数据
 static void generate_random_data(char* buf, size_t size) {
     for (size_t i = 0; i < size - 1; i++) {
-        buf[i] = 'a' + (rand() % 26);
+        buf[i] = 'a' + (random() % 26);
     }
     buf[size - 1] = '\0';
 }
@@ -49,14 +47,24 @@ static void generate_test_data(char* key, size_t key_size,
                              char* value, size_t value_size,
                              int thread_id, int op_id) {
     if (key_size <= SMALL_KEY_SIZE) {
-        snprintf(key, key_size, "key_%d_%d", thread_id, op_id);
+        strlcpy(key, "key_", key_size);
+        strlcat(key, tostring(thread_id), key_size);
+        strlcat(key, "_", key_size);
+        strlcat(key, tostring(op_id), key_size);
     } else {
         generate_random_data(key, key_size);
-        snprintf(key, 20, "key_%d_%d_", thread_id, op_id); // 保留前缀
+        strlcpy(key, "key_", 20);
+        strlcat(key, tostring(thread_id), 20);
+        strlcat(key, "_", 20);
+        strlcat(key, tostring(op_id), 20);
+        strlcat(key, "_", 20);
     }
     
     if (value_size <= SMALL_VALUE_SIZE) {
-        snprintf(value, value_size, "value_%d_%d", thread_id, op_id);
+        strlcpy(value, "value_", value_size);
+        strlcat(value, tostring(thread_id), value_size);
+        strlcat(value, "_", value_size);
+        strlcat(value, tostring(op_id), value_size);
     } else {
         generate_random_data(value, value_size);
     }

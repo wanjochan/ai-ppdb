@@ -11,6 +11,7 @@
 
 ### KVStore 模块 (src/kvstore/)
 - `kvstore.c` - KVStore 核心实现，管理存储引擎的主要功能
+- `kvstore_impl.c` - KVStore 内部实现，包含具体的存储操作实现
 - `memtable.c` - 内存表基础实现
 - `sharded_memtable.c` - 分片内存表实现，用于提高并发性能
 - `skiplist.c` - 无锁跳表实现，作为内存表的基础数据结构
@@ -71,31 +72,35 @@
 ### 核心组件依赖关系
 1. KVStore 核心
    ```
-   ppdb_kvstore.h
-   ├── ppdb_types.h
-   └── kvstore_internal.h
-       ├── kvstore_types.h
-       ├── sync.h
-       ├── kvstore_memtable.h
-       ├── kvstore_wal.h
-       └── kvstore_monitor.h
+   ppdb/ppdb_kvstore.h
+   ├── ppdb/ppdb_types.h
+   └── kvstore/internal/kvstore_internal.h
+       ├── kvstore/internal/kvstore_types.h
+       ├── kvstore/internal/sync.h
+       ├── kvstore/internal/kvstore_memtable.h
+       ├── kvstore/internal/kvstore_wal.h
+       └── kvstore/internal/kvstore_monitor.h
    ```
 
 2. 内存管理
    ```
-   memtable.h
-   ├── ppdb_types.h
-   ├── sync.h
-   ├── skiplist.h
-   └── sharded_memtable.h
+   kvstore/internal/kvstore_memtable.h
+   ├── ppdb/ppdb_types.h
+   ├── ppdb/ppdb_error.h
+   ├── kvstore/internal/kvstore_types.h
+   ├── kvstore/internal/sync.h
+   ├── kvstore/internal/skiplist.h
+   └── kvstore/internal/kvstore_sharded_memtable.h
    ```
 
 3. 持久化
    ```
-   wal.h
-   ├── ppdb_types.h
-   ├── sync.h
-   └── fs.h
+   kvstore/internal/kvstore_wal.h
+   ├── ppdb/ppdb_types.h
+   ├── ppdb/ppdb_error.h
+   ├── kvstore/internal/kvstore_types.h
+   ├── kvstore/internal/sync.h
+   └── kvstore/internal/kvstore_fs.h
    ```
 
 ### 通用组件依赖

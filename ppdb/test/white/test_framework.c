@@ -1,10 +1,9 @@
+#include <cosmopolitan.h>
 #include "test_framework.h"
-#include <ppdb/logger.h>
-#include <ppdb/fs.h>
-#include <stdlib.h>
-#include <string.h>
-#include <signal.h>
-#include <time.h>
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "kvstore/internal/kvstore_logger.h"
+#include "kvstore/internal/kvstore_fs.h"
 
 #define MAX_RESOURCES 1024
 #define DEFAULT_TIMEOUT 30
@@ -25,7 +24,7 @@ static struct {
 // 超时信号处理
 static void timeout_handler(int signo) {
     (void)signo;
-    longjmp(g_test_state.timeout_jmp, 1);
+    siglongjmp(g_test_state.timeout_jmp, 1);
 }
 
 // 初始化测试框架
@@ -53,7 +52,7 @@ void test_framework_init(void) {
     g_test_state.resource_count = 0;
     
     // 设置超时处理
-    signal(SIGALRM, timeout_handler);
+    sigaction(SIGALRM, &(struct sigaction){.sa_handler = timeout_handler}, NULL);
     
     g_test_state.initialized = true;
 }
@@ -85,15 +84,15 @@ void test_set_error_injection(const error_injection_t* config) {
 void test_inject_error(void) {
     if (!g_test_state.error_injection.enabled) return;
     
-    float r = (float)rand() / RAND_MAX;
+    float r = (float)random() / RAND_MAX;
     
     if (r < g_test_state.error_injection.crash_probability) {
-        raise(SIGABRT);
+        abort();
     }
     
     if (r < g_test_state.error_injection.delay_probability) {
-        int delay = rand() % g_test_state.error_injection.max_delay_ms;
-        usleep(delay * 1000);
+        int delay = random() % g_test_state.error_injection.max_delay_ms;
+        microsleep(delay * 1000);
     }
 }
 
@@ -227,8 +226,24 @@ void cleanup_test_dir(const char* dir_path) {
     if (!dir_path) return;
     
     char cmd[256];
-    snprintf(cmd, sizeof(cmd), "rm -rf %s", dir_path);
+    strlcpy(cmd, "rm -rf ", sizeof(cmd));
+    strlcat(cmd, dir_path, sizeof(cmd));
     system(cmd);
     
     mkdir(dir_path, 0755);
+}
+
+void test_case_start(const char* test_name) {
+    strlcpy(current_test_name, test_name, sizeof(current_test_name));
+    strlcpy(current_test_result, "PASS", sizeof(current_test_result));
+    test_case_count++;
+}
+
+void test_case_fail(const char* fmt, ...) {
+    strlcpy(current_test_result, "FAIL", sizeof(current_test_result));
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(current_test_message, sizeof(current_test_message), fmt, args);
+    va_end(args);
+    test_case_failed++;
 }

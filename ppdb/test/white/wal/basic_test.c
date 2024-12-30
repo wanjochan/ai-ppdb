@@ -1,14 +1,14 @@
-#include "ppdb/memtable.h"
-#include "ppdb/wal.h"
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+#include <cosmopolitan.h>
+#include "test_framework.h"
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
+#include "kvstore/internal/kvstore_wal.h"
+#include "kvstore/internal/kvstore_memtable.h"
 
 // 测试基本写入和恢复
 static void test_basic_write_recover() {
-    printf("Running test_basic_write_recover...\n");
+    ppdb_log_info("Running test_basic_write_recover...");
 
     // 创建 WAL
     ppdb_wal_config_t config = {
@@ -51,12 +51,12 @@ static void test_basic_write_recover() {
 
     ppdb_memtable_destroy(table);
     ppdb_wal_destroy(wal);
-    printf("test_basic_write_recover passed\n");
+    ppdb_log_info("test_basic_write_recover passed");
 }
 
 // 测试文件分段
 static void test_segment_switch() {
-    printf("Running test_segment_switch...\n");
+    ppdb_log_info("Running test_segment_switch...");
 
     // 创建 WAL，使用小的段大小
     ppdb_wal_config_t config = {
@@ -70,8 +70,10 @@ static void test_segment_switch() {
     // 写入足够多的数据触发分段
     char key[32], value[32];
     for (int i = 0; i < 10; i++) {
-        snprintf(key, sizeof(key), "key%d", i);
-        snprintf(value, sizeof(value), "value%d", i);
+        strlcpy(key, "key", sizeof(key));
+        strlcat(key, tostring(i), sizeof(key));
+        strlcpy(value, "value", sizeof(value));
+        strlcat(value, tostring(i), sizeof(value));
         assert(ppdb_wal_write(wal, PPDB_WAL_PUT,
             (uint8_t*)key, strlen(key),
             (uint8_t*)value, strlen(value)) == PPDB_OK);
@@ -85,8 +87,10 @@ static void test_segment_switch() {
     // 验证所有数据都正确恢复
     uint8_t buf[256];
     for (int i = 0; i < 10; i++) {
-        snprintf(key, sizeof(key), "key%d", i);
-        snprintf(value, sizeof(value), "value%d", i);
+        strlcpy(key, "key", sizeof(key));
+        strlcat(key, tostring(i), sizeof(key));
+        strlcpy(value, "value", sizeof(value));
+        strlcat(value, tostring(i), sizeof(value));
         size_t len = sizeof(buf);
         assert(ppdb_memtable_get(table, (uint8_t*)key, strlen(key), buf, &len) == PPDB_OK);
         assert(len == strlen(value));
@@ -95,7 +99,7 @@ static void test_segment_switch() {
 
     ppdb_memtable_destroy(table);
     ppdb_wal_destroy(wal);
-    printf("test_segment_switch passed\n");
+    ppdb_log_info("test_segment_switch passed");
 }
 
 // 测试崩溃恢复
