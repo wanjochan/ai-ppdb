@@ -2,7 +2,7 @@
 
 // 公共头文件
 #include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_logger.h"
+#include "kvstore/internal/kvstore_logger.h"
 
 // 内部头文件
 #include "kvstore/internal/kvstore_fs.h"
@@ -51,12 +51,12 @@ ppdb_error_t ppdb_remove_directory(const char* path) {
     }
 
     struct dirent* entry;
-    char full_path[MAX_PATH_LENGTH];
+    char full_path[MAXPATHLEN];
     ppdb_error_t err = PPDB_OK;
     size_t path_len = strlen(path);
 
     // Safety check: ensure base path will not overflow
-    if (path_len >= MAX_PATH_LENGTH - 2) {  // Reserve "/" and null terminator
+    if (path_len >= MAXPATHLEN - 2) {  // Reserve "/" and null terminator
         ppdb_log_error("Base path too long: %s", path);
         closedir(dir);
         return PPDB_ERR_PATH_TOO_LONG;
@@ -69,7 +69,7 @@ ppdb_error_t ppdb_remove_directory(const char* path) {
 
         size_t name_len = strlen(entry->d_name);
         // Check full path length
-        if (path_len + name_len + 2 > MAX_PATH_LENGTH) {  // +2 for "/" and null terminator
+        if (path_len + name_len + 2 > MAXPATHLEN) {  // +2 for "/" and null terminator
             ppdb_log_error("Path would be too long: %s/%s", path, entry->d_name);
             err = PPDB_ERR_PATH_TOO_LONG;
             break;

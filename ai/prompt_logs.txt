@@ -1,20 +1,25 @@
+review INDEX.md and FILES.md in docs/, and PLAN.md in docs/
+
+
+
 那现在运行一下
 cd ppdb\scripts && build_ppdb.bat
 把简单的问题先修复，而复杂的问题先调整计划到PLAN.md
 注意：构建工具都在的，可能目录不对调整一下就行的
 
+结合build_ppdb.bat找出代码中引用sync.h不正确的地方
 
 =====
 
+
 as warm-up, in ppdb/, you need to review all .md in docs/ and .c in src/;
-从底层往上每一层分析出可能的严重问题并列举更新到合适的文档;
 
 run scripts\build_ppdb.bat and do fix after detail planned;
 during this process, if any key progress or plan changed, you MUST update related documents  (for example, update the PLAN.md etc);
 ALWAYS plan before action to save time；
 新增文件或函数前可以就近先找一下，有可能已经写好了只是路径或位置问题（但也要确认不是恰巧同名）；
 我们用的是cosompolitan跨平台底层；
-
+构建工具都在的，可能目录不对调整一下就行的
 
 # warmup
 
