@@ -38,7 +38,7 @@ ppdb_error_t ppdb_monitor_create(ppdb_monitor_t** monitor) {
     if (!monitor) return PPDB_ERR_NULL_POINTER;
 
     ppdb_monitor_t* new_monitor = (ppdb_monitor_t*)calloc(1, sizeof(ppdb_monitor_t));
-    if (!new_monitor) return PPDB_ERR_NO_MEMORY;
+    if (!new_monitor) return PPDB_ERR_OUT_OF_MEMORY;
 
     ppdb_metrics_init(&new_monitor->current);
     ppdb_metrics_init(&new_monitor->previous);

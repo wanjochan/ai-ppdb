@@ -33,7 +33,7 @@ ppdb_error_t ppdb_memtable_create_sharded_basic(size_t size_limit, ppdb_memtable
 
     // 分配内存表结构
     ppdb_memtable_t* new_table = aligned_alloc(64, sizeof(ppdb_memtable_t));
-    if (!new_table) return PPDB_ERR_NO_MEMORY;
+    if (!new_table) return PPDB_ERR_OUT_OF_MEMORY;
 
     // 初始化基本字段
     new_table->type = PPDB_MEMTABLE_SHARDED;
@@ -47,7 +47,7 @@ ppdb_error_t ppdb_memtable_create_sharded_basic(size_t size_limit, ppdb_memtable
     new_table->shards = calloc(new_table->shard_count, sizeof(ppdb_memtable_shard_t));
     if (!new_table->shards) {
         free(new_table);
-        return PPDB_ERR_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     // 初始化每个分片
@@ -58,7 +58,10 @@ ppdb_error_t ppdb_memtable_create_sharded_basic(size_t size_limit, ppdb_memtable
 
     for (size_t i = 0; i < new_table->shard_count; i++) {
         // 创建分片的跳表
-        ppdb_error_t err = ppdb_skiplist_create(&new_table->shards[i].skiplist);
+        ppdb_error_t err = ppdb_skiplist_create(&new_table->shards[i].skiplist,
+                                              PPDB_SKIPLIST_MAX_LEVEL,
+                                              ppdb_skiplist_default_compare,
+                                              &sync_config);
         if (err != PPDB_OK) {
             // 清理已创建的分片
             for (size_t j = 0; j < i; j++) {
@@ -111,7 +114,7 @@ ppdb_error_t ppdb_memtable_put_sharded(ppdb_memtable_t* table,
                                       const void* key, size_t key_len,
                                       const void* value, size_t value_len) {
     if (!table || !table->shards || !key || !value) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARGUMENT;
+    if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
 
     size_t total_size = key_len + value_len + PPDB_SKIPLIST_NODE_SIZE;
     if (table->current_size + total_size > table->size_limit) {
@@ -143,7 +146,7 @@ ppdb_error_t ppdb_memtable_get_sharded(ppdb_memtable_t* table,
                                       const void* key, size_t key_len,
                                       void** value, size_t* value_len) {
     if (!table || !table->shards || !key || !value || !value_len) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0) return PPDB_ERR_INVALID_ARGUMENT;
+    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     // 获取目标分片
     size_t shard_index = get_shard_index(key, key_len, table->shard_count);
@@ -165,7 +168,7 @@ ppdb_error_t ppdb_memtable_get_sharded(ppdb_memtable_t* table,
 ppdb_error_t ppdb_memtable_delete_sharded(ppdb_memtable_t* table,
                                          const void* key, size_t key_len) {
     if (!table || !table->shards || !key) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0) return PPDB_ERR_INVALID_ARGUMENT;
+    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     // 获取目标分片
     size_t shard_index = get_shard_index(key, key_len, table->shard_count);

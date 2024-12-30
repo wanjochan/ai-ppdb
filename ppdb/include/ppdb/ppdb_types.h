@@ -116,6 +116,14 @@ typedef struct ppdb_memtable_shard {
     atomic_size_t size;          // 分片大小
 } ppdb_memtable_shard_t;
 
+// 基础内存表
+typedef struct ppdb_memtable_basic {
+    ppdb_skiplist_t* skiplist;   // 跳表
+    ppdb_sync_t sync;            // 同步原语
+    size_t used;                 // 已使用大小
+    size_t size;                 // 总大小
+} ppdb_memtable_basic_t;
+
 // 内存表
 typedef struct ppdb_memtable {
     ppdb_memtable_type_t type;      // 内存表类型
@@ -123,20 +131,12 @@ typedef struct ppdb_memtable {
     atomic_size_t current_size;     // 当前大小
     size_t shard_count;             // 分片数量
     union {
-        ppdb_skiplist_t* basic;     // 基础版本
-        ppdb_memtable_shard_t* shards;  // 分片版本
+        ppdb_memtable_basic_t* basic;     // 基础版本
+        ppdb_memtable_shard_t* shards;    // 分片版本
     };
     ppdb_metrics_t metrics;         // 性能指标
     bool is_immutable;              // 是否不可变
 } ppdb_memtable_t;
-
-// 内存表迭代器
-typedef struct ppdb_memtable_iterator {
-    ppdb_memtable_t* table;        // 内存表
-    ppdb_skiplist_iterator_t* it;  // 跳表迭代器
-    bool valid;                    // 是否有效
-    ppdb_kv_pair_t current_pair;   // 当前键值对
-} ppdb_memtable_iterator_t;
 
 // 跳表迭代器
 typedef struct ppdb_skiplist_iterator {
@@ -146,5 +146,13 @@ typedef struct ppdb_skiplist_iterator {
     ppdb_kv_pair_t current_pair;   // 当前键值对
     ppdb_sync_t sync;              // 同步原语
 } ppdb_skiplist_iterator_t;
+
+// 内存表迭代器
+typedef struct ppdb_memtable_iterator {
+    ppdb_memtable_t* table;        // 内存表
+    ppdb_skiplist_iterator_t* it;  // 跳表迭代器
+    bool valid;                    // 是否有效
+    ppdb_kv_pair_t current_pair;   // 当前键值对
+} ppdb_memtable_iterator_t;
 
 #endif // PPDB_TYPES_H 

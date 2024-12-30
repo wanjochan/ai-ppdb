@@ -47,7 +47,7 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
     // 分配内存
     ppdb_kvstore_t* new_store = (ppdb_kvstore_t*)calloc(1, sizeof(ppdb_kvstore_t));
     if (!new_store) {
-        return PPDB_ERR_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     // 初始化基本字段

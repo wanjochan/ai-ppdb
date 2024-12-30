@@ -21,13 +21,13 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
 
     // 分配内存表结构
     ppdb_memtable_t* new_table = aligned_alloc(64, sizeof(ppdb_memtable_t));
-    if (!new_table) return PPDB_ERR_NO_MEMORY;
+    if (!new_table) return PPDB_ERR_OUT_OF_MEMORY;
 
     // 分配基础内存表结构
     new_table->basic = aligned_alloc(64, sizeof(ppdb_memtable_basic_t));
     if (!new_table->basic) {
         free(new_table);
-        return PPDB_ERR_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     // 初始化基础结构
@@ -43,8 +43,17 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     new_table->basic->used = 0;
     new_table->basic->size = size_limit;
 
+    // 初始化同步原语
+    ppdb_sync_config_t sync_config = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000
+    };
+
     // 创建跳表
-    ppdb_error_t err = ppdb_skiplist_create(&new_table->basic->skiplist);
+    ppdb_error_t err = ppdb_skiplist_create(&new_table->basic->skiplist,
+                                          PPDB_SKIPLIST_MAX_LEVEL,
+                                          ppdb_skiplist_default_compare,
+                                          &sync_config);
     if (err != PPDB_OK) {
         free(new_table->basic);
         free(new_table);
@@ -52,10 +61,6 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     }
 
     // 初始化同步原语
-    ppdb_sync_config_t sync_config = {
-        .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000
-    };
     err = ppdb_sync_init(&new_table->basic->sync, &sync_config);
     if (err != PPDB_OK) {
         ppdb_skiplist_destroy(new_table->basic->skiplist);
@@ -83,7 +88,7 @@ ppdb_error_t ppdb_memtable_put_basic(ppdb_memtable_t* table,
                                     const void* key, size_t key_len,
                                     const void* value, size_t value_len) {
     if (!table || !table->basic || !key || !value) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARGUMENT;
+    if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
 
     size_t total_size = key_len + value_len + PPDB_SKIPLIST_NODE_SIZE;
     if (table->basic->used + total_size > table->basic->size) {
@@ -109,7 +114,7 @@ ppdb_error_t ppdb_memtable_get_basic(ppdb_memtable_t* table,
                                     const void* key, size_t key_len,
                                     void** value, size_t* value_len) {
     if (!table || !table->basic || !key || !value || !value_len) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0) return PPDB_ERR_INVALID_ARGUMENT;
+    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     ppdb_sync_lock(&table->basic->sync);
 
@@ -125,7 +130,7 @@ ppdb_error_t ppdb_memtable_get_basic(ppdb_memtable_t* table,
 ppdb_error_t ppdb_memtable_delete_basic(ppdb_memtable_t* table,
                                        const void* key, size_t key_len) {
     if (!table || !table->basic || !key) return PPDB_ERR_NULL_POINTER;
-    if (key_len == 0) return PPDB_ERR_INVALID_ARGUMENT;
+    if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     ppdb_sync_lock(&table->basic->sync);
 

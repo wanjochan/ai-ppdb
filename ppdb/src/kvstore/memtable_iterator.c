@@ -22,12 +22,19 @@ ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table,
     if (!table || !iter) return PPDB_ERR_INVALID_ARG;
     
     ppdb_memtable_iterator_t* new_iter = malloc(sizeof(ppdb_memtable_iterator_t));
-    if (!new_iter) return PPDB_ERR_NO_MEMORY;
+    if (!new_iter) return PPDB_ERR_OUT_OF_MEMORY;
 
     new_iter->table = table;
     new_iter->skiplist_iter = NULL;
 
-    ppdb_error_t err = ppdb_skiplist_iterator_create(table->skiplist, &new_iter->skiplist_iter);
+    ppdb_sync_config_t sync_config = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000
+    };
+
+    ppdb_error_t err = ppdb_skiplist_iterator_create(table->skiplist,
+                                                   &new_iter->skiplist_iter,
+                                                   &sync_config);
     if (err != PPDB_OK) {
         free(new_iter);
         return err;

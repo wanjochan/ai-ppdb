@@ -11,7 +11,7 @@
 ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config);
 
 // 销毁同步原语
-void ppdb_sync_destroy(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync);
 
 // 加锁
 ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync);
@@ -20,12 +20,15 @@ ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync);
 bool ppdb_sync_try_lock(ppdb_sync_t* sync);
 
 // 解锁
-void ppdb_sync_unlock(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync);
 
 // 同步文件
 ppdb_error_t ppdb_sync_file(const char* filename);
 
 // 同步文件描述符
 ppdb_error_t ppdb_sync_fd(int fd);
+
+// 哈希函数
+uint32_t ppdb_sync_hash(const void* data, size_t len);
 
 #endif // PPDB_SYNC_H

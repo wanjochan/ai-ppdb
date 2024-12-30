@@ -48,14 +48,6 @@ int ppdb_skiplist_default_compare(const void* key1, size_t key1_len,
                                 const void* key2, size_t key2_len);
 
 // 迭代器相关操作
-typedef struct ppdb_skiplist_iterator {
-    ppdb_skiplist_t* list;          // 跳表指针
-    ppdb_skiplist_node_t* current;  // 当前节点
-    ppdb_sync_t sync;               // 同步原语
-    bool valid;                     // 是否有效
-    ppdb_kv_pair_t current_pair;    // 当前键值对
-} ppdb_skiplist_iterator_t;
-
 // 创建迭代器
 ppdb_error_t ppdb_skiplist_iterator_create(ppdb_skiplist_t* list,
                                          ppdb_skiplist_iterator_t** iter,
