@@ -31,7 +31,15 @@ typedef enum ppdb_error {
     PPDB_ERR_BUSY,                  // 忙
     PPDB_ERR_TEMPORARY_FAILURE,     // 临时失败
     PPDB_ERR_PROTOCOL,              // 协议错误
-    PPDB_ERR_UNKNOWN                // 未知错误
+    PPDB_ERR_FULL,                  // 已满
+    PPDB_ERR_EMPTY,                 // 为空
+    PPDB_ERR_INTERNAL,              // 内部错误
+    PPDB_ERR_MUTEX_ERROR,           // 互斥锁错误
+    PPDB_ERR_IMMUTABLE,             // 不可变
+    PPDB_ERR_TOO_LARGE,            // 太大
+    PPDB_ERR_BUFFER_TOO_SMALL,     // 缓冲区太小
+    PPDB_ERR_ITERATOR_END,         // 迭代器结束
+    PPDB_ERR_UNKNOWN               // 未知错误
 } ppdb_error_t;
 
 // 错误码转字符串
