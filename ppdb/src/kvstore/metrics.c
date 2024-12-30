@@ -1,5 +1,12 @@
 #include <cosmopolitan.h>
+
+// 公共头文件
+#include "ppdb/ppdb_error.h"
+
+// 内部头文件
+#include "internal/kvstore_types.h"
 #include "internal/metrics.h"
+#include "internal/sync.h"
 
 // Get current timestamp (microseconds)
 static uint64_t get_timestamp_us() {

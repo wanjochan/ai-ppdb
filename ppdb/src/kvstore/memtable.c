@@ -1,4 +1,10 @@
 #include <cosmopolitan.h>
+
+// 公共头文件
+#include "ppdb/ppdb_error.h"
+
+// 内部头文件
+#include "internal/kvstore_types.h"
 #include "internal/kvstore_memtable.h"
 #include "internal/kvstore_logger.h"
 #include "internal/kvstore_fs.h"

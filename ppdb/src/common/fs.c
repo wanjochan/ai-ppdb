@@ -1,7 +1,11 @@
 #include <cosmopolitan.h>
-#include "ppdb/fs.h"
+
+// 公共头文件
 #include "ppdb/ppdb_error.h"
-#include "ppdb/logger.h"
+#include "ppdb/ppdb_logger.h"
+
+// 内部头文件
+#include "kvstore/internal/kvstore_fs.h"
 
 bool ppdb_fs_dir_exists(const char* path) {
     struct stat st;

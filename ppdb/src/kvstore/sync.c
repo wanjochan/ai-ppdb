@@ -1,8 +1,14 @@
 #include <cosmopolitan.h>
 #include <string.h>
 #include <unistd.h>
-#include "sync.h"
-#include "ppdb/logger.h"
+
+// 公共头文件
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_logger.h"
+
+// 内部头文件
+#include "internal/kvstore_types.h"
+#include "internal/sync.h"
 
 // MurmurHash2 实现
 static uint32_t murmur_hash2(const void* key, size_t len) {

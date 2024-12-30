@@ -1,5 +1,13 @@
 #include <cosmopolitan.h>
-#include "internal/monitor.h"
+
+// 公共头文件
+#include "ppdb/ppdb_error.h"
+
+// 内部头文件
+#include "internal/kvstore_types.h"
+#include "internal/kvstore_monitor.h"
+#include "internal/sync.h"
+#include "internal/metrics.h"
 
 // 获取CPU核心数
 static int get_cpu_cores(void) {

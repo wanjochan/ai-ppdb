@@ -1,7 +1,16 @@
 #include <cosmopolitan.h>
-#include "internal/sharded_memtable.h"
+
+// 公共头文件
+#include "ppdb/ppdb_error.h"
+
+// 内部头文件
+#include "internal/kvstore_types.h"
+#include "internal/kvstore_sharded_memtable.h"
+#include "internal/kvstore_memtable.h"
+#include "internal/kvstore_logger.h"
 #include "internal/sync.h"
-#include "ppdb/logger.h"
+#include "internal/skiplist.h"
+#include "internal/metrics.h"
 
 // Calculate key hash
 static uint32_t hash_key(const uint8_t* key, size_t key_len) {

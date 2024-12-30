@@ -1,7 +1,14 @@
 #include <cosmopolitan.h>
 #include <stdatomic.h>
+
+// 公共头文件
+#include "ppdb/ppdb_error.h"
+
+// 内部头文件
+#include "internal/kvstore_types.h"
 #include "internal/skiplist.h"
 #include "internal/sync.h"
+#include "internal/metrics.h"
 
 // 节点状态
 typedef enum node_state {

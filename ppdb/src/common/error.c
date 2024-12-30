@@ -1,4 +1,6 @@
 #include <cosmopolitan.h>
+
+// 公共头文件
 #include "ppdb/ppdb_error.h"
 
 // 错误描述字符串

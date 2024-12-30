@@ -1,8 +1,17 @@
 #include <cosmopolitan.h>
-#include "internal/wal.h"
-#include "internal/sync.h"
 #include <fcntl.h>
 #include <unistd.h>
+
+// 公共头文件
+#include "ppdb/ppdb_error.h"
+
+// 内部头文件
+#include "internal/kvstore_types.h"
+#include "internal/kvstore_wal.h"
+#include "internal/kvstore_fs.h"
+#include "internal/kvstore_logger.h"
+#include "internal/sync.h"
+#include "internal/metrics.h"
 
 // WAL record header
 typedef struct wal_record_header {
