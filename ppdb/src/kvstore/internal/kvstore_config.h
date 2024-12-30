@@ -1,8 +1,9 @@
-#ifndef PPDB_CONFIG_H
-#define PPDB_CONFIG_H
+#ifndef PPDB_KVSTORE_CONFIG_H
+#define PPDB_KVSTORE_CONFIG_H
 
 #include <cosmopolitan.h>
-#include "ppdb/types.h"
+#include "ppdb/ppdb_error.h"
+#include "kvstore_types.h"
 
 // KVStore configuration structure
 typedef struct ppdb_kvstore_config {
@@ -15,4 +16,4 @@ typedef struct ppdb_kvstore_config {
     bool adaptive_sharding;        // 是否启用自适应分片
 } ppdb_kvstore_config_t;
 
-#endif // PPDB_CONFIG_H
+#endif // PPDB_KVSTORE_CONFIG_H 
