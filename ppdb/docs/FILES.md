@@ -9,10 +9,16 @@
 ### 主程序
 - `src/main.c` - 程序入口，包含配置初始化和主循环
 
+### 公共模块 (src/common/)
+- `error.c` - 错误处理实现
+- `fs.c` - 文件系统操作实现
+- `logger.c` - 日志系统实现
+
 ### KVStore 模块 (src/kvstore/)
 - `kvstore.c` - KVStore 核心实现，管理存储引擎的主要功能
 - `kvstore_impl.c` - KVStore 内部实现，包含具体的存储操作实现
 - `memtable.c` - 内存表基础实现
+- `memtable_iterator.c` - 内存表迭代器实现
 - `sharded_memtable.c` - 分片内存表实现，用于提高并发性能
 - `skiplist.c` - 无锁跳表实现，作为内存表的基础数据结构
 - `sync.c` - 同步原语实现，提供并发控制机制
@@ -103,11 +109,22 @@
    └── kvstore/internal/kvstore_fs.h
    ```
 
+4. 公共组件
+   ```
+   src/common/
+   ├── error.c
+   │   └── ppdb/ppdb_error.h
+   ├── fs.c
+   │   └── ppdb/ppdb_fs.h
+   └── logger.c
+       └── ppdb/ppdb_logger.h
+   ```
+
 ### 通用组件依赖
 - 所有组件依赖 `ppdb_error.h` 进行错误处理
 - 所有组件依赖 `ppdb_types.h` 获取基础类型定义
 - 所有组件依赖 `sync.h` 进行并发控制
-- 所有组件使用 `kvstore_logger.h` 进行日志记录
+- 所有组件使用 `ppdb_logger.h` 进行日志记录
 
 ## 代码规范
 1. 公共接口放在 `include/ppdb/` 目录
