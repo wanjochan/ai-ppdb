@@ -196,7 +196,7 @@ ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
         case PPDB_SYNC_SPINLOCK:
             while (atomic_flag_test_and_set(&sync->spinlock)) {
                 // 自旋等待
-                microsleep(1);  // 短暂休眠以减少CPU占用
+                usleep(1);  // 短暂休眠以减少CPU占用
             }
             break;
         case PPDB_SYNC_RWLOCK:
@@ -248,22 +248,23 @@ ppdb_error_t ppdb_sync_file(const char* filename) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    // 打开文件
-    int fd = open(filename, O_RDWR);
+    int fd = open(filename, O_RDONLY);
     if (fd < 0) {
         return PPDB_ERR_IO;
     }
 
-    // 同步文件
-    if (fsync(fd) != 0) {
-        close(fd);
-        return PPDB_ERR_IO;
+    int ret = fsync(fd);
+    close(fd);
+
+    return (ret == 0) ? PPDB_OK : PPDB_ERR_IO;
+}
+
+// 文件描述符同步函数
+ppdb_error_t ppdb_sync_fd(int fd) {
+    if (fd < 0) {
+        return PPDB_ERR_INVALID_ARG;
     }
 
-    // 关闭文件
-    if (close(fd) != 0) {
-        return PPDB_ERR_IO;
-    }
-
-    return PPDB_OK;
+    int ret = fsync(fd);
+    return (ret == 0) ? PPDB_OK : PPDB_ERR_IO;
 }
