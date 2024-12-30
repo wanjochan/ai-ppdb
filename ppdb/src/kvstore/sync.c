@@ -62,7 +62,7 @@ ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config)
         case PPDB_SYNC_MUTEX:
             ret = pthread_mutex_init(&sync->mutex, NULL);
             if (ret != 0) {
-                return PPDB_ERR_SYNC_ERROR;
+                return PPDB_ERR_MUTEX_ERROR;
             }
             break;
         case PPDB_SYNC_SPINLOCK:
@@ -71,7 +71,7 @@ ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config)
         case PPDB_SYNC_RWLOCK:
             ret = pthread_rwlock_init(&sync->rwlock, NULL);
             if (ret != 0) {
-                return PPDB_ERR_SYNC_ERROR;
+                return PPDB_ERR_MUTEX_ERROR;
             }
             break;
         default:
@@ -92,7 +92,7 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
         case PPDB_SYNC_MUTEX:
             ret = pthread_mutex_destroy(&sync->mutex);
             if (ret != 0) {
-                return PPDB_ERR_SYNC_ERROR;
+                return PPDB_ERR_MUTEX_ERROR;
             }
             break;
         case PPDB_SYNC_SPINLOCK:
@@ -101,7 +101,7 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
         case PPDB_SYNC_RWLOCK:
             ret = pthread_rwlock_destroy(&sync->rwlock);
             if (ret != 0) {
-                return PPDB_ERR_SYNC_ERROR;
+                return PPDB_ERR_MUTEX_ERROR;
             }
             break;
         default:
@@ -143,7 +143,7 @@ ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
         case PPDB_SYNC_MUTEX:
             ret = pthread_mutex_lock(&sync->mutex);
             if (ret != 0) {
-                return PPDB_ERR_SYNC_ERROR;
+                return PPDB_ERR_MUTEX_ERROR;
             }
             break;
         case PPDB_SYNC_SPINLOCK:
@@ -154,7 +154,7 @@ ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
         case PPDB_SYNC_RWLOCK:
             ret = pthread_rwlock_wrlock(&sync->rwlock);
             if (ret != 0) {
-                return PPDB_ERR_SYNC_ERROR;
+                return PPDB_ERR_MUTEX_ERROR;
             }
             break;
         default:
@@ -175,7 +175,7 @@ ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
         case PPDB_SYNC_MUTEX:
             ret = pthread_mutex_unlock(&sync->mutex);
             if (ret != 0) {
-                return PPDB_ERR_SYNC_ERROR;
+                return PPDB_ERR_MUTEX_ERROR;
             }
             break;
         case PPDB_SYNC_SPINLOCK:
@@ -184,7 +184,7 @@ ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
         case PPDB_SYNC_RWLOCK:
             ret = pthread_rwlock_unlock(&sync->rwlock);
             if (ret != 0) {
-                return PPDB_ERR_SYNC_ERROR;
+                return PPDB_ERR_MUTEX_ERROR;
             }
             break;
         default:

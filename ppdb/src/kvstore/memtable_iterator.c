@@ -10,12 +10,6 @@
 #include "kvstore/internal/skiplist.h"
 #include "kvstore/internal/sync.h"
 
-// 内存表迭代器结构
-struct ppdb_memtable_iterator {
-    ppdb_memtable_t* table;
-    ppdb_skiplist_iterator_t* skiplist_iter;
-};
-
 // 创建迭代器
 ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table,
                                                 ppdb_memtable_iterator_t** iter) {
@@ -25,15 +19,17 @@ ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table,
     if (!new_iter) return PPDB_ERR_OUT_OF_MEMORY;
 
     new_iter->table = table;
-    new_iter->skiplist_iter = NULL;
+    new_iter->it = NULL;
+    new_iter->valid = false;
+    memset(&new_iter->current_pair, 0, sizeof(ppdb_kv_pair_t));
 
     ppdb_sync_config_t sync_config = {
         .type = PPDB_SYNC_MUTEX,
         .spin_count = 1000
     };
 
-    ppdb_error_t err = ppdb_skiplist_iterator_create(table->skiplist,
-                                                   &new_iter->skiplist_iter,
+    ppdb_error_t err = ppdb_skiplist_iterator_create(table->basic->skiplist,
+                                                   &new_iter->it,
                                                    &sync_config);
     if (err != PPDB_OK) {
         free(new_iter);
@@ -52,14 +48,21 @@ ppdb_error_t ppdb_memtable_iterator_next_basic(ppdb_memtable_iterator_t* iter,
         return PPDB_ERR_INVALID_ARG;
     }
 
-    uint8_t* tmp_key;
-    uint8_t* tmp_value;
-    ppdb_error_t err = ppdb_skiplist_iterator_next(iter->skiplist_iter,
+    void* tmp_key;
+    void* tmp_value;
+    ppdb_error_t err = ppdb_skiplist_iterator_next(iter->it,
                                                   &tmp_key, key_len,
                                                   &tmp_value, value_len);
     if (err == PPDB_OK) {
         *key = tmp_key;
         *value = tmp_value;
+        iter->valid = true;
+        iter->current_pair.key = tmp_key;
+        iter->current_pair.key_size = *key_len;
+        iter->current_pair.value = tmp_value;
+        iter->current_pair.value_size = *value_len;
+    } else {
+        iter->valid = false;
     }
     return err;
 }
@@ -68,8 +71,8 @@ ppdb_error_t ppdb_memtable_iterator_next_basic(ppdb_memtable_iterator_t* iter,
 void ppdb_memtable_iterator_destroy_basic(ppdb_memtable_iterator_t* iter) {
     if (!iter) return;
     
-    if (iter->skiplist_iter) {
-        ppdb_skiplist_iterator_destroy(iter->skiplist_iter);
+    if (iter->it) {
+        ppdb_skiplist_iterator_destroy(iter->it);
     }
     free(iter);
 } 

@@ -25,4 +25,16 @@ void ppdb_metrics_record_get(ppdb_metrics_t* metrics, size_t key_size, size_t va
 // 记录删除操作
 void ppdb_metrics_record_delete(ppdb_metrics_t* metrics, size_t key_size);
 
+// 记录一般操作
+void ppdb_metrics_record_op(ppdb_metrics_t* metrics, uint64_t latency_us);
+
+// 获取总操作数
+uint64_t ppdb_metrics_total_ops(ppdb_metrics_t* metrics);
+
+// 获取平均延迟
+uint64_t ppdb_metrics_avg_latency(ppdb_metrics_t* metrics);
+
+// 获取总字节数
+uint64_t ppdb_metrics_total_bytes(ppdb_metrics_t* metrics);
+
 #endif // PPDB_METRICS_H

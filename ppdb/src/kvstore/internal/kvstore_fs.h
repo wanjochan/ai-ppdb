@@ -24,4 +24,16 @@ ppdb_error_t ppdb_get_file_size(const char* filename, size_t* size);
 // 同步文件
 ppdb_error_t ppdb_sync_file(const char* filename);
 
+// 确保目录存在
+ppdb_error_t ppdb_ensure_directory(const char* path);
+
+// 删除文件
+ppdb_error_t ppdb_delete_file(const char* filename);
+
+// 检查文件是否存在
+ppdb_error_t ppdb_file_exists(const char* filename, bool* exists);
+
+// 重命名文件
+ppdb_error_t ppdb_rename_file(const char* old_name, const char* new_name);
+
 #endif // PPDB_KVSTORE_FS_H 

@@ -49,55 +49,63 @@ typedef struct ppdb_wal {
     ppdb_sync_t sync;
     bool sync_on_write;
     bool enable_compression;
-    
-    // 缓冲区管理
+    uint64_t next_sequence;
     wal_buffer_t* buffers;
     size_t buffer_count;
-    size_t current_buffer;
-    
-    // 状态管理
-    uint64_t next_sequence;
-    bool closed;
-    
-    // 性能指标
     ppdb_metrics_t metrics;
 } ppdb_wal_t;
+
+// WAL 配置
+typedef struct ppdb_wal_config {
+    const char* filename;
+    bool sync_on_write;
+    bool enable_compression;
+    size_t buffer_size;
+    size_t buffer_count;
+} ppdb_wal_config_t;
 
 // WAL 恢复迭代器
 typedef struct ppdb_wal_recovery_iter {
     ppdb_wal_t* wal;
     off_t position;
-    char* buffer;
+    void* buffer;
     size_t buffer_size;
-    ppdb_kv_pair_t current;
+    struct {
+        void* key;
+        size_t key_size;
+        void* value;
+        size_t value_size;
+    } current;
 } ppdb_wal_recovery_iter_t;
 
-// 函数声明
+// 基础 WAL 操作
+ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t** wal);
+void ppdb_wal_destroy_basic(ppdb_wal_t* wal);
+ppdb_error_t ppdb_wal_write_basic(ppdb_wal_t* wal, const void* key, size_t key_len, const void* value, size_t value_len);
+ppdb_error_t ppdb_wal_sync_basic(ppdb_wal_t* wal);
+size_t ppdb_wal_size_basic(ppdb_wal_t* wal);
+uint64_t ppdb_wal_next_sequence_basic(ppdb_wal_t* wal);
+
+// 无锁 WAL 操作
+ppdb_error_t ppdb_wal_write_lockfree_basic(ppdb_wal_t* wal, const void* key, size_t key_len, const void* value, size_t value_len);
+ppdb_error_t ppdb_wal_sync_lockfree_basic(ppdb_wal_t* wal);
+size_t ppdb_wal_size_lockfree_basic(ppdb_wal_t* wal);
+uint64_t ppdb_wal_next_sequence_lockfree_basic(ppdb_wal_t* wal);
+
+// WAL 恢复操作
+ppdb_error_t ppdb_wal_recovery_iter_create_basic(ppdb_wal_t* wal, ppdb_wal_recovery_iter_t** iter);
+void ppdb_wal_recovery_iter_destroy_basic(ppdb_wal_recovery_iter_t* iter);
+ppdb_error_t ppdb_wal_recovery_iter_next_basic(ppdb_wal_recovery_iter_t* iter);
+ppdb_error_t ppdb_wal_recover_basic(ppdb_wal_t* wal, ppdb_memtable_t* memtable);
+ppdb_error_t ppdb_wal_recover_lockfree_basic(ppdb_wal_t* wal, ppdb_memtable_t* memtable);
+
+// 工厂函数
 ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal);
 void ppdb_wal_destroy(ppdb_wal_t* wal);
-ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
-                           const void* key, size_t key_size,
-                           const void* value, size_t value_size);
+ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal, const void* key, size_t key_len, const void* value, size_t value_len);
 ppdb_error_t ppdb_wal_sync(ppdb_wal_t* wal);
-ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* table);
-
-// 无锁版本函数
-void ppdb_wal_close_lockfree(ppdb_wal_t* wal);
-void ppdb_wal_destroy_lockfree(ppdb_wal_t* wal);
-ppdb_error_t ppdb_wal_write_lockfree(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
-                                    const void* key, size_t key_size,
-                                    const void* value, size_t value_size);
-ppdb_error_t ppdb_wal_sync_lockfree(ppdb_wal_t* wal);
-ppdb_error_t ppdb_wal_recover_lockfree(ppdb_wal_t* wal, ppdb_memtable_t* table);
-
-// 恢复迭代器操作
-ppdb_error_t ppdb_wal_recovery_iter_create(ppdb_wal_t* wal, ppdb_wal_recovery_iter_t** iter);
-ppdb_error_t ppdb_wal_recovery_iter_next(ppdb_wal_recovery_iter_t* iter, void** key, size_t* key_size, void** value, size_t* value_size);
-void ppdb_wal_recovery_iter_destroy(ppdb_wal_recovery_iter_t* iter);
-
-// WAL 状态操作
-bool ppdb_wal_is_closed(ppdb_wal_t* wal);
 size_t ppdb_wal_size(ppdb_wal_t* wal);
 uint64_t ppdb_wal_next_sequence(ppdb_wal_t* wal);
+ppdb_error_t ppdb_wal_recover(ppdb_wal_t* wal, ppdb_memtable_t* memtable);
 
 #endif // PPDB_KVSTORE_WAL_H 

@@ -50,7 +50,7 @@ typedef struct ppdb_sync {
     ppdb_sync_type_t type;    // 同步类型
     union {
         pthread_mutex_t mutex;     // 互斥锁
-        _Atomic int spinlock;      // 自旋锁
+        atomic_flag spinlock;      // 自旋锁
         pthread_rwlock_t rwlock;   // 读写锁
     };
 } ppdb_sync_t;

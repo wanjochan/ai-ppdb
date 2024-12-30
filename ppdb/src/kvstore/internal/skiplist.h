@@ -6,6 +6,16 @@
 #include "ppdb/ppdb_types.h"
 #include "kvstore/internal/sync.h"
 
+// 跳表节点
+typedef struct ppdb_skiplist_node {
+    void* key;                      // 键
+    size_t key_len;                 // 键长度
+    void* value;                    // 值
+    size_t value_len;               // 值长度
+    struct ppdb_skiplist_node** next;  // 后继节点数组
+    int level;                      // 节点层数
+} ppdb_skiplist_node_t;
+
 // 跳表操作函数声明
 
 // 创建跳表
