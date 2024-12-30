@@ -1,4 +1,6 @@
 @echo off
+rem 设置代码页为 UTF-8
+chcp 65001 > nul
 setlocal EnableDelayedExpansion
 
 rem Set paths
@@ -22,24 +24,24 @@ if "%TEST_TYPE%"=="help" (
     echo 用法: build.bat [模块] [构建模式]
     echo.
     echo 可用模块:
-    echo   help      显示此帮助信息
-    echo   42        运行基础测试
-    echo   sync      运行同步原语测试
-    echo   skiplist  运行跳表测试
-    echo   memtable  运行内存表测试
-    echo   unit      运行单元测试
-    echo   all       运行所有测试
+    echo "  help      显示此帮助信息"
+    echo "  test42    运行基础测试"
+    echo "  sync      运行同步原语测试"
+    echo "  skiplist  运行跳表测试"
+    echo "  memtable  运行内存表测试"
+    echo "  unit      运行单元测试"
+    echo "  all       运行所有测试"
     echo.
     echo 构建模式:
-    echo   debug     调试模式 ^(默认^)
-    echo   release   发布模式
+    echo "  debug     调试模式 ^(默认^)"
+    echo "  release   发布模式"
     echo.
     echo 示例:
-    echo   build.bat help              显示帮助信息
-    echo   build.bat 42                运行基础测试
-    echo   build.bat sync debug        以调试模式运行同步测试
-    echo   build.bat memtable release  以发布模式运行内存表测试
-    echo   build.bat all               运行所有测试
+    echo "  build.bat help              显示帮助信息"
+    echo "  build.bat test42            运行基础测试"
+    echo "  build.bat sync debug        以调试模式运行同步测试"
+    echo "  build.bat memtable release  以发布模式运行内存表测试"
+    echo "  build.bat all               运行所有测试"
     exit /b 0
 )
 
@@ -72,7 +74,7 @@ set "NEED_REBUILD=0"
 if not exist "%BUILD_DIR%\%TEST_TYPE%_test.exe" set "NEED_REBUILD=1"
 
 rem Main logic
-if "%TEST_TYPE%"=="42" (
+if "%TEST_TYPE%"=="test42" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test 42 ""
     if exist "%BUILD_DIR%\42_test.exe" "%BUILD_DIR%\42_test.exe"
 ) else if "%TEST_TYPE%"=="sync" (
