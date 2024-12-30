@@ -23,9 +23,10 @@
 
 ### 公共接口
 - `ppdb_error.h` - 错误码定义和错误处理接口
+- `ppdb_types.h` - 基础类型定义，包含压缩、运行模式等公共类型
 - `ppdb_kvstore.h` - KVStore 公共接口定义，提供所有 KV 存储操作
 
-## 存储引擎接口
+### 存储引擎接口
 - `memtable.h` - 内存表接口定义
 - `sharded_memtable.h` - 分片内存表接口定义
 - `wal.h` - WAL 接口定义
@@ -35,8 +36,8 @@
 
 ### KVStore 核心实现
 - `kvstore_internal.h` - KVStore 内部数据结构和函数定义
-- `kvstore_types.h` - 基础类型和常量定义
-- `kvstore_config.h` - KVStore 配置项定义
+- `kvstore_types.h` - 内部类型定义（如键值对、迭代器等）
+- `kvstore_config.h` - KVStore 内部配置扩展定义
 
 ### 存储引擎组件
 - `kvstore_memtable.h` - 内存表实现
@@ -57,8 +58,10 @@
 1. 命名规范：
    - KVStore 相关的内部实现以 `kvstore_` 开头
    - 基础设施组件保持简单命名
+   - 公共类型定义以 `ppdb_` 开头
 
 2. 组件分层：
+   - 公共接口：提供给外部使用的稳定接口和类型定义
    - 核心实现：存储引擎的主要组件
    - 辅助组件：提供监控、日志等支持
    - 基础设施：提供底层机制支持
@@ -69,6 +72,7 @@
 1. KVStore 核心
    ```
    ppdb_kvstore.h
+   ├── ppdb_types.h
    └── kvstore_internal.h
        ├── kvstore_types.h
        ├── sync.h
@@ -80,6 +84,7 @@
 2. 内存管理
    ```
    memtable.h
+   ├── ppdb_types.h
    ├── sync.h
    ├── skiplist.h
    └── sharded_memtable.h
@@ -88,13 +93,14 @@
 3. 持久化
    ```
    wal.h
+   ├── ppdb_types.h
    ├── sync.h
    └── fs.h
    ```
 
 ### 通用组件依赖
 - 所有组件依赖 `ppdb_error.h` 进行错误处理
-- 所有组件依赖 `kvstore_types.h` 获取基础定义
+- 所有组件依赖 `ppdb_types.h` 获取基础类型定义
 - 所有组件依赖 `sync.h` 进行并发控制
 - 所有组件使用 `kvstore_logger.h` 进行日志记录
 

@@ -6,132 +6,107 @@
 // 内部头文件
 #include "internal/kvstore_types.h"
 #include "internal/kvstore_monitor.h"
-#include "internal/sync.h"
 #include "internal/metrics.h"
 
+// 监控窗口大小（毫秒）
+#define PPDB_MONITOR_WINDOW_MS 1000
+
+// 监控器结构
+struct ppdb_monitor {
+    ppdb_metrics_t current;     // 当前窗口指标
+    ppdb_metrics_t previous;    // 上一窗口指标
+    uint64_t window_start_ms;   // 窗口开始时间
+    uint32_t cpu_cores;         // CPU核心数
+};
+
 // 获取CPU核心数
-static int get_cpu_cores(void) {
-    SYSTEM_INFO sysInfo;
+static uint32_t get_cpu_cores(void) {
+    struct NtSystemInfo sysInfo;
     GetSystemInfo(&sysInfo);
     return sysInfo.dwNumberOfProcessors;
 }
 
-// 获取当前时间戳（毫秒）
-static time_t get_current_ms(void) {
+// 获取当前时间（毫秒）
+static uint64_t get_current_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
-// 重置性能指标
-static void reset_metrics(ppdb_perf_metrics_t* metrics) {
-    atomic_store(&metrics->op_count, 0);
-    atomic_store(&metrics->total_latency_us, 0);
-    atomic_store(&metrics->max_latency_us, 0);
-    atomic_store(&metrics->lock_contentions, 0);
-    atomic_store(&metrics->lock_wait_us, 0);
+// 创建监控器
+ppdb_error_t ppdb_monitor_create(ppdb_monitor_t** monitor) {
+    if (!monitor) return PPDB_ERR_NULL_POINTER;
+
+    ppdb_monitor_t* new_monitor = (ppdb_monitor_t*)calloc(1, sizeof(ppdb_monitor_t));
+    if (!new_monitor) return PPDB_ERR_NO_MEMORY;
+
+    ppdb_metrics_init(&new_monitor->current);
+    ppdb_metrics_init(&new_monitor->previous);
+    new_monitor->window_start_ms = get_current_ms();
+    new_monitor->cpu_cores = get_cpu_cores();
+
+    *monitor = new_monitor;
+    return PPDB_OK;
 }
 
-ppdb_monitor_t* ppdb_monitor_create(void) {
-    ppdb_monitor_t* monitor = (ppdb_monitor_t*)calloc(1, sizeof(ppdb_monitor_t));
-    if (!monitor) return NULL;
-
-    reset_metrics(&monitor->current);
-    reset_metrics(&monitor->previous);
-    atomic_store(&monitor->should_switch, false);
-    monitor->window_start_ms = get_current_ms();
-    monitor->cpu_cores = get_cpu_cores();
-
-    return monitor;
-}
-
+// 销毁监控器
 void ppdb_monitor_destroy(ppdb_monitor_t* monitor) {
-    if (monitor) free(monitor);
+    if (!monitor) return;
+    free(monitor);
 }
 
+// 操作开始
 void ppdb_monitor_op_start(ppdb_monitor_t* monitor) {
     if (!monitor) return;
 
+    uint64_t current_ms = get_current_ms();
+
     // 检查是否需要切换窗口
-    time_t current_ms = get_current_ms();
     if (current_ms - monitor->window_start_ms >= PPDB_MONITOR_WINDOW_MS) {
-        // 保存当前窗口数据
-        memcpy(&monitor->previous, &monitor->current, sizeof(ppdb_perf_metrics_t));
-        reset_metrics(&monitor->current);
+        // 切换窗口
+        monitor->previous = monitor->current;
+        ppdb_metrics_reset(&monitor->current);
         monitor->window_start_ms = current_ms;
     }
 }
 
+// 操作结束
 void ppdb_monitor_op_end(ppdb_monitor_t* monitor, uint64_t latency_us) {
     if (!monitor) return;
-
-    atomic_fetch_add(&monitor->current.op_count, 1);
-    atomic_fetch_add(&monitor->current.total_latency_us, latency_us);
-
-    // 更新最大延迟
-    uint64_t current_max = atomic_load(&monitor->current.max_latency_us);
-    while (latency_us > current_max) {
-        if (atomic_compare_exchange_weak(&monitor->current.max_latency_us,
-                                       &current_max, latency_us)) {
-            break;
-        }
-    }
+    ppdb_metrics_record_op(&monitor->current, latency_us);
 }
 
-void ppdb_monitor_lock_contention(ppdb_monitor_t* monitor, uint64_t wait_us) {
-    if (!monitor) return;
-
-    atomic_fetch_add(&monitor->current.lock_contentions, 1);
-    atomic_fetch_add(&monitor->current.lock_wait_us, wait_us);
-}
-
+// 是否应该切换内存表
 bool ppdb_monitor_should_switch(ppdb_monitor_t* monitor) {
     if (!monitor) return false;
 
-    // 获取当前指标
-    uint64_t qps = ppdb_monitor_get_qps(monitor);
-    uint64_t p99_latency = ppdb_monitor_get_p99_latency(monitor);
-    double contention_rate = ppdb_monitor_get_contention_rate(monitor);
+    // 获取当前性能指标
+    uint64_t ops = ppdb_metrics_total_ops(&monitor->current);
+    uint64_t avg_latency = ppdb_metrics_avg_latency(&monitor->current);
 
-    // 判断是否需要切换到分片模式
-    bool should_switch = 
-        (monitor->cpu_cores >= 8) &&         // CPU核心数>=8
-        ((qps > 50000) ||                    // QPS>50K
-         (contention_rate > 30.0) ||         // 锁竞争率>30%
-         (p99_latency > 5000));              // P99延迟>5ms
+    // 如果操作数太少，不切换
+    if (ops < 1000) return false;
 
-    atomic_store(&monitor->should_switch, should_switch);
-    return should_switch;
+    // 如果平均延迟超过10ms，建议切换
+    if (avg_latency > 10000) return true;
+
+    return false;
 }
 
-uint64_t ppdb_monitor_get_qps(ppdb_monitor_t* monitor) {
+// 获取操作数
+uint64_t ppdb_monitor_get_op_count(ppdb_monitor_t* monitor) {
     if (!monitor) return 0;
-
-    uint64_t op_count = atomic_load(&monitor->current.op_count);
-    time_t window_duration = get_current_ms() - monitor->window_start_ms;
-    if (window_duration == 0) return 0;
-
-    return (op_count * 1000) / window_duration;
+    return ppdb_metrics_total_ops(&monitor->current);
 }
 
-uint64_t ppdb_monitor_get_p99_latency(ppdb_monitor_t* monitor) {
+// 获取平均延迟
+uint64_t ppdb_monitor_get_avg_latency(ppdb_monitor_t* monitor) {
     if (!monitor) return 0;
-
-    uint64_t total_latency = atomic_load(&monitor->current.total_latency_us);
-    uint64_t op_count = atomic_load(&monitor->current.op_count);
-    if (op_count == 0) return 0;
-
-    // 简化的P99计算，使用最大延迟作为估计
-    // 在实际生产环境中应该使用更精确的百分位数计算方法
-    return atomic_load(&monitor->current.max_latency_us);
+    return ppdb_metrics_avg_latency(&monitor->current);
 }
 
-double ppdb_monitor_get_contention_rate(ppdb_monitor_t* monitor) {
-    if (!monitor) return 0.0;
-
-    uint64_t contentions = atomic_load(&monitor->current.lock_contentions);
-    uint64_t op_count = atomic_load(&monitor->current.op_count);
-    if (op_count == 0) return 0.0;
-
-    return (double)contentions * 100.0 / op_count;
+// 获取内存使用量
+uint64_t ppdb_monitor_get_memory_usage(ppdb_monitor_t* monitor) {
+    if (!monitor) return 0;
+    return ppdb_metrics_total_bytes(&monitor->current);
 }

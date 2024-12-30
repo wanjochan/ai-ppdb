@@ -6,13 +6,13 @@
 
 // 性能监控结构
 typedef struct ppdb_metrics {
-    atomic_uint64_t total_ops;         // 总操作数
-    atomic_uint64_t total_latency_us;  // 总延迟(微秒)
-    atomic_uint64_t max_latency_us;    // 最大延迟(微秒)
-    atomic_uint64_t min_latency_us;    // 最小延迟(微秒)
-    atomic_uint64_t total_bytes;       // 总字节数
-    atomic_uint64_t total_keys;        // 总键数
-    atomic_uint64_t total_values;      // 总值数
+    _Atomic(uint64_t) total_ops;         // 总操作数
+    _Atomic(uint64_t) total_latency_us;  // 总延迟(微秒)
+    _Atomic(uint64_t) max_latency_us;    // 最大延迟(微秒)
+    _Atomic(uint64_t) min_latency_us;    // 最小延迟(微秒)
+    _Atomic(uint64_t) total_bytes;       // 总字节数
+    _Atomic(uint64_t) total_keys;        // 总键数
+    _Atomic(uint64_t) total_values;      // 总值数
 } ppdb_metrics_t;
 
 // 初始化性能监控

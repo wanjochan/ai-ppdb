@@ -3,17 +3,19 @@
 
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_types.h"
 
 // 节点状态
 typedef enum ppdb_node_state {
     NODE_VALID = 0,      // 正常节点
     NODE_DELETED = 1,    // 已标记删除
-    NODE_INSERTING = 2   // 正在插入
+    NODE_INSERTING = 2,  // 正在插入
+    NODE_LOCKED = 3      // 已锁定
 } ppdb_node_state_t;
 
 // 引用计数
 typedef struct ppdb_ref_count {
-    atomic_uint count;   // 引用计数值
+    _Atomic(uint32_t) count;   // 引用计数值
 } ppdb_ref_count_t;
 
 // 同步策略配置
@@ -28,7 +30,7 @@ typedef struct ppdb_sync_config {
 // 统一的同步原语
 typedef struct ppdb_sync {
     union {
-        atomic_int atomic;
+        _Atomic(int) atomic;
         mutex_t mutex;
     } impl;
     ppdb_sync_config_t config;
@@ -36,8 +38,8 @@ typedef struct ppdb_sync {
     
     #ifdef PPDB_DEBUG
     struct {
-        atomic_uint64_t contention_count;  // 竞争次数
-        atomic_uint64_t wait_time_us;      // 等待时间
+        _Atomic(uint64_t) contention_count;  // 竞争次数
+        _Atomic(uint64_t) wait_time_us;      // 等待时间
     } stats;
     #endif
 } ppdb_sync_t;
@@ -50,7 +52,7 @@ typedef struct ppdb_stripe_locks {
 } ppdb_stripe_locks_t;
 
 // 基本同步API
-void ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config);
+ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config);
 void ppdb_sync_destroy(ppdb_sync_t* sync);
 bool ppdb_sync_try_lock(ppdb_sync_t* sync);
 void ppdb_sync_lock(ppdb_sync_t* sync);

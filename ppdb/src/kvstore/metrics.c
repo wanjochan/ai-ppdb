@@ -6,7 +6,6 @@
 // 内部头文件
 #include "internal/kvstore_types.h"
 #include "internal/metrics.h"
-#include "internal/sync.h"
 
 // Get current timestamp (microseconds)
 static uint64_t get_timestamp_us() {
@@ -19,105 +18,78 @@ static uint64_t get_timestamp_us() {
 void ppdb_metrics_init(ppdb_metrics_t* metrics) {
     if (!metrics) return;
     
-    ppdb_sync_init(&metrics->sync);
-    metrics->total_ops = 0;
-    metrics->total_latency_us = 0;
-    metrics->active_threads = 0;
-    metrics->max_threads = 0;
-    metrics->current_size = 0;
-    metrics->last_update = time(NULL);
-    metrics->last_ops = 0;
-    metrics->ops_per_sec = 0.0;
+    atomic_init(&metrics->total_ops, 0);
+    atomic_init(&metrics->total_latency_us, 0);
+    atomic_init(&metrics->max_latency_us, 0);
+    atomic_init(&metrics->min_latency_us, UINT64_MAX);
+    atomic_init(&metrics->total_bytes, 0);
+    atomic_init(&metrics->total_keys, 0);
+    atomic_init(&metrics->total_values, 0);
 }
 
-// Destroy performance metrics
-void ppdb_metrics_destroy(ppdb_metrics_t* metrics) {
-    if (!metrics) return;
-    ppdb_sync_destroy(&metrics->sync);
-}
-
-// Record operation start
-void ppdb_metrics_begin_op(ppdb_metrics_t* metrics) {
+// Reset performance metrics
+void ppdb_metrics_reset(ppdb_metrics_t* metrics) {
     if (!metrics) return;
     
-    ppdb_sync_lock(&metrics->sync);
-    metrics->active_threads++;
-    if (metrics->active_threads > metrics->max_threads) {
-        metrics->max_threads = metrics->active_threads;
-    }
-    ppdb_sync_unlock(&metrics->sync);
+    atomic_store(&metrics->total_ops, 0);
+    atomic_store(&metrics->total_latency_us, 0);
+    atomic_store(&metrics->max_latency_us, 0);
+    atomic_store(&metrics->min_latency_us, UINT64_MAX);
+    atomic_store(&metrics->total_bytes, 0);
+    atomic_store(&metrics->total_keys, 0);
+    atomic_store(&metrics->total_values, 0);
 }
 
-// Record operation end
-void ppdb_metrics_end_op(ppdb_metrics_t* metrics, size_t size_delta) {
+// Record operation
+void ppdb_metrics_record_op(ppdb_metrics_t* metrics, uint64_t latency_us) {
     if (!metrics) return;
     
-    static const time_t UPDATE_INTERVAL = 1; // Update throughput every 1 second
+    atomic_fetch_add(&metrics->total_ops, 1);
+    atomic_fetch_add(&metrics->total_latency_us, latency_us);
     
-    uint64_t end_time = get_timestamp_us();
-    time_t current_time = time(NULL);
+    // Update max latency
+    uint64_t old_max;
+    do {
+        old_max = atomic_load(&metrics->max_latency_us);
+        if (latency_us <= old_max) break;
+    } while (!atomic_compare_exchange_weak(&metrics->max_latency_us, &old_max, latency_us));
     
-    ppdb_sync_lock(&metrics->sync);
-    
-    // Update operation count and size
-    metrics->total_ops++;
-    metrics->current_size += size_delta;
-    metrics->active_threads--;
-    
-    // Update throughput if interval has elapsed
-    time_t time_diff = current_time - metrics->last_update;
-    if (time_diff >= UPDATE_INTERVAL) {
-        uint64_t ops_diff = metrics->total_ops - metrics->last_ops;
-        metrics->ops_per_sec = (double)ops_diff / time_diff;
-        metrics->last_update = current_time;
-        metrics->last_ops = metrics->total_ops;
-    }
-    
-    ppdb_sync_unlock(&metrics->sync);
+    // Update min latency
+    uint64_t old_min;
+    do {
+        old_min = atomic_load(&metrics->min_latency_us);
+        if (latency_us >= old_min) break;
+    } while (!atomic_compare_exchange_weak(&metrics->min_latency_us, &old_min, latency_us));
 }
 
-// Get current throughput
-double ppdb_metrics_get_throughput(ppdb_metrics_t* metrics) {
-    if (!metrics) return 0.0;
+// Record data
+void ppdb_metrics_record_data(ppdb_metrics_t* metrics, size_t key_size, size_t value_size) {
+    if (!metrics) return;
     
-    ppdb_sync_lock(&metrics->sync);
-    double throughput = metrics->ops_per_sec;
-    ppdb_sync_unlock(&metrics->sync);
-    
-    return throughput;
+    atomic_fetch_add(&metrics->total_bytes, key_size + value_size);
+    atomic_fetch_add(&metrics->total_keys, 1);
+    atomic_fetch_add(&metrics->total_values, 1);
 }
 
 // Get average latency
-double ppdb_metrics_get_avg_latency(ppdb_metrics_t* metrics) {
-    if (!metrics) return 0.0;
-    
-    ppdb_sync_lock(&metrics->sync);
-    double avg_latency = metrics->total_ops > 0 
-        ? (double)metrics->total_latency_us / metrics->total_ops 
-        : 0.0;
-    ppdb_sync_unlock(&metrics->sync);
-    
-    return avg_latency;
-}
-
-// Get active thread count
-uint32_t ppdb_metrics_get_active_threads(ppdb_metrics_t* metrics) {
+uint64_t ppdb_metrics_avg_latency(ppdb_metrics_t* metrics) {
     if (!metrics) return 0;
     
-    ppdb_sync_lock(&metrics->sync);
-    uint32_t threads = metrics->active_threads;
-    ppdb_sync_unlock(&metrics->sync);
+    uint64_t total_ops = atomic_load(&metrics->total_ops);
+    if (total_ops == 0) return 0;
     
-    return threads;
+    uint64_t total_latency = atomic_load(&metrics->total_latency_us);
+    return total_latency / total_ops;
 }
 
-// Get current data size
-size_t ppdb_metrics_get_size(ppdb_metrics_t* metrics) {
+// Get total operations
+uint64_t ppdb_metrics_total_ops(ppdb_metrics_t* metrics) {
     if (!metrics) return 0;
-    
-    ppdb_sync_lock(&metrics->sync);
-    size_t size = metrics->current_size;
-    ppdb_sync_unlock(&metrics->sync);
-    
-    return size;
+    return atomic_load(&metrics->total_ops);
+}
+
+// Get total bytes
+uint64_t ppdb_metrics_total_bytes(ppdb_metrics_t* metrics) {
+    if (!metrics) return 0;
+    return atomic_load(&metrics->total_bytes);
 }

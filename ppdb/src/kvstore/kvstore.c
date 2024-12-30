@@ -65,7 +65,14 @@ ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvsto
     new_store->db_path[path_len] = '\0';
 
     // 初始化同步原语
-    ppdb_sync_init(&new_store->sync);
+    ppdb_sync_config_t sync_config = {
+        .use_lockfree = config->use_sharding,
+        .stripe_count = 0,  // 不使用分片锁
+        .spin_count = 1000, // 默认自旋次数
+        .backoff_us = 100,  // 默认退避时间
+        .enable_ref_count = false
+    };
+    ppdb_sync_init(&new_store->sync, &sync_config);
 
     // 创建数据目录
     if (!ppdb_fs_dir_exists(config->data_dir)) {

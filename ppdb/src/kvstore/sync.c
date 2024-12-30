@@ -1,10 +1,7 @@
 #include <cosmopolitan.h>
-#include <string.h>
-#include <unistd.h>
 
 // 公共头文件
 #include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_logger.h"
 
 // 内部头文件
 #include "internal/kvstore_types.h"
@@ -65,51 +62,67 @@ uint32_t ppdb_ref_get(ppdb_ref_count_t* ref) {
     return atomic_load(&ref->count);
 }
 
-void ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config) {
-    memcpy(&sync->config, config, sizeof(ppdb_sync_config_t));
+ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config) {
+    if (!sync || !config) return PPDB_ERR_INVALID_ARG;
+    
+    sync->config = *config;
     
     if (config->use_lockfree) {
         atomic_init(&sync->impl.atomic, NODE_VALID);
     } else {
-        mutex_init(&sync->impl.mutex);
+        atomic_init(&sync->impl.mutex, 0);  // 0表示未锁定
     }
     
     if (config->enable_ref_count) {
         sync->ref_count = malloc(sizeof(ppdb_ref_count_t));
-        if (sync->ref_count) {
-            ppdb_ref_init(sync->ref_count);
+        if (!sync->ref_count) {
+            return PPDB_ERR_NO_MEMORY;
         }
+        ppdb_ref_init(sync->ref_count);
+    } else {
+        sync->ref_count = NULL;
     }
     
     #ifdef PPDB_DEBUG
     atomic_init(&sync->stats.contention_count, 0);
     atomic_init(&sync->stats.wait_time_us, 0);
     #endif
+
+    return PPDB_OK;
 }
 
 void ppdb_sync_destroy(ppdb_sync_t* sync) {
+    if (!sync) return;
+
     if (!sync->config.use_lockfree) {
-        mutex_destroy(&sync->impl.mutex);
+        // 自旋锁不需要销毁
     }
     
     if (sync->ref_count) {
         free(sync->ref_count);
+        sync->ref_count = NULL;
     }
 }
 
 bool ppdb_sync_try_lock(ppdb_sync_t* sync) {
+    if (!sync) return false;
+
     if (sync->config.use_lockfree) {
-        return atomic_compare_exchange_strong(&sync->impl.atomic, &(int){NODE_VALID}, NODE_LOCKED);
+        int expected = NODE_VALID;
+        return atomic_compare_exchange_strong(&sync->impl.atomic, &expected, NODE_LOCKED);
     } else {
-        return mutex_trylock(&sync->impl.mutex) == 0;
+        int expected = 0;
+        return atomic_compare_exchange_strong(&sync->impl.mutex, &expected, 1);
     }
 }
 
 void ppdb_sync_lock(ppdb_sync_t* sync) {
+    if (!sync) return;
+
     uint32_t attempts = 0;
     
     #ifdef PPDB_DEBUG
-    uint64_t start_time = get_current_time_us();
+    uint64_t start_time = now_us();
     #endif
     
     while (attempts++ < sync->config.spin_count) {
@@ -124,52 +137,64 @@ void ppdb_sync_lock(ppdb_sync_t* sync) {
     
     // 自旋失败后强制获取锁
     if (sync->config.use_lockfree) {
-        while (!atomic_compare_exchange_strong(&sync->impl.atomic, &(int){NODE_VALID}, NODE_LOCKED)) {
+        int expected;
+        do {
+            expected = NODE_VALID;
+            if (atomic_compare_exchange_strong(&sync->impl.atomic, &expected, NODE_LOCKED)) {
+                break;
+            }
             usleep(sync->config.backoff_us);
-        }
+        } while (1);
     } else {
-        mutex_lock(&sync->impl.mutex);
+        while (1) {
+            int expected = 0;
+            if (atomic_compare_exchange_strong(&sync->impl.mutex, &expected, 1)) {
+                break;
+            }
+            if (sync->config.backoff_us > 0) {
+                usleep(sync->config.backoff_us);
+            }
+        }
     }
     
     #ifdef PPDB_DEBUG
     atomic_fetch_add(&sync->stats.contention_count, 1);
-    atomic_fetch_add(&sync->stats.wait_time_us, 
-                    get_current_time_us() - start_time);
+    atomic_fetch_add(&sync->stats.wait_time_us, now_us() - start_time);
     #endif
 }
 
 void ppdb_sync_unlock(ppdb_sync_t* sync) {
+    if (!sync) return;
+
     if (sync->config.use_lockfree) {
         atomic_store(&sync->impl.atomic, NODE_VALID);
     } else {
-        mutex_unlock(&sync->impl.mutex);
+        atomic_store(&sync->impl.mutex, 0);
     }
 }
 
 // 节点状态API实现
 bool ppdb_sync_is_valid(ppdb_sync_t* sync) {
-    if (!sync->config.use_lockfree) {
+    if (!sync || !sync->config.use_lockfree) {
         return true;
     }
     return atomic_load(&sync->impl.atomic) == NODE_VALID;
 }
 
 bool ppdb_sync_mark_deleted(ppdb_sync_t* sync) {
-    if (!sync->config.use_lockfree) {
+    if (!sync || !sync->config.use_lockfree) {
         return false;
     }
     int expected = NODE_VALID;
-    return atomic_compare_exchange_strong(&sync->impl.atomic, 
-                                       &expected, NODE_DELETED);
+    return atomic_compare_exchange_strong(&sync->impl.atomic, &expected, NODE_DELETED);
 }
 
 bool ppdb_sync_mark_inserting(ppdb_sync_t* sync) {
-    if (!sync->config.use_lockfree) {
+    if (!sync || !sync->config.use_lockfree) {
         return false;
     }
     int expected = NODE_VALID;
-    return atomic_compare_exchange_strong(&sync->impl.atomic,
-                                       &expected, NODE_INSERTING);
+    return atomic_compare_exchange_strong(&sync->impl.atomic, &expected, NODE_INSERTING);
 }
 
 // 分片锁优化实现
@@ -183,7 +208,7 @@ static inline uint32_t optimize_stripe_count(uint32_t count) {
 }
 
 ppdb_stripe_locks_t* ppdb_stripe_locks_create(const ppdb_sync_config_t* config) {
-    if (config->stripe_count == 0) {
+    if (!config || config->stripe_count == 0) {
         return NULL;
     }
     
@@ -231,43 +256,21 @@ static inline uint32_t get_stripe_index(ppdb_stripe_locks_t* stripes,
 
 bool ppdb_stripe_locks_try_lock(ppdb_stripe_locks_t* stripes,
                                const void* key, size_t key_len) {
+    if (!stripes || !key) return false;
     uint32_t idx = get_stripe_index(stripes, key, key_len);
     return ppdb_sync_try_lock(&stripes->locks[idx]);
 }
 
 void ppdb_stripe_locks_lock(ppdb_stripe_locks_t* stripes,
                            const void* key, size_t key_len) {
+    if (!stripes || !key) return;
     uint32_t idx = get_stripe_index(stripes, key, key_len);
     ppdb_sync_lock(&stripes->locks[idx]);
 }
 
 void ppdb_stripe_locks_unlock(ppdb_stripe_locks_t* stripes,
                             const void* key, size_t key_len) {
+    if (!stripes || !key) return;
     uint32_t idx = get_stripe_index(stripes, key, key_len);
     ppdb_sync_unlock(&stripes->locks[idx]);
-}
-
-// 无锁原子操作
-bool ppdb_sync_cas(ppdb_sync_t* sync, void* expected, void* desired) {
-    if (!sync->config.use_lockfree) {
-        ppdb_log_error("CAS operation only supported in lockfree mode");
-        return false;
-    }
-    return atomic_compare_exchange_strong(&sync->impl.atomic, expected, (int)desired);
-}
-
-void* ppdb_sync_load(ppdb_sync_t* sync) {
-    if (!sync->config.use_lockfree) {
-        ppdb_log_error("Atomic load only supported in lockfree mode");
-        return NULL;
-    }
-    return (void*)atomic_load(&sync->impl.atomic);
-}
-
-void ppdb_sync_store(ppdb_sync_t* sync, void* value) {
-    if (!sync->config.use_lockfree) {
-        ppdb_log_error("Atomic store only supported in lockfree mode");
-        return;
-    }
-    atomic_store(&sync->impl.atomic, (int)value);
 }

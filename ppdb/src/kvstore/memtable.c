@@ -12,14 +12,17 @@
 #include "internal/sync.h"
 #include "internal/metrics.h"
 
+// 跳表节点大小估计
+#define PPDB_SKIPLIST_NODE_SIZE 64
+
 // MemTable structure
-struct ppdb_memtable_t {
+struct ppdb_memtable {
     ppdb_skiplist_t* skiplist;     // 底层跳表
     ppdb_sync_t sync;              // 同步原语
-    atomic_size_t current_size;    // 当前大小
-    size_t max_size;              // 最大大小
-    atomic_bool is_immutable;     // 是否不可变
-    ppdb_metrics_t metrics;       // 性能监控
+    _Atomic(size_t) used;          // 当前使用大小
+    size_t size;                   // 最大大小
+    _Atomic(bool) is_immutable;    // 是否不可变
+    ppdb_metrics_t metrics;        // 性能监控
 };
 
 // 创建内存表
@@ -32,7 +35,14 @@ ppdb_error_t ppdb_memtable_create(size_t size, ppdb_memtable_t** table) {
     if (!new_table) return PPDB_ERR_NO_MEMORY;
 
     // 初始化同步原语
-    ppdb_error_t err = ppdb_sync_init(&new_table->sync);
+    ppdb_sync_config_t sync_config = {
+        .use_lockfree = false,
+        .stripe_count = 0,
+        .spin_count = 1000,
+        .backoff_us = 100,
+        .enable_ref_count = false
+    };
+    ppdb_error_t err = ppdb_sync_init(&new_table->sync, &sync_config);
     if (err != PPDB_OK) {
         free(new_table);
         return err;
@@ -48,8 +58,8 @@ ppdb_error_t ppdb_memtable_create(size_t size, ppdb_memtable_t** table) {
 
     // 初始化其他字段
     new_table->size = size;
-    new_table->used = 0;
-    new_table->is_immutable = false;
+    atomic_init(&new_table->used, 0);
+    atomic_init(&new_table->is_immutable, false);
     ppdb_metrics_init(&new_table->metrics);
 
     *table = new_table;
@@ -62,7 +72,7 @@ void ppdb_memtable_destroy(ppdb_memtable_t* table) {
 
     ppdb_skiplist_destroy(table->skiplist);
     ppdb_sync_destroy(&table->sync);
-    ppdb_metrics_destroy(&table->metrics);
+    ppdb_metrics_reset(&table->metrics);
     free(table);
 }
 
@@ -74,18 +84,18 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
     if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
 
     // 开始监控
-    ppdb_metrics_begin_op(&table->metrics);
+    uint64_t start_time = now_us();
 
     // 检查是否可写
-    if (table->is_immutable) {
-        ppdb_metrics_end_op(&table->metrics, 0);
+    if (atomic_load(&table->is_immutable)) {
+        ppdb_metrics_record_op(&table->metrics, 0);
         return PPDB_ERR_IMMUTABLE;
     }
 
     // 检查空间
-    size_t entry_size = key_len + value_len + sizeof(ppdb_skiplist_node_t);
-    if (table->used + entry_size > table->size) {
-        ppdb_metrics_end_op(&table->metrics, 0);
+    size_t entry_size = key_len + value_len + PPDB_SKIPLIST_NODE_SIZE;
+    if (atomic_load(&table->used) + entry_size > table->size) {
+        ppdb_metrics_record_op(&table->metrics, 0);
         return PPDB_ERR_FULL;
     }
 
@@ -95,9 +105,10 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
                                         (const uint8_t*)value, value_len);
     if (err == PPDB_OK) {
         atomic_fetch_add(&table->used, entry_size);
+        ppdb_metrics_record_data(&table->metrics, key_len, value_len);
     }
 
-    ppdb_metrics_end_op(&table->metrics, now_us());
+    ppdb_metrics_record_op(&table->metrics, now_us() - start_time);
     return err;
 }
 
@@ -109,14 +120,14 @@ ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
     if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     // 开始监控
-    ppdb_metrics_begin_op(&table->metrics);
+    uint64_t start_time = now_us();
 
     // 从跳表读取
     ppdb_error_t err = ppdb_skiplist_get(table->skiplist,
                                         (const uint8_t*)key, key_len,
                                         (uint8_t**)value, value_len);
 
-    ppdb_metrics_end_op(&table->metrics, now_us());
+    ppdb_metrics_record_op(&table->metrics, now_us() - start_time);
     return err;
 }
 
@@ -127,11 +138,11 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
     if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     // 开始监控
-    ppdb_metrics_begin_op(&table->metrics);
+    uint64_t start_time = now_us();
 
     // 检查是否可写
-    if (table->is_immutable) {
-        ppdb_metrics_end_op(&table->metrics, 0);
+    if (atomic_load(&table->is_immutable)) {
+        ppdb_metrics_record_op(&table->metrics, 0);
         return PPDB_ERR_IMMUTABLE;
     }
 
@@ -139,7 +150,7 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
     ppdb_error_t err = ppdb_skiplist_delete(table->skiplist,
                                            (const uint8_t*)key, key_len);
 
-    ppdb_metrics_end_op(&table->metrics, now_us());
+    ppdb_metrics_record_op(&table->metrics, now_us() - start_time);
     return err;
 }
 
@@ -162,10 +173,9 @@ bool ppdb_memtable_is_immutable(ppdb_memtable_t* table) {
 }
 
 // 设置为不可变
-ppdb_error_t ppdb_memtable_set_immutable(ppdb_memtable_t* table) {
-    if (!table) return PPDB_ERR_NULL_POINTER;
+void ppdb_memtable_set_immutable(ppdb_memtable_t* table) {
+    if (!table) return;
     atomic_store(&table->is_immutable, true);
-    return PPDB_OK;
 }
 
 // 获取性能指标

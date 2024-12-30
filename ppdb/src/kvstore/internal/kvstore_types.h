@@ -3,19 +3,7 @@
 
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
-
-// 从 defs.h 和 types.h 合并的定义
-#define PPDB_MAX_KEY_SIZE 1024
-#define PPDB_MAX_VALUE_SIZE (1024 * 1024)
-#define PPDB_MAX_PATH_SIZE 256
-#define PPDB_DEFAULT_MEMTABLE_SIZE (64 * 1024 * 1024)  // 64MB
-#define PPDB_DEFAULT_WAL_SEGMENT_SIZE (4 * 1024 * 1024)  // 4MB
-
-// 基础类型定义
-typedef uint32_t ppdb_size_t;
-typedef uint64_t ppdb_offset_t;
-typedef uint64_t ppdb_timestamp_t;
-typedef uint32_t ppdb_version_t;
+#include "ppdb/ppdb_types.h"
 
 // 键值对结构
 typedef struct ppdb_kv_pair {

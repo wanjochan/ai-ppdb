@@ -1,4 +1,7 @@
-review INDEX.md and FILES.md in docs/, and PLAN.md in docs/
+review INDEX.md and FILES.md in docs/, and PLAN.md in docs/;
+
+run ppdb\scripts\build_ppdb.bat and make a fix plan first;
+
 
 
 
