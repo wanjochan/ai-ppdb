@@ -28,10 +28,21 @@ typedef enum ppdb_sync_type {
     PPDB_SYNC_LOCKFREE    // 无锁
 } ppdb_sync_type_t;
 
+// 运行模式
+typedef enum ppdb_mode {
+    PPDB_MODE_NORMAL = 0,    // 正常模式
+    PPDB_MODE_RECOVERY,      // 恢复模式
+    PPDB_MODE_READONLY       // 只读模式
+} ppdb_mode_t;
+
 // 同步配置
 typedef struct ppdb_sync_config {
-    ppdb_sync_type_t type;    // 同步类型
-    uint32_t spin_count;      // 自旋次数
+    ppdb_sync_type_t type;         // 同步类型
+    uint32_t spin_count;           // 自旋次数
+    bool use_lockfree;             // 是否使用无锁模式
+    uint32_t stripe_count;         // 分片数量
+    uint32_t backoff_us;           // 退避时间（微秒）
+    bool enable_ref_count;         // 是否启用引用计数
 } ppdb_sync_config_t;
 
 // 同步原语
@@ -118,5 +129,22 @@ typedef struct ppdb_memtable {
     ppdb_metrics_t metrics;         // 性能指标
     bool is_immutable;              // 是否不可变
 } ppdb_memtable_t;
+
+// 内存表迭代器
+typedef struct ppdb_memtable_iterator {
+    ppdb_memtable_t* table;        // 内存表
+    ppdb_skiplist_iterator_t* it;  // 跳表迭代器
+    bool valid;                    // 是否有效
+    ppdb_kv_pair_t current_pair;   // 当前键值对
+} ppdb_memtable_iterator_t;
+
+// 跳表迭代器
+typedef struct ppdb_skiplist_iterator {
+    ppdb_skiplist_t* list;         // 跳表
+    ppdb_skiplist_node_t* current; // 当前节点
+    bool valid;                    // 是否有效
+    ppdb_kv_pair_t current_pair;   // 当前键值对
+    ppdb_sync_t sync;              // 同步原语
+} ppdb_skiplist_iterator_t;
 
 #endif // PPDB_TYPES_H 

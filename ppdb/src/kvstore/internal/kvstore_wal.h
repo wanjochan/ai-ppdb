@@ -72,6 +72,16 @@ typedef struct ppdb_wal_recovery_iter {
     ppdb_kv_pair_t current;
 } ppdb_wal_recovery_iter_t;
 
+// WAL 配置
+typedef struct ppdb_wal_config {
+    char* data_dir;              // 数据目录
+    size_t buffer_size;          // 缓冲区大小
+    size_t buffer_count;         // 缓冲区数量
+    bool sync_on_write;          // 写入时同步
+    bool enable_compression;      // 启用压缩
+    ppdb_sync_config_t sync;     // 同步配置
+} ppdb_wal_config_t;
+
 // 函数声明
 ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal);
 void ppdb_wal_destroy(ppdb_wal_t* wal);
@@ -89,5 +99,15 @@ ppdb_error_t ppdb_wal_write_lockfree(ppdb_wal_t* wal, ppdb_wal_record_type_t typ
                                     const void* value, size_t value_size);
 ppdb_error_t ppdb_wal_sync_lockfree(ppdb_wal_t* wal);
 ppdb_error_t ppdb_wal_recover_lockfree(ppdb_wal_t* wal, ppdb_memtable_t* table);
+
+// 恢复迭代器操作
+ppdb_error_t ppdb_wal_recovery_iter_create(ppdb_wal_t* wal, ppdb_wal_recovery_iter_t** iter);
+ppdb_error_t ppdb_wal_recovery_iter_next(ppdb_wal_recovery_iter_t* iter, void** key, size_t* key_size, void** value, size_t* value_size);
+void ppdb_wal_recovery_iter_destroy(ppdb_wal_recovery_iter_t* iter);
+
+// WAL 状态操作
+bool ppdb_wal_is_closed(ppdb_wal_t* wal);
+size_t ppdb_wal_size(ppdb_wal_t* wal);
+uint64_t ppdb_wal_next_sequence(ppdb_wal_t* wal);
 
 #endif // PPDB_KVSTORE_WAL_H 

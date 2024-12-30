@@ -44,4 +44,24 @@ bool ppdb_memtable_empty(ppdb_memtable_t* memtable);
 // 检查内存表是否已满
 bool ppdb_memtable_full(ppdb_memtable_t* memtable);
 
+// 创建内存表
+ppdb_error_t ppdb_memtable_create(size_t size_limit, ppdb_memtable_t** memtable);
+ppdb_error_t ppdb_memtable_create_sharded(size_t size_limit, ppdb_memtable_t** memtable);
+ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** memtable);
+
+// 无锁操作
+ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* memtable, const void* key, size_t key_len, const void* value, size_t value_len);
+ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* memtable, const void* key, size_t key_len, void* value, size_t* value_len);
+ppdb_error_t ppdb_memtable_delete_lockfree(ppdb_memtable_t* memtable, const void* key, size_t key_len);
+
+// 迭代器操作
+ppdb_error_t ppdb_memtable_iterator_create(ppdb_memtable_t* memtable, ppdb_memtable_iterator_t** iter);
+ppdb_error_t ppdb_memtable_iterator_next(ppdb_memtable_iterator_t* iter, void** key, size_t* key_len, void** value, size_t* value_len);
+void ppdb_memtable_iterator_destroy(ppdb_memtable_iterator_t* iter);
+
+// 内存表状态
+size_t ppdb_memtable_max_size(ppdb_memtable_t* memtable);
+bool ppdb_memtable_is_immutable(ppdb_memtable_t* memtable);
+void ppdb_memtable_set_immutable(ppdb_memtable_t* memtable, bool immutable);
+
 #endif // PPDB_KVSTORE_MEMTABLE_H 

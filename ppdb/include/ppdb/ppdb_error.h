@@ -39,6 +39,11 @@ typedef enum ppdb_error {
     PPDB_ERR_TOO_LARGE,            // 太大
     PPDB_ERR_BUFFER_TOO_SMALL,     // 缓冲区太小
     PPDB_ERR_ITERATOR_END,         // 迭代器结束
+    PPDB_ERR_MEMTABLE_FULL,        // 内存表已满
+    PPDB_ERR_WAL_FULL,             // WAL已满
+    PPDB_ERR_WAL_CORRUPTED,        // WAL损坏
+    PPDB_ERR_WAL_NOT_FOUND,        // WAL不存在
+    PPDB_ERR_WAL_INVALID,          // WAL无效
     PPDB_ERR_UNKNOWN               // 未知错误
 } ppdb_error_t;
 

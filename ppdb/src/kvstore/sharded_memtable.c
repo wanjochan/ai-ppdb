@@ -28,7 +28,7 @@ static size_t get_shard_index(const void* key, size_t key_len, size_t shard_coun
 }
 
 // 创建分片内存表
-ppdb_error_t ppdb_memtable_create_sharded(size_t size_limit, ppdb_memtable_t** table) {
+ppdb_error_t ppdb_memtable_create_sharded_basic(size_t size_limit, ppdb_memtable_t** table) {
     if (!table) return PPDB_ERR_NULL_POINTER;
 
     // 分配内存表结构
