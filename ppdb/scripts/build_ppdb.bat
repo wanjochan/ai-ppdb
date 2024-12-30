@@ -1,133 +1,77 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
-:: Set root paths
-set SCRIPT_DIR=%~dp0
-set PROJECT_ROOT=%SCRIPT_DIR%..
-set WORKSPACE_ROOT=%PROJECT_ROOT%\..
-set BUILD_DIR=%PROJECT_ROOT%\build
-set SRC_DIR=%PROJECT_ROOT%\src
-set INCLUDE_DIR=%PROJECT_ROOT%\include
-
-:: Set dependency paths (absolute paths)
+rem Check paths
+echo Checking paths:
+set WORKSPACE_ROOT=%~dp0..\..
 set COSMO=%WORKSPACE_ROOT%\cosmopolitan
 set CROSS9=%WORKSPACE_ROOT%\cross9\bin
 set GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe
 set AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe
 
-:: Debug paths
-echo Checking paths:
 echo WORKSPACE_ROOT: %WORKSPACE_ROOT%
 echo COSMO: %COSMO%
 echo GCC: %GCC%
+echo AR: %AR%
 
-:: Check required directories and files
-if not exist "%COSMO%" (
-    echo Error: Cosmopolitan directory not found at: %COSMO%
-    exit /b 1
-)
+rem Set include paths
+set INCLUDE_PATHS=-I%~dp0..\include -I%~dp0..\src -I%~dp0.. -I%COSMO%
 
-if not exist "%CROSS9%" (
-    echo Error: Cross9 directory not found at: %CROSS9%
-    exit /b 1
-)
+rem Set compiler flags
+set CFLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer
+set LDFLAGS=-static -nostdlib -Wl,-T,%COSMO%\ape.lds -Wl,--gc-sections -fuse-ld=bfd
+set LIBS=%COSMO%\crt.o %COSMO%\ape.o %COSMO%\cosmopolitan.a
 
-if not exist "%GCC%" (
-    echo Error: GCC not found at: %GCC%
-    exit /b 1
-)
+rem Create build directory
+if not exist build mkdir build
+cd build
 
-if not exist "%AR%" (
-    echo Error: AR not found at: %AR%
-    exit /b 1
-)
-
-:: Compilation options
-set COMMON_FLAGS=-Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer
-set DEBUG_FLAGS=-g -O0 -DDEBUG
-set RELEASE_FLAGS=-O2 -DNDEBUG
-set CFLAGS=%COMMON_FLAGS% %DEBUG_FLAGS% -I"%INCLUDE_DIR%" -I"%COSMO%" -I"%SRC_DIR%" -I"%PROJECT_ROOT%"
-
-:: Linker options
-set LDFLAGS=-static -nostdlib -Wl,-T,"%COSMO%\ape.lds" -Wl,--gc-sections -fuse-ld=bfd
-set LIBS="%COSMO%\crt.o" "%COSMO%\ape.o" "%COSMO%\cosmopolitan.a"
-
-:: Create build directory
-if not exist "%BUILD_DIR%" (
-    echo Creating build directory...
-    mkdir "%BUILD_DIR%"
-)
-
-:: Create object directory
-set OBJ_DIR=%BUILD_DIR%\obj
-if not exist "%OBJ_DIR%" (
-    echo Creating object directory...
-    mkdir "%OBJ_DIR%"
-)
-
-:: Change to object directory for compilation
-pushd "%OBJ_DIR%"
-
-:: Compile common modules
+rem Compile common modules
 echo Compiling common modules...
-for %%f in ("%SRC_DIR%\common\*.c") do (
-    echo   Compiling %%f...
-    pushd "%SRC_DIR%"
-    "%GCC%" %CFLAGS% -c "%%f" -o "%OBJ_DIR%\%%~nf.o"
-    popd
-    if errorlevel 1 (
-        echo Error compiling %%f
-        popd
-        exit /b 1
-    )
-)
+echo   Compiling %~dp0..\src\common\error.c...
+%GCC% -c -o error.o %~dp0..\src\common\error.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\common\fs.c...
+%GCC% -c -o fs.o %~dp0..\src\common\fs.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\common\logger.c...
+%GCC% -c -o logger.o %~dp0..\src\common\logger.c %INCLUDE_PATHS% %CFLAGS%
 
-:: Compile KVStore modules
+rem Compile KVStore modules
 echo Compiling KVStore modules...
-for %%f in ("%SRC_DIR%\kvstore\*.c") do (
-    echo   Compiling %%f...
-    pushd "%SRC_DIR%"
-    "%GCC%" %CFLAGS% -c "%%f" -o "%OBJ_DIR%\%%~nf.o"
-    popd
-    if errorlevel 1 (
-        echo Error compiling %%f
-        popd
-        exit /b 1
-    )
-)
+echo   Compiling %~dp0..\src\kvstore\kvstore.c...
+%GCC% -c -o kvstore.o %~dp0..\src\kvstore\kvstore.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\memtable.c...
+%GCC% -c -o memtable.o %~dp0..\src\kvstore\memtable.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\memtable_iterator.c...
+%GCC% -c -o memtable_iterator.o %~dp0..\src\kvstore\memtable_iterator.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\metrics.c...
+%GCC% -c -o metrics.o %~dp0..\src\kvstore\metrics.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\monitor.c...
+%GCC% -c -o monitor.o %~dp0..\src\kvstore\monitor.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\sharded_memtable.c...
+%GCC% -c -o sharded_memtable.o %~dp0..\src\kvstore\sharded_memtable.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\skiplist.c...
+%GCC% -c -o skiplist.o %~dp0..\src\kvstore\skiplist.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\sync.c...
+%GCC% -c -o sync.o %~dp0..\src\kvstore\sync.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\wal.c...
+%GCC% -c -o wal.o %~dp0..\src\kvstore\wal.c %INCLUDE_PATHS% %CFLAGS%
+echo   Compiling %~dp0..\src\kvstore\kvstore_impl.c...
+%GCC% -c -o kvstore_impl.o %~dp0..\src\kvstore\kvstore_impl.c %INCLUDE_PATHS% %CFLAGS%
 
-:: Compile main program
+rem Compile main program
 echo Compiling main program...
-pushd "%SRC_DIR%"
-"%GCC%" %CFLAGS% -c "main.c" -o "%OBJ_DIR%\main.o"
-popd
-if errorlevel 1 (
-    echo Error compiling main.c
-    popd
-    exit /b 1
-)
+%GCC% -c -o main.o %~dp0..\src\main.c %INCLUDE_PATHS% %CFLAGS%
 
-:: Create static library
+rem Create static library
 echo Creating static library...
-"%AR%" rcs "%BUILD_DIR%\libppdb.a" *.o
+%AR% rcs libppdb.a error.o fs.o logger.o kvstore.o memtable.o memtable_iterator.o metrics.o monitor.o sharded_memtable.o skiplist.o sync.o wal.o kvstore_impl.o
 
-:: Link executable
+rem Link executable
 echo Linking executable...
-"%GCC%" %LDFLAGS% *.o %LIBS% -o "%BUILD_DIR%\ppdb.exe"
+%GCC% %LDFLAGS% -o ppdb.exe main.o libppdb.a %LIBS%
 
-:: Add APE self-modify support
+rem Add APE self-modify support
 echo Adding APE self-modify support...
-copy /b "%BUILD_DIR%\ppdb.exe" + "%COSMO%\ape-copy-self.o" "%BUILD_DIR%\ppdb.com"
-if errorlevel 1 (
-    echo Error adding APE support
-    popd
-    exit /b 1
-)
+%COSMO%\tool\apelink ppdb.exe
 
-:: Clean up intermediate files
-echo Cleaning up...
-popd
-rmdir /s /q "%OBJ_DIR%"
-
-echo Build completed successfully!
-echo Binary: %BUILD_DIR%\ppdb.com
+cd ..

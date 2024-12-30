@@ -1,8 +1,9 @@
 review INDEX.md and FILES.md in docs/, and PLAN.md in docs/;
 
-run ppdb\scripts\build_ppdb.bat and make a fix plan first;
+run ppdb\scripts\build_ppdb.bat and make a fix plan and wait for confirm;
 
 
+wait
 
 
 那现在运行一下

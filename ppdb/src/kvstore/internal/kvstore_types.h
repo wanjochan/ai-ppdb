@@ -1,17 +1,9 @@
 #ifndef PPDB_KVSTORE_TYPES_H
 #define PPDB_KVSTORE_TYPES_H
 
-#include <cosmopolitan.h>
-#include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_types.h"
-
-// 键值对结构
-typedef struct ppdb_kv_pair {
-    void* key;
-    void* value;
-    ppdb_size_t key_len;
-    ppdb_size_t value_len;
-} ppdb_kv_pair_t;
+#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb_kvstore.h"
 
 // 迭代器结构
 typedef struct ppdb_iterator {

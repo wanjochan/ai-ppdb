@@ -129,3 +129,120 @@ ppdb_error_t ppdb_remove_directory(const char* path) {
 
     return err;
 }
+
+bool ppdb_fs_file_exists(const char* path) {
+    struct stat st;
+    if (stat(path, &st) == 0) {
+        return S_ISREG(st.st_mode);
+    }
+    return false;
+}
+
+ppdb_error_t ppdb_get_file_size(const char* path, size_t* size) {
+    if (!path || !size) return PPDB_ERR_NULL_POINTER;
+
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        ppdb_log_error("Failed to get file size: %s (errno: %d)", path, errno);
+        return PPDB_ERR_IO;
+    }
+
+    *size = (size_t)st.st_size;
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_read_file(const char* path, void* buf, size_t size) {
+    if (!path || !buf) return PPDB_ERR_NULL_POINTER;
+    if (size == 0) return PPDB_OK;
+
+    FILE* fp = fopen(path, "rb");
+    if (!fp) {
+        ppdb_log_error("Failed to open file for reading: %s (errno: %d)", path, errno);
+        return PPDB_ERR_IO;
+    }
+
+    size_t bytes_read = fread(buf, 1, size, fp);
+    if (bytes_read != size) {
+        ppdb_log_error("Failed to read file: %s (expected: %zu, actual: %zu)", 
+                      path, size, bytes_read);
+        fclose(fp);
+        return PPDB_ERR_IO;
+    }
+
+    fclose(fp);
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_write_file(const char* path, const void* buf, size_t size) {
+    if (!path || !buf) return PPDB_ERR_NULL_POINTER;
+    if (size == 0) return PPDB_OK;
+
+    FILE* fp = fopen(path, "wb");
+    if (!fp) {
+        ppdb_log_error("Failed to open file for writing: %s (errno: %d)", path, errno);
+        return PPDB_ERR_IO;
+    }
+
+    size_t bytes_written = fwrite(buf, 1, size, fp);
+    if (bytes_written != size) {
+        ppdb_log_error("Failed to write file: %s (expected: %zu, actual: %zu)", 
+                      path, size, bytes_written);
+        fclose(fp);
+        return PPDB_ERR_IO;
+    }
+
+    fclose(fp);
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_append_file(const char* path, const void* buf, size_t size) {
+    if (!path || !buf) return PPDB_ERR_NULL_POINTER;
+    if (size == 0) return PPDB_OK;
+
+    FILE* fp = fopen(path, "ab");
+    if (!fp) {
+        ppdb_log_error("Failed to open file for appending: %s (errno: %d)", path, errno);
+        return PPDB_ERR_IO;
+    }
+
+    size_t bytes_written = fwrite(buf, 1, size, fp);
+    if (bytes_written != size) {
+        ppdb_log_error("Failed to append to file: %s (expected: %zu, actual: %zu)", 
+                      path, size, bytes_written);
+        fclose(fp);
+        return PPDB_ERR_IO;
+    }
+
+    fclose(fp);
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_truncate_file(const char* path, size_t size) {
+    if (!path) return PPDB_ERR_NULL_POINTER;
+
+#ifdef _WIN32
+    HANDLE hFile = CreateFileA(path, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 
+                             FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        ppdb_log_error("Failed to open file for truncating: %s", path);
+        return PPDB_ERR_IO;
+    }
+
+    LARGE_INTEGER li;
+    li.QuadPart = size;
+    if (!SetFilePointerEx(hFile, li, NULL, FILE_BEGIN) || !SetEndOfFile(hFile)) {
+        ppdb_log_error("Failed to truncate file: %s", path);
+        CloseHandle(hFile);
+        return PPDB_ERR_IO;
+    }
+
+    CloseHandle(hFile);
+#else
+    if (truncate(path, size) != 0) {
+        ppdb_log_error("Failed to truncate file: %s (errno: %d)", path, errno);
+        return PPDB_ERR_IO;
+    }
+#endif
+
+    return PPDB_OK;
+}

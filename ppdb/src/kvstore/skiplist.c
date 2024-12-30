@@ -38,6 +38,13 @@ struct ppdb_skiplist {
     } hint;
 };
 
+// 迭代器结构
+struct ppdb_skiplist_iterator {
+    ppdb_skiplist_t* list;        // 跳表指针
+    skiplist_node_t* current;     // 当前节点
+    ppdb_sync_t sync;             // 同步原语
+};
+
 // 生成随机高度
 static uint32_t random_height(void) {
     uint32_t height = 1;
@@ -297,7 +304,6 @@ ppdb_error_t ppdb_skiplist_delete(ppdb_skiplist_t* list,
 
     // 更新指针
     for (uint32_t i = 0; i < current->height; i++) {
-        if (update[i]->next[i] != current) break;
         update[i]->next[i] = current->next[i];
     }
 
@@ -313,4 +319,76 @@ ppdb_error_t ppdb_skiplist_delete(ppdb_skiplist_t* list,
 size_t ppdb_skiplist_size(ppdb_skiplist_t* list) {
     if (!list) return 0;
     return atomic_load(&list->size);
+}
+
+// 创建迭代器
+ppdb_error_t ppdb_skiplist_iterator_create(ppdb_skiplist_t* list,
+                                         ppdb_skiplist_iterator_t** iter) {
+    if (!list || !iter) return PPDB_ERR_NULL_POINTER;
+
+    ppdb_skiplist_iterator_t* new_iter = aligned_alloc(64, sizeof(ppdb_skiplist_iterator_t));
+    if (!new_iter) return PPDB_ERR_NO_MEMORY;
+
+    // 初始化同步原语
+    ppdb_sync_config_t sync_config = {
+        .use_lockfree = false,
+        .stripe_count = 0,
+        .spin_count = 1000,
+        .backoff_us = 100,
+        .enable_ref_count = false
+    };
+    ppdb_sync_init(&new_iter->sync, &sync_config);
+
+    new_iter->list = list;
+    new_iter->current = list->head;
+
+    *iter = new_iter;
+    return PPDB_OK;
+}
+
+// 迭代器移动到下一个元素
+ppdb_error_t ppdb_skiplist_iterator_next(ppdb_skiplist_iterator_t* iter,
+                                        uint8_t** key, size_t* key_len,
+                                        uint8_t** value, size_t* value_len) {
+    if (!iter || !key || !key_len || !value || !value_len) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    ppdb_sync_lock(&iter->sync);
+
+    // 移动到下一个节点
+    iter->current = iter->current->next[0];
+    if (!iter->current) {
+        ppdb_sync_unlock(&iter->sync);
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    // 复制键值对
+    *key = malloc(iter->current->key_len);
+    if (!*key) {
+        ppdb_sync_unlock(&iter->sync);
+        return PPDB_ERR_NO_MEMORY;
+    }
+
+    *value = malloc(iter->current->value_len);
+    if (!*value) {
+        free(*key);
+        ppdb_sync_unlock(&iter->sync);
+        return PPDB_ERR_NO_MEMORY;
+    }
+
+    memcpy(*key, iter->current->key, iter->current->key_len);
+    memcpy(*value, iter->current->value, iter->current->value_len);
+    *key_len = iter->current->key_len;
+    *value_len = iter->current->value_len;
+
+    ppdb_sync_unlock(&iter->sync);
+    return PPDB_OK;
+}
+
+// 销毁迭代器
+void ppdb_skiplist_iterator_destroy(ppdb_skiplist_iterator_t* iter) {
+    if (!iter) return;
+    ppdb_sync_destroy(&iter->sync);
+    free(iter);
 }

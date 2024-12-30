@@ -5,14 +5,14 @@
 #include "ppdb/ppdb_kvstore.h"
 
 // 内部头文件
-#include "internal/kvstore_types.h"
-#include "internal/kvstore_internal.h"
-#include "internal/kvstore_config.h"
-#include "internal/kvstore_fs.h"
-#include "internal/kvstore_memtable.h"
-#include "internal/kvstore_wal.h"
-#include "internal/kvstore_monitor.h"
-#include "internal/kvstore_logger.h"
+#include "kvstore/internal/kvstore_types.h"
+#include "kvstore/internal/kvstore_internal.h"
+#include "kvstore/internal/kvstore_config.h"
+#include "kvstore/internal/kvstore_fs.h"
+#include "kvstore/internal/kvstore_memtable.h"
+#include "kvstore/internal/kvstore_wal.h"
+#include "kvstore/internal/kvstore_monitor.h"
+#include "kvstore/internal/kvstore_logger.h"
 
 // 创建内存表
 static ppdb_error_t create_memtable(size_t size, ppdb_memtable_t** table, bool use_sharding) {

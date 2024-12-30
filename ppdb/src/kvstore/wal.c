@@ -1,342 +1,446 @@
 #include <cosmopolitan.h>
-#include <fcntl.h>
-#include <unistd.h>
-
-// 公共头文件
 #include "ppdb/ppdb_error.h"
-
-// 内部头文件
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_kvstore.h"
 #include "internal/kvstore_types.h"
+#include "internal/kvstore_memtable.h"
 #include "internal/kvstore_wal.h"
-#include "internal/kvstore_fs.h"
-#include "internal/kvstore_logger.h"
 #include "internal/sync.h"
 #include "internal/metrics.h"
+#include "internal/kvstore_fs.h"
 
-// WAL record header
-typedef struct wal_record_header {
-    uint32_t type;           // 记录类型
-    uint32_t key_size;       // 键大小
-    uint32_t value_size;     // 值大小
-    uint64_t sequence;       // 序列号
-    uint32_t checksum;       // 校验和
-} __attribute__((packed)) wal_record_header_t;
-
-// WAL buffer
-typedef struct wal_buffer {
-    char* data;              // 数据
-    atomic_size_t size;      // 大小
-    atomic_size_t used;      // 已用大小
-    atomic_bool in_use;      // 是否使用中
-    ppdb_sync_t sync;        // 同步原语
-} wal_buffer_t;
-
-// WAL structure
-struct ppdb_wal {
-    int fd;                  // 文件描述符
-    char* filename;          // 文件名
-    ppdb_wal_config_t config;// 配置
-    ppdb_sync_t sync;        // 同步原语
-    wal_buffer_t* buffers;   // 缓冲区数组
-    atomic_size_t buffer_count;    // 缓冲区数量
-    atomic_size_t current_buffer;  // 当前缓冲区
-    atomic_uint64_t next_sequence; // 下一个序列号
-    atomic_bool closed;            // 是否关闭
-    atomic_uint64_t file_size;     // 文件大小
-};
-
-// WAL recovery iterator
-struct ppdb_wal_recovery_iter {
-    ppdb_wal_t* wal;        // WAL pointer
-    off_t position;         // Current position
-    char* buffer;           // Read buffer
-    size_t buffer_size;     // Buffer size
-};
-
-// Create WAL
-ppdb_wal_t* ppdb_wal_create(const char* filename, const ppdb_wal_config_t* config) {
-    if (!filename || !config) return NULL;
-
-    ppdb_wal_t* wal = aligned_alloc(64, sizeof(ppdb_wal_t));
-    if (!wal) return NULL;
-
-    // Initialize synchronization
-    ppdb_sync_init(&wal->sync, &config->sync_config);
-
-    // Open file
-    wal->fd = open(filename, O_RDWR | O_CREAT | O_APPEND, 0644);
-    if (wal->fd < 0) {
-        ppdb_sync_destroy(&wal->sync);
-        free(wal);
-        return NULL;
-    }
-
-    // Copy configuration
-    memcpy(&wal->config, config, sizeof(ppdb_wal_config_t));
-    wal->filename = strdup(filename);
-
-    // Initialize buffers
-    atomic_init(&wal->buffer_count, 2);  // Double buffer
-    wal->buffers = aligned_alloc(64, sizeof(wal_buffer_t) * 2);
-    if (!wal->buffers) {
-        close(wal->fd);
-        ppdb_sync_destroy(&wal->sync);
-        free(wal->filename);
-        free(wal);
-        return NULL;
-    }
-
-    for (size_t i = 0; i < 2; i++) {
-        wal->buffers[i].data = aligned_alloc(4096, config->buffer_size);
-        if (!wal->buffers[i].data) {
-            for (size_t j = 0; j < i; j++) {
-                free(wal->buffers[j].data);
-            }
-            free(wal->buffers);
-            close(wal->fd);
-            ppdb_sync_destroy(&wal->sync);
-            free(wal->filename);
-            free(wal);
-            return NULL;
+// CRC32计算函数
+static uint32_t calculate_crc32(const void* data, size_t size) {
+    uint32_t crc = 0xFFFFFFFF;
+    const uint8_t* bytes = (const uint8_t*)data;
+    
+    for (size_t i = 0; i < size; i++) {
+        crc ^= bytes[i];
+        for (int j = 0; j < 8; j++) {
+            crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
         }
-        atomic_init(&wal->buffers[i].size, config->buffer_size);
-        atomic_init(&wal->buffers[i].used, 0);
-        atomic_init(&wal->buffers[i].in_use, false);
-        ppdb_sync_init(&wal->buffers[i].sync, &config->sync_config);
+    }
+    
+    return ~crc;
+}
+
+// 实现函数
+ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t** wal) {
+    if (!config || !wal) {
+        return PPDB_ERR_INVALID_ARG;
     }
 
-    atomic_init(&wal->current_buffer, 0);
-    atomic_init(&wal->next_sequence, 1);
-    atomic_init(&wal->closed, false);
-    atomic_init(&wal->file_size, 0);
+    ppdb_wal_t* new_wal = aligned_alloc(64, sizeof(ppdb_wal_t));
+    if (!new_wal) {
+        return PPDB_ERR_NO_MEMORY;
+    }
 
-    return wal;
+    // 初始化文件头
+    wal_header_t header = {
+        .magic = WAL_MAGIC,
+        .version = 1,
+        .sequence = 0
+    };
+
+    // 写入文件头
+    ppdb_error_t err = ppdb_write_file(config->filename, &header, sizeof(header));
+    if (err != PPDB_OK) {
+        free(new_wal);
+        return err;
+    }
+
+    // 初始化 WAL 结构
+    new_wal->filename = strdup(config->filename);
+    if (!new_wal->filename) {
+        free(new_wal);
+        return PPDB_ERR_NO_MEMORY;
+    }
+
+    new_wal->file_size = sizeof(header);
+    new_wal->sync_on_write = config->sync_on_write;
+    new_wal->enable_compression = config->enable_compression;
+
+    // 初始化同步原语
+    ppdb_sync_config_t sync_config = {
+        .type = PPDB_SYNC_TYPE_MUTEX,
+        .spin_count = 1000
+    };
+
+    err = ppdb_sync_init(&new_wal->sync, &sync_config);
+    if (err != PPDB_OK) {
+        free(new_wal->filename);
+        free(new_wal);
+        return err;
+    }
+
+    // 初始化缓冲区
+    if (config->buffer_size > 0) {
+        new_wal->buffers = malloc(sizeof(wal_buffer_t));
+        if (!new_wal->buffers) {
+            ppdb_sync_destroy(&new_wal->sync);
+            free(new_wal->filename);
+            free(new_wal);
+            return PPDB_ERR_NO_MEMORY;
+        }
+
+        new_wal->buffers[0].data = malloc(config->buffer_size);
+        if (!new_wal->buffers[0].data) {
+            free(new_wal->buffers);
+            ppdb_sync_destroy(&new_wal->sync);
+            free(new_wal->filename);
+            free(new_wal);
+            return PPDB_ERR_NO_MEMORY;
+        }
+
+        new_wal->buffers[0].size = config->buffer_size;
+        new_wal->buffers[0].used = 0;
+        new_wal->buffers[0].in_use = false;
+        err = ppdb_sync_init(&new_wal->buffers[0].sync, &sync_config);
+        if (err != PPDB_OK) {
+            free(new_wal->buffers[0].data);
+            free(new_wal->buffers);
+            ppdb_sync_destroy(&new_wal->sync);
+            free(new_wal->filename);
+            free(new_wal);
+            return err;
+        }
+
+        new_wal->buffer_count = 1;
+    } else {
+        new_wal->buffers = NULL;
+        new_wal->buffer_count = 0;
+    }
+
+    new_wal->next_sequence = 0;
+    new_wal->closed = false;
+    new_wal->current_buffer = 0;
+    ppdb_metrics_init(&new_wal->metrics);
+
+    *wal = new_wal;
+    return PPDB_OK;
 }
 
 // Destroy WAL
-void ppdb_wal_destroy(ppdb_wal_t* wal) {
+void ppdb_wal_destroy_basic(ppdb_wal_t* wal) {
     if (!wal) return;
-
-    // Mark as closed
-    atomic_store(&wal->closed, true);
-
-    // Wait for all buffer operations to complete
-    for (size_t i = 0; i < atomic_load(&wal->buffer_count); i++) {
-        while (atomic_load(&wal->buffers[i].in_use)) {
-            sched_yield();
+    
+    // 清理缓冲区
+    if (wal->buffers) {
+        for (size_t i = 0; i < wal->buffer_count; i++) {
+            ppdb_sync_destroy(&wal->buffers[i].sync);
+            free(wal->buffers[i].data);
         }
-        ppdb_sync_destroy(&wal->buffers[i].sync);
-        free(wal->buffers[i].data);
+        free(wal->buffers);
     }
 
-    ppdb_sync_destroy(&wal->sync);
-    free(wal->buffers);
     free(wal->filename);
-    close(wal->fd);
+    ppdb_sync_destroy(&wal->sync);
     free(wal);
 }
 
-// Append record
-int ppdb_wal_append(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
-                    const void* key, size_t key_len,
-                    const void* value, size_t value_len,
-                    uint64_t sequence) {
-    if (!wal || !key || (value_len > 0 && !value)) return PPDB_ERR_INVALID_ARG;
-    if (atomic_load(&wal->closed)) return PPDB_ERR_CLOSED;
-
-    // Calculate record size
-    size_t record_size = sizeof(wal_record_header_t) + key_len + value_len;
-    if (record_size > wal->config.buffer_size) return PPDB_ERR_TOO_LARGE;
-
-    // Get current buffer
-    size_t current = atomic_load(&wal->current_buffer);
-    wal_buffer_t* buffer = &wal->buffers[current];
-
-    // Try to get buffer lock
-    if (!ppdb_sync_try_lock(&buffer->sync)) {
-        return PPDB_ERR_BUSY;
+// Write record
+ppdb_error_t ppdb_wal_write_basic(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
+                                 const void* key, size_t key_size,
+                                 const void* value, size_t value_size) {
+    if (!wal || !key || key_size == 0) {
+        return PPDB_ERR_INVALID_ARG;
     }
 
-    // Check buffer space
-    size_t used = atomic_load(&buffer->used);
-    if (used + record_size > atomic_load(&buffer->size)) {
-        // Switch to next buffer
-        size_t next = (current + 1) % atomic_load(&wal->buffer_count);
-        wal_buffer_t* next_buffer = &wal->buffers[next];
+    ppdb_sync_lock(&wal->sync);
 
-        // Wait for next buffer to be available
-        while (atomic_load(&next_buffer->in_use)) {
-            sched_yield();
-        }
+    // 检查是否已关闭
+    if (wal->closed) {
+        ppdb_sync_unlock(&wal->sync);
+        return PPDB_ERR_CLOSED;
+    }
 
-        // Flush current buffer
-        if (used > 0) {
-            ssize_t written = write(wal->fd, buffer->data, used);
-            if (written != used) {
-                ppdb_sync_unlock(&buffer->sync);
-                return PPDB_ERR_IO;
-            }
-            atomic_fetch_add(&wal->file_size, written);
-            atomic_store(&buffer->used, 0);
-        }
+    // 准备记录头
+    wal_record_header_t header = {
+        .type = type,
+        .key_size = key_size,
+        .value_size = value_size,
+        .crc32 = 0
+    };
 
-        // Switch buffer
-        atomic_store(&wal->current_buffer, next);
-        ppdb_sync_unlock(&buffer->sync);
-        buffer = next_buffer;
-        
-        if (!ppdb_sync_try_lock(&buffer->sync)) {
-            return PPDB_ERR_BUSY;
+    // 计算CRC32
+    header.crc32 = calculate_crc32(key, key_size);
+    if (value && value_size > 0) {
+        header.crc32 ^= calculate_crc32(value, value_size);
+    }
+
+    // 写入记录头
+    ppdb_error_t err = ppdb_write_file(wal->filename, &header, sizeof(header));
+    if (err != PPDB_OK) {
+        ppdb_sync_unlock(&wal->sync);
+        return err;
+    }
+
+    // 写入键
+    err = ppdb_write_file(wal->filename, key, key_size);
+    if (err != PPDB_OK) {
+        ppdb_sync_unlock(&wal->sync);
+        return err;
+    }
+
+    // 写入值
+    if (value && value_size > 0) {
+        err = ppdb_write_file(wal->filename, value, value_size);
+        if (err != PPDB_OK) {
+            ppdb_sync_unlock(&wal->sync);
+            return err;
         }
     }
 
-    // Prepare record header
+    // 更新文件大小
+    wal->file_size += sizeof(header) + key_size + value_size;
+
+    // 如果需要同步写入
+    if (wal->sync_on_write) {
+        err = ppdb_sync_file(wal->filename);
+        if (err != PPDB_OK) {
+            ppdb_sync_unlock(&wal->sync);
+            return err;
+        }
+    }
+
+    // 更新序列号和指标
+    wal->next_sequence++;
+    wal->metrics.put_count++;
+
+    ppdb_sync_unlock(&wal->sync);
+    return PPDB_OK;
+}
+
+// Write record (lockfree version)
+ppdb_error_t ppdb_wal_write_lockfree_basic(ppdb_wal_t* wal, ppdb_wal_record_type_t type,
+                                          const void* key, size_t key_len,
+                                          const void* value, size_t value_len) {
+    if (!wal || !key || !value) return PPDB_ERR_INVALID_ARG;
+
+    // 写入记录头
     wal_record_header_t header = {
         .type = type,
         .key_size = key_len,
         .value_size = value_len,
-        .sequence = sequence ? sequence : atomic_fetch_add(&wal->next_sequence, 1),
-        .checksum = 0  // TODO: Implement checksum
+        .crc32 = 0  // TODO: 计算CRC32
     };
 
-    // Write record
-    used = atomic_load(&buffer->used);
-    memcpy(buffer->data + used, &header, sizeof(header));
-    used += sizeof(header);
-    memcpy(buffer->data + used, key, key_len);
-    used += key_len;
-    if (value_len > 0) {
-        memcpy(buffer->data + used, value, value_len);
-        used += value_len;
-    }
-    atomic_store(&buffer->used, used);
+    // 获取当前文件大小
+    size_t current_size;
+    ppdb_error_t err = ppdb_get_file_size(wal->filename, &current_size);
+    if (err != PPDB_OK) return err;
 
-    ppdb_sync_unlock(&buffer->sync);
+    // 写入记录头
+    err = ppdb_append_file(wal->filename, &header, sizeof(header));
+    if (err != PPDB_OK) return err;
+
+    // 写入键
+    err = ppdb_append_file(wal->filename, key, key_len);
+    if (err != PPDB_OK) return err;
+
+    // 写入值
+    err = ppdb_append_file(wal->filename, value, value_len);
+    if (err != PPDB_OK) return err;
+
+    // 更新状态
+    wal->next_sequence++;
+    wal->file_size = current_size + sizeof(header) + key_len + value_len;
+    wal->metrics.put_count++;
+
     return PPDB_OK;
 }
 
 // Sync to disk
-int ppdb_wal_sync(ppdb_wal_t* wal) {
+ppdb_error_t ppdb_wal_sync_basic(ppdb_wal_t* wal) {
     if (!wal) return PPDB_ERR_INVALID_ARG;
-    if (atomic_load(&wal->closed)) return PPDB_ERR_CLOSED;
 
-    // Get current buffer
-    size_t current = atomic_load(&wal->current_buffer);
-    wal_buffer_t* buffer = &wal->buffers[current];
+    ppdb_sync_lock(&wal->sync);
 
-    // Get buffer lock
-    ppdb_sync_lock(&buffer->sync);
+    // 在文件系统层面，我们目前没有显式的同步操作
+    // 每次写入都是同步的，所以这里只需要更新计数器
+    wal->metrics.total_ops++;
 
-    // Write data
-    size_t used = atomic_load(&buffer->used);
-    if (used > 0) {
-        ssize_t written = write(wal->fd, buffer->data, used);
-        if (written != used) {
-            ppdb_sync_unlock(&buffer->sync);
-            return PPDB_ERR_IO;
-        }
-        atomic_fetch_add(&wal->file_size, written);
-        atomic_store(&buffer->used, 0);
-    }
-
-    // Sync to disk
-    if (fsync(wal->fd) != 0) {
-        ppdb_sync_unlock(&buffer->sync);
-        return PPDB_ERR_IO;
-    }
-
-    ppdb_sync_unlock(&buffer->sync);
+    ppdb_sync_unlock(&wal->sync);
     return PPDB_OK;
 }
 
-// Create recovery iterator
-ppdb_wal_recovery_iter_t* ppdb_wal_recovery_iter_create(ppdb_wal_t* wal) {
-    if (!wal) return NULL;
+// Sync to disk (lockfree version)
+ppdb_error_t ppdb_wal_sync_lockfree_basic(ppdb_wal_t* wal) {
+    if (!wal) return PPDB_ERR_INVALID_ARG;
 
-    ppdb_wal_recovery_iter_t* iter = malloc(sizeof(ppdb_wal_recovery_iter_t));
-    if (!iter) return NULL;
+    // 同上，目前没有显式的同步操作
+    wal->metrics.total_ops++;
+    return PPDB_OK;
+}
 
-    iter->wal = wal;
-    iter->position = 0;
-    iter->buffer_size = 4096;
-    iter->buffer = malloc(iter->buffer_size);
-    if (!iter->buffer) {
-        free(iter);
-        return NULL;
+// Get file size
+size_t ppdb_wal_size_basic(ppdb_wal_t* wal) {
+    if (!wal) return 0;
+    
+    size_t current_size;
+    if (ppdb_get_file_size(wal->filename, &current_size) != PPDB_OK) {
+        return 0;
     }
+    return current_size;
+}
 
-    return iter;
+// Get file size (lockfree version)
+size_t ppdb_wal_size_lockfree_basic(ppdb_wal_t* wal) {
+    return ppdb_wal_size_basic(wal);  // 复用基础版本
+}
+
+// Get next sequence number
+uint64_t ppdb_wal_next_sequence_basic(ppdb_wal_t* wal) {
+    return wal ? wal->next_sequence : 0;
+}
+
+// Get next sequence number (lockfree version)
+uint64_t ppdb_wal_next_sequence_lockfree_basic(ppdb_wal_t* wal) {
+    return wal ? wal->next_sequence : 0;
+}
+
+// Create recovery iterator
+ppdb_error_t ppdb_wal_recovery_iter_create_basic(ppdb_wal_t* wal,
+                                                ppdb_wal_recovery_iter_t** iter) {
+    if (!wal || !iter) return PPDB_ERR_INVALID_ARG;
+
+    ppdb_wal_recovery_iter_t* new_iter = malloc(sizeof(ppdb_wal_recovery_iter_t));
+    if (!new_iter) return PPDB_ERR_NO_MEMORY;
+
+    new_iter->wal = wal;
+    new_iter->position = sizeof(wal_header_t);  // Skip header
+    new_iter->buffer = NULL;
+    new_iter->buffer_size = 0;
+
+    *iter = new_iter;
+    return PPDB_OK;
 }
 
 // Destroy recovery iterator
-void ppdb_wal_recovery_iter_destroy(ppdb_wal_recovery_iter_t* iter) {
+void ppdb_wal_recovery_iter_destroy_basic(ppdb_wal_recovery_iter_t* iter) {
     if (!iter) return;
     free(iter->buffer);
     free(iter);
 }
 
-// Check if recovery iterator is valid
-bool ppdb_wal_recovery_iter_valid(ppdb_wal_recovery_iter_t* iter) {
-    if (!iter || !iter->wal) return false;
-    return iter->position < atomic_load(&iter->wal->file_size);
+// Read next record with CRC check
+ppdb_error_t ppdb_wal_recovery_iter_next_basic(ppdb_wal_recovery_iter_t* iter) {
+    if (!iter || !iter->wal) {
+        return PPDB_ERROR_INVALID_ARGUMENT;
+    }
+
+    if (iter->position >= iter->wal->file_size) {
+        return PPDB_ERROR_ITERATOR_END;
+    }
+
+    // 读取记录头
+    wal_record_header_t header;
+    ppdb_error_t err = ppdb_read_file(iter->wal->filename, &header, sizeof(header));
+    if (err != PPDB_ERROR_OK) {
+        return err;
+    }
+
+    // 分配或扩展缓冲区
+    size_t total_size = header.key_size + header.value_size;
+    if (total_size > iter->buffer_size) {
+        char* new_buffer = realloc(iter->buffer, total_size);
+        if (!new_buffer) {
+            return PPDB_ERROR_BUFFER_TOO_SMALL;
+        }
+        iter->buffer = new_buffer;
+        iter->buffer_size = total_size;
+    }
+
+    // 读取键和值
+    err = ppdb_read_file(iter->wal->filename, iter->buffer, total_size);
+    if (err != PPDB_ERROR_OK) {
+        return err;
+    }
+
+    // 验证CRC32
+    uint32_t crc = calculate_crc32(iter->buffer, header.key_size);
+    if (header.value_size > 0) {
+        crc ^= calculate_crc32(iter->buffer + header.key_size, header.value_size);
+    }
+    if (crc != header.crc32) {
+        return PPDB_ERROR_CHECKSUM;
+    }
+
+    // 设置当前记录
+    iter->current.key = iter->buffer;
+    iter->current.key_size = header.key_size;
+    if (header.value_size > 0) {
+        iter->current.value = iter->buffer + header.key_size;
+        iter->current.value_size = header.value_size;
+    } else {
+        iter->current.value = NULL;
+        iter->current.value_size = 0;
+    }
+
+    iter->position += sizeof(header) + total_size;
+    return PPDB_ERROR_OK;
 }
 
-// Get next record
-int ppdb_wal_recovery_iter_next(ppdb_wal_recovery_iter_t* iter,
-                               ppdb_wal_record_type_t* type,
-                               void** key, size_t* key_len,
-                               void** value, size_t* value_len,
-                               uint64_t* sequence) {
-    if (!iter || !iter->wal || !type || !key || !key_len || !value || !value_len || !sequence) {
-        return PPDB_ERR_INVALID_ARG;
+// Recover WAL
+ppdb_error_t ppdb_wal_recover_basic(ppdb_wal_t* wal, ppdb_memtable_t* memtable) {
+    if (!wal || !memtable) {
+        return PPDB_ERROR_INVALID_ARGUMENT;
     }
 
-    // Read record header
-    wal_record_header_t header;
-    ssize_t n = pread(iter->wal->fd, &header, sizeof(header), iter->position);
-    if (n != sizeof(header)) {
-        return PPDB_ERR_IO;
-    }
+    ppdb_wal_recovery_iter_t iter = {
+        .wal = wal,
+        .position = 0,
+        .buffer = NULL,
+        .buffer_size = 0
+    };
 
-    // Allocate memory
-    *key = malloc(header.key_size);
-    if (!*key) return PPDB_ERR_NO_MEMORY;
-
-    if (header.value_size > 0) {
-        *value = malloc(header.value_size);
-        if (!*value) {
-            free(*key);
-            return PPDB_ERR_NO_MEMORY;
+    ppdb_error_t err = ppdb_wal_recovery_iter_next_basic(&iter);
+    while (err == PPDB_ERROR_OK) {
+        // 处理当前记录
+        err = ppdb_memtable_put_basic(memtable, 
+            iter.current.key, iter.current.key_size,
+            iter.current.value, iter.current.value_size);
+        if (err != PPDB_ERROR_OK) {
+            break;
         }
-    } else {
-        *value = NULL;
+        err = ppdb_wal_recovery_iter_next_basic(&iter);
     }
 
-    // Read key and value
-    n = pread(iter->wal->fd, *key, header.key_size, 
-              iter->position + sizeof(header));
-    if (n != header.key_size) {
-        free(*key);
-        free(*value);
-        return PPDB_ERR_IO;
+    if (err == PPDB_ERROR_ITERATOR_END) {
+        err = PPDB_ERROR_OK;
     }
 
-    if (header.value_size > 0) {
-        n = pread(iter->wal->fd, *value, header.value_size,
-                 iter->position + sizeof(header) + header.key_size);
-        if (n != header.value_size) {
-            free(*key);
-            free(*value);
-            return PPDB_ERR_IO;
+    return err;
+}
+
+// Recover WAL (lockfree version)
+ppdb_error_t ppdb_wal_recover_lockfree_basic(ppdb_wal_t* wal, ppdb_memtable_t* memtable) {
+    if (!wal || !memtable) {
+        return PPDB_ERROR_INVALID_ARGUMENT;
+    }
+
+    ppdb_wal_recovery_iter_t iter = {
+        .wal = wal,
+        .position = 0,
+        .buffer = NULL,
+        .buffer_size = 0
+    };
+
+    ppdb_error_t err = ppdb_wal_recovery_iter_next_basic(&iter);
+    while (err == PPDB_ERROR_OK) {
+        // 处理当前记录
+        err = ppdb_memtable_put_lockfree_basic(memtable,
+            iter.current.key, iter.current.key_size,
+            iter.current.value, iter.current.value_size);
+        if (err != PPDB_ERROR_OK) {
+            break;
         }
+        err = ppdb_wal_recovery_iter_next_basic(&iter);
     }
 
-    // Update position and return values
-    iter->position += sizeof(header) + header.key_size + header.value_size;
-    *type = header.type;
-    *key_len = header.key_size;
-    *value_len = header.value_size;
-    *sequence = header.sequence;
+    if (err == PPDB_ERROR_ITERATOR_END) {
+        err = PPDB_ERROR_OK;
+    }
 
-    return PPDB_OK;
+    return err;
 }

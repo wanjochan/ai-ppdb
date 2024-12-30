@@ -3,25 +3,31 @@
 
 #include <cosmopolitan.h>
 #include "ppdb_error.h"
+#include "ppdb_types.h"
 
 // WAL配置
 typedef struct ppdb_wal_config {
-    char dir_path[256];         // WAL目录路径
-    size_t segment_size;        // 段大小
-    bool sync_write;           // 是否同步写入
-    bool enable_compression;   // 是否启用压缩
-    size_t buffer_size;        // 缓冲区大小
+    char dir_path[PPDB_MAX_PATH_SIZE];  // WAL目录路径
+    char filename[PPDB_MAX_PATH_SIZE];  // WAL文件名
+    size_t segment_size;                // 段大小
+    ppdb_compression_t compression;      // 压缩算法
+    bool sync_write;                    // 是否同步写入
+    bool use_buffer;                    // 是否使用缓冲区
+    size_t buffer_size;                 // 缓冲区大小
+    uint32_t max_segments;              // 最大段数
+    bool sync_on_write;
+    bool enable_compression;  // 启用压缩选项
 } ppdb_wal_config_t;
 
 // KVStore配置
 typedef struct ppdb_kvstore_config {
-    char data_dir[256];         // 数据目录
-    size_t memtable_size;       // 内存表大小限制
-    bool use_sharding;          // 是否使用分片
-    bool adaptive_sharding;     // 是否启用自适应分片
-    bool enable_compression;    // 是否启用压缩
-    bool enable_monitoring;     // 是否启用监控
-    ppdb_wal_config_t wal;      // WAL配置
+    char data_dir[PPDB_MAX_PATH_SIZE];  // 数据目录
+    size_t memtable_size;               // 内存表大小限制
+    bool use_sharding;                  // 是否使用分片
+    bool adaptive_sharding;             // 是否启用自适应分片
+    bool enable_compression;            // 是否启用压缩
+    bool enable_monitoring;             // 是否启用监控
+    ppdb_wal_config_t wal;              // WAL配置
 } ppdb_kvstore_config_t;
 
 // KVStore句柄

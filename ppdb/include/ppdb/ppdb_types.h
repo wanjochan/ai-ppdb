@@ -34,4 +34,11 @@ typedef uint32_t ppdb_version_t;
 #define PPDB_DEFAULT_MEMTABLE_SIZE (64 * 1024 * 1024)  // 64MB
 #define PPDB_DEFAULT_WAL_SEGMENT_SIZE (4 * 1024 * 1024)  // 4MB
 
+typedef struct ppdb_kv_pair {
+    void* key;
+    size_t key_size;
+    void* value;
+    size_t value_size;
+} ppdb_kv_pair_t;
+
 #endif // PPDB_TYPES_H_ 

@@ -21,4 +21,10 @@ ppdb_error_t ppdb_truncate_file(const char* path, size_t size);
 ppdb_error_t ppdb_list_directory(const char* path, char*** files, size_t* count);
 ppdb_error_t ppdb_free_file_list(char** files, size_t count);
 
+// 文件操作函数
+ppdb_error_t ppdb_write_file(const char* filename, const void* data, size_t size);
+ppdb_error_t ppdb_read_file(const char* filename, void* data, size_t size);
+ppdb_error_t ppdb_append_file(const char* filename, const void* data, size_t size);
+ppdb_error_t ppdb_get_file_size(const char* filename, size_t* size);
+
 #endif // PPDB_KVSTORE_FS_H 

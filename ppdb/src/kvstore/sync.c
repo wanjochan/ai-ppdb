@@ -1,13 +1,7 @@
 #include <cosmopolitan.h>
-
-// 公共头文件
-#include "ppdb/ppdb_error.h"
-
-// 内部头文件
-#include "internal/kvstore_types.h"
 #include "internal/sync.h"
 
-// MurmurHash2 实现
+// MurmurHash2 
 static uint32_t murmur_hash2(const void* key, size_t len) {
     const uint32_t m = 0x5bd1e995;
     const uint32_t seed = 0x1234ABCD;
@@ -44,233 +38,149 @@ static uint32_t murmur_hash2(const void* key, size_t len) {
     return h;
 }
 
-// 引用计数实现
-void ppdb_ref_init(ppdb_ref_count_t* ref) {
-    atomic_init(&ref->count, 1);
+// FNV-1a哈希函数实现
+uint32_t ppdb_sync_hash(const void* data, size_t len) {
+    const uint8_t* bytes = (const uint8_t*)data;
+    uint32_t hash = 2166136261u;  // FNV offset basis
+    for (size_t i = 0; i < len; i++) {
+        hash ^= bytes[i];
+        hash *= 16777619u;  // FNV prime
+    }
+    return hash;
 }
 
-void ppdb_ref_inc(ppdb_ref_count_t* ref) {
-    atomic_fetch_add(&ref->count, 1);
-}
-
-bool ppdb_ref_dec(ppdb_ref_count_t* ref) {
-    uint32_t old = atomic_fetch_sub(&ref->count, 1);
-    return old == 1;  // 返回是否应该释放
-}
-
-uint32_t ppdb_ref_get(ppdb_ref_count_t* ref) {
-    return atomic_load(&ref->count);
-}
-
+// 初始化同步原语
 ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config) {
-    if (!sync || !config) return PPDB_ERR_INVALID_ARG;
-    
-    sync->config = *config;
-    
-    if (config->use_lockfree) {
-        atomic_init(&sync->impl.atomic, NODE_VALID);
-    } else {
-        atomic_init(&sync->impl.mutex, 0);  // 0表示未锁定
+    if (!sync || !config) {
+        return PPDB_ERR_INVALID_ARG;
     }
-    
-    if (config->enable_ref_count) {
-        sync->ref_count = malloc(sizeof(ppdb_ref_count_t));
-        if (!sync->ref_count) {
-            return PPDB_ERR_NO_MEMORY;
-        }
-        ppdb_ref_init(sync->ref_count);
-    } else {
-        sync->ref_count = NULL;
+
+    sync->type = config->type;
+
+    switch (config->type) {
+        case PPDB_SYNC_TYPE_MUTEX:
+            atomic_init(&sync->mutex, 0);
+            break;
+        case PPDB_SYNC_TYPE_SPINLOCK:
+            atomic_flag_clear(&sync->spinlock);
+            break;
+        case PPDB_SYNC_TYPE_RWLOCK:
+            atomic_init(&sync->rwlock.lock, 0);
+            atomic_init(&sync->rwlock.readers, 0);
+            break;
+        default:
+            return PPDB_ERR_INVALID_ARG;
     }
-    
-    #ifdef PPDB_DEBUG
-    atomic_init(&sync->stats.contention_count, 0);
-    atomic_init(&sync->stats.wait_time_us, 0);
-    #endif
 
     return PPDB_OK;
 }
 
+// 销毁同步原语
 void ppdb_sync_destroy(ppdb_sync_t* sync) {
     if (!sync) return;
-
-    if (!sync->config.use_lockfree) {
-        // 自旋锁不需要销毁
-    }
-    
-    if (sync->ref_count) {
-        free(sync->ref_count);
-        sync->ref_count = NULL;
-    }
+    // 目前不需要特殊的清理操作
 }
 
+// 尝试加锁
 bool ppdb_sync_try_lock(ppdb_sync_t* sync) {
     if (!sync) return false;
 
-    if (sync->config.use_lockfree) {
-        int expected = NODE_VALID;
-        return atomic_compare_exchange_strong(&sync->impl.atomic, &expected, NODE_LOCKED);
-    } else {
-        int expected = 0;
-        return atomic_compare_exchange_strong(&sync->impl.mutex, &expected, 1);
+    switch (sync->type) {
+        case PPDB_SYNC_TYPE_MUTEX: {
+            int expected = 0;
+            return atomic_compare_exchange_strong(&sync->mutex, &expected, 1);
+        }
+        case PPDB_SYNC_TYPE_SPINLOCK:
+            return !atomic_flag_test_and_set(&sync->spinlock);
+        case PPDB_SYNC_TYPE_RWLOCK: {
+            int expected = 0;
+            if (atomic_compare_exchange_strong(&sync->rwlock.lock, &expected, 1)) {
+                while (atomic_load(&sync->rwlock.readers) > 0) {
+                    // 等待读者完成
+                }
+                return true;
+            }
+            return false;
+        }
+        default:
+            return false;
     }
 }
 
+// 加锁
 void ppdb_sync_lock(ppdb_sync_t* sync) {
     if (!sync) return;
 
-    uint32_t attempts = 0;
-    
-    #ifdef PPDB_DEBUG
-    uint64_t start_time = now_us();
-    #endif
-    
-    while (attempts++ < sync->config.spin_count) {
-        if (ppdb_sync_try_lock(sync)) {
-            return;
-        }
-        
-        if (sync->config.backoff_us > 0) {
-            usleep(sync->config.backoff_us);
-        }
+    switch (sync->type) {
+        case PPDB_SYNC_TYPE_MUTEX:
+            while (true) {
+                int expected = 0;
+                if (atomic_compare_exchange_strong(&sync->mutex, &expected, 1)) {
+                    break;
+                }
+                usleep(1);  // 简单的退避策略
+            }
+            break;
+        case PPDB_SYNC_TYPE_SPINLOCK:
+            while (atomic_flag_test_and_set(&sync->spinlock)) {
+                usleep(1);  // 简单的退避策略
+            }
+            break;
+        case PPDB_SYNC_TYPE_RWLOCK:
+            while (true) {
+                int expected = 0;
+                if (atomic_compare_exchange_strong(&sync->rwlock.lock, &expected, 1)) {
+                    while (atomic_load(&sync->rwlock.readers) > 0) {
+                        // 等待读者完成
+                        usleep(1);
+                    }
+                    break;
+                }
+                usleep(1);  // 简单的退避策略
+            }
+            break;
     }
-    
-    // 自旋失败后强制获取锁
-    if (sync->config.use_lockfree) {
-        int expected;
-        do {
-            expected = NODE_VALID;
-            if (atomic_compare_exchange_strong(&sync->impl.atomic, &expected, NODE_LOCKED)) {
-                break;
-            }
-            usleep(sync->config.backoff_us);
-        } while (1);
-    } else {
-        while (1) {
-            int expected = 0;
-            if (atomic_compare_exchange_strong(&sync->impl.mutex, &expected, 1)) {
-                break;
-            }
-            if (sync->config.backoff_us > 0) {
-                usleep(sync->config.backoff_us);
-            }
-        }
-    }
-    
-    #ifdef PPDB_DEBUG
-    atomic_fetch_add(&sync->stats.contention_count, 1);
-    atomic_fetch_add(&sync->stats.wait_time_us, now_us() - start_time);
-    #endif
 }
 
+// 解锁
 void ppdb_sync_unlock(ppdb_sync_t* sync) {
     if (!sync) return;
 
-    if (sync->config.use_lockfree) {
-        atomic_store(&sync->impl.atomic, NODE_VALID);
-    } else {
-        atomic_store(&sync->impl.mutex, 0);
+    switch (sync->type) {
+        case PPDB_SYNC_TYPE_MUTEX:
+            atomic_store(&sync->mutex, 0);
+            break;
+        case PPDB_SYNC_TYPE_SPINLOCK:
+            atomic_flag_clear(&sync->spinlock);
+            break;
+        case PPDB_SYNC_TYPE_RWLOCK:
+            atomic_store(&sync->rwlock.lock, 0);
+            break;
     }
 }
 
-// 节点状态API实现
-bool ppdb_sync_is_valid(ppdb_sync_t* sync) {
-    if (!sync || !sync->config.use_lockfree) {
-        return true;
+// 文件同步函数
+ppdb_error_t ppdb_sync_file(const char* filename) {
+    if (!filename) {
+        return PPDB_ERR_INVALID_ARG;
     }
-    return atomic_load(&sync->impl.atomic) == NODE_VALID;
-}
 
-bool ppdb_sync_mark_deleted(ppdb_sync_t* sync) {
-    if (!sync || !sync->config.use_lockfree) {
-        return false;
+    // 打开文件
+    int fd = open(filename, O_RDWR);
+    if (fd < 0) {
+        return PPDB_ERR_IO;
     }
-    int expected = NODE_VALID;
-    return atomic_compare_exchange_strong(&sync->impl.atomic, &expected, NODE_DELETED);
-}
 
-bool ppdb_sync_mark_inserting(ppdb_sync_t* sync) {
-    if (!sync || !sync->config.use_lockfree) {
-        return false;
+    // 同步文件
+    if (fsync(fd) != 0) {
+        close(fd);
+        return PPDB_ERR_IO;
     }
-    int expected = NODE_VALID;
-    return atomic_compare_exchange_strong(&sync->impl.atomic, &expected, NODE_INSERTING);
-}
 
-// 分片锁优化实现
-static inline uint32_t optimize_stripe_count(uint32_t count) {
-    // 确保分片数是2的幂
-    uint32_t optimized = 1;
-    while (optimized < count) {
-        optimized <<= 1;
+    // 关闭文件
+    if (close(fd) != 0) {
+        return PPDB_ERR_IO;
     }
-    return optimized;
-}
 
-ppdb_stripe_locks_t* ppdb_stripe_locks_create(const ppdb_sync_config_t* config) {
-    if (!config || config->stripe_count == 0) {
-        return NULL;
-    }
-    
-    ppdb_stripe_locks_t* stripes = malloc(sizeof(ppdb_stripe_locks_t));
-    if (!stripes) {
-        return NULL;
-    }
-    
-    // 优化分片数量
-    uint32_t optimized_count = optimize_stripe_count(config->stripe_count);
-    stripes->count = optimized_count;
-    stripes->mask = optimized_count - 1;
-    
-    // 内存布局优化: 将锁对齐到缓存行
-    size_t aligned_size = (sizeof(ppdb_sync_t) + 63) & ~63;
-    stripes->locks = aligned_alloc(64, aligned_size * optimized_count);
-    
-    if (!stripes->locks) {
-        free(stripes);
-        return NULL;
-    }
-    
-    for (uint32_t i = 0; i < optimized_count; i++) {
-        ppdb_sync_init(&stripes->locks[i], config);
-    }
-    
-    return stripes;
-}
-
-void ppdb_stripe_locks_destroy(ppdb_stripe_locks_t* stripes) {
-    if (!stripes) return;
-    
-    for (uint32_t i = 0; i < stripes->count; i++) {
-        ppdb_sync_destroy(&stripes->locks[i]);
-    }
-    
-    free(stripes->locks);
-    free(stripes);
-}
-
-static inline uint32_t get_stripe_index(ppdb_stripe_locks_t* stripes,
-                                      const void* key, size_t key_len) {
-    return murmur_hash2(key, key_len) & stripes->mask;
-}
-
-bool ppdb_stripe_locks_try_lock(ppdb_stripe_locks_t* stripes,
-                               const void* key, size_t key_len) {
-    if (!stripes || !key) return false;
-    uint32_t idx = get_stripe_index(stripes, key, key_len);
-    return ppdb_sync_try_lock(&stripes->locks[idx]);
-}
-
-void ppdb_stripe_locks_lock(ppdb_stripe_locks_t* stripes,
-                           const void* key, size_t key_len) {
-    if (!stripes || !key) return;
-    uint32_t idx = get_stripe_index(stripes, key, key_len);
-    ppdb_sync_lock(&stripes->locks[idx]);
-}
-
-void ppdb_stripe_locks_unlock(ppdb_stripe_locks_t* stripes,
-                            const void* key, size_t key_len) {
-    if (!stripes || !key) return;
-    uint32_t idx = get_stripe_index(stripes, key, key_len);
-    ppdb_sync_unlock(&stripes->locks[idx]);
+    return PPDB_OK;
 }

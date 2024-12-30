@@ -4,6 +4,9 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
 
+// 获取当前时间戳(微秒)
+uint64_t now_us(void);
+
 // 性能监控结构
 typedef struct ppdb_metrics {
     _Atomic(uint64_t) total_ops;         // 总操作数
@@ -13,6 +16,9 @@ typedef struct ppdb_metrics {
     _Atomic(uint64_t) total_bytes;       // 总字节数
     _Atomic(uint64_t) total_keys;        // 总键数
     _Atomic(uint64_t) total_values;      // 总值数
+    _Atomic(uint64_t) put_count;         // PUT操作计数
+    _Atomic(uint64_t) get_count;         // GET操作计数
+    _Atomic(uint64_t) delete_count;      // DELETE操作计数
 } ppdb_metrics_t;
 
 // 初始化性能监控
