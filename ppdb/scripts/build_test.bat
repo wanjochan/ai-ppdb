@@ -1,113 +1,93 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
-set COSMO=..\cosmopolitan
-set CROSS9=..\cross9\bin
-set GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe
-set AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe
+rem Set paths
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%\.."
+set "ROOT_DIR=%CD%"
+set "BUILD_DIR=%ROOT_DIR%\build"
+set "INCLUDE_DIR=%ROOT_DIR%\include"
+set "COSMO=%ROOT_DIR%\..\cosmopolitan"
+set "CROSS9=%ROOT_DIR%\..\cross9\bin"
+set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
+set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
+set "TEST_DIR=%ROOT_DIR%\test"
 
-:: Check required directories and files
+rem Get test type
+set "TEST_TYPE=%1"
+if "%TEST_TYPE%"=="" set "TEST_TYPE=all"
+
+rem Set test environment
+set "TEST_ENV="
+if "%TEST_TYPE%"=="unit" set "TEST_ENV=set TEST_TYPE=unit &&"
+
+rem Check directories
 if not exist "%COSMO%" (
-    echo Error: Cosmopolitan directory not found at: %COSMO%
+    echo Error: Cosmopolitan directory not found
     exit /b 1
 )
 
 if not exist "%CROSS9%" (
-    echo Error: Cross9 directory not found at: %CROSS9%
+    echo Error: Cross9 directory not found
     exit /b 1
 )
 
 if not exist "%GCC%" (
-    echo Error: GCC not found at: %GCC%
+    echo Error: GCC not found
     exit /b 1
 )
 
 if not exist "%AR%" (
-    echo Error: AR not found at: %AR%
+    echo Error: AR not found
     exit /b 1
 )
 
-:: Create build directory if not exists
-if not exist "%BUILD_DIR%" (
-    mkdir "%BUILD_DIR%"
-)
+rem Create build directory
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-:: Compilation options
-set COMMON_FLAGS=-Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer
-set DEBUG_FLAGS=-g -O0 -DDEBUG
-set CFLAGS=%COMMON_FLAGS% %DEBUG_FLAGS% -I "%INCLUDE_DIR%" -I "%COSMO%"
+rem Set compilation flags
+set "COMMON_FLAGS=-Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer"
+set "DEBUG_FLAGS=-g -O0 -DDEBUG"
+set "CFLAGS=%COMMON_FLAGS% %DEBUG_FLAGS% -I%INCLUDE_DIR% -I%COSMO% -I%ROOT_DIR%/src"
 
-:: Linker options
-set LDFLAGS=-static -nostdlib -Wl,-T,"%COSMO%\ape.lds" -Wl,--gc-sections -fuse-ld=bfd
-set LIBS="%COSMO%\crt.o" "%COSMO%\ape.o" "%COSMO%\cosmopolitan.a"
+rem Set linker flags
+set "LDFLAGS=-static -nostdlib -Wl,-T,%COSMO%\ape.lds -Wl,--gc-sections -fuse-ld=bfd"
+set "LIBS=%COSMO%\crt.o %COSMO%\ape.o %COSMO%\cosmopolitan.a"
 
-:: Ensure library is built
+rem Build library if needed
 if not exist "%BUILD_DIR%\libppdb.a" (
-    echo Building library first...
+    echo Building library...
     call "%SCRIPT_DIR%\build_ppdb.bat"
     if errorlevel 1 (
-        echo Error building library
+        echo Error: Library build failed
         exit /b 1
     )
 )
 
-:: Change to build directory for intermediate files
-cd "%BUILD_DIR%"
+rem Set test sources
+if "%TEST_TYPE%"=="unit" (
+    set "TEST_SOURCES=%TEST_DIR%\white\test_framework.c %TEST_DIR%\white\test_basic.c"
+    set "TEST_TARGET=unit_test.exe"
+) else (
+    set "TEST_SOURCES=%TEST_DIR%\white\test_*.c"
+    set "TEST_TARGET=all_test.exe"
+)
 
-:: Compile test framework
-echo Compiling test framework...
-"%GCC%" %CFLAGS% -c "%TEST_DIR%\test_framework.c"
-if errorlevel 1 (
-    echo Error compiling test framework
+rem Build tests
+echo Building %TEST_TYPE% tests...
+"%GCC%" %CFLAGS% %TEST_SOURCES% -o "%BUILD_DIR%\%TEST_TARGET%" %LDFLAGS% %LIBS%
+
+rem Run tests
+if exist "%BUILD_DIR%\%TEST_TARGET%" (
+    echo Running %TEST_TYPE% tests...
+    %TEST_ENV% "%BUILD_DIR%\%TEST_TARGET%"
+) else (
+    echo Error: Test build failed
     exit /b 1
 )
 
-:: Compile test files
-echo Compiling test files...
-for %%f in ("%TEST_DIR%\test_*.c") do (
-    :: Skip test_framework.c and test_*_main.c
-    echo %%f | findstr /i /c:"test_framework.c" /c:"test_.*_main.c" > nul
-    if errorlevel 1 (
-        echo   Compiling %%f...
-        "%GCC%" %CFLAGS% -c "%%f"
-        if errorlevel 1 (
-            echo Error compiling %%f
-            exit /b 1
-        )
-    )
-)
-
-:: Compile test main programs
-echo Compiling test main programs...
-for %%f in ("%TEST_DIR%\test_*_main.c") do (
-    echo   Compiling %%f...
-    "%GCC%" %CFLAGS% -c "%%f"
-    if errorlevel 1 (
-        echo Error compiling %%f
-        exit /b 1
-    )
-)
-
-:: Link test programs
-echo Linking test programs...
-for %%f in (test_*_main.o) do (
-    set "test_name=%%~nf"
-    set "test_name=!test_name:_main=!"
-    echo   Linking !test_name!.exe...
-    "%GCC%" %LDFLAGS% "%%f" !test_name!.o test_framework.o "%BUILD_DIR%\libppdb.a" %LIBS% -o "%BUILD_DIR%\!test_name!.exe"
-    
-    :: Add APE self-modify support
-    echo   Adding APE self-modify support to !test_name!...
-    copy /b "%BUILD_DIR%\!test_name!.exe" + "%COSMO%\ape-copy-self.o" "%BUILD_DIR%\!test_name!.com"
-    if errorlevel 1 (
-        echo Error adding APE support to !test_name!
-        exit /b 1
-    )
-)
-
-:: Clean up intermediate files
+rem Clean up
 echo Cleaning up...
-del *.o
+del *.o 2>nul
 
-echo Test build completed successfully!
-echo Test binaries in: %BUILD_DIR%
+exit /b 0

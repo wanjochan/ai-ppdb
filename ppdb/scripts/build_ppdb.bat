@@ -68,10 +68,6 @@ echo Creating static library...
 
 rem Link executable
 echo Linking executable...
-%GCC% %LDFLAGS% -o ppdb.exe main.o libppdb.a %LIBS%
-
-rem Add APE self-modify support
-echo Adding APE self-modify support...
-%COSMO%\tool\apelink ppdb.exe
+%GCC% %LDFLAGS% -o ppdb.exe main.o libppdb.a %LIBS% %COSMO%\ape-copy-self.o
 
 cd ..
