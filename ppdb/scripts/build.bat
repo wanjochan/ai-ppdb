@@ -30,6 +30,8 @@ if "%TEST_TYPE%"=="help" (
     echo "  sync      运行同步原语测试"
     echo "  skiplist  运行跳表测试"
     echo "  memtable  运行内存表测试"
+    echo "  sharded   运行分片内存表测试"
+    echo "  kvstore   运行KVStore测试"
     echo "  wal       运行WAL测试"
     echo "  unit      运行单元测试"
     echo "  all       运行所有测试"
@@ -170,6 +172,12 @@ if "%TEST_TYPE%"=="test42" (
     )
     echo Running all tests...
     "%BUILD_DIR%\all_test.exe"
+) else if "%TEST_TYPE%"=="sharded" (
+    if "%NEED_REBUILD%"=="1" call :build_simple_test sharded_memtable "src\kvstore\sharded_memtable.c src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\common\logger.c test\white\test_framework.c" "test\white\storage\test_sharded_memtable.c"
+    if exist "%BUILD_DIR%\sharded_memtable_test.exe" "%BUILD_DIR%\sharded_memtable_test.exe"
+) else if "%TEST_TYPE%"=="kvstore" (
+    if "%NEED_REBUILD%"=="1" call :build_simple_test kvstore "src\kvstore\kvstore.c src\kvstore\kvstore_impl.c src\kvstore\sharded_memtable.c src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\kvstore\wal.c src\common\logger.c src\common\error.c src\common\fs.c test\white\test_framework.c" "test\white\storage\test_kvstore.c"
+    if exist "%BUILD_DIR%\kvstore_test.exe" "%BUILD_DIR%\kvstore_test.exe"
 ) else (
     echo Error: Unknown module '%TEST_TYPE%'
     echo 运行 'build.bat help' 查看帮助信息
