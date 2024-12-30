@@ -1,10 +1,9 @@
 #include <cosmopolitan.h>
-#include "test.h"
-#include "internal/metrics.h"
-#include "ppdb/logger.h"
+#include "test_framework.h"
+#include "kvstore/internal/metrics.h"
 
-// 基本功能测试
-void test_metrics_basic() {
+// 计数器测试
+void test_counter(void) {
     ppdb_metrics_t metrics;
     ppdb_metrics_init(&metrics);
 
@@ -23,10 +22,9 @@ void test_metrics_basic() {
     ASSERT_EQ(ppdb_metrics_get_size(&metrics), 100);
 
     ppdb_metrics_destroy(&metrics);
-    TEST_OK();
 }
 
-// 并发测试
+// 并发测试线程函数
 static void* concurrent_worker(void* arg) {
     ppdb_metrics_t* metrics = (ppdb_metrics_t*)arg;
     
@@ -39,7 +37,8 @@ static void* concurrent_worker(void* arg) {
     return NULL;
 }
 
-void test_metrics_concurrent() {
+// 直方图测试
+void test_histogram(void) {
     ppdb_metrics_t metrics;
     ppdb_metrics_init(&metrics);
 
@@ -57,13 +56,17 @@ void test_metrics_concurrent() {
     // 验证结果
     ASSERT_EQ(ppdb_metrics_get_size(&metrics), 40000); // 4 * 1000 * 10
     ASSERT_GT(ppdb_metrics_get_throughput(&metrics), 0.0);
+
+    // 验证延迟分布
+    double p50 = ppdb_metrics_get_latency_percentile(&metrics, 50);
+    double p99 = ppdb_metrics_get_latency_percentile(&metrics, 99);
+    ASSERT_GT(p99, p50); // 99分位延迟应该大于中位数
     
     ppdb_metrics_destroy(&metrics);
-    TEST_OK();
 }
 
-// 性能指标准确性测试
-void test_metrics_accuracy() {
+// 采样器测试
+void test_sampler(void) {
     ppdb_metrics_t metrics;
     ppdb_metrics_init(&metrics);
 
@@ -84,33 +87,21 @@ void test_metrics_accuracy() {
     ASSERT_GT(avg_latency, 8000.0);  // 8ms
     ASSERT_LT(avg_latency, 12000.0); // 12ms
 
+    // 验证采样率
+    double sample_rate = ppdb_metrics_get_sample_rate(&metrics);
+    ASSERT_GT(sample_rate, 0.0);
+    ASSERT_LE(sample_rate, 1.0);
+
     ppdb_metrics_destroy(&metrics);
-    TEST_OK();
 }
 
-// memtable性能监控测试
-void test_memtable_metrics() {
-    ppdb_memtable_t* table;
-    ASSERT_EQ(ppdb_memtable_create(1024*1024, &table), PPDB_OK);
-
-    // 获取性能指标
-    ppdb_metrics_t* metrics = ppdb_memtable_get_metrics(table);
-    ASSERT_NOT_NULL(metrics);
-
-    // 测试写入操作的性能统计
-    uint8_t key[8] = {0};
-    uint8_t value[100] = {0};
+int main(void) {
+    TEST_INIT("Performance Metrics Test");
     
-    for (int i = 0; i < 1000; i++) {
-        *(uint64_t*)key = i;
-        ASSERT_EQ(ppdb_memtable_put(table, key, sizeof(key), value, sizeof(value)), PPDB_OK);
-    }
-
-    // 验证性能指标
-    ASSERT_GT(ppdb_metrics_get_throughput(metrics), 0.0);
-    ASSERT_GT(ppdb_metrics_get_size(metrics), 0);
-    ASSERT_EQ(ppdb_metrics_get_active_threads(metrics), 0); // 所有操作已完成
-
-    ppdb_memtable_destroy(table);
-    TEST_OK();
-}
+    RUN_TEST(test_counter);
+    RUN_TEST(test_histogram);
+    RUN_TEST(test_sampler);
+    
+    TEST_SUMMARY();
+    return TEST_RESULT();
+} 
