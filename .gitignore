@@ -55,3 +55,4 @@ cosmo_tinycc.zip
 *.swo
 *.bin
 *.obj
+ppdb/test_sync.tmp

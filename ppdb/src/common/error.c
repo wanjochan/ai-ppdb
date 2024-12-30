@@ -5,11 +5,11 @@
 
 // 错误描述字符串
 static const char* error_strings[] = {
-    [PPDB_OK] = "Success",
+    [PPDB_OK] = "OK",
     [PPDB_ERR_INVALID_ARG] = "Invalid argument",
     [PPDB_ERR_NULL_POINTER] = "Null pointer",
     [PPDB_ERR_OUT_OF_MEMORY] = "Out of memory",
-    [PPDB_ERR_IO] = "I/O error",
+    [PPDB_ERR_IO] = "IO error",
     [PPDB_ERR_NOT_FOUND] = "Not found",
     [PPDB_ERR_ALREADY_EXISTS] = "Already exists",
     [PPDB_ERR_CLOSED] = "Closed",
@@ -23,7 +23,7 @@ static const char* error_strings[] = {
     [PPDB_ERR_INVALID_SIZE] = "Invalid size",
     [PPDB_ERR_INVALID_TYPE] = "Invalid type",
     [PPDB_ERR_INVALID_OPERATION] = "Invalid operation",
-    [PPDB_ERR_INVALID_CONFIG] = "Invalid config",
+    [PPDB_ERR_INVALID_CONFIG] = "Invalid configuration",
     [PPDB_ERR_INVALID_PATH] = "Invalid path",
     [PPDB_ERR_PATH_TOO_LONG] = "Path too long",
     [PPDB_ERR_PERMISSION_DENIED] = "Permission denied",
@@ -39,6 +39,13 @@ static const char* error_strings[] = {
     [PPDB_ERR_TOO_LARGE] = "Too large",
     [PPDB_ERR_BUFFER_TOO_SMALL] = "Buffer too small",
     [PPDB_ERR_ITERATOR_END] = "Iterator end",
+    [PPDB_ERR_MEMTABLE_FULL] = "Memtable full",
+    [PPDB_ERR_WAL_FULL] = "WAL full",
+    [PPDB_ERR_WAL_CORRUPTED] = "WAL corrupted",
+    [PPDB_ERR_WAL_NOT_FOUND] = "WAL not found",
+    [PPDB_ERR_WAL_INVALID] = "WAL invalid",
+    [PPDB_ERR_LOCK_FAILED] = "Lock failed",
+    [PPDB_ERR_UNLOCK_FAILED] = "Unlock failed",
     [PPDB_ERR_UNKNOWN] = "Unknown error"
 };
 

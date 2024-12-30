@@ -48,7 +48,7 @@ if "%TEST_TYPE%"=="42" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test 42 ""
     if exist "%BUILD_DIR%\42_test.exe" "%BUILD_DIR%\42_test.exe"
 ) else if "%TEST_TYPE%"=="sync" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test sync "src\kvstore\sync.c test\white\test_framework.c" "test\white\infra\test_sync.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test sync "src\kvstore\sync.c src\common\logger.c src\common\error.c test\white\test_framework.c" "test\white\infra\test_sync.c"
     if exist "%BUILD_DIR%\sync_test.exe" "%BUILD_DIR%\sync_test.exe"
 ) else if "%TEST_TYPE%"=="skiplist" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test skiplist "src\kvstore\skiplist.c src\kvstore\sync.c"

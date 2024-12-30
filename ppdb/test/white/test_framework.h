@@ -6,149 +6,127 @@
 #include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_logger.h"
 
-// 工具函数声明
-void microsleep(int microseconds);
-
-// 测试状态变量
-extern char current_test_name[256];
-extern char current_test_result[32];
-extern char current_test_message[1024];
-extern int test_case_count;
-extern int test_case_failed;
-
-// 测试统计
-typedef struct {
-    clock_t start_time;      // 测试开始时间
-    clock_t end_time;        // 测试结束时间
-    int total_cases;         // 总用例数
-    int passed_cases;        // 通过用例数
-    int failed_cases;        // 失败用例数
-    size_t peak_memory;      // 峰值内存使用
-    size_t total_allocated;  // 总分配内存
-    size_t current_allocated;// 当前分配内存
-} test_stats_t;
-
-// 测试环境配置
-typedef struct {
-    int thread_count;        // 并发线程数
-    int timeout_seconds;     // 超时时间
-    size_t memory_limit;     // 内存限制
-    char* temp_dir;         // 临时目录
-    bool verbose;           // 详细日志
-    bool abort_on_failure;  // 失败时终止
-} test_config_t;
-
-// 错误注入配置
-typedef struct {
-    float crash_probability;  // 崩溃概率
-    float delay_probability; // 延迟概率
-    int max_delay_ms;       // 最大延迟
-    bool enabled;           // 是否启用
-} error_injection_t;
-
-// 资源跟踪
-typedef struct {
-    void* ptr;              // 资源指针
-    const char* type;       // 资源类型
-    const char* file;       // 分配文件
-    int line;              // 分配行号
-    void (*cleanup)(void*); // 清理函数
-} resource_tracker_t;
-
-// 测试用例函数类型
-typedef int (*test_case_fn_t)(void);
+// 测试类型
+typedef enum test_type {
+    TEST_TYPE_UNIT,      // 单元测试
+    TEST_TYPE_PERF,      // 性能测试
+    TEST_TYPE_STRESS,    // 压力测试
+    TEST_TYPE_FUZZ,      // 模糊测试
+    TEST_TYPE_ALL        // 所有测试
+} test_type_t;
 
 // 测试用例结构
-typedef struct {
-    const char* name;           // 用例名称
-    test_case_fn_t fn;         // 用例函数
-    int timeout_seconds;        // 用例超时时间
-    bool skip;                 // 是否跳过
-    const char* description;   // 用例描述
+typedef struct test_case {
+    const char* name;           // 测试名称
+    int (*fn)(void);           // 测试函数
+    int timeout_seconds;        // 超时时间（秒）
+    bool skip;                  // 是否跳过
+    const char* description;    // 测试描述
 } test_case_t;
 
 // 测试套件结构
-typedef struct {
-    const char* name;          // 套件名称
-    const test_case_t* cases;  // 用例数组
-    size_t num_cases;          // 用例数量
-    void (*setup)(void);      // 套件初始化
-    void (*teardown)(void);   // 套件清理
+typedef struct test_suite {
+    const char* name;                  // 套件名称
+    const test_case_t* cases;          // 测试用例数组
+    size_t num_cases;                  // 测试用例数量
+    void (*setup)(void);              // 套件初始化函数
+    void (*teardown)(void);           // 套件清理函数
 } test_suite_t;
 
-// 框架初始化和清理
+// 测试统计信息
+typedef struct test_stats {
+    clock_t start_time;        // 开始时间
+    clock_t end_time;          // 结束时间
+    size_t total_tests;        // 总测试数
+    size_t failed_tests;       // 失败测试数
+    size_t skipped_tests;      // 跳过测试数
+    size_t peak_memory;        // 峰值内存
+} test_stats_t;
+
+// 测试配置
+typedef struct test_config {
+    test_type_t type;          // 测试类型
+    bool verbose;              // 是否详细输出
+    bool abort_on_failure;     // 失败时是否中止
+    bool color_output;         // 是否彩色输出
+    const char* filter;        // 测试过滤器
+} test_config_t;
+
+// 测试状态
+typedef struct test_state {
+    test_stats_t stats;        // 统计信息
+    test_config_t config;      // 配置信息
+    jmp_buf timeout_jmp;       // 超时跳转缓冲区
+    bool initialized;          // 是否已初始化
+} test_state_t;
+
+// 全局变量
+extern test_state_t g_test_state;
+extern char current_test_name[256];
+extern char current_test_result[32];
+extern int test_case_count;
+extern int test_case_failed;
+
+// 测试框架初始化和清理
 void test_framework_init(void);
 void test_framework_cleanup(void);
 
-// 配置管理
-void test_set_config(const test_config_t* config);
-void test_get_config(test_config_t* config);
-
-// 错误注入
-void test_set_error_injection(const error_injection_t* config);
-void test_inject_error(void);
-
-// 资源管理
-void* test_track_resource(void* ptr, const char* type, 
-    const char* file, int line, void (*cleanup)(void*));
-void test_cleanup_resources(void);
-
-// 统计管理
-void test_start_stats(void);
-void test_end_stats(void);
-void test_get_stats(test_stats_t* stats);
-void test_print_stats(void);
-int test_get_result(void);
-
-// 运行测试
-int run_test_suite(const test_suite_t* suite);
-int run_single_test(const test_case_t* test);
-
-// 清理测试目录
-void cleanup_test_dir(const char* dir_path);
-
-// 测试断言宏
-#define TEST_ASSERT(condition, ...) \
+// 断言宏
+#define ASSERT_EQ(actual, expected) \
     do { \
-        if (!(condition)) { \
-            ppdb_log_error(__VA_ARGS__); \
-            test_cleanup_resources(); \
-            test_case_failed++; \
-            return; \
+        if ((actual) != (expected)) { \
+            ppdb_log_error("Assertion failed: %s == %s (%d != %d)", \
+                #actual, #expected, (int)(actual), (int)(expected)); \
+            return -1; \
         } \
     } while (0)
 
-#define TEST_ASSERT_OK(err, message) \
-    TEST_ASSERT((err) == PPDB_OK, "Operation failed: %s (error: %s)", \
-        message, ppdb_error_string(err))
-
-#define TEST_ASSERT_NOT_NULL(ptr, message) \
-    TEST_ASSERT((ptr) != NULL, "Null pointer: %s", message)
-
-// 资源跟踪宏
-#define TEST_TRACK(ptr, type, cleanup_fn) \
-    test_track_resource(ptr, type, __FILE__, __LINE__, cleanup_fn)
-
-// 测试注册宏
-#define RUN_TEST(fn) \
+#define ASSERT_NE(actual, expected) \
     do { \
-        test_case_count++; \
-        strcpy(current_test_name, #fn); \
-        fn(); \
+        if ((actual) == (expected)) { \
+            ppdb_log_error("Assertion failed: %s != %s (%d == %d)", \
+                #actual, #expected, (int)(actual), (int)(expected)); \
+            return -1; \
+        } \
     } while (0)
 
-// 测试类型枚举
-typedef enum {
-    TEST_TYPE_UNIT,
-    TEST_TYPE_INTEGRATION,
-    TEST_TYPE_STRESS,
-    TEST_TYPE_ALL
-} test_type_t;
+#define ASSERT_TRUE(condition) \
+    do { \
+        if (!(condition)) { \
+            ppdb_log_error("Assertion failed: %s", #condition); \
+            return -1; \
+        } \
+    } while (0)
 
-// 设置测试类型
-void test_framework_set_type(test_type_t type);
+#define ASSERT_FALSE(condition) \
+    do { \
+        if (condition) { \
+            ppdb_log_error("Assertion failed: !%s", #condition); \
+            return -1; \
+        } \
+    } while (0)
+
+#define ASSERT_NULL(ptr) \
+    do { \
+        if ((ptr) != NULL) { \
+            ppdb_log_error("Assertion failed: %s == NULL", #ptr); \
+            return -1; \
+        } \
+    } while (0)
+
+#define ASSERT_NOT_NULL(ptr) \
+    do { \
+        if ((ptr) == NULL) { \
+            ppdb_log_error("Assertion failed: %s != NULL", #ptr); \
+            return -1; \
+        } \
+    } while (0)
 
 // 检查是否应该运行某个测试
 bool test_framework_should_run(test_type_t type);
+
+// 测试套件管理
+int run_test_suite(const test_suite_t* suite);
+int run_test_case(const test_case_t* test_case);
 
 #endif // PPDB_TEST_FRAMEWORK_H

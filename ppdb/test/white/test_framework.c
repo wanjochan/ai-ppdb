@@ -283,32 +283,83 @@ int run_single_test(const test_case_t* test) {
     return result;
 }
 
+// 运行单个测试用例
+int run_test_case(const test_case_t* test_case) {
+    if (!test_case) return -1;
+    
+    // 设置当前测试名称
+    strncpy(current_test_name, test_case->name, sizeof(current_test_name) - 1);
+    current_test_name[sizeof(current_test_name) - 1] = '\0';
+    
+    // 打印测试信息
+    ppdb_log_info("Running test: %s", test_case->name);
+    ppdb_log_info("Description: %s", test_case->description);
+    
+    // 设置超时处理
+    if (setjmp(g_test_state.timeout_jmp) == 0) {
+        alarm(test_case->timeout_seconds);
+        
+        // 运行测试
+        test_case_count++;
+        int result = test_case->fn();
+        
+        // 取消超时
+        alarm(0);
+        
+        // 处理结果
+        if (result != 0) {
+            test_case_failed++;
+            strncpy(current_test_result, "FAILED", sizeof(current_test_result) - 1);
+            return -1;
+        } else {
+            strncpy(current_test_result, "PASSED", sizeof(current_test_result) - 1);
+            return 0;
+        }
+    } else {
+        // 超时处理
+        test_case_failed++;
+        strncpy(current_test_result, "TIMEOUT", sizeof(current_test_result) - 1);
+        return -1;
+    }
+}
+
 // 运行测试套件
 int run_test_suite(const test_suite_t* suite) {
-    if (!suite) return 1;
+    if (!suite) return -1;
     
+    // 打印套件信息
     ppdb_log_info("Running test suite: %s", suite->name);
     
-    // 执行套件初始化
+    // 运行套件初始化
     if (suite->setup) {
         suite->setup();
     }
     
-    // 运行所有测试
+    // 运行所有测试用例
     int failed = 0;
     for (size_t i = 0; i < suite->num_cases; i++) {
-        if (run_single_test(&suite->cases[i]) != 0) {
+        const test_case_t* test_case = &suite->cases[i];
+        if (test_case->skip) {
+            ppdb_log_info("Skipping test: %s", test_case->name);
+            continue;
+        }
+        
+        if (run_test_case(test_case) != 0) {
             failed++;
-            if (g_test_state.config.abort_on_failure) {
-                break;
-            }
         }
     }
     
-    // 执行套件清理
+    // 运行套件清理
     if (suite->teardown) {
         suite->teardown();
     }
+    
+    // 打印测试结果
+    ppdb_log_info("Test Results:");
+    ppdb_log_info("  Total Cases: %d", test_case_count);
+    ppdb_log_info("  Failed: %d", test_case_failed);
+    ppdb_log_info("  Duration: %.2f seconds", (double)(clock() - g_test_state.stats.start_time) / CLOCKS_PER_SEC);
+    ppdb_log_info("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
     
     return failed;
 }

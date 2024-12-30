@@ -1,7 +1,7 @@
-#include "cosmopolitan.h"
+#include <cosmopolitan.h>
 #include "kvstore/internal/sync.h"
 #include "ppdb/ppdb_error.h"
-#include "test/white/test_framework.h"
+#include "test_framework.h"
 
 // 测试线程数据结构
 typedef struct {
@@ -22,29 +22,60 @@ static void* mutex_thread_func(void* arg) {
 }
 
 // 互斥锁测试
-void test_mutex(void) {
+int test_mutex(void) {
     ppdb_sync_t sync;
     ppdb_sync_config_t config = {
-        .type = PPDB_SYNC_MUTEX
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000,
+        .use_lockfree = false,
+        .stripe_count = 1,
+        .backoff_us = 100,
+        .enable_ref_count = false
     };
     
     // 基本操作测试
     ppdb_error_t err = ppdb_sync_init(&sync, &config);
-    ASSERT_EQ(err, PPDB_OK);
+    ppdb_log_info("Mutex init result: %s (%d)", ppdb_error_string(err), err);
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to initialize mutex: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     // 加锁解锁测试
     err = ppdb_sync_lock(&sync);
-    ASSERT_EQ(err, PPDB_OK);
+    ppdb_log_info("Mutex lock result: %s (%d)", ppdb_error_string(err), err);
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to lock mutex: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     err = ppdb_sync_unlock(&sync);
-    ASSERT_EQ(err, PPDB_OK);
+    ppdb_log_info("Mutex unlock result: %s (%d)", ppdb_error_string(err), err);
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to unlock mutex: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
     
     // try_lock测试
     bool locked = ppdb_sync_try_lock(&sync);
-    ASSERT_TRUE(locked);
+    ppdb_log_info("Mutex try_lock result: %d", locked);
+    if (!locked) {
+        ppdb_log_error("Failed to try_lock mutex");
+        ASSERT_TRUE(locked);
+        return -1;
+    }
+    
     if (locked) {
         err = ppdb_sync_unlock(&sync);
-        ASSERT_EQ(err, PPDB_OK);
+        ppdb_log_info("Mutex unlock result: %s (%d)", ppdb_error_string(err), err);
+        if (err != PPDB_OK) {
+            ppdb_log_error("Failed to unlock mutex after try_lock: %s (%d)", ppdb_error_string(err), err);
+            ASSERT_EQ(err, PPDB_OK);
+            return -1;
+        }
     }
 
     // 多线程竞争测试
@@ -59,35 +90,57 @@ void test_mutex(void) {
         thread_data[i].sync = &sync;
         thread_data[i].counter = &counter;
         thread_data[i].num_iterations = ITERATIONS_PER_THREAD;
-        pthread_create(&threads[i], NULL, mutex_thread_func, &thread_data[i]);
+        int ret = pthread_create(&threads[i], NULL, mutex_thread_func, &thread_data[i]);
+        if (ret != 0) {
+            ppdb_log_error("Failed to create thread %d: %d", i, ret);
+            ASSERT_EQ(ret, 0);
+            return -1;
+        }
     }
     
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        int ret = pthread_join(threads[i], NULL);
+        if (ret != 0) {
+            ppdb_log_error("Failed to join thread %d: %d", i, ret);
+            ASSERT_EQ(ret, 0);
+            return -1;
+        }
     }
     
     ASSERT_EQ(counter, NUM_THREADS * ITERATIONS_PER_THREAD);
     
-    ppdb_sync_destroy(&sync);
+    err = ppdb_sync_destroy(&sync);
+    ppdb_log_info("Mutex destroy result: %s (%d)", ppdb_error_string(err), err);
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to destroy mutex: %s (%d)", ppdb_error_string(err), err);
+        ASSERT_EQ(err, PPDB_OK);
+        return -1;
+    }
+    return 0;
 }
 
 // 自旋锁测试
-void test_spinlock(void) {
+int test_spinlock(void) {
     ppdb_sync_t sync;
     ppdb_sync_config_t config = {
-        .type = PPDB_SYNC_SPINLOCK
+        .type = PPDB_SYNC_SPINLOCK,
+        .spin_count = 1000,
+        .use_lockfree = false,
+        .stripe_count = 1,
+        .backoff_us = 100,
+        .enable_ref_count = false
     };
     
     // 基本操作测试
     ppdb_error_t err = ppdb_sync_init(&sync, &config);
-    ASSERT_EQ(err, PPDB_OK);
+    if (err != PPDB_OK) return -1;
     
     // 加锁解锁测试
     err = ppdb_sync_lock(&sync);
-    ASSERT_EQ(err, PPDB_OK);
+    if (err != PPDB_OK) return -1;
     
     err = ppdb_sync_unlock(&sync);
-    ASSERT_EQ(err, PPDB_OK);
+    if (err != PPDB_OK) return -1;
     
     // 多线程竞争测试
     pthread_t threads[NUM_THREADS];
@@ -98,16 +151,21 @@ void test_spinlock(void) {
         thread_data[i].sync = &sync;
         thread_data[i].counter = &counter;
         thread_data[i].num_iterations = ITERATIONS_PER_THREAD;
-        pthread_create(&threads[i], NULL, mutex_thread_func, &thread_data[i]);
+        int ret = pthread_create(&threads[i], NULL, mutex_thread_func, &thread_data[i]);
+        if (ret != 0) return -1;
     }
     
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        int ret = pthread_join(threads[i], NULL);
+        if (ret != 0) return -1;
     }
     
-    ASSERT_EQ(counter, NUM_THREADS * ITERATIONS_PER_THREAD);
+    if (counter != NUM_THREADS * ITERATIONS_PER_THREAD) return -1;
     
-    ppdb_sync_destroy(&sync);
+    err = ppdb_sync_destroy(&sync);
+    if (err != PPDB_OK) return -1;
+    
+    return 0;
 }
 
 // 读写锁测试线程函数 - 读线程
@@ -134,15 +192,20 @@ static void* rwlock_write_thread(void* arg) {
 }
 
 // 读写锁测试
-void test_rwlock(void) {
+int test_rwlock(void) {
     ppdb_sync_t sync;
     ppdb_sync_config_t config = {
-        .type = PPDB_SYNC_RWLOCK
+        .type = PPDB_SYNC_RWLOCK,
+        .spin_count = 1000,
+        .use_lockfree = false,
+        .stripe_count = 1,
+        .backoff_us = 100,
+        .enable_ref_count = false
     };
     
     // 基本操作测试
     ppdb_error_t err = ppdb_sync_init(&sync, &config);
-    ASSERT_EQ(err, PPDB_OK);
+    if (err != PPDB_OK) return -1;
     
     // 读写锁测试
     #define NUM_READERS 8
@@ -161,7 +224,8 @@ void test_rwlock(void) {
         reader_data[i].sync = &sync;
         reader_data[i].counter = &counter;
         reader_data[i].num_iterations = READ_ITERATIONS;
-        pthread_create(&readers[i], NULL, rwlock_read_thread, &reader_data[i]);
+        int ret = pthread_create(&readers[i], NULL, rwlock_read_thread, &reader_data[i]);
+        if (ret != 0) return -1;
     }
     
     // 创建写线程
@@ -169,54 +233,104 @@ void test_rwlock(void) {
         writer_data[i].sync = &sync;
         writer_data[i].counter = &counter;
         writer_data[i].num_iterations = WRITE_ITERATIONS;
-        pthread_create(&writers[i], NULL, rwlock_write_thread, &writer_data[i]);
+        int ret = pthread_create(&writers[i], NULL, rwlock_write_thread, &writer_data[i]);
+        if (ret != 0) return -1;
     }
     
     // 等待所有线程完成
     for (int i = 0; i < NUM_READERS; i++) {
-        pthread_join(readers[i], NULL);
+        int ret = pthread_join(readers[i], NULL);
+        if (ret != 0) return -1;
     }
     for (int i = 0; i < NUM_WRITERS; i++) {
-        pthread_join(writers[i], NULL);
+        int ret = pthread_join(writers[i], NULL);
+        if (ret != 0) return -1;
     }
     
-    ASSERT_EQ(counter, NUM_WRITERS * WRITE_ITERATIONS);
+    if (counter != NUM_WRITERS * WRITE_ITERATIONS) return -1;
     
-    ppdb_sync_destroy(&sync);
+    err = ppdb_sync_destroy(&sync);
+    if (err != PPDB_OK) return -1;
+    
+    return 0;
 }
 
 // 文件同步测试
-void test_file_sync(void) {
+int test_file_sync(void) {
     // 创建临时文件
     const char* test_file = "test_sync.tmp";
-    FILE* fp = fopen(test_file, "w");
-    ASSERT_TRUE(fp != NULL);
-    fprintf(fp, "test data");
-    fclose(fp);
+    int fd = open(test_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        ppdb_log_error("Failed to create test file: %s (errno: %d)", test_file, errno);
+        return -1;
+    }
+    ppdb_log_info("Created test file: %s", test_file);
+    
+    // 写入一些数据
+    const char* data = "test data\n";
+    ssize_t written = write(fd, data, strlen(data));
+    if (written != (ssize_t)strlen(data)) {
+        ppdb_log_error("Failed to write test data (errno: %d)", errno);
+        close(fd);
+        remove(test_file);
+        return -1;
+    }
+    close(fd);
+    ppdb_log_info("Wrote test data to file");
     
     // 测试文件同步
     ppdb_error_t err = ppdb_sync_file(test_file);
-    ASSERT_EQ(err, PPDB_OK);
+    ppdb_log_info("File sync result: %s (%d)", ppdb_error_string(err), err);
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to sync file: %s", test_file);
+        remove(test_file);
+        return -1;
+    }
     
     // 测试文件描述符同步
-    fp = fopen(test_file, "r");
-    ASSERT_TRUE(fp != NULL);
-    err = ppdb_sync_fd(fileno(fp));
-    ASSERT_EQ(err, PPDB_OK);
-    fclose(fp);
+    fd = open(test_file, O_RDWR);
+    if (fd < 0) {
+        ppdb_log_error("Failed to open test file for reading: %s (errno: %d)", test_file, errno);
+        remove(test_file);
+        return -1;
+    }
+    ppdb_log_info("Opened test file for reading");
+    
+    err = ppdb_sync_fd(fd);
+    ppdb_log_info("File descriptor sync result: %s (%d)", ppdb_error_string(err), err);
+    close(fd);
+    if (err != PPDB_OK) {
+        ppdb_log_error("Failed to sync file descriptor: %d", fd);
+        remove(test_file);
+        return -1;
+    }
     
     // 清理
+    ppdb_log_info("Cleaning up test file");
     remove(test_file);
+    return 0;
 }
 
+// 测试套件定义
+static const test_case_t sync_test_cases[] = {
+    {"mutex", test_mutex, 30, false, "Test mutex basic functionality"},
+    {"spinlock", test_spinlock, 30, false, "Test spinlock basic functionality"},
+    {"rwlock", test_rwlock, 30, false, "Test rwlock basic functionality"},
+    {"file_sync", test_file_sync, 30, false, "Test file sync functionality"}
+};
+
+static const test_suite_t sync_test_suite = {
+    .name = "Sync Primitives Test",
+    .cases = sync_test_cases,
+    .num_cases = sizeof(sync_test_cases) / sizeof(sync_test_cases[0]),
+    .setup = NULL,
+    .teardown = NULL
+};
+
+// 主函数
 int main(void) {
-    TEST_INIT("Sync Primitives Test");
-    
-    RUN_TEST(test_mutex);
-    RUN_TEST(test_spinlock);
-    RUN_TEST(test_rwlock);
-    RUN_TEST(test_file_sync);
-    
-    TEST_SUMMARY();
-    return TEST_RESULT();
+    test_framework_init();
+    int result = run_test_suite(&sync_test_suite);
+    test_framework_cleanup();
+    return result;
 }
