@@ -1,3 +1,18 @@
+/**
+ * @file sync.c
+ * @brief PPDB 同步原语实现
+ * 
+ * 本文件实现了三种基本同步模式：
+ * 1. 互斥锁模式：使用 pthread_mutex，适用于需要严格互斥的场景
+ * 2. 自旋锁模式：使用原子操作，适用于锁竞争不激烈的场景
+ * 3. 读写锁模式：使用 pthread_rwlock，适用于读多写少的场景
+ * 
+ * 性能优化说明：
+ * - 自旋锁使用原子操作，避免线程切换开销
+ * - 读写锁区分读写操作，提高并发度
+ * - 提供哈希函数用于分片锁实现
+ */
+
 #include <cosmopolitan.h>
 #include "internal/sync.h"
 
@@ -49,7 +64,16 @@ uint32_t ppdb_sync_hash(const void* data, size_t len) {
     return hash;
 }
 
-// 初始化同步原语
+/**
+ * @brief 初始化同步原语
+ * 
+ * 根据配置类型初始化不同的同步原语：
+ * - PPDB_SYNC_MUTEX: pthread_mutex_init
+ * - PPDB_SYNC_SPINLOCK: atomic_flag_clear
+ * - PPDB_SYNC_RWLOCK: pthread_rwlock_init
+ * 
+ * 注意：这些是基本的同步原语，分片锁优化在 sharded_memtable.c 中实现
+ */
 ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config) {
     if (!sync || !config) {
         return PPDB_ERR_INVALID_ARG;
