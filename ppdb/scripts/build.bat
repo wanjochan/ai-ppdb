@@ -25,10 +25,12 @@ if "%TEST_TYPE%"=="help" (
     echo.
     echo 可用模块:
     echo "  help      显示此帮助信息"
+    echo "  ppdb      构建主程序"
     echo "  test42    运行基础测试"
     echo "  sync      运行同步原语测试"
     echo "  skiplist  运行跳表测试"
     echo "  memtable  运行内存表测试"
+    echo "  wal       运行WAL测试"
     echo "  unit      运行单元测试"
     echo "  all       运行所有测试"
     echo.
@@ -38,6 +40,7 @@ if "%TEST_TYPE%"=="help" (
     echo.
     echo 示例:
     echo "  build.bat help              显示帮助信息"
+    echo "  build.bat ppdb              构建主程序"
     echo "  build.bat test42            运行基础测试"
     echo "  build.bat sync debug        以调试模式运行同步测试"
     echo "  build.bat memtable release  以发布模式运行内存表测试"
@@ -86,6 +89,49 @@ if "%TEST_TYPE%"=="test42" (
 ) else if "%TEST_TYPE%"=="memtable" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test memtable "src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\common\logger.c test\white\test_framework.c" "test\white\storage\test_memtable.c"
     if exist "%BUILD_DIR%\memtable_test.exe" "%BUILD_DIR%\memtable_test.exe"
+) else if "%TEST_TYPE%"=="wal" (
+    if "%NEED_REBUILD%"=="1" call :build_simple_test wal "src\kvstore\wal.c src\kvstore\sync.c src\common\logger.c src\common\error.c src\common\fs.c test\white\test_framework.c" "test\white\storage\test_wal.c"
+    if exist "%BUILD_DIR%\wal_test.exe" "%BUILD_DIR%\wal_test.exe"
+) else if "%TEST_TYPE%"=="ppdb" (
+    echo Building PPDB main program...
+    
+    rem Compile common modules
+    echo Compiling common modules...
+    for %%F in (error fs logger) do (
+        echo   Compiling src\common\%%F.c...
+        "%GCC%" %CFLAGS% -c "%ROOT_DIR%\src\common\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        if errorlevel 1 exit /b 1
+    )
+
+    rem Compile KVStore modules
+    echo Compiling KVStore modules...
+    for %%F in (kvstore memtable memtable_iterator metrics monitor sharded_memtable skiplist sync wal kvstore_impl) do (
+        echo   Compiling src\kvstore\%%F.c...
+        "%GCC%" %CFLAGS% -c "%ROOT_DIR%\src\kvstore\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        if errorlevel 1 exit /b 1
+    )
+
+    rem Compile main program
+    echo Compiling main program...
+    "%GCC%" %CFLAGS% -c "%ROOT_DIR%\src\main.c" -o "%BUILD_DIR%\main.o"
+    if errorlevel 1 exit /b 1
+
+    rem Create static library
+    echo Creating static library...
+    "%AR%" rcs "%BUILD_DIR%\libppdb.a" "%BUILD_DIR%\error.o" "%BUILD_DIR%\fs.o" "%BUILD_DIR%\logger.o" "%BUILD_DIR%\kvstore.o" "%BUILD_DIR%\memtable.o" "%BUILD_DIR%\memtable_iterator.o" "%BUILD_DIR%\metrics.o" "%BUILD_DIR%\monitor.o" "%BUILD_DIR%\sharded_memtable.o" "%BUILD_DIR%\skiplist.o" "%BUILD_DIR%\sync.o" "%BUILD_DIR%\wal.o" "%BUILD_DIR%\kvstore_impl.o"
+    if errorlevel 1 exit /b 1
+
+    rem Link executable
+    echo Linking executable...
+    "%GCC%" %LDFLAGS% -o "%BUILD_DIR%\ppdb.exe.dbg" "%BUILD_DIR%\main.o" "%BUILD_DIR%\libppdb.a" %LIBS%
+    if errorlevel 1 exit /b 1
+
+    rem Process with objcopy
+    echo Processing for cosmopolitan format...
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\ppdb.exe.dbg" "%BUILD_DIR%\ppdb.exe"
+    if errorlevel 1 exit /b 1
+
+    echo PPDB build completed successfully
 ) else if "%TEST_TYPE%"=="unit" (
     if "%NEED_REBUILD%"=="1" (
         echo Building unit tests...
