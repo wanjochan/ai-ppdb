@@ -4,6 +4,9 @@
 #include "kvstore/internal/sync.h"
 #include "kvstore/internal/skiplist.h"
 
+// 跳表最大层数
+#define PPDB_SKIPLIST_MAX_LEVEL 32
+
 // 默认比较函数
 int ppdb_skiplist_default_compare(const void* key1, size_t key1_len,
                                 const void* key2, size_t key2_len) {
@@ -80,16 +83,24 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
                                       const void* value, size_t value_len,
                                       int level) {
     // 计算节点大小
-    size_t node_size = sizeof(ppdb_skiplist_node_t) + level * sizeof(ppdb_skiplist_node_t*);
+    size_t node_size = sizeof(ppdb_skiplist_node_t);
     
-    // 分配内存
+    // 分配节点内存
     ppdb_skiplist_node_t* node = aligned_alloc(64, node_size);
     if (!node) return NULL;
+
+    // 分配 next 数组内存
+    node->next = aligned_alloc(64, level * sizeof(ppdb_skiplist_node_t*));
+    if (!node->next) {
+        free(node);
+        return NULL;
+    }
 
     // 分配键值内存
     if (key && key_len > 0) {
         node->key = malloc(key_len);
         if (!node->key) {
+            free(node->next);
             free(node);
             return NULL;
         }
@@ -104,6 +115,7 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
         node->value = malloc(value_len);
         if (!node->value) {
             free(node->key);
+            free(node->next);
             free(node);
             return NULL;
         }
@@ -125,6 +137,7 @@ static void destroy_node(ppdb_skiplist_node_t* node) {
     if (!node) return;
     free(node->key);
     free(node->value);
+    free(node->next);
     free(node);
 }
 

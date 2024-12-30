@@ -11,8 +11,10 @@
 
 // CRC32计算函数
 static uint32_t calculate_crc32(const void* data, size_t size) {
-    // TODO: 实现CRC32计算
-    return 0;
+    if (!data || size == 0) {
+        return 0;
+    }
+    return crc32c(0, data, size);
 }
 
 // 基础WAL操作实现
@@ -338,7 +340,7 @@ ppdb_error_t ppdb_wal_recovery_iter_next_basic(ppdb_wal_recovery_iter_t* iter,
     }
 
     // 检查是否已到文件末尾
-    if (iter->position >= iter->wal->file_size) {
+    if (iter->position >= (off_t)iter->wal->file_size) {
         return PPDB_ERR_ITERATOR_END;
     }
 

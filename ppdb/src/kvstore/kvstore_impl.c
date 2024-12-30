@@ -102,6 +102,23 @@ ppdb_error_t ppdb_memtable_delete_lockfree(ppdb_memtable_t* table,
     return ppdb_memtable_delete_lockfree_basic(table, key, key_len);
 }
 
+size_t ppdb_memtable_size(ppdb_memtable_t* table) {
+    if (!table) {
+        return 0;
+    }
+
+    switch (table->type) {
+        case PPDB_MEMTABLE_BASIC:
+            return ppdb_memtable_size_basic(table);
+        case PPDB_MEMTABLE_SHARDED:
+            return table->current_size;
+        case PPDB_MEMTABLE_LOCKFREE:
+            return table->current_size;
+        default:
+            return 0;
+    }
+}
+
 size_t ppdb_memtable_max_size(ppdb_memtable_t* table) {
     if (!table) {
         return 0;

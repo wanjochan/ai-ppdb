@@ -15,6 +15,52 @@
 // 跳表节点大小估计
 #define PPDB_SKIPLIST_NODE_SIZE 64
 
+// 包装器函数
+ppdb_error_t ppdb_memtable_create(size_t size_limit, ppdb_memtable_t** table) {
+    return ppdb_memtable_create_basic(size_limit, table);
+}
+
+void ppdb_memtable_destroy(ppdb_memtable_t* table) {
+    ppdb_memtable_destroy_basic(table);
+}
+
+ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
+                              const void* key, size_t key_len,
+                              const void* value, size_t value_len) {
+    return ppdb_memtable_put_basic(table, key, key_len, value, value_len);
+}
+
+ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
+                              const void* key, size_t key_len,
+                              void** value, size_t* value_len) {
+    return ppdb_memtable_get_basic(table, key, key_len, value, value_len);
+}
+
+ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
+                                 const void* key, size_t key_len) {
+    return ppdb_memtable_delete_basic(table, key, key_len);
+}
+
+size_t ppdb_memtable_size(ppdb_memtable_t* table) {
+    return ppdb_memtable_size_basic(table);
+}
+
+size_t ppdb_memtable_max_size(ppdb_memtable_t* table) {
+    return ppdb_memtable_max_size_basic(table);
+}
+
+bool ppdb_memtable_is_immutable(ppdb_memtable_t* table) {
+    return ppdb_memtable_is_immutable_basic(table);
+}
+
+void ppdb_memtable_set_immutable(ppdb_memtable_t* table) {
+    ppdb_memtable_set_immutable_basic(table);
+}
+
+const ppdb_metrics_t* ppdb_memtable_get_metrics(ppdb_memtable_t* table) {
+    return ppdb_memtable_get_metrics_basic(table);
+}
+
 // 创建内存表
 ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** table) {
     if (!table) return PPDB_ERR_NULL_POINTER;
@@ -46,7 +92,11 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     // 初始化同步原语
     ppdb_sync_config_t sync_config = {
         .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000
+        .spin_count = 1000,
+        .use_lockfree = false,
+        .stripe_count = 1,
+        .backoff_us = 100,
+        .enable_ref_count = false
     };
 
     // 创建跳表

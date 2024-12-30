@@ -23,6 +23,11 @@ void ppdb_memtable_destroy_basic(ppdb_memtable_t* table);
 ppdb_error_t ppdb_memtable_put_basic(ppdb_memtable_t* table, const void* key, size_t key_len, const void* value, size_t value_len);
 ppdb_error_t ppdb_memtable_get_basic(ppdb_memtable_t* table, const void* key, size_t key_len, void** value, size_t* value_len);
 ppdb_error_t ppdb_memtable_delete_basic(ppdb_memtable_t* table, const void* key, size_t key_len);
+size_t ppdb_memtable_size_basic(ppdb_memtable_t* table);
+size_t ppdb_memtable_max_size_basic(ppdb_memtable_t* table);
+bool ppdb_memtable_is_immutable_basic(ppdb_memtable_t* table);
+void ppdb_memtable_set_immutable_basic(ppdb_memtable_t* table);
+const ppdb_metrics_t* ppdb_memtable_get_metrics_basic(ppdb_memtable_t* table);
 
 // 分片内存表操作
 ppdb_error_t ppdb_memtable_create_sharded_basic(size_t size_limit, ppdb_memtable_t** table);

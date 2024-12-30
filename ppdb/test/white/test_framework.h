@@ -4,7 +4,17 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_kvstore.h"
-#include "src/kvstore/internal/kvstore_logger.h"
+#include "kvstore/internal/kvstore_logger.h"
+
+// 工具函数声明
+void microsleep(int microseconds);
+
+// 测试状态变量
+extern char current_test_name[256];
+extern char current_test_result[32];
+extern char current_test_message[1024];
+extern int test_case_count;
+extern int test_case_failed;
 
 // 测试统计
 typedef struct {
@@ -121,5 +131,19 @@ void cleanup_test_dir(const char* dir_path);
 #define TEST_REGISTER(fn) test_register_case(#fn, fn, 0, false, "")
 #define TEST_REGISTER_FULL(fn, timeout, skip, desc) \
     test_register_case(#fn, fn, timeout, skip, desc)
+
+// 测试类型枚举
+typedef enum {
+    TEST_TYPE_UNIT,
+    TEST_TYPE_INTEGRATION,
+    TEST_TYPE_STRESS,
+    TEST_TYPE_ALL
+} test_type_t;
+
+// 设置测试类型
+void test_framework_set_type(test_type_t type);
+
+// 检查是否应该运行某个测试
+bool test_framework_should_run(test_type_t type);
 
 #endif // PPDB_TEST_FRAMEWORK_H

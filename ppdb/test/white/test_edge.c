@@ -130,6 +130,43 @@ static void test_max_value_length(void) {
     printf("Test passed!\n\n");
 }
 
+#include "test_framework.h"
+#include "ppdb/ppdb_kvstore.h"
+
+// 内存满测试
+static int test_edge_memory_full(void) {
+    // TODO: 实现内存满时的边界测试
+    return 0;
+}
+
+// 大键值测试
+static int test_edge_large_keys(void) {
+    // TODO: 实现大键值的边界测试
+    return 0;
+}
+
+// 空键值测试
+static int test_edge_empty_keys(void) {
+    // TODO: 实现空键值的边界测试
+    return 0;
+}
+
+// 边界测试套件
+static const test_case_t edge_cases[] = {
+    {"test_edge_memory_full", test_edge_memory_full, 10, false, "Test behavior when memory is full"},
+    {"test_edge_large_keys", test_edge_large_keys, 10, false, "Test very large key values"},
+    {"test_edge_empty_keys", test_edge_empty_keys, 10, false, "Test empty key values"},
+    {NULL, NULL, 0, false, NULL}  // 结束标记
+};
+
+const test_suite_t edge_suite = {
+    .name = "Edge Case Tests",
+    .cases = edge_cases,
+    .num_cases = sizeof(edge_cases) / sizeof(edge_cases[0]) - 1,
+    .setup = NULL,
+    .teardown = NULL
+};
+
 int main(int argc, char* argv[]) {
     printf("Starting MemTable Edge Case Tests...\n\n");
     
@@ -141,4 +178,4 @@ int main(int argc, char* argv[]) {
 
     printf("All MemTable Edge Case Tests passed!\n");
     return 0;
-} 
+}

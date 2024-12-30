@@ -34,11 +34,13 @@ static void test_put_get(void) {
     assert(err == PPDB_OK);
 
     // 测试数据
-    const uint8_t key[] = "test_key";
-    const uint8_t value[] = "test_value";
+    const char* key = "test_key";
+    const char* value = "test_value";
+    size_t key_len = strlen(key) + 1;
+    size_t value_len = strlen(value) + 1;
     
     // Put操作
-    err = ppdb_memtable_put(table, key, sizeof(key), value, sizeof(value));
+    err = ppdb_memtable_put(table, key, key_len, value, value_len);
     printf("  Put [key='%s', value='%s']: %s\n", key, value, err == PPDB_OK ? "OK" : "Failed");
     assert(err == PPDB_OK);
     
@@ -47,16 +49,17 @@ static void test_put_get(void) {
     assert(current_size > 0);
 
     // Get操作
-    uint8_t buf[256];
-    size_t buf_len = sizeof(buf);
-    err = ppdb_memtable_get(table, key, sizeof(key), buf, &buf_len);
+    void* retrieved_value = NULL;
+    size_t retrieved_value_len = 0;
+    err = ppdb_memtable_get(table, key, key_len, &retrieved_value, &retrieved_value_len);
     printf("  Get [key='%s']: %s\n", key, err == PPDB_OK ? "OK" : "Failed");
     if (err == PPDB_OK) {
-        printf("  Retrieved value: '%s' (length: %zu)\n", buf, buf_len);
+        printf("  Retrieved value: '%s' (length: %zu)\n", (char*)retrieved_value, retrieved_value_len);
     }
     assert(err == PPDB_OK);
-    assert(buf_len == sizeof(value));
-    assert(memcmp(buf, value, buf_len) == 0);
+    assert(retrieved_value_len == value_len);
+    assert(memcmp(retrieved_value, value, value_len) == 0);
+    free(retrieved_value);  // 释放获取的值
 
     ppdb_memtable_destroy(table);
     printf("  Destroy MemTable: OK\n");
@@ -73,23 +76,26 @@ static void test_delete(void) {
     assert(err == PPDB_OK);
 
     // 插入数据
-    const uint8_t key[] = "test_key";
-    const uint8_t value[] = "test_value";
-    err = ppdb_memtable_put(table, key, sizeof(key), value, sizeof(value));
+    const char* key = "test_key";
+    const char* value = "test_value";
+    size_t key_len = strlen(key) + 1;
+    size_t value_len = strlen(value) + 1;
+    err = ppdb_memtable_put(table, key, key_len, value, value_len);
     printf("  Put [key='%s', value='%s']: %s\n", key, value, err == PPDB_OK ? "OK" : "Failed");
     assert(err == PPDB_OK);
 
     // 删除数据
-    err = ppdb_memtable_delete(table, key, sizeof(key));
+    err = ppdb_memtable_delete(table, key, key_len);
     printf("  Delete [key='%s']: %s\n", key, err == PPDB_OK ? "OK" : "Failed");
     assert(err == PPDB_OK);
 
     // 验证删除
-    uint8_t buf[256];
-    size_t buf_len = sizeof(buf);
-    err = ppdb_memtable_get(table, key, sizeof(key), buf, &buf_len);
+    void* retrieved_value = NULL;
+    size_t retrieved_value_len = 0;
+    err = ppdb_memtable_get(table, key, key_len, &retrieved_value, &retrieved_value_len);
     printf("  Verify delete [key='%s']: %s\n", key, err == PPDB_ERR_NOT_FOUND ? "OK" : "Failed");
     assert(err == PPDB_ERR_NOT_FOUND);
+    if (retrieved_value) free(retrieved_value);
 
     ppdb_memtable_destroy(table);
     printf("  Destroy MemTable: OK\n");
@@ -108,10 +114,12 @@ static void test_size_limit(void) {
     assert(err == PPDB_OK);
 
     // 尝试插入超过限制的数据
-    const uint8_t key[] = "test_key";
-    const uint8_t value[] = "this_is_a_very_long_value_that_exceeds_the_limit";
-    printf("  Try to put large data [key='%s', value='%s' (length: %zu)]\n", key, value, sizeof(value));
-    err = ppdb_memtable_put(table, key, sizeof(key), value, sizeof(value));
+    const char* key = "test_key";
+    const char* value = "this_is_a_very_long_value_that_exceeds_the_limit";
+    size_t key_len = strlen(key) + 1;
+    size_t value_len = strlen(value) + 1;
+    printf("  Try to put large data [key='%s', value='%s' (length: %zu)]\n", key, value, value_len);
+    err = ppdb_memtable_put(table, key, key_len, value, value_len);
     printf("  Result: %s\n", err == PPDB_ERR_OUT_OF_MEMORY ? "Correctly rejected" : "Incorrectly accepted");
     assert(err == PPDB_ERR_OUT_OF_MEMORY);
 
@@ -130,29 +138,33 @@ static void test_update(void) {
     assert(err == PPDB_OK);
 
     // 插入初始数据
-    const uint8_t key[] = "test_key";
-    const uint8_t value1[] = "value1";
-    err = ppdb_memtable_put(table, key, sizeof(key), value1, sizeof(value1));
+    const char* key = "test_key";
+    const char* value1 = "value1";
+    size_t key_len = strlen(key) + 1;
+    size_t value1_len = strlen(value1) + 1;
+    err = ppdb_memtable_put(table, key, key_len, value1, value1_len);
     printf("  Put [key='%s', value='%s']: %s\n", key, value1, err == PPDB_OK ? "OK" : "Failed");
     assert(err == PPDB_OK);
 
     // 更新数据
-    const uint8_t value2[] = "value2";
-    err = ppdb_memtable_put(table, key, sizeof(key), value2, sizeof(value2));
+    const char* value2 = "value2";
+    size_t value2_len = strlen(value2) + 1;
+    err = ppdb_memtable_put(table, key, key_len, value2, value2_len);
     printf("  Update [key='%s', new_value='%s']: %s\n", key, value2, err == PPDB_OK ? "OK" : "Failed");
     assert(err == PPDB_OK);
 
     // 验证更新
-    uint8_t buf[256];
-    size_t buf_len = sizeof(buf);
-    err = ppdb_memtable_get(table, key, sizeof(key), buf, &buf_len);
+    void* retrieved_value = NULL;
+    size_t retrieved_value_len = 0;
+    err = ppdb_memtable_get(table, key, key_len, &retrieved_value, &retrieved_value_len);
     printf("  Verify update [key='%s']: %s\n", key, err == PPDB_OK ? "OK" : "Failed");
     if (err == PPDB_OK) {
-        printf("  Retrieved value: '%s' (length: %zu)\n", buf, buf_len);
+        printf("  Retrieved value: '%s' (length: %zu)\n", (char*)retrieved_value, retrieved_value_len);
     }
     assert(err == PPDB_OK);
-    assert(buf_len == sizeof(value2));
-    assert(memcmp(buf, value2, buf_len) == 0);
+    assert(retrieved_value_len == value2_len);
+    assert(memcmp(retrieved_value, value2, value2_len) == 0);
+    free(retrieved_value);
 
     ppdb_memtable_destroy(table);
     printf("  Destroy MemTable: OK\n");

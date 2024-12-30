@@ -5,6 +5,22 @@
 #include "kvstore/internal/kvstore_logger.h"
 #include "kvstore/internal/kvstore_fs.h"
 
+// 工具函数实现
+void microsleep(int microseconds) {
+    struct timespec ts = {
+        .tv_sec = microseconds / 1000000,
+        .tv_nsec = (microseconds % 1000000) * 1000
+    };
+    nanosleep(&ts, NULL);
+}
+
+// 全局测试状态变量定义
+char current_test_name[256] = {0};
+char current_test_result[32] = {0};
+char current_test_message[1024] = {0};
+int test_case_count = 0;
+int test_case_failed = 0;
+
 #define MAX_RESOURCES 1024
 #define DEFAULT_TIMEOUT 30
 #define DEFAULT_THREADS 4
@@ -246,4 +262,15 @@ void test_case_fail(const char* fmt, ...) {
     vsnprintf(current_test_message, sizeof(current_test_message), fmt, args);
     va_end(args);
     test_case_failed++;
+}
+
+// 当前测试类型
+static test_type_t current_test_type = TEST_TYPE_ALL;
+
+void test_framework_set_type(test_type_t type) {
+    current_test_type = type;
+}
+
+bool test_framework_should_run(test_type_t type) {
+    return current_test_type == TEST_TYPE_ALL || current_test_type == type;
 }
