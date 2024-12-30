@@ -2,9 +2,13 @@ as warm-up, read INDEX.md and FILES.md in docs/, and PLAN.md in docs/;
 特别注意：我们用的是cosmopolitan底层，所以不需要用libc的头文件；构建工具都在的，遇到不在先停下来问我意见；如果你要新建文件也停下来问我意见; 如果没有严重的问题要处理也可以先停下来；思考计划时多想想能不能用工具尽量一次实现多些操作；遇到cosmopolitan构建方面的问题，你可以使用curl工具（使用代理http://127.0.0.1:8888）去上网查询解决方案；
 
 ===【测试类构建】
-运行 .\scripts\build_test.bat unit
+按顺序执行（上一个测试没问题才进入下一个）：
+.\scripts\build_test.bat 42
+.\scripts\build_test.bat sync
+
 把问题按严重程度列出来，做一个完整的修改计划，
 然后停下来等我确认后续动作；
+如果没有大的问题，那就把这个bat中的 sync和42两个分支的代码想办法重用一下
 ===
 
 ##不是哦，之前构建成功过的，工具都在的，可能只是路径问题
