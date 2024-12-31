@@ -47,10 +47,28 @@ typedef struct {
     uint64_t st_size;
 } Elf64_Sym;
 
-static void *map_memory(size_t size, DWORD protect) {
-    void *ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, protect);
+typedef struct {
+    uint64_t r_offset;
+    uint32_t r_type;
+    uint32_t r_sym;
+    uint64_t r_addend;
+} Elf64_Rela;
+
+typedef struct {
+    uint32_t p_type;
+    uint32_t p_flags;
+    uint64_t p_offset;
+    uint64_t p_vaddr;
+    uint64_t p_paddr;
+    uint64_t p_filesz;
+    uint64_t p_memsz;
+    uint64_t p_align;
+} Elf64_Phdr;
+
+static void *map_memory(void *addr, size_t size, DWORD protect) {
+    void *ptr = VirtualAlloc(addr, size, MEM_COMMIT | MEM_RESERVE, protect);
     if (!ptr) {
-        printf("Failed to allocate memory (size: %zu)\n", size);
+        printf("Failed to allocate memory at %p (size: %zu)\n", addr, size);
         return NULL;
     }
     return ptr;
@@ -73,8 +91,8 @@ static int verify_elf_header(const Elf64_Ehdr *ehdr) {
         printf("Not a little-endian ELF file\n");
         return 0;
     }
-    if (ehdr->e_type != 1) {  // relocatable
-        printf("Not a relocatable ELF file\n");
+    if (ehdr->e_type != 2) {  // executable
+        printf("Not an executable ELF file\n");
         return 0;
     }
     if (ehdr->e_machine != 62) {  // x86_64
@@ -132,44 +150,69 @@ int main(int argc, char *argv[]) {
     }
     printf("ELF header verified\n");
 
-    // First pass: find .text section
-    Elf64_Shdr *shdr = (Elf64_Shdr*)(data + ehdr->e_shoff);
-    const char *shstrtab = (const char*)(data + shdr[ehdr->e_shstrndx].sh_offset);
-    Elf64_Shdr *text_shdr = NULL;
-
-    for (int i = 0; i < ehdr->e_shnum; i++) {
-        const char *name = get_string(shstrtab, shdr[i].sh_name);
-        printf("Section %d: %s at offset 0x%lx, addr 0x%lx, size 0x%lx, align 0x%lx\n",
-               i, name, shdr[i].sh_offset, shdr[i].sh_addr, shdr[i].sh_size, shdr[i].sh_addralign);
-
-        if (shdr[i].sh_type == 1 && shdr[i].sh_size > 0) {  // PROGBITS
-            if (strcmp(name, ".text") == 0) {
-                text_shdr = &shdr[i];
-                break;
-            }
+    // Load program headers
+    Elf64_Phdr *phdr = (Elf64_Phdr*)(data + ehdr->e_phoff);
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        if (phdr[i].p_type != 1) {  // LOAD
+            continue;
         }
-    }
 
-    if (!text_shdr) {
-        printf(".text section not found\n");
-        free(data);
-        return 1;
-    }
+        printf("Loading segment %d: vaddr=0x%lx, size=0x%lx, flags=0x%x\n", 
+               i, phdr[i].p_vaddr, phdr[i].p_memsz, phdr[i].p_flags);
 
-    // Allocate memory for code
-    size_t text_size = ROUND_UP(text_shdr->sh_size, text_shdr->sh_addralign);
-    void *code_base = map_memory(text_size, PAGE_READWRITE);
-    if (!code_base) {
-        free(data);
-        return 1;
-    }
-    printf("Mapped code at: %p (size: %zu)\n", code_base, text_size);
+        // Calculate page-aligned addresses and sizes
+        uintptr_t vaddr = ROUND_DOWN(phdr[i].p_vaddr, PAGE_SIZE);
+        uintptr_t vaddr_end = ROUND_UP(phdr[i].p_vaddr + phdr[i].p_memsz, PAGE_SIZE);
+        size_t map_size = vaddr_end - vaddr;
 
-    // Load .text section
-    memcpy(code_base, data + text_shdr->sh_offset, text_shdr->sh_size);
-    printf("Loaded .text section to %p (size: %zu)\n", code_base, (size_t)text_shdr->sh_size);
+        // Map memory with appropriate protection
+        DWORD protect = PAGE_READWRITE;
+        if ((phdr[i].p_flags & 1) && (phdr[i].p_flags & 4)) {  // PF_X | PF_R
+            protect = PAGE_EXECUTE_READ;
+        } else if (phdr[i].p_flags & 4) {  // PF_R
+            protect = PAGE_READONLY;
+        }
+
+        void *base = map_memory((void*)vaddr, map_size, PAGE_READWRITE);
+        if (!base) {
+            printf("Failed to map segment %d\n", i);
+            free(data);
+            return 1;
+        }
+
+        // Copy segment data
+        if (phdr[i].p_filesz > 0) {
+            printf("Copying segment data: offset=0x%lx, size=0x%lx\n", 
+                   phdr[i].p_offset, phdr[i].p_filesz);
+            memcpy((void*)(vaddr + (phdr[i].p_vaddr - vaddr)), 
+                   data + phdr[i].p_offset, 
+                   phdr[i].p_filesz);
+        }
+
+        // Initialize BSS if needed
+        if (phdr[i].p_memsz > phdr[i].p_filesz) {
+            printf("Initializing BSS: addr=0x%lx, size=0x%lx\n",
+                   vaddr + (phdr[i].p_vaddr - vaddr) + phdr[i].p_filesz,
+                   phdr[i].p_memsz - phdr[i].p_filesz);
+            memset((void*)(vaddr + (phdr[i].p_vaddr - vaddr) + phdr[i].p_filesz),
+                   0,
+                   phdr[i].p_memsz - phdr[i].p_filesz);
+        }
+
+        // Change protection
+        DWORD old_protect;
+        if (!VirtualProtect(base, map_size, protect, &old_protect)) {
+            printf("Failed to change memory protection for segment %d\n", i);
+            unmap_memory(base, map_size);
+            free(data);
+            return 1;
+        }
+
+        printf("Loaded segment %d at %p (size: %zu)\n", i, base, map_size);
+    }
 
     // Find module_main symbol
+    Elf64_Shdr *shdr = (Elf64_Shdr*)(data + ehdr->e_shoff);
     Elf64_Shdr *symtab = NULL;
     const char *strtab = NULL;
 
@@ -183,7 +226,6 @@ int main(int argc, char *argv[]) {
 
     if (!symtab || !strtab) {
         printf("Symbol table not found\n");
-        unmap_memory(code_base, text_size);
         free(data);
         return 1;
     }
@@ -195,43 +237,25 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < num_syms; i++) {
         const char *name = get_string(strtab, syms[i].st_name);
         if (strcmp(name, "module_main") == 0) {
-            module_main = (module_main_t)((char*)code_base + syms[i].st_value);
-            printf("Found module_main at offset 0x%lx\n", syms[i].st_value);
+            module_main = (module_main_t)syms[i].st_value;
+            printf("Found module_main at virtual address 0x%lx\n", syms[i].st_value);
             break;
         }
     }
 
     if (!module_main) {
         printf("module_main symbol not found\n");
-        unmap_memory(code_base, text_size);
-        free(data);
-        return 1;
-    }
-
-    // Change memory protection to execute-only
-    DWORD old_protect;
-    if (!VirtualProtect(code_base, text_size, PAGE_EXECUTE_READ, &old_protect)) {
-        printf("Failed to change memory protection\n");
-        unmap_memory(code_base, text_size);
         free(data);
         return 1;
     }
 
     // Flush instruction cache
-    FlushInstructionCache(GetCurrentProcess(), code_base, text_size);
-
-    // Print code bytes
-    printf("Code bytes at %p: ", module_main);
-    for (int i = 0; i < 16 && i < text_size; i++) {
-        printf("%02x ", ((uint8_t*)module_main)[i]);
-    }
-    printf("\n");
+    FlushInstructionCache(GetCurrentProcess(), (void*)ROUND_DOWN((uintptr_t)module_main, PAGE_SIZE), PAGE_SIZE);
 
     printf("Calling module_main at %p\n", module_main);
     int result = module_main();
-    printf("module_main returned %d\n", result);
+    printf("Module returned: %d\n", result);
 
-    unmap_memory(code_base, text_size);
     free(data);
     return 0;
 }
