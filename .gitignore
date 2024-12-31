@@ -61,3 +61,4 @@ mingw64/
 cosmo/ape/ape.o
 cosmo/ape/test.dll
 cosmo/test.dll
+cosmo/test.dat

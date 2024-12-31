@@ -1,44 +1,33 @@
 /* DLL linker script */
 ENTRY(module_main)
 PHDRS {
-  text PT_LOAD FLAGS(7);
-  data PT_LOAD FLAGS(6);
+  text PT_LOAD FLAGS(5);   /* Read + Execute */
+  data PT_LOAD FLAGS(6);   /* Read + Write */
 }
 SECTIONS {
-  . = 0x10000000;
-
-  /* Code sections */
+  . = 0x110000000;
+  
   .text : {
     *(.text.module_main)
-    *(.text.test_func1)
-    *(.text.test_func2)
+    *(.text.test_func*)
     *(.text*)
-    *(.plt*)
-    *(.iplt*)
   } :text
 
-  /* Read-only data */
   .rodata : {
     *(.rodata*)
-    *(.rela*)
   } :text
 
-  /* Read-write data */
   .data : {
     *(.data*)
-    *(.got*)
-    *(.igot*)
   } :data
 
-  /* BSS section */
   .bss : {
     *(.bss*)
-    *(COMMON)
   } :data
 
-  /* Discarded sections */
   /DISCARD/ : {
-    *(.note.*)
+    *(.note*)
+    *(.gnu*)
     *(.comment*)
     *(.eh_frame*)
     *(.debug*)

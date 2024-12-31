@@ -1,173 +1,93 @@
 #include "cosmopolitan.h"
 
-// Required by Cosmopolitan
-void _apple(void) {}
+#define PAGE_SIZE 4096
+#define ALIGN_DOWN(x, align) ((x) & ~((align)-1))
+#define ALIGN_UP(x, align) ALIGN_DOWN((x) + (align)-1, (align))
+
+#ifndef MEM_RESERVE
+#define MEM_RESERVE 0x00002000
+#endif
+
+#ifndef MEM_COMMIT
+#define MEM_COMMIT 0x00001000
+#endif
+
+#ifndef MEM_RELEASE
+#define MEM_RELEASE 0x00008000
+#endif
+
+#ifndef PAGE_EXECUTE_READ
+#define PAGE_EXECUTE_READ 0x20
+#endif
+
+#ifndef PAGE_EXECUTE_READWRITE  
+#define PAGE_EXECUTE_READWRITE 0x40
+#endif
+
+typedef int (*module_main_t)(void);
+
+void *load_section(void *base, Elf64_Shdr *section, void *module_base) {
+    if (section->sh_size == 0) {
+        return NULL;
+    }
+
+    // Calculate the target virtual address
+    void *target = (void *)((uintptr_t)base + section->sh_addr);
+    
+    // Copy section data
+    memcpy(target, (char *)module_base + section->sh_offset, section->sh_size);
+    
+    printf("Loaded section to %p (size: %lu)\n", target, section->sh_size);
+    return target;
+}
 
 // Forward declaration
 int main(int argc, char *argv[]);
 
 // Entry point
 void _start(void) {
-  // Call main with no arguments for now
-  exit(main(0, NULL));
+    // Call main with no arguments for now
+    exit(main(0, NULL));
 }
 
 int main(int argc, char *argv[]) {
-  printf("Cosmo loader starting...\n");
-
-  // Load the module
-  const char *module_path = "build/test.dbg";
-  printf("Loading module: %s\n", module_path);
-
-  // Open and map the module file
-  int fd = open(module_path, O_RDONLY);
-  if (fd < 0) {
-    printf("Failed to open module file\n");
-    return 1;
-  }
-
-  struct stat st;
-  if (fstat(fd, &st) < 0) {
-    printf("Failed to stat module file\n");
-    close(fd);
-    return 1;
-  }
-
-  printf("Module size: %ld bytes\n", st.st_size);
-
-  // Map module into memory, let system choose address
-  void *module = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-  if (module == MAP_FAILED) {
-    printf("Failed to map module file: %d\n", errno);
-    close(fd);
-    return 1;
-  }
-
-  printf("Module mapped at: %p\n", module);
-
-  // Verify ELF header
-  Elf64_Ehdr *ehdr = (Elf64_Ehdr *)module;
-  if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
-    printf("Invalid ELF magic\n");
-    munmap(module, st.st_size);
-    close(fd);
-    return 1;
-  }
-
-  printf("ELF header verified\n");
-
-  // Find the section headers
-  Elf64_Shdr *shdr = (Elf64_Shdr *)((char *)module + ehdr->e_shoff);
-  char *shstrtab = (char *)module + shdr[ehdr->e_shstrndx].sh_offset;
-
-  // Find the symbol table and string table
-  Elf64_Shdr *symtab = NULL;
-  Elf64_Shdr *strtab = NULL;
-  Elf64_Shdr *rela = NULL;
-  Elf64_Shdr *text = NULL;
-  void *module_main = NULL;
-
-  for (int i = 0; i < ehdr->e_shnum; i++) {
-    printf("Section %d: %s at offset 0x%lx, addr 0x%lx\n", 
-           i, 
-           shstrtab + shdr[i].sh_name,
-           shdr[i].sh_offset,
-           shdr[i].sh_addr);
-
-    if (shdr[i].sh_type == SHT_SYMTAB) {
-      symtab = &shdr[i];
-    } else if (shdr[i].sh_type == SHT_STRTAB && 
-               strcmp(shstrtab + shdr[i].sh_name, ".strtab") == 0) {
-      strtab = &shdr[i];
-    } else if (shdr[i].sh_type == SHT_RELA) {
-      rela = &shdr[i];
-    } else if (strcmp(shstrtab + shdr[i].sh_name, ".text") == 0) {
-      text = &shdr[i];
+    if (argc < 2) {
+        printf("Usage: %s <module.dat>\n", argv[0]);
+        return 1;
     }
 
-    // Find module_main section
-    if (strcmp(shstrtab + shdr[i].sh_name, ".text.module_main") == 0) {
-      module_main = (void *)((char *)module + shdr[i].sh_offset);
-      printf("Found module_main at offset 0x%lx, addr 0x%lx\n", 
-             shdr[i].sh_offset, shdr[i].sh_addr);
-    }
-  }
+    const char *module_path = argv[1];
+    printf("Loading module: %s\n", module_path);
 
-  if (!symtab || !strtab) {
-    printf("Failed to find symbol tables\n");
-    munmap(module, st.st_size);
+    // Open module file
+    int fd = open(module_path, O_RDONLY);
+    if (fd < 0) {
+        printf("Failed to open module\n");
+        return 1;
+    }
+
+    // Get file size
+    off_t file_size = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    printf("Module size: %lu bytes\n", file_size);
+
+    // Map module into memory
+    void *module_base = mmap(NULL, file_size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, 0);
+    if (module_base == MAP_FAILED) {
+        printf("Failed to map module\n");
+        close(fd);
+        return 1;
+    }
+
+    // Call module_main
+    printf("Calling module_main at %p\n", module_base);
+    module_main_t entry = (module_main_t)module_base;
+    int result = entry();
+    printf("Module returned: %d\n", result);
+
+    // Cleanup
+    munmap(module_base, file_size);
     close(fd);
-    return 1;
-  }
 
-  // Make text section executable
-  if (text) {
-    void *text_addr = (void *)((char *)module + text->sh_offset);
-    size_t text_size = text->sh_size;
-    if (mprotect(text_addr, text_size, PROT_READ | PROT_EXEC) < 0) {
-      printf("Failed to make text section executable: %d\n", errno);
-      munmap(module, st.st_size);
-      close(fd);
-      return 1;
-    }
-    printf("Made text section executable at %p, size %ld\n", text_addr, text_size);
-  }
-
-  // Process relocations if present
-  if (rela) {
-    printf("Processing relocations...\n");
-    Elf64_Rela *rels = (Elf64_Rela *)((char *)module + rela->sh_offset);
-    Elf64_Sym *syms = (Elf64_Sym *)((char *)module + symtab->sh_offset);
-    char *strs = (char *)module + strtab->sh_offset;
-    int nrels = rela->sh_size / sizeof(Elf64_Rela);
-
-    for (int i = 0; i < nrels; i++) {
-      Elf64_Rela *rel = &rels[i];
-      Elf64_Sym *sym = &syms[ELF64_R_SYM(rel->r_info)];
-      const char *name = strs + sym->st_name;
-
-      printf("Relocation: offset=0x%lx type=%ld symbol=%s\n",
-             rel->r_offset, ELF64_R_TYPE(rel->r_info), name);
-
-      // Apply relocation
-      uint64_t *target = (uint64_t *)((char *)module + rel->r_offset);
-      uint64_t symbol_addr = (uint64_t)module + sym->st_value;
-
-      switch (ELF64_R_TYPE(rel->r_info)) {
-        case R_X86_64_RELATIVE:
-          *target = (uint64_t)module + rel->r_addend;
-          break;
-        case R_X86_64_64:
-          *target = symbol_addr + rel->r_addend;
-          break;
-        case R_X86_64_PC32:
-          *target = (uint32_t)(symbol_addr + rel->r_addend - (uint64_t)target);
-          break;
-        case R_X86_64_PLT32:
-          *target = (uint32_t)(symbol_addr + rel->r_addend - (uint64_t)target);
-          break;
-        default:
-          printf("Unknown relocation type: %ld\n", ELF64_R_TYPE(rel->r_info));
-          break;
-      }
-    }
-  }
-
-  if (!module_main) {
-    printf("Failed to find module_main\n");
-    munmap(module, st.st_size);
-    close(fd);
-    return 1;
-  }
-
-  // Call module_main
-  printf("Calling module_main at %p...\n", module_main);
-  int (*main_fn)(void) = module_main;
-  int result = main_fn();
-
-  printf("Module returned: %d\n", result);
-
-  munmap(module, st.st_size);
-  close(fd);
-  return 0;
+    return result;
 }

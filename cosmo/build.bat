@@ -7,13 +7,15 @@ if "%MODULE%"=="" (
   exit /b 1
 )
 
-set COSMO_DIR=..\cosmopolitan
-set CROSS_DIR=..\cross9\bin
-set CC=%CROSS_DIR%\x86_64-pc-linux-gnu-gcc.exe
-set LD=%CROSS_DIR%\x86_64-pc-linux-gnu-ld.exe
-set OBJCOPY=%CROSS_DIR%\x86_64-pc-linux-gnu-objcopy.exe
+rem Build test module
+..\cross9\bin\x86_64-pc-linux-gnu-gcc.exe -c -mcmodel=small -fPIC -nostdlib -nostdinc -fno-stack-protector test.c -o build\test.o -I..\cosmopolitan -I..\cosmopolitan\libc\isystem
+if %errorlevel% neq 0 exit /b %errorlevel%
 
-if not exist build mkdir build
+..\cross9\bin\x86_64-pc-linux-gnu-gcc.exe -nostdlib -static -T dll.lds -Wl,--gc-sections -Wl,--build-id=none build\test.o -o build\test.dbg
+if %errorlevel% neq 0 exit /b %errorlevel%
 
-%CC% -g -Os -fno-pie -no-pie -mcmodel=large -mno-red-zone -nostdlib -nostdinc -o build\%MODULE%.dbg %MODULE%.c -I%COSMO_DIR% -I%COSMO_DIR%\libc\isystem -Wl,--gc-sections -Wl,-T,dll.lds -Wl,--build-id=none -include %COSMO_DIR%\cosmopolitan.h %COSMO_DIR%\cosmopolitan.a
-%OBJCOPY% -S -O binary build\%MODULE%.dbg %MODULE%.dat
+..\cross9\bin\x86_64-pc-linux-gnu-objcopy.exe -O binary build\test.dbg build\test.dat
+if %errorlevel% neq 0 exit /b %errorlevel%
+
+copy /Y build\test.dat test.dat
+if %errorlevel% neq 0 exit /b %errorlevel%
