@@ -52,20 +52,12 @@ typedef struct {
 typedef struct ppdb_wal {
     char* dir_path;              // WAL目录路径
     char* filename;              // WAL文件名
-    size_t segment_size;         // 段文件大小限制
-    bool use_fsync;             // 是否使用fsync
-    ppdb_sync_t* sync;          // 同步对象
-    int current_fd;             // 当前段文件描述符
-    size_t current_size;        // 当前段文件大小
+    int current_fd;             // 当前文件描述符
+    size_t current_size;        // 当前文件大小
     uint64_t next_sequence;     // 下一个序列号
     bool sync_on_write;         // 是否在写入时同步
-    bool enable_compression;    // 是否启用压缩
-    size_t file_size;          // 文件大小
-    wal_buffer_t* buffers;     // 缓冲区数组
-    size_t buffer_count;       // 缓冲区数量
-    bool closed;               // 是否已关闭
-    size_t current_buffer;     // 当前缓冲区索引
-    ppdb_metrics_t metrics;    // 性能指标
+    bool closed;                // 是否已关闭
+    ppdb_sync_t* sync;          // 同步对象
 } ppdb_wal_t;
 
 // WAL恢复迭代器
@@ -79,4 +71,4 @@ typedef struct ppdb_wal_recovery_iter {
     wal_record_t current;       // 当前记录
 } ppdb_wal_recovery_iter_t;
 
-#endif // PPDB_KVSTORE_WAL_TYPES_H 
+#endif // PPDB_KVSTORE_WAL_TYPES_H

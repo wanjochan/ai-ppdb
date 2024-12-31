@@ -1,9 +1,12 @@
 #ifndef PPDB_KVSTORE_H
 #define PPDB_KVSTORE_H
 
-#include <cosmopolitan.h>
 #include "ppdb_error.h"
 #include "ppdb_types.h"
+#include <cosmopolitan.h>
+
+// 前向声明
+typedef struct ppdb_iterator ppdb_iterator_t;
 
 // WAL配置
 typedef struct ppdb_wal_config {
@@ -51,5 +54,8 @@ ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
 // 生命周期管理
 void ppdb_kvstore_close(ppdb_kvstore_t* store);
 void ppdb_kvstore_destroy(ppdb_kvstore_t* store);
+
+// 迭代器操作
+void ppdb_iterator_destroy(ppdb_iterator_t* iter);
 
 #endif // PPDB_KVSTORE_H 

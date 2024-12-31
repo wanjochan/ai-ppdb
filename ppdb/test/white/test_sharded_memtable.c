@@ -23,40 +23,38 @@ static int test_basic_ops(void) {
     ppdb_log_info("Testing basic operations...");
 
     // 创建分片内存表
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create_sharded_basic(4096, &table);
+    ppdb_sharded_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_sharded_memtable_create(&table, 4);
     TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
     TEST_ASSERT(table != NULL, "Memtable pointer is NULL");
 
     // 测试插入和获取
     const char* test_key = "test_key";
     const char* test_value = "test_value";
-    err = ppdb_memtable_put_sharded_basic(table, test_key, strlen(test_key),
-                                         test_value, strlen(test_value));
+    err = ppdb_sharded_memtable_put(table, test_key, strlen(test_key) + 1,
+                                   test_value, strlen(test_value) + 1);
     TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
 
     // 获取值
-    void* value = NULL;
-    size_t value_size = 0;
-    err = ppdb_memtable_get_sharded_basic(table, test_key, strlen(test_key),
-                                         &value, &value_size);
+    char value[32] = {0};
+    size_t value_size = sizeof(value);
+    err = ppdb_sharded_memtable_get(table, test_key, strlen(test_key) + 1,
+                                   value, &value_size);
     TEST_ASSERT(err == PPDB_OK, "Failed to get value");
-    TEST_ASSERT(value_size == strlen(test_value), "Value size mismatch");
-    TEST_ASSERT(value != NULL, "Value pointer is NULL");
+    TEST_ASSERT(value_size == strlen(test_value) + 1, "Value size mismatch");
     TEST_ASSERT(memcmp(value, test_value, value_size) == 0, "Value content mismatch");
-    free(value);
 
     // 测试删除
-    err = ppdb_memtable_delete_sharded_basic(table, test_key, strlen(test_key));
+    err = ppdb_sharded_memtable_delete(table, test_key, strlen(test_key) + 1);
     TEST_ASSERT(err == PPDB_OK, "Failed to delete key-value pair");
 
     // 验证删除
-    err = ppdb_memtable_get_sharded_basic(table, test_key, strlen(test_key),
-                                         &value, &value_size);
+    err = ppdb_sharded_memtable_get(table, test_key, strlen(test_key) + 1,
+                                   value, &value_size);
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key still exists after deletion");
 
     // 销毁内存表
-    ppdb_memtable_destroy_sharded(table);
+    ppdb_sharded_memtable_destroy(table);
     return 0;
 }
 
@@ -65,82 +63,77 @@ static int test_shard_distribution(void) {
     ppdb_log_info("Testing shard distribution...");
 
     // 创建分片内存表
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create_sharded_basic(4096, &table);
+    ppdb_sharded_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_sharded_memtable_create(&table, 4);
     TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
     TEST_ASSERT(table != NULL, "Memtable pointer is NULL");
 
     // 插入一些数据
-    char key[MAX_KEY_SIZE];
-    char value[MAX_VALUE_SIZE];
+    char key[32], value[32];
     for (int i = 0; i < 100; i++) {
         snprintf(key, sizeof(key), "key_%d", i);
         snprintf(value, sizeof(value), "value_%d", i);
-        err = ppdb_memtable_put_sharded_basic(table, key, strlen(key),
-                                             value, strlen(value));
+        err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1,
+                                       value, strlen(value) + 1);
         TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
     }
 
-    // 检查每个分片的大小
-    size_t total_size = 0;
+    // 检查每个分片是否都有数据
+    int empty_shards = 0;
     for (size_t i = 0; i < table->shard_count; i++) {
-        size_t shard_size = atomic_load(&table->shards[i].size);
-        TEST_ASSERT(shard_size > 0, "Shard %zu is empty", i);
-        total_size += shard_size;
+        size_t shard_size = ppdb_memtable_size_basic(table->shards[i]);
+        if (shard_size == 0) {
+            empty_shards++;
+        }
     }
-
-    // 验证总大小
-    size_t current_size = atomic_load(&table->current_size);
-    TEST_ASSERT(current_size == total_size, "Total size mismatch");
+    TEST_ASSERT(empty_shards == 0, "Found empty shards");
 
     // 销毁内存表
-    ppdb_memtable_destroy_sharded(table);
+    ppdb_sharded_memtable_destroy(table);
     return 0;
 }
 
 // 并发操作测试
 typedef struct {
-    ppdb_memtable_t* table;
+    ppdb_sharded_memtable_t* table;
     int thread_id;
 } thread_arg_t;
 
 static void* concurrent_worker(void* arg) {
     thread_arg_t* thread_arg = (thread_arg_t*)arg;
-    ppdb_memtable_t* table = thread_arg->table;
+    ppdb_sharded_memtable_t* table = thread_arg->table;
     int thread_id = thread_arg->thread_id;
 
     char key[MAX_KEY_SIZE];
     char value[MAX_VALUE_SIZE];
+    char retrieved_value[MAX_VALUE_SIZE];
 
     for (int i = 0; i < NUM_OPS; i++) {
         generate_test_data(key, sizeof(key), value, sizeof(value), thread_id, i);
 
         // 插入
-        ppdb_error_t err = ppdb_memtable_put_sharded_basic(table, key, strlen(key),
-                                                          value, strlen(value));
+        ppdb_error_t err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1,
+                                                    value, strlen(value) + 1);
         if (err != PPDB_OK) {
             ppdb_log_error("Thread %d: Failed to put key-value pair", thread_id);
             return NULL;
         }
 
         // 获取
-        void* retrieved_value = NULL;
-        size_t value_size = 0;
-        err = ppdb_memtable_get_sharded_basic(table, key, strlen(key),
-                                             &retrieved_value, &value_size);
+        size_t value_size = sizeof(retrieved_value);
+        err = ppdb_sharded_memtable_get(table, key, strlen(key) + 1,
+                                       retrieved_value, &value_size);
         if (err != PPDB_OK) {
             ppdb_log_error("Thread %d: Failed to get value", thread_id);
             return NULL;
         }
-        if (value_size != strlen(value) || memcmp(retrieved_value, value, value_size) != 0) {
+        if (value_size != strlen(value) + 1 || memcmp(retrieved_value, value, value_size) != 0) {
             ppdb_log_error("Thread %d: Value mismatch", thread_id);
-            free(retrieved_value);
             return NULL;
         }
-        free(retrieved_value);
 
         // 删除
-        err = ppdb_memtable_delete_sharded_basic(table, key, strlen(key));
+        err = ppdb_sharded_memtable_delete(table, key, strlen(key) + 1);
         if (err != PPDB_OK) {
             ppdb_log_error("Thread %d: Failed to delete key-value pair", thread_id);
             return NULL;
@@ -154,8 +147,8 @@ static int test_concurrent_ops(void) {
     ppdb_log_info("Testing concurrent operations...");
 
     // 创建分片内存表
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create_sharded_basic(4096 * 1024, &table);
+    ppdb_sharded_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_sharded_memtable_create(&table, 4);
     TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
     TEST_ASSERT(table != NULL, "Memtable pointer is NULL");
 
@@ -181,7 +174,7 @@ static int test_concurrent_ops(void) {
     }
 
     // 销毁内存表
-    ppdb_memtable_destroy_sharded(table);
+    ppdb_sharded_memtable_destroy(table);
     return 0;
 }
 
@@ -190,57 +183,65 @@ static int test_iterator(void) {
     ppdb_log_info("Testing iterator...");
 
     // 创建分片内存表
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create_sharded_basic(4096, &table);
+    ppdb_sharded_memtable_t* table = NULL;
+    ppdb_error_t err = ppdb_sharded_memtable_create(&table, 4);
     TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
     TEST_ASSERT(table != NULL, "Memtable pointer is NULL");
 
     // 插入有序的键值对
-    const int num_pairs = 10;
-    char key[MAX_KEY_SIZE];
-    char value[MAX_VALUE_SIZE];
+    const int num_pairs = 100;
     for (int i = 0; i < num_pairs; i++) {
-        snprintf(key, sizeof(key), "key_%02d", i);
-        snprintf(value, sizeof(value), "value_%02d", i);
-        err = ppdb_memtable_put_sharded_basic(table, key, strlen(key),
-                                             value, strlen(value));
+        char key[32], value[32];
+        snprintf(key, sizeof(key), "iter_key_%03d", i);
+        snprintf(value, sizeof(value), "iter_value_%03d", i);
+        printf("Inserted key: %s, value: %s\n", key, value);
+        err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1,
+                                       value, strlen(value) + 1);
         TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
     }
 
     // 创建迭代器
-    ppdb_memtable_iterator_t* iter = NULL;
-    err = ppdb_memtable_iterator_create_basic(table, &iter);
+    ppdb_iterator_t* iter = NULL;
+    err = ppdb_sharded_memtable_iterator_create(table, &iter);
     TEST_ASSERT(err == PPDB_OK, "Failed to create iterator");
     TEST_ASSERT(iter != NULL, "Iterator pointer is NULL");
 
     // 验证迭代顺序
     int count = 0;
-    while (1) {
-        ppdb_kv_pair_t* pair = NULL;
-        err = ppdb_memtable_iterator_next_basic(iter, &pair);
-        if (err == PPDB_ERR_NOT_FOUND) {
-            break;
-        }
-        TEST_ASSERT(err == PPDB_OK, "Failed to get next key-value pair");
-        TEST_ASSERT(pair != NULL, "Key-value pair pointer is NULL");
+    bool has_next = iter->valid(iter);
+    printf("Initial valid: %d\n", has_next);
 
-        snprintf(key, sizeof(key), "key_%02d", count);
-        snprintf(value, sizeof(value), "value_%02d", count);
+    while (has_next) {
+        ppdb_kv_pair_t pair = {0};
+        err = iter->get(iter, &pair);
+        TEST_ASSERT(err == PPDB_OK, "Failed to get key-value pair");
 
-        TEST_ASSERT(pair->key_size == strlen(key), "Key size mismatch");
-        TEST_ASSERT(memcmp(pair->key, key, pair->key_size) == 0, "Key content mismatch");
-        TEST_ASSERT(pair->value_size == strlen(value), "Value size mismatch");
-        TEST_ASSERT(memcmp(pair->value, value, pair->value_size) == 0, "Value content mismatch");
+        char expected_key[32], expected_value[32];
+        snprintf(expected_key, sizeof(expected_key), "iter_key_%03d", count);
+        snprintf(expected_value, sizeof(expected_value), "iter_value_%03d", count);
+
+        printf("Count: %d\n", count);
+        printf("Expected key: %s (%zu bytes)\n", expected_key, strlen(expected_key));
+        printf("Actual key: %.*s (%zu bytes)\n", (int)pair.key_size, (char*)pair.key, pair.key_size);
+        printf("Expected value: %s (%zu bytes)\n", expected_value, strlen(expected_value));
+        printf("Actual value: %.*s (%zu bytes)\n\n", (int)pair.value_size, (char*)pair.value, pair.value_size);
+
+        TEST_ASSERT(pair.key_size == strlen(expected_key) + 1, "Key size mismatch");
+        TEST_ASSERT(memcmp(pair.key, expected_key, pair.key_size - 1) == 0, "Key content mismatch");
+        TEST_ASSERT(pair.value_size == strlen(expected_value) + 1, "Value size mismatch");
+        TEST_ASSERT(memcmp(pair.value, expected_value, pair.value_size - 1) == 0, "Value content mismatch");
 
         count++;
-        free(pair);
+        has_next = iter->next(iter);
+        printf("Next valid: %d\n", has_next);
     }
 
+    printf("Final count: %d, expected: %d\n", count, num_pairs);
     TEST_ASSERT(count == num_pairs, "Iterator count mismatch");
 
     // 销毁迭代器和内存表
-    ppdb_memtable_iterator_destroy_basic(iter);
-    ppdb_memtable_destroy_sharded(table);
+    ppdb_iterator_destroy(iter);
+    ppdb_sharded_memtable_destroy(table);
     return 0;
 }
 

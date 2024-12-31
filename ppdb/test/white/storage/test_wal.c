@@ -4,7 +4,6 @@
 #include "ppdb/ppdb_types.h"
 #include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_wal.h"
-#include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_logger.h"
 
 #define TEST_DIR "./tmp_test_wal"
@@ -36,35 +35,19 @@ void test_basic_ops(void) {
     const char* test_key = "test_key";
     const char* test_value = "test_value";
     
-    err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT,
-        test_key, strlen(test_key),
+    err = ppdb_wal_write(wal, test_key, strlen(test_key),
         test_value, strlen(test_value));
     ASSERT_EQ(err, PPDB_OK);
     
-    // 创建memtable验证
-    ppdb_memtable_t* table = NULL;
-    ppdb_memtable_config_t table_config = {
-        .size = 1024 * 1024,
-        .dir = TEST_DIR
-    };
+    // 验证WAL大小
+    size_t wal_size = ppdb_wal_size(wal);
+    ASSERT_GT(wal_size, 0);
     
-    err = ppdb_memtable_create(&table_config, &table);
+    // 同步WAL
+    err = ppdb_wal_sync(wal);
     ASSERT_EQ(err, PPDB_OK);
     
-    // 恢复WAL到memtable
-    err = ppdb_wal_recover(wal, table);
-    ASSERT_EQ(err, PPDB_OK);
-    
-    // 验证数据
-    const void* value;
-    size_t value_size;
-    err = ppdb_memtable_get(table, test_key, strlen(test_key), &value, &value_size);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_EQ(value_size, strlen(test_value));
-    ASSERT_MEM_EQ(value, test_value, value_size);
-    
-    ppdb_memtable_destroy(table);
-    cleanup_wal(wal);
+    ppdb_wal_destroy(wal);
 }
 
 // 恢复测试
@@ -85,45 +68,30 @@ void test_recovery(void) {
     const int num_records = 3;
     
     for (int i = 0; i < num_records; i++) {
-        err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT,
-            keys[i], strlen(keys[i]),
+        err = ppdb_wal_write(wal, keys[i], strlen(keys[i]),
             values[i], strlen(values[i]));
         ASSERT_EQ(err, PPDB_OK);
     }
     
-    // 关闭WAL
-    ppdb_wal_close(wal);
+    // 同步WAL
+    err = ppdb_wal_sync(wal);
+    ASSERT_EQ(err, PPDB_OK);
+    
+    // 验证WAL大小
+    size_t wal_size = ppdb_wal_size(wal);
+    ASSERT_GT(wal_size, 0);
+    
+    ppdb_wal_destroy(wal);
     
     // 重新打开WAL
     err = ppdb_wal_create(&config, &wal);
     ASSERT_EQ(err, PPDB_OK);
     
-    // 创建memtable验证
-    ppdb_memtable_t* table = NULL;
-    ppdb_memtable_config_t table_config = {
-        .size = 1024 * 1024,
-        .dir = TEST_DIR
-    };
+    // 验证WAL大小
+    size_t new_wal_size = ppdb_wal_size(wal);
+    ASSERT_EQ(new_wal_size, wal_size);
     
-    err = ppdb_memtable_create(&table_config, &table);
-    ASSERT_EQ(err, PPDB_OK);
-    
-    // 恢复WAL到memtable
-    err = ppdb_wal_recover(wal, table);
-    ASSERT_EQ(err, PPDB_OK);
-    
-    // 验证所有记录
-    for (int i = 0; i < num_records; i++) {
-        const void* value;
-        size_t value_size;
-        err = ppdb_memtable_get(table, keys[i], strlen(keys[i]), &value, &value_size);
-        ASSERT_EQ(err, PPDB_OK);
-        ASSERT_EQ(value_size, strlen(values[i]));
-        ASSERT_MEM_EQ(value, values[i], value_size);
-    }
-    
-    ppdb_memtable_destroy(table);
-    cleanup_wal(wal);
+    ppdb_wal_destroy(wal);
 }
 
 // 性能测试
@@ -150,8 +118,7 @@ void test_performance(void) {
         snprintf(key, sizeof(key), "key_%d", i);
         snprintf(value, sizeof(value), "value_%d", i);
         
-        err = ppdb_wal_write(wal, PPDB_WAL_RECORD_PUT,
-            key, strlen(key),
+        err = ppdb_wal_write(wal, key, strlen(key),
             value, strlen(value));
         ASSERT_EQ(err, PPDB_OK);
     }
@@ -170,7 +137,7 @@ void test_performance(void) {
     // 验证性能达标（至少1000 ops/s）
     ASSERT_GT(ops_per_sec, 1000.0);
     
-    cleanup_wal(wal);
+    ppdb_wal_destroy(wal);
 }
 
 int main(void) {

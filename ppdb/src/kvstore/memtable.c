@@ -602,17 +602,22 @@ ppdb_error_t ppdb_memtable_iterator_next_basic(ppdb_memtable_iterator_t* iter,
         return PPDB_ERR_NOT_FOUND;
     }
 
-    // 先返回当前键值对
-    *pair = &iter->current_pair;
-
-    // 再移动到下一个
-    ppdb_error_t err = ppdb_skiplist_iterator_next(iter->it, &iter->current_pair);
+    // 获取当前键值对
+    ppdb_error_t err = ppdb_skiplist_iterator_get(iter->it, &iter->current_pair);
     if (err != PPDB_OK) {
-        iter->valid = false;
         return err;
     }
 
-    return PPDB_OK;
+    // 返回当前键值对
+    *pair = &iter->current_pair;
+
+    // 移动到下一个
+    err = ppdb_skiplist_iterator_next(iter->it, &iter->current_pair);
+    if (err != PPDB_OK) {
+        iter->valid = false;
+    }
+
+    return err;
 }
 
 // 获取当前键值对
@@ -622,13 +627,11 @@ ppdb_error_t ppdb_memtable_iterator_get_basic(ppdb_memtable_iterator_t* iter,
         return PPDB_ERR_INVALID_ARG;
     }
 
-    if (!iter->it || !iter->valid) {
+    if (!iter->it) {
         return PPDB_ERR_NOT_FOUND;
     }
 
-    // 复制当前键值对
-    *pair = iter->current_pair;
-    return PPDB_OK;
+    return ppdb_skiplist_iterator_get(iter->it, pair);
 }
 
 // 销毁迭代器

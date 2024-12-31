@@ -60,7 +60,8 @@ static void* concurrent_worker(void* arg) {
             args->success = false;
             return NULL;
         }
-        if (memcmp(read_value, value, strlen(value)) != 0) {
+
+        if (value_size != strlen(value) || memcmp(read_value, value, value_size) != 0) {
             ppdb_log_error("Value mismatch in thread %d", args->thread_id);
             args->success = false;
             free(read_value);

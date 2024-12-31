@@ -36,24 +36,86 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
     };
 
     // 复制配置
-    new_wal->dir_path = strdup(config->dir_path);
+    new_wal->dir_path = strdup(config->dir);
     if (!new_wal->dir_path) {
         free(new_wal);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
-    new_wal->filename = strdup(config->filename);
+    // 生成WAL文件名
+    char filename[256];
+    snprintf(filename, sizeof(filename), "%s/wal.log", new_wal->dir_path);
+    new_wal->filename = strdup(filename);
     if (!new_wal->filename) {
         free(new_wal->dir_path);
         free(new_wal);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
-    new_wal->file_size = sizeof(header);
-    new_wal->sync_on_write = config->sync_on_write;
-    new_wal->enable_compression = config->enable_compression;
+    // 创建目录
+    if (mkdir(new_wal->dir_path, 0755) != 0 && errno != EEXIST) {
+        free(new_wal->filename);
+        free(new_wal->dir_path);
+        free(new_wal);
+        return PPDB_ERR_IO;
+    }
+
+    // 打开WAL文件
+    new_wal->current_fd = open(new_wal->filename, O_CREAT | O_RDWR | O_APPEND, 0644);
+    if (new_wal->current_fd < 0) {
+        free(new_wal->filename);
+        free(new_wal->dir_path);
+        free(new_wal);
+        return PPDB_ERR_IO;
+    }
+
+    // 获取文件大小
+    off_t file_size = lseek(new_wal->current_fd, 0, SEEK_END);
+    if (file_size < 0) {
+        close(new_wal->current_fd);
+        free(new_wal->filename);
+        free(new_wal->dir_path);
+        free(new_wal);
+        return PPDB_ERR_IO;
+    }
+
+    // 如果是新文件，写入头部
+    if (file_size == 0) {
+        if (write(new_wal->current_fd, &header, sizeof(header)) != sizeof(header)) {
+            close(new_wal->current_fd);
+            free(new_wal->filename);
+            free(new_wal->dir_path);
+            free(new_wal);
+            return PPDB_ERR_IO;
+        }
+        new_wal->current_size = sizeof(header);
+    } else {
+        // 读取现有头部
+        if (pread(new_wal->current_fd, &header, sizeof(header), 0) != sizeof(header)) {
+            close(new_wal->current_fd);
+            free(new_wal->filename);
+            free(new_wal->dir_path);
+            free(new_wal);
+            return PPDB_ERR_IO;
+        }
+        new_wal->current_size = file_size;
+    }
+
+    // 初始化其他字段
+    new_wal->next_sequence = header.sequence;
+    new_wal->sync_on_write = (config->sync_mode == PPDB_SYNC_MODE_SYNC);
+    new_wal->closed = false;
 
     // 初始化同步对象
+    new_wal->sync = (ppdb_sync_t*)malloc(sizeof(ppdb_sync_t));
+    if (!new_wal->sync) {
+        close(new_wal->current_fd);
+        free(new_wal->filename);
+        free(new_wal->dir_path);
+        free(new_wal);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
     ppdb_sync_config_t sync_config = {
         .type = PPDB_SYNC_MUTEX,
         .spin_count = 1000
@@ -61,57 +123,13 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
 
     ppdb_error_t err = ppdb_sync_init(new_wal->sync, &sync_config);
     if (err != PPDB_OK) {
+        free(new_wal->sync);
+        close(new_wal->current_fd);
         free(new_wal->filename);
         free(new_wal->dir_path);
         free(new_wal);
         return err;
     }
-
-    // 如果启用了缓冲区，则初始化缓冲区
-    if (config->use_buffer) {
-        new_wal->buffers = malloc(sizeof(wal_buffer_t));
-        if (!new_wal->buffers) {
-            ppdb_sync_destroy(new_wal->sync);
-            free(new_wal->filename);
-            free(new_wal->dir_path);
-            free(new_wal);
-            return PPDB_ERR_OUT_OF_MEMORY;
-        }
-
-        new_wal->buffers[0].data = malloc(config->buffer_size);
-        if (!new_wal->buffers[0].data) {
-            free(new_wal->buffers);
-            ppdb_sync_destroy(new_wal->sync);
-            free(new_wal->filename);
-            free(new_wal->dir_path);
-            free(new_wal);
-            return PPDB_ERR_OUT_OF_MEMORY;
-        }
-
-        new_wal->buffers[0].size = config->buffer_size;
-        new_wal->buffers[0].used = 0;
-        new_wal->buffers[0].in_use = false;
-        err = ppdb_sync_init(&new_wal->buffers[0].sync, &sync_config);
-        if (err != PPDB_OK) {
-            free(new_wal->buffers[0].data);
-            free(new_wal->buffers);
-            ppdb_sync_destroy(new_wal->sync);
-            free(new_wal->filename);
-            free(new_wal->dir_path);
-            free(new_wal);
-            return err;
-        }
-
-        new_wal->buffer_count = 1;
-    } else {
-        new_wal->buffers = NULL;
-        new_wal->buffer_count = 0;
-    }
-
-    // 初始化其他字段
-    new_wal->closed = false;
-    new_wal->current_buffer = 0;
-    ppdb_metrics_init(&new_wal->metrics);
 
     *wal = new_wal;
     return PPDB_OK;
@@ -122,19 +140,17 @@ void ppdb_wal_destroy_basic(ppdb_wal_t* wal) {
         return;
     }
 
-    // 清理缓冲区
-    if (wal->buffers) {
-        for (size_t i = 0; i < wal->buffer_count; i++) {
-            ppdb_sync_destroy(&wal->buffers[i].sync);
-            free(wal->buffers[i].data);
-        }
-        free(wal->buffers);
+    if (wal->current_fd >= 0) {
+        close(wal->current_fd);
     }
 
-    // 清理其他资源
+    if (wal->sync) {
+        ppdb_sync_destroy(wal->sync);
+        free(wal->sync);
+    }
+
     free(wal->filename);
     free(wal->dir_path);
-    ppdb_sync_destroy(wal->sync);
     free(wal);
 }
 
@@ -144,107 +160,59 @@ ppdb_error_t ppdb_wal_write_basic(ppdb_wal_t* wal, const void* key, size_t key_l
         return PPDB_ERR_INVALID_ARG;
     }
 
-    ppdb_sync_lock(wal->sync);
+    if (wal->closed) {
+        return PPDB_ERR_WAL_CLOSED;
+    }
 
-    // 准备记录头部
-    wal_record_header_t header = {
+    // 构造记录头部
+    wal_record_header_t record_header = {
         .type = PPDB_WAL_RECORD_PUT,
         .key_size = key_len,
         .value_size = value_len,
-        .crc32 = 0  // 先设为0，后面计算
+        .crc32 = 0
     };
 
     // 计算CRC32
-    header.crc32 = calculate_crc32(key, key_len);
+    record_header.crc32 = calculate_crc32(key, key_len);
     if (value && value_len > 0) {
-        header.crc32 ^= calculate_crc32(value, value_len);
+        record_header.crc32 ^= calculate_crc32(value, value_len);
     }
 
+    // 加锁写入
+    ppdb_sync_lock(wal->sync);
+
     // 写入记录头部
-    ppdb_error_t err = ppdb_write_file(wal->filename, &header, sizeof(header));
-    if (err != PPDB_OK) {
+    if (write(wal->current_fd, &record_header, sizeof(record_header)) != sizeof(record_header)) {
         ppdb_sync_unlock(wal->sync);
-        return err;
+        return PPDB_ERR_IO;
     }
 
     // 写入键
-    err = ppdb_write_file(wal->filename, key, key_len);
-    if (err != PPDB_OK) {
+    if (write(wal->current_fd, key, key_len) != key_len) {
         ppdb_sync_unlock(wal->sync);
-        return err;
+        return PPDB_ERR_IO;
     }
 
-    // 写入值（如果有）
+    // 写入值
     if (value && value_len > 0) {
-        err = ppdb_write_file(wal->filename, value, value_len);
-        if (err != PPDB_OK) {
+        if (write(wal->current_fd, value, value_len) != value_len) {
             ppdb_sync_unlock(wal->sync);
-            return err;
+            return PPDB_ERR_IO;
         }
     }
 
     // 更新文件大小
-    wal->file_size += sizeof(header) + key_len + value_len;
+    wal->current_size += sizeof(record_header) + key_len + value_len;
 
-    // 如果需要，同步到磁盘
+    // 如果需要同步
     if (wal->sync_on_write) {
-        err = ppdb_sync_file(wal->filename);
-        if (err != PPDB_OK) {
+        if (fsync(wal->current_fd) != 0) {
             ppdb_sync_unlock(wal->sync);
-            return err;
+            return PPDB_ERR_IO;
         }
     }
-
-    // 更新指标
-    wal->metrics.put_count++;
 
     ppdb_sync_unlock(wal->sync);
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_wal_write_lockfree_basic(ppdb_wal_t* wal, const void* key, size_t key_len,
-                                          const void* value, size_t value_len) {
-    if (!wal || !key || key_len == 0) {
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    // 准备记录头部
-    wal_record_header_t header = {
-        .type = PPDB_WAL_RECORD_PUT,
-        .key_size = key_len,
-        .value_size = value_len,
-        .crc32 = 0  // TODO: 计算CRC32
-    };
-
-    // 获取当前文件大小
-    size_t current_size;
-    ppdb_error_t err = ppdb_get_file_size(wal->filename, &current_size);
-    if (err != PPDB_OK) {
-        return err;
-    }
-
-    // 写入记录头部
-    err = ppdb_append_file(wal->filename, &header, sizeof(header));
-    if (err != PPDB_OK) {
-        return err;
-    }
-
-    // 写入键
-    err = ppdb_append_file(wal->filename, key, key_len);
-    if (err != PPDB_OK) {
-        return err;
-    }
-
-    // 写入值（如果有）
-    err = ppdb_append_file(wal->filename, value, value_len);
-    if (err != PPDB_OK) {
-        return err;
-    }
-
-    // 更新文件大小
-    wal->file_size = current_size + sizeof(header) + key_len + value_len;
-    wal->metrics.put_count++;
-
     return PPDB_OK;
 }
 
@@ -253,23 +221,18 @@ ppdb_error_t ppdb_wal_sync_basic(ppdb_wal_t* wal) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    ppdb_sync_lock(wal->sync);
-
-    // 更新指标
-    wal->metrics.total_ops++;
-
-    ppdb_sync_unlock(wal->sync);
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_wal_sync_lockfree_basic(ppdb_wal_t* wal) {
-    if (!wal) {
-        return PPDB_ERR_INVALID_ARG;
+    if (wal->closed) {
+        return PPDB_ERR_WAL_CLOSED;
     }
 
-    // 更新指标
-    wal->metrics.total_ops++;
+    ppdb_sync_lock(wal->sync);
+    
+    if (fsync(wal->current_fd) != 0) {
+        ppdb_sync_unlock(wal->sync);
+        return PPDB_ERR_IO;
+    }
 
+    ppdb_sync_unlock(wal->sync);
     return PPDB_OK;
 }
 
@@ -277,177 +240,38 @@ size_t ppdb_wal_size_basic(ppdb_wal_t* wal) {
     if (!wal) {
         return 0;
     }
-
-    size_t current_size;
-    if (ppdb_get_file_size(wal->filename, &current_size) != PPDB_OK) {
-        return 0;
-    }
-
-    return current_size;
-}
-
-size_t ppdb_wal_size_lockfree_basic(ppdb_wal_t* wal) {
-    return wal ? wal->file_size : 0;
+    return wal->current_size;
 }
 
 uint64_t ppdb_wal_next_sequence_basic(ppdb_wal_t* wal) {
-    return wal ? wal->next_sequence : 0;
+    if (!wal) {
+        return 0;
+    }
+    return wal->next_sequence++;
 }
 
-uint64_t ppdb_wal_next_sequence_lockfree_basic(ppdb_wal_t* wal) {
-    return wal ? wal->next_sequence : 0;
+// 工厂函数实现
+ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal) {
+    return ppdb_wal_create_basic(config, wal);
 }
 
-ppdb_error_t ppdb_wal_recovery_iter_create_basic(ppdb_wal_t* wal, ppdb_wal_recovery_iter_t** iter) {
-    if (!wal || !iter) {
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    ppdb_wal_recovery_iter_t* new_iter = malloc(sizeof(ppdb_wal_recovery_iter_t));
-    if (!new_iter) {
-        return PPDB_ERR_OUT_OF_MEMORY;
-    }
-
-    new_iter->wal = wal;
-    new_iter->position = sizeof(wal_header_t);  // 跳过WAL头部
-    new_iter->buffer = NULL;
-    new_iter->buffer_size = 0;
-    new_iter->current.key = NULL;
-    new_iter->current.key_size = 0;
-    new_iter->current.value = NULL;
-    new_iter->current.value_size = 0;
-
-    *iter = new_iter;
-    return PPDB_OK;
+void ppdb_wal_destroy(ppdb_wal_t* wal) {
+    ppdb_wal_destroy_basic(wal);
 }
 
-void ppdb_wal_recovery_iter_destroy_basic(ppdb_wal_recovery_iter_t* iter) {
-    if (!iter) {
-        return;
-    }
-
-    free(iter->current.key);
-    free(iter->current.value);
-    free(iter->buffer);
-    free(iter);
+ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal, const void* key, size_t key_len,
+                           const void* value, size_t value_len) {
+    return ppdb_wal_write_basic(wal, key, key_len, value, value_len);
 }
 
-ppdb_error_t ppdb_wal_recovery_iter_next_basic(ppdb_wal_recovery_iter_t* iter,
-                                              void** key, size_t* key_len,
-                                              void** value, size_t* value_len) {
-    if (!iter || !key || !key_len || !value || !value_len) {
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    // 检查是否已到文件末尾
-    if (iter->position >= (off_t)iter->wal->file_size) {
-        return PPDB_ERR_ITERATOR_END;
-    }
-
-    // 读取记录头部
-    wal_record_header_t header;
-    ssize_t bytes_read = pread(iter->wal->current_fd, &header, sizeof(header), iter->position);
-    if (bytes_read != sizeof(header)) {
-        return PPDB_ERR_IO;
-    }
-
-    // 验证记录大小
-    if (header.key_size == 0 || header.key_size > PPDB_MAX_KEY_SIZE ||
-        header.value_size > PPDB_MAX_VALUE_SIZE) {
-        return PPDB_ERR_WAL_CORRUPTED;
-    }
-
-    // 分配内存
-    void* key_data = malloc(header.key_size);
-    void* value_data = header.value_size > 0 ? malloc(header.value_size) : NULL;
-
-    if (!key_data || (header.value_size > 0 && !value_data)) {
-        free(key_data);
-        free(value_data);
-        return PPDB_ERR_OUT_OF_MEMORY;
-    }
-
-    // 读取键
-    off_t data_pos = iter->position + sizeof(header);
-    bytes_read = pread(iter->wal->current_fd, key_data, header.key_size, data_pos);
-    if (bytes_read != header.key_size) {
-        free(key_data);
-        free(value_data);
-        return PPDB_ERR_IO;
-    }
-
-    // 读取值（如果有）
-    if (header.value_size > 0) {
-        data_pos += header.key_size;
-        bytes_read = pread(iter->wal->current_fd, value_data, header.value_size, data_pos);
-        if (bytes_read != header.value_size) {
-            free(key_data);
-            free(value_data);
-            return PPDB_ERR_IO;
-        }
-    }
-
-    // 更新迭代器位置
-    iter->position += sizeof(header) + header.key_size + header.value_size;
-
-    // 返回数据
-    *key = key_data;
-    *key_len = header.key_size;
-    *value = value_data;
-    *value_len = header.value_size;
-
-    return PPDB_OK;
+ppdb_error_t ppdb_wal_sync(ppdb_wal_t* wal) {
+    return ppdb_wal_sync_basic(wal);
 }
 
-ppdb_error_t ppdb_wal_recover_basic(ppdb_wal_t* wal, ppdb_memtable_t* memtable) {
-    if (!wal || !memtable) {
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    // 创建迭代器
-    ppdb_wal_recovery_iter_t* iter;
-    ppdb_error_t err = ppdb_wal_recovery_iter_create(wal, &iter);
-    if (err != PPDB_OK) {
-        return err;
-    }
-
-    // 遍历WAL记录
-    void* key;
-    size_t key_len;
-    void* value;
-    size_t value_len;
-
-    while (true) {
-        err = ppdb_wal_recovery_iter_next(iter,
-                                        &key, &key_len,
-                                        &value, &value_len);
-
-        if (err == PPDB_ERR_ITERATOR_END) {
-            break;
-        }
-
-        if (err != PPDB_OK) {
-            ppdb_wal_recovery_iter_destroy(iter);
-            return err;
-        }
-
-        // 将记录写入内存表
-        err = ppdb_memtable_put(memtable, key, key_len, value, value_len);
-
-        free(key);
-        free(value);
-
-        if (err != PPDB_OK) {
-            ppdb_wal_recovery_iter_destroy(iter);
-            return err;
-        }
-    }
-
-    ppdb_wal_recovery_iter_destroy(iter);
-    return PPDB_OK;
+size_t ppdb_wal_size(ppdb_wal_t* wal) {
+    return ppdb_wal_size_basic(wal);
 }
 
-ppdb_error_t ppdb_wal_recover_lockfree_basic(ppdb_wal_t* wal, ppdb_memtable_t* memtable) {
-    // 对于基础实现，我们直接调用带锁的版本
-    return ppdb_wal_recover_basic(wal, memtable);
+uint64_t ppdb_wal_next_sequence(ppdb_wal_t* wal) {
+    return ppdb_wal_next_sequence_basic(wal);
 }

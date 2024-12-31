@@ -19,7 +19,7 @@ void ppdb_sharded_memtable_destroy(ppdb_sharded_memtable_t* table);
 
 // 基本操作
 ppdb_error_t ppdb_sharded_memtable_put(ppdb_sharded_memtable_t* table, const void* key, size_t key_len, const void* value, size_t value_len);
-ppdb_error_t ppdb_sharded_memtable_get(ppdb_sharded_memtable_t* table, const void* key, size_t key_len, void* value, size_t* value_len);
+ppdb_error_t ppdb_sharded_memtable_get(ppdb_sharded_memtable_t* table, const void* key, size_t key_len, void** value_out, size_t* value_len_out);
 ppdb_error_t ppdb_sharded_memtable_delete(ppdb_sharded_memtable_t* table, const void* key, size_t key_len);
 
 // 迭代器操作
