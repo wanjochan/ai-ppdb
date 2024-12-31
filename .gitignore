@@ -56,3 +56,7 @@ cosmo_tinycc.zip
 *.bin
 *.obj
 ppdb/test_sync.tmp
+cosmo/build/
+cosmo/main.dat
+cosmo/mingw64.7z
+mingw64/

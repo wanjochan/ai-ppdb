@@ -1,10 +1,16 @@
 #include "cosmopolitan.h"
 
-int main(int argc, char* argv[]) {
-    printf("Test module loaded.\n");
-    printf("Arguments received: %d\n", argc);
+__attribute__((visibility("default")))
+__attribute__((used))
+int module_main(int argc, char* argv[]) {
+    printf("Hello from main.dat!\n");
+    printf("Arguments:\n");
     for (int i = 0; i < argc; i++) {
-        printf("arg[%d]: %s\n", i, argv[i]);
+        printf("  %d: %s\n", i, argv[i]);
     }
     return 0;
+}
+
+int main(int argc, char* argv[]) {
+    return module_main(argc, argv);
 }
