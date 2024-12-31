@@ -1,6 +1,10 @@
 # Cosmo - ELF Loader for Windows
 
-一个用于在 Windows 上加载和执行 ELF 文件的动态加载器。
+跨平台加载和执行 ELF 文件的动态加载器
+（暂时在做x64版本）
+（如果成功后还会开发跨平台的类似ape原理的动态库，兼容dll/dyld/so）
+
+智能助理注意：还要阅读docs/*.md进行知识热身
 
 ## 当前进展
 
