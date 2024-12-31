@@ -399,9 +399,19 @@ ppdb_error_t ppdb_skiplist_iterator_next(ppdb_skiplist_iterator_t* iter,
     }
 
     // 复制当前节点的键值对
-    pair->key = iter->current->key;
+    pair->key = malloc(iter->current->key_len);
+    if (!pair->key) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    memcpy(pair->key, iter->current->key, iter->current->key_len);
     pair->key_size = iter->current->key_len;
-    pair->value = iter->current->value;
+
+    pair->value = malloc(iter->current->value_len);
+    if (!pair->value) {
+        free(pair->key);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    memcpy(pair->value, iter->current->value, iter->current->value_len);
     pair->value_size = iter->current->value_len;
 
     // 移动到下一个节点
@@ -421,9 +431,19 @@ ppdb_error_t ppdb_skiplist_iterator_get(ppdb_skiplist_iterator_t* iter,
     }
 
     // 复制键值对
-    pair->key = iter->current->key;
+    pair->key = malloc(iter->current->key_len);
+    if (!pair->key) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    memcpy(pair->key, iter->current->key, iter->current->key_len);
     pair->key_size = iter->current->key_len;
-    pair->value = iter->current->value;
+
+    pair->value = malloc(iter->current->value_len);
+    if (!pair->value) {
+        free(pair->key);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    memcpy(pair->value, iter->current->value, iter->current->value_len);
     pair->value_size = iter->current->value_len;
 
     return PPDB_OK;

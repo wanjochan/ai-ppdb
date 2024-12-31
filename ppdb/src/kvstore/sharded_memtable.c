@@ -1,18 +1,10 @@
 #include <cosmopolitan.h>
-
-// 公共头文件
 #include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-
-// 内部头文件
-#include "kvstore/internal/kvstore_types.h"
+#include "kvstore/internal/kvstore_sharded_memtable.h"
 #include "kvstore/internal/kvstore_memtable.h"
-#include "kvstore/internal/kvstore_logger.h"
-#include "kvstore/internal/kvstore_fs.h"
 #include "kvstore/internal/skiplist.h"
 #include "kvstore/internal/sync.h"
 #include "kvstore/internal/metrics.h"
-#include "kvstore/internal/kvstore_sharded_memtable.h"
 
 // 分片内存表结构
 struct ppdb_sharded_memtable {
@@ -24,130 +16,182 @@ struct ppdb_sharded_memtable {
 typedef struct {
     ppdb_sharded_memtable_t* table;
     size_t current_shard;
-    ppdb_memtable_iterator_t* current_iterator;
+    ppdb_memtable_iterator_t** shard_iterators;  // 每个分片的迭代器
+    ppdb_kv_pair_t** current_pairs;              // 每个分片的当前键值对
+    bool valid;
 } sharded_iterator_internal_t;
+
+// 比较两个键值对
+static int compare_pairs(const ppdb_kv_pair_t* a, const ppdb_kv_pair_t* b) {
+    size_t min_len = a->key_size < b->key_size ? a->key_size : b->key_size;
+    int cmp = memcmp(a->key, b->key, min_len);
+    if (cmp != 0) return cmp;
+    return (a->key_size < b->key_size) ? -1 : (a->key_size > b->key_size ? 1 : 0);
+}
+
+// 找到具有最小键的分片索引
+static size_t find_min_key_shard(sharded_iterator_internal_t* internal) {
+    size_t min_shard = (size_t)-1;
+    
+    for (size_t i = 0; i < internal->table->shard_count; i++) {
+        if (internal->current_pairs[i] && (min_shard == (size_t)-1 || 
+            compare_pairs(internal->current_pairs[i], internal->current_pairs[min_shard]) < 0)) {
+            min_shard = i;
+        }
+    }
+    
+    return min_shard;
+}
 
 // 迭代器前进
 static bool sharded_iterator_next(ppdb_iterator_t* iter) {
-    if (!iter) {
+    if (!iter || !iter->internal) {
         return false;
     }
 
     sharded_iterator_internal_t* internal = (sharded_iterator_internal_t*)iter->internal;
-    if (!internal) {
+    if (!internal->valid) {
         return false;
     }
 
-    // 如果当前迭代器为空，尝试获取下一个分片的迭代器
-    if (!internal->current_iterator) {
-        while (internal->current_shard < internal->table->shard_count) {
+    // 如果是第一次调用，初始化所有分片的迭代器
+    if (!internal->shard_iterators) {
+        internal->shard_iterators = calloc(internal->table->shard_count, sizeof(ppdb_memtable_iterator_t*));
+        internal->current_pairs = calloc(internal->table->shard_count, sizeof(ppdb_kv_pair_t*));
+        if (!internal->shard_iterators || !internal->current_pairs) {
+            internal->valid = false;
+            return false;
+        }
+
+        // 初始化每个分片的迭代器
+        for (size_t i = 0; i < internal->table->shard_count; i++) {
             ppdb_error_t err = ppdb_memtable_iterator_create_basic(
-                internal->table->shards[internal->current_shard],
-                &internal->current_iterator);
+                internal->table->shards[i],
+                &internal->shard_iterators[i]);
             
-            if (err == PPDB_OK && internal->current_iterator) {
-                ppdb_kv_pair_t* first_pair = NULL;
-                err = ppdb_memtable_iterator_next_basic(internal->current_iterator, &first_pair);
-                if (err == PPDB_OK && first_pair) {
-                    free(first_pair);
-                    return true;  // 找到有效的迭代器和第一个元素
+            if (err == PPDB_OK && internal->shard_iterators[i]) {
+                ppdb_kv_pair_t* next_pair = NULL;
+                err = ppdb_memtable_iterator_next_basic(internal->shard_iterators[i], &next_pair);
+                if (err == PPDB_OK && next_pair) {
+                    internal->current_pairs[i] = malloc(sizeof(ppdb_kv_pair_t));
+                    if (internal->current_pairs[i]) {
+                        // 复制键值对
+                        internal->current_pairs[i]->key = malloc(next_pair->key_size);
+                        internal->current_pairs[i]->value = malloc(next_pair->value_size);
+                        if (internal->current_pairs[i]->key && internal->current_pairs[i]->value) {
+                            memcpy(internal->current_pairs[i]->key, next_pair->key, next_pair->key_size);
+                            memcpy(internal->current_pairs[i]->value, next_pair->value, next_pair->value_size);
+                            internal->current_pairs[i]->key_size = next_pair->key_size;
+                            internal->current_pairs[i]->value_size = next_pair->value_size;
+                        } else {
+                            if (internal->current_pairs[i]->key) free(internal->current_pairs[i]->key);
+                            if (internal->current_pairs[i]->value) free(internal->current_pairs[i]->value);
+                            free(internal->current_pairs[i]);
+                            internal->current_pairs[i] = NULL;
+                        }
+                    }
                 }
             }
-            // 如果获取迭代器失败或没有第一个元素，继续查找下一个分片
-            if (internal->current_iterator) {
-                ppdb_memtable_iterator_destroy_basic(internal->current_iterator);
-                internal->current_iterator = NULL;
+        }
+    } else {
+        // 找到当前最小键的分片
+        size_t min_shard = find_min_key_shard(internal);
+        if (min_shard == (size_t)-1) {
+            internal->valid = false;
+            return false;
+        }
+
+        // 获取该分片的下一个键值对
+        ppdb_kv_pair_t* next_pair = NULL;
+        ppdb_error_t err = ppdb_memtable_iterator_next_basic(internal->shard_iterators[min_shard], &next_pair);
+        if (err == PPDB_OK && next_pair) {
+            // 释放当前最小键的内存
+            if (internal->current_pairs[min_shard]) {
+                free(internal->current_pairs[min_shard]->key);
+                free(internal->current_pairs[min_shard]->value);
+                free(internal->current_pairs[min_shard]);
             }
-            internal->current_shard++;
+
+            // 更新为新的键值对
+            internal->current_pairs[min_shard] = malloc(sizeof(ppdb_kv_pair_t));
+            if (internal->current_pairs[min_shard]) {
+                // 复制键值对
+                internal->current_pairs[min_shard]->key = malloc(next_pair->key_size);
+                internal->current_pairs[min_shard]->value = malloc(next_pair->value_size);
+                if (internal->current_pairs[min_shard]->key && internal->current_pairs[min_shard]->value) {
+                    memcpy(internal->current_pairs[min_shard]->key, next_pair->key, next_pair->key_size);
+                    memcpy(internal->current_pairs[min_shard]->value, next_pair->value, next_pair->value_size);
+                    internal->current_pairs[min_shard]->key_size = next_pair->key_size;
+                    internal->current_pairs[min_shard]->value_size = next_pair->value_size;
+                } else {
+                    if (internal->current_pairs[min_shard]->key) free(internal->current_pairs[min_shard]->key);
+                    if (internal->current_pairs[min_shard]->value) free(internal->current_pairs[min_shard]->value);
+                    free(internal->current_pairs[min_shard]);
+                    internal->current_pairs[min_shard] = NULL;
+                }
+            }
+        } else {
+            // 如果没有下一个键值对，释放当前的并设置为 NULL
+            if (internal->current_pairs[min_shard]) {
+                free(internal->current_pairs[min_shard]->key);
+                free(internal->current_pairs[min_shard]->value);
+                free(internal->current_pairs[min_shard]);
+                internal->current_pairs[min_shard] = NULL;
+            }
         }
-        return false;  // 没有更多的分片
     }
 
-    // 尝试移动到当前迭代器的下一个键值对
-    ppdb_kv_pair_t* pair = NULL;
-    ppdb_error_t err = ppdb_memtable_iterator_next_basic(internal->current_iterator, &pair);
-    if (err == PPDB_OK) {
-        if (pair) {
-            free(pair);
-        }
-        return true;  // 成功移动到下一个键值对
-    }
-
-    // 如果当前分片已遍历完，释放当前迭代器并尝试下一个分片
-    ppdb_memtable_iterator_destroy_basic(internal->current_iterator);
-    internal->current_iterator = NULL;
-    internal->current_shard++;
-    return sharded_iterator_next(iter);
+    // 检查是否还有有效的键值对
+    internal->valid = find_min_key_shard(internal) != (size_t)-1;
+    return internal->valid;
 }
 
 // 获取当前键值对
-static ppdb_error_t sharded_iterator_get(ppdb_iterator_t* iter, ppdb_kv_pair_t* pair_out) {
-    if (!iter || !pair_out) {
-        return PPDB_ERR_INVALID_ARG;
+static ppdb_error_t sharded_iterator_get(ppdb_iterator_t* iter, ppdb_kv_pair_t* pair) {
+    if (!iter || !iter->internal || !pair) {
+        return PPDB_ERR_NULL_POINTER;
     }
 
     sharded_iterator_internal_t* internal = (sharded_iterator_internal_t*)iter->internal;
-    if (!internal || !internal->current_iterator) {
+    if (!internal->valid) {
+        return PPDB_ERR_INVALID_STATE;
+    }
+
+    size_t min_shard = find_min_key_shard(internal);
+    if (min_shard == (size_t)-1) {
         return PPDB_ERR_NOT_FOUND;
     }
 
-    return ppdb_memtable_iterator_get_basic(internal->current_iterator, pair_out);
+    ppdb_kv_pair_t* min_pair = internal->current_pairs[min_shard];
+    
+    // 复制键
+    pair->key = malloc(min_pair->key_size);
+    if (!pair->key) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    memcpy(pair->key, min_pair->key, min_pair->key_size);
+    pair->key_size = min_pair->key_size;
+
+    // 复制值
+    pair->value = malloc(min_pair->value_size);
+    if (!pair->value) {
+        free(pair->key);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    memcpy(pair->value, min_pair->value, min_pair->value_size);
+    pair->value_size = min_pair->value_size;
+
+    return PPDB_OK;
 }
 
 // 检查迭代器是否有效
 static bool sharded_iterator_valid(const ppdb_iterator_t* iter) {
-    if (!iter) {
+    if (!iter || !iter->internal) {
         return false;
     }
 
     sharded_iterator_internal_t* internal = (sharded_iterator_internal_t*)iter->internal;
-    if (!internal) {
-        return false;
-    }
-
-    // 如果当前迭代器为空，尝试获取下一个分片的迭代器
-    if (!internal->current_iterator) {
-        while (internal->current_shard < internal->table->shard_count) {
-            ppdb_error_t err = ppdb_memtable_iterator_create_basic(
-                internal->table->shards[internal->current_shard],
-                &internal->current_iterator);
-            
-            if (err == PPDB_OK && internal->current_iterator) {
-                ppdb_kv_pair_t* pair = NULL;
-                if (ppdb_memtable_iterator_next_basic(internal->current_iterator, &pair) == PPDB_OK) {
-                    if (pair) {
-                        free(pair->key);
-                        free(pair->value);
-                        free(pair);
-                    }
-                    return true;  // 找到有效的迭代器
-                }
-                // 如果获取键值对失败，释放当前迭代器并继续查找
-                ppdb_memtable_iterator_destroy_basic(internal->current_iterator);
-                internal->current_iterator = NULL;
-            }
-            internal->current_shard++;
-        }
-        return false;  // 没有更多的分片
-    }
-
-    // 检查当前迭代器是否有效
-    ppdb_kv_pair_t* pair = NULL;
-    ppdb_error_t err = ppdb_memtable_iterator_next_basic(internal->current_iterator, &pair);
-    if (err != PPDB_OK) {
-        // 如果当前迭代器无效，释放当前迭代器并尝试下一个分片
-        ppdb_memtable_iterator_destroy_basic(internal->current_iterator);
-        internal->current_iterator = NULL;
-        internal->current_shard++;
-        return sharded_iterator_valid(iter);
-    }
-    if (pair) {
-        free(pair->key);
-        free(pair->value);
-        free(pair);
-    }
-
-    return true;
+    return internal->valid;
 }
 
 // 销毁迭代器
@@ -158,12 +202,68 @@ void ppdb_iterator_destroy(ppdb_iterator_t* iter) {
 
     sharded_iterator_internal_t* internal = (sharded_iterator_internal_t*)iter->internal;
     if (internal) {
-        if (internal->current_iterator) {
-            ppdb_memtable_iterator_destroy_basic(internal->current_iterator);
+        if (internal->shard_iterators) {
+            for (size_t i = 0; i < internal->table->shard_count; i++) {
+                if (internal->shard_iterators[i]) {
+                    ppdb_memtable_iterator_destroy_basic(internal->shard_iterators[i]);
+                }
+            }
+            free(internal->shard_iterators);
+        }
+        if (internal->current_pairs) {
+            for (size_t i = 0; i < internal->table->shard_count; i++) {
+                if (internal->current_pairs[i]) {
+                    free(internal->current_pairs[i]->key);
+                    free(internal->current_pairs[i]->value);
+                    free(internal->current_pairs[i]);
+                }
+            }
+            free(internal->current_pairs);
         }
         free(internal);
     }
     free(iter);
+}
+
+// 创建分片迭代器
+ppdb_error_t ppdb_sharded_memtable_iterator_create(ppdb_sharded_memtable_t* table, ppdb_iterator_t** iter) {
+    if (!table || !iter) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    // 创建迭代器结构
+    ppdb_iterator_t* new_iter = malloc(sizeof(ppdb_iterator_t));
+    if (!new_iter) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 创建内部结构
+    sharded_iterator_internal_t* internal = malloc(sizeof(sharded_iterator_internal_t));
+    if (!internal) {
+        free(new_iter);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    internal->table = table;
+    internal->current_shard = 0;
+    internal->shard_iterators = NULL;
+    internal->current_pairs = NULL;
+    internal->valid = true;
+
+    new_iter->internal = internal;
+    new_iter->next = sharded_iterator_next;
+    new_iter->valid = sharded_iterator_valid;
+    new_iter->get = sharded_iterator_get;
+
+    // 移动到第一个元素
+    *iter = new_iter;
+    if (!sharded_iterator_next(new_iter)) {
+        ppdb_iterator_destroy(new_iter);
+        *iter = NULL;
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    return PPDB_OK;
 }
 
 // 创建分片内存表
@@ -211,19 +311,82 @@ void ppdb_sharded_memtable_destroy(ppdb_sharded_memtable_t* table) {
     free(table);
 }
 
+// MurmurHash3 算法的辅助函数
+static uint64_t rotl64(uint64_t x, int8_t r) {
+    return (x << r) | (x >> (64 - r));
+}
+
+static uint64_t fmix64(uint64_t k) {
+    k ^= k >> 33;
+    k *= 0xff51afd7ed558ccdULL;
+    k ^= k >> 33;
+    k *= 0xc4ceb9fe1a85ec53ULL;
+    k ^= k >> 33;
+    return k;
+}
+
 // 获取分片索引
 size_t ppdb_sharded_memtable_get_shard_index(ppdb_sharded_memtable_t* table, const void* key, size_t key_len) {
     if (!table || !key || key_len == 0 || table->shard_count == 0) return 0;
 
-    // 使用简单的加法哈希
+    const uint64_t c1 = 0x87c37b91114253d5ULL;
+    const uint64_t c2 = 0x4cf5ad432745937fULL;
     const unsigned char* data = (const unsigned char*)key;
-    uint64_t hash = 0;
-    
-    for (size_t i = 0; i < key_len; i++) {
-        hash = hash * 31 + data[i];
+    const int nblocks = key_len / 16;
+    uint64_t h1 = 0;
+    uint64_t h2 = 0;
+
+    // 处理16字节的块
+    const uint64_t* blocks = (const uint64_t*)(data);
+    for (int i = 0; i < nblocks; i++) {
+        uint64_t k1 = blocks[i*2];
+        uint64_t k2 = blocks[i*2+1];
+
+        k1 *= c1; k1 = rotl64(k1,31); k1 *= c2; h1 ^= k1;
+        h1 = rotl64(h1,27); h1 += h2; h1 = h1*5+0x52dce729;
+
+        k2 *= c2; k2 = rotl64(k2,33); k2 *= c1; h2 ^= k2;
+        h2 = rotl64(h2,31); h2 += h1; h2 = h2*5+0x38495ab5;
     }
 
-    return hash % table->shard_count;
+    // 处理剩余字节
+    const unsigned char* tail = data + nblocks*16;
+    uint64_t k1 = 0;
+    uint64_t k2 = 0;
+    switch(key_len & 15) {
+        case 15: k2 ^= ((uint64_t)tail[14]) << 48;
+        case 14: k2 ^= ((uint64_t)tail[13]) << 40;
+        case 13: k2 ^= ((uint64_t)tail[12]) << 32;
+        case 12: k2 ^= ((uint64_t)tail[11]) << 24;
+        case 11: k2 ^= ((uint64_t)tail[10]) << 16;
+        case 10: k2 ^= ((uint64_t)tail[ 9]) << 8;
+        case  9: k2 ^= ((uint64_t)tail[ 8]) << 0;
+                k2 *= c2; k2 = rotl64(k2,33); k2 *= c1; h2 ^= k2;
+
+        case  8: k1 ^= ((uint64_t)tail[ 7]) << 56;
+        case  7: k1 ^= ((uint64_t)tail[ 6]) << 48;
+        case  6: k1 ^= ((uint64_t)tail[ 5]) << 40;
+        case  5: k1 ^= ((uint64_t)tail[ 4]) << 32;
+        case  4: k1 ^= ((uint64_t)tail[ 3]) << 24;
+        case  3: k1 ^= ((uint64_t)tail[ 2]) << 16;
+        case  2: k1 ^= ((uint64_t)tail[ 1]) << 8;
+        case  1: k1 ^= ((uint64_t)tail[ 0]) << 0;
+                k1 *= c1; k1 = rotl64(k1,31); k1 *= c2; h1 ^= k1;
+    };
+
+    h1 ^= key_len;
+    h2 ^= key_len;
+
+    h1 += h2;
+    h2 += h1;
+
+    h1 = fmix64(h1);
+    h2 = fmix64(h2);
+
+    h1 += h2;
+    h2 += h1;
+
+    return h1 % table->shard_count;
 }
 
 // 写入键值对
@@ -292,62 +455,4 @@ ppdb_error_t ppdb_sharded_memtable_delete(ppdb_sharded_memtable_t* table, const 
 
     // 从分片中删除
     return ppdb_memtable_delete_basic(table->shards[shard_index], key, key_len);
-}
-
-// 创建分片迭代器
-ppdb_error_t ppdb_sharded_memtable_iterator_create(ppdb_sharded_memtable_t* table,
-                                                  ppdb_iterator_t** iter_out) {
-    if (!table || !iter_out) {
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    // 分配迭代器内存
-    ppdb_iterator_t* iter = malloc(sizeof(ppdb_iterator_t));
-    if (!iter) {
-        return PPDB_ERR_OUT_OF_MEMORY;
-    }
-
-    // 分配内部数据结构内存
-    sharded_iterator_internal_t* internal = malloc(sizeof(sharded_iterator_internal_t));
-    if (!internal) {
-        free(iter);
-        return PPDB_ERR_OUT_OF_MEMORY;
-    }
-
-    // 初始化内部数据
-    internal->table = table;
-    internal->current_shard = 0;
-    internal->current_iterator = NULL;
-
-    // 初始化第一个有效的分片迭代器
-    while (internal->current_shard < table->shard_count) {
-        ppdb_error_t err = ppdb_memtable_iterator_create_basic(
-            table->shards[internal->current_shard],
-            &internal->current_iterator);
-        
-        if (err == PPDB_OK && internal->current_iterator) {
-            ppdb_kv_pair_t* pair = NULL;
-            if (ppdb_memtable_iterator_next_basic(internal->current_iterator, &pair) == PPDB_OK) {
-                if (pair) {
-                    free(pair->key);
-                    free(pair->value);
-                    free(pair);
-                }
-                break;  // 找到有效的迭代器
-            }
-            // 如果获取键值对失败，释放当前迭代器并继续查找
-            ppdb_memtable_iterator_destroy_basic(internal->current_iterator);
-            internal->current_iterator = NULL;
-        }
-        internal->current_shard++;
-    }
-
-    // 设置迭代器函数
-    iter->next = sharded_iterator_next;
-    iter->get = sharded_iterator_get;
-    iter->valid = sharded_iterator_valid;
-    iter->internal = internal;
-
-    *iter_out = iter;
-    return PPDB_OK;
 }

@@ -36,7 +36,7 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
     };
 
     // 复制配置
-    new_wal->dir_path = strdup(config->dir);
+    new_wal->dir_path = strdup(config->dir_path);
     if (!new_wal->dir_path) {
         free(new_wal);
         return PPDB_ERR_OUT_OF_MEMORY;
@@ -44,13 +44,20 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
 
     // 生成WAL文件名
     char filename[256];
-    snprintf(filename, sizeof(filename), "%s/wal.log", new_wal->dir_path);
+    if (config->filename[0] != '\0') {
+        snprintf(filename, sizeof(filename), "%s/%s", new_wal->dir_path, config->filename);
+    } else {
+        snprintf(filename, sizeof(filename), "%s/wal.log", new_wal->dir_path);
+    }
     new_wal->filename = strdup(filename);
     if (!new_wal->filename) {
         free(new_wal->dir_path);
         free(new_wal);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
+
+    // 设置同步模式
+    new_wal->sync_on_write = config->sync_write;
 
     // 创建目录
     if (mkdir(new_wal->dir_path, 0755) != 0 && errno != EEXIST) {
@@ -103,7 +110,7 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
 
     // 初始化其他字段
     new_wal->next_sequence = header.sequence;
-    new_wal->sync_on_write = (config->sync_mode == PPDB_SYNC_MODE_SYNC);
+    new_wal->sync_on_write = config->sync_write;
     new_wal->closed = false;
 
     // 初始化同步对象
@@ -156,7 +163,7 @@ void ppdb_wal_destroy_basic(ppdb_wal_t* wal) {
 
 ppdb_error_t ppdb_wal_write_basic(ppdb_wal_t* wal, const void* key, size_t key_len,
                                  const void* value, size_t value_len) {
-    if (!wal || !key || key_len == 0) {
+    if (!wal || !key || !value) {
         return PPDB_ERR_INVALID_ARG;
     }
 
@@ -274,4 +281,20 @@ size_t ppdb_wal_size(ppdb_wal_t* wal) {
 
 uint64_t ppdb_wal_next_sequence(ppdb_wal_t* wal) {
     return ppdb_wal_next_sequence_basic(wal);
+}
+
+// 关闭WAL
+void ppdb_wal_close(ppdb_wal_t* wal) {
+    if (!wal) {
+        return;
+    }
+
+    // 同步并关闭文件
+    if (wal->current_fd >= 0) {
+        ppdb_wal_sync(wal);
+        close(wal->current_fd);
+        wal->current_fd = -1;
+    }
+
+    wal->closed = true;
 }

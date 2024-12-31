@@ -71,56 +71,46 @@ extern int test_case_failed;
 void test_framework_init(void);
 void test_framework_cleanup(void);
 
-// 断言宏
-#define ASSERT_EQ(actual, expected) \
-    do { \
-        if ((actual) != (expected)) { \
-            ppdb_log_error("Assertion failed: %s == %s (%d != %d)", \
-                #actual, #expected, (int)(actual), (int)(expected)); \
-            return -1; \
-        } \
-    } while (0)
+// 测试宏定义
+#define TEST_INIT(name) do { \
+    test_framework_init(); \
+    printf("Running test suite: %s\n", name); \
+} while(0)
 
-#define ASSERT_NE(actual, expected) \
-    do { \
-        if ((actual) == (expected)) { \
-            ppdb_log_error("Assertion failed: %s != %s (%d == %d)", \
-                #actual, #expected, (int)(actual), (int)(expected)); \
-            return -1; \
-        } \
-    } while (0)
+#define TEST_SUMMARY() test_print_stats()
+#define TEST_RESULT() test_get_result()
 
-#define ASSERT_TRUE(condition) \
-    do { \
-        if (!(condition)) { \
-            ppdb_log_error("Assertion failed: %s", #condition); \
-            return -1; \
-        } \
-    } while (0)
+#define ASSERT_EQ(actual, expected) do { \
+    if ((actual) != (expected)) { \
+        printf("Assertion failed: %s == %s\n", #actual, #expected); \
+        printf("  at %s:%d\n", __FILE__, __LINE__); \
+        return -1; \
+    } \
+} while(0)
 
-#define ASSERT_FALSE(condition) \
-    do { \
-        if (condition) { \
-            ppdb_log_error("Assertion failed: !%s", #condition); \
-            return -1; \
-        } \
-    } while (0)
+#define ASSERT_GT(actual, expected) do { \
+    if ((actual) <= (expected)) { \
+        printf("Assertion failed: %s > %s\n", #actual, #expected); \
+        printf("  at %s:%d\n", __FILE__, __LINE__); \
+        return -1; \
+    } \
+} while(0)
 
-#define ASSERT_NULL(ptr) \
-    do { \
-        if ((ptr) != NULL) { \
-            ppdb_log_error("Assertion failed: %s == NULL", #ptr); \
-            return -1; \
-        } \
-    } while (0)
+#define ASSERT_NOT_NULL(ptr) do { \
+    if ((ptr) == NULL) { \
+        printf("Assertion failed: %s is NULL\n", #ptr); \
+        printf("  at %s:%d\n", __FILE__, __LINE__); \
+        return -1; \
+    } \
+} while(0)
 
-#define ASSERT_NOT_NULL(ptr) \
-    do { \
-        if ((ptr) == NULL) { \
-            ppdb_log_error("Assertion failed: %s != NULL", #ptr); \
-            return -1; \
-        } \
-    } while (0)
+#define RUN_TEST(test_fn) do { \
+    printf("Running test: %s\n", #test_fn); \
+    if (test_fn() != 0) { \
+        printf("Test failed: %s\n", #test_fn); \
+        return -1; \
+    } \
+} while(0)
 
 // 检查是否应该运行某个测试
 bool test_framework_should_run(test_type_t type);
@@ -129,25 +119,6 @@ bool test_framework_should_run(test_type_t type);
 int run_test_suite(const test_suite_t* suite);
 int run_test_case(const test_case_t* test_case);
 void test_print_stats(void);
-
-// 测试宏定义
-#define TEST_ASSERT(condition, message) \
-    do { \
-        if (!(condition)) { \
-            ppdb_log_error("Assertion failed: %s (%s)", #condition, message); \
-            return -1; \
-        } \
-    } while (0)
-
-#define RUN_TEST(test_fn) \
-    do { \
-        ppdb_log_info("Running test: %s", #test_fn); \
-        if (test_fn() != 0) { \
-            ppdb_log_error("Test failed: %s", #test_fn); \
-            test_case_failed++; \
-        } \
-        test_case_count++; \
-    } while (0)
 
 // 测试结果函数
 int test_get_result(void);

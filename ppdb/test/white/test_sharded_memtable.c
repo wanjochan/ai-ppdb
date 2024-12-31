@@ -179,70 +179,50 @@ static int test_concurrent_ops(void) {
 }
 
 // 迭代器测试
-static int test_iterator(void) {
-    ppdb_log_info("Testing iterator...");
-
-    // 创建分片内存表
+static void test_iterator(void) {
     ppdb_sharded_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_sharded_memtable_create(&table, 4);
-    TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
-    TEST_ASSERT(table != NULL, "Memtable pointer is NULL");
+    assert(err == PPDB_OK);
 
-    // 插入有序的键值对
-    const int num_pairs = 100;
-    for (int i = 0; i < num_pairs; i++) {
-        char key[32], value[32];
+    // 插入100个有序的键值对
+    char key[16];
+    char value[16];
+    for (int i = 0; i < 100; i++) {
         snprintf(key, sizeof(key), "iter_key_%03d", i);
         snprintf(value, sizeof(value), "iter_value_%03d", i);
         printf("Inserted key: %s, value: %s\n", key, value);
-        err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1,
-                                       value, strlen(value) + 1);
-        TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
+        err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1, value, strlen(value) + 1);
+        assert(err == PPDB_OK);
     }
 
     // 创建迭代器
     ppdb_iterator_t* iter = NULL;
     err = ppdb_sharded_memtable_iterator_create(table, &iter);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create iterator");
-    TEST_ASSERT(iter != NULL, "Iterator pointer is NULL");
+    assert(err == PPDB_OK);
 
-    // 验证迭代顺序
-    int count = 0;
-    bool has_next = iter->valid(iter);
-    printf("Initial valid: %d\n", has_next);
-
-    while (has_next) {
-        ppdb_kv_pair_t pair = {0};
+    // 验证迭代器遍历的顺序
+    int i = 0;
+    while (iter->valid(iter)) {
+        ppdb_kv_pair_t pair;
         err = iter->get(iter, &pair);
-        TEST_ASSERT(err == PPDB_OK, "Failed to get key-value pair");
+        assert(err == PPDB_OK);
 
-        char expected_key[32], expected_value[32];
-        snprintf(expected_key, sizeof(expected_key), "iter_key_%03d", count);
-        snprintf(expected_value, sizeof(expected_value), "iter_value_%03d", count);
+        snprintf(key, sizeof(key), "iter_key_%03d", i);
+        snprintf(value, sizeof(value), "iter_value_%03d", i);
+        
+        assert(pair.key_size == strlen(key) + 1);
+        assert(pair.value_size == strlen(value) + 1);
+        assert(memcmp(pair.key, key, pair.key_size) == 0);
+        assert(memcmp(pair.value, value, pair.value_size) == 0);
 
-        printf("Count: %d\n", count);
-        printf("Expected key: %s (%zu bytes)\n", expected_key, strlen(expected_key));
-        printf("Actual key: %.*s (%zu bytes)\n", (int)pair.key_size, (char*)pair.key, pair.key_size);
-        printf("Expected value: %s (%zu bytes)\n", expected_value, strlen(expected_value));
-        printf("Actual value: %.*s (%zu bytes)\n\n", (int)pair.value_size, (char*)pair.value, pair.value_size);
-
-        TEST_ASSERT(pair.key_size == strlen(expected_key) + 1, "Key size mismatch");
-        TEST_ASSERT(memcmp(pair.key, expected_key, pair.key_size - 1) == 0, "Key content mismatch");
-        TEST_ASSERT(pair.value_size == strlen(expected_value) + 1, "Value size mismatch");
-        TEST_ASSERT(memcmp(pair.value, expected_value, pair.value_size - 1) == 0, "Value content mismatch");
-
-        count++;
-        has_next = iter->next(iter);
-        printf("Next valid: %d\n", has_next);
+        iter->next(iter);
+        i++;
     }
+    assert(i == 100);
 
-    printf("Final count: %d, expected: %d\n", count, num_pairs);
-    TEST_ASSERT(count == num_pairs, "Iterator count mismatch");
-
-    // 销毁迭代器和内存表
+    // 清理资源
     ppdb_iterator_destroy(iter);
     ppdb_sharded_memtable_destroy(table);
-    return 0;
 }
 
 // 测试套件

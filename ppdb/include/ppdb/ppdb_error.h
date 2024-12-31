@@ -44,6 +44,7 @@ typedef enum ppdb_error {
     PPDB_ERR_WAL_CORRUPTED,        // WAL损坏
     PPDB_ERR_WAL_NOT_FOUND,        // WAL不存在
     PPDB_ERR_WAL_INVALID,          // WAL无效
+    PPDB_ERR_WAL_CLOSED,           // WAL已关闭
     PPDB_ERR_LOCK_FAILED,          // 加锁失败
     PPDB_ERR_UNLOCK_FAILED,        // 解锁失败
     PPDB_ERR_UNKNOWN               // 未知错误

@@ -579,14 +579,6 @@ ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table, ppdb_me
         return err;
     }
 
-    // 获取第一个键值对
-    err = ppdb_skiplist_iterator_get(new_iter->it, &new_iter->current_pair);
-    if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
-        ppdb_skiplist_iterator_destroy(new_iter->it);
-        free(new_iter);
-        return err;
-    }
-
     *iter = new_iter;
     return PPDB_OK;
 }
@@ -617,7 +609,7 @@ ppdb_error_t ppdb_memtable_iterator_next_basic(ppdb_memtable_iterator_t* iter,
         iter->valid = false;
     }
 
-    return err;
+    return PPDB_OK;
 }
 
 // 获取当前键值对
@@ -631,7 +623,13 @@ ppdb_error_t ppdb_memtable_iterator_get_basic(ppdb_memtable_iterator_t* iter,
         return PPDB_ERR_NOT_FOUND;
     }
 
-    return ppdb_skiplist_iterator_get(iter->it, pair);
+    // 获取当前键值对
+    ppdb_error_t err = ppdb_skiplist_iterator_get(iter->it, pair);
+    if (err != PPDB_OK) {
+        return err;
+    }
+
+    return PPDB_OK;
 }
 
 // 销毁迭代器
@@ -642,6 +640,14 @@ void ppdb_memtable_iterator_destroy_basic(ppdb_memtable_iterator_t* iter) {
 
     if (iter->it) {
         ppdb_skiplist_iterator_destroy(iter->it);
+    }
+
+    // 释放当前键值对
+    if (iter->current_pair.key) {
+        free(iter->current_pair.key);
+    }
+    if (iter->current_pair.value) {
+        free(iter->current_pair.value);
     }
 
     free(iter);

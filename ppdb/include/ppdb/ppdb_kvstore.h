@@ -7,6 +7,7 @@
 
 // 前向声明
 typedef struct ppdb_iterator ppdb_iterator_t;
+typedef struct ppdb_wal ppdb_wal_t;
 
 // WAL配置
 typedef struct ppdb_wal_config {
@@ -57,5 +58,14 @@ void ppdb_kvstore_destroy(ppdb_kvstore_t* store);
 
 // 迭代器操作
 void ppdb_iterator_destroy(ppdb_iterator_t* iter);
+
+// WAL操作
+ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal);
+void ppdb_wal_close(ppdb_wal_t* wal);
+void ppdb_wal_destroy(ppdb_wal_t* wal);
+ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal, const void* key, size_t key_len, const void* value, size_t value_len);
+ppdb_error_t ppdb_wal_sync(ppdb_wal_t* wal);
+size_t ppdb_wal_size(ppdb_wal_t* wal);
+uint64_t ppdb_wal_next_sequence(ppdb_wal_t* wal);
 
 #endif // PPDB_KVSTORE_H 

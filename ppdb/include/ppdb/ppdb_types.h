@@ -28,6 +28,13 @@ typedef enum ppdb_sync_type {
     PPDB_SYNC_LOCKFREE    // 无锁
 } ppdb_sync_type_t;
 
+// WAL同步模式
+typedef enum ppdb_sync_mode {
+    PPDB_SYNC_MODE_NONE = 0,    // 不同步
+    PPDB_SYNC_MODE_SYNC,        // 同步写入
+    PPDB_SYNC_MODE_ASYNC        // 异步写入
+} ppdb_sync_mode_t;
+
 // 运行模式
 typedef enum ppdb_mode {
     PPDB_MODE_NORMAL = 0,    // 正常模式

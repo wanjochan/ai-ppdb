@@ -1,16 +1,12 @@
-#include <cosmopolitan.h>
-#include "test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_wal.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "test/white/test_framework.h"
+#include <cosmopolitan.h>
 
-#define TEST_DIR "./tmp_test_wal"
-#define MAX_KEY_SIZE 64
-#define MAX_VALUE_SIZE 128
+#define TEST_DIR "tmp_test/wal"
+#define TEST_KEY "test_key"
+#define TEST_VALUE "test_value"
 
-// WAL资源清理函数
+// 清理函数
 static void cleanup_wal(ppdb_wal_t* wal) {
     if (wal) {
         ppdb_wal_close(wal);
@@ -19,134 +15,141 @@ static void cleanup_wal(ppdb_wal_t* wal) {
 }
 
 // 基本操作测试
-void test_basic_ops(void) {
-    // 创建WAL
+static int test_basic_ops(void) {
     ppdb_wal_t* wal = NULL;
     ppdb_wal_config_t config = {
-        .dir = TEST_DIR,
-        .sync_mode = PPDB_SYNC_MODE_ASYNC
+        .dir_path = TEST_DIR,
+        .sync_write = false,
+        .use_buffer = true,
+        .buffer_size = 4096,
+        .segment_size = 1024 * 1024,  // 1MB
+        .max_segments = 10,
+        .sync_on_write = false,
+        .enable_compression = false
     };
-    
+
     ppdb_error_t err = ppdb_wal_create(&config, &wal);
     ASSERT_EQ(err, PPDB_OK);
     ASSERT_NOT_NULL(wal);
-    
+
     // 写入测试数据
-    const char* test_key = "test_key";
-    const char* test_value = "test_value";
-    
-    err = ppdb_wal_write(wal, test_key, strlen(test_key),
-        test_value, strlen(test_value));
+    err = ppdb_wal_write(wal, TEST_KEY, strlen(TEST_KEY),
+                         TEST_VALUE, strlen(TEST_VALUE));
     ASSERT_EQ(err, PPDB_OK);
-    
-    // 验证WAL大小
+
+    // 检查WAL大小
     size_t wal_size = ppdb_wal_size(wal);
     ASSERT_GT(wal_size, 0);
-    
+
     // 同步WAL
     err = ppdb_wal_sync(wal);
     ASSERT_EQ(err, PPDB_OK);
-    
-    ppdb_wal_destroy(wal);
+
+    cleanup_wal(wal);
+    return 0;
 }
 
 // 恢复测试
-void test_recovery(void) {
-    // 创建WAL
+static int test_recovery(void) {
     ppdb_wal_t* wal = NULL;
     ppdb_wal_config_t config = {
-        .dir = TEST_DIR,
-        .sync_mode = PPDB_SYNC_MODE_ASYNC
+        .dir_path = TEST_DIR,
+        .sync_write = false,
+        .use_buffer = true,
+        .buffer_size = 4096,
+        .segment_size = 1024 * 1024,  // 1MB
+        .max_segments = 10,
+        .sync_on_write = false,
+        .enable_compression = false
     };
-    
+
     ppdb_error_t err = ppdb_wal_create(&config, &wal);
     ASSERT_EQ(err, PPDB_OK);
-    
+
     // 写入多条记录
-    const char* keys[] = {"key1", "key2", "key3"};
-    const char* values[] = {"value1", "value2", "value3"};
-    const int num_records = 3;
-    
+    const int num_records = 100;
     for (int i = 0; i < num_records; i++) {
-        err = ppdb_wal_write(wal, keys[i], strlen(keys[i]),
-            values[i], strlen(values[i]));
+        char key[32], value[32];
+        snprintf(key, sizeof(key), "key_%d", i);
+        snprintf(value, sizeof(value), "value_%d", i);
+
+        err = ppdb_wal_write(wal, key, strlen(key), value, strlen(value));
         ASSERT_EQ(err, PPDB_OK);
     }
-    
-    // 同步WAL
+
+    // 同步并记录大小
     err = ppdb_wal_sync(wal);
     ASSERT_EQ(err, PPDB_OK);
-    
-    // 验证WAL大小
+
     size_t wal_size = ppdb_wal_size(wal);
     ASSERT_GT(wal_size, 0);
-    
-    ppdb_wal_destroy(wal);
-    
+
+    // 关闭WAL
+    cleanup_wal(wal);
+
     // 重新打开WAL
     err = ppdb_wal_create(&config, &wal);
     ASSERT_EQ(err, PPDB_OK);
-    
-    // 验证WAL大小
+
+    // 检查大小是否一致
     size_t new_wal_size = ppdb_wal_size(wal);
     ASSERT_EQ(new_wal_size, wal_size);
-    
-    ppdb_wal_destroy(wal);
+
+    cleanup_wal(wal);
+    return 0;
 }
 
 // 性能测试
-void test_performance(void) {
-    // 创建WAL
+static int test_performance(void) {
     ppdb_wal_t* wal = NULL;
     ppdb_wal_config_t config = {
-        .dir = TEST_DIR,
-        .sync_mode = PPDB_SYNC_MODE_ASYNC
+        .dir_path = TEST_DIR,
+        .sync_write = false,
+        .use_buffer = true,
+        .buffer_size = 4096,
+        .segment_size = 1024 * 1024,  // 1MB
+        .max_segments = 10,
+        .sync_on_write = false,
+        .enable_compression = false
     };
-    
+
     ppdb_error_t err = ppdb_wal_create(&config, &wal);
     ASSERT_EQ(err, PPDB_OK);
 
-    // 批量写入测试
-    #define BATCH_SIZE 1000
-    char key[32], value[128];
-    
-    // 测量写入性能
+    // 写入大量记录并测量性能
+    const int num_records = 10000;
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    
-    for (int i = 0; i < BATCH_SIZE; i++) {
-        snprintf(key, sizeof(key), "key_%d", i);
-        snprintf(value, sizeof(value), "value_%d", i);
-        
-        err = ppdb_wal_write(wal, key, strlen(key),
-            value, strlen(value));
+
+    for (int i = 0; i < num_records; i++) {
+        char key[32], value[32];
+        snprintf(key, sizeof(key), "perf_key_%d", i);
+        snprintf(value, sizeof(value), "perf_value_%d", i);
+
+        err = ppdb_wal_write(wal, key, strlen(key), value, strlen(value));
         ASSERT_EQ(err, PPDB_OK);
     }
-    
-    // 强制同步
+
     err = ppdb_wal_sync(wal);
     ASSERT_EQ(err, PPDB_OK);
-    
+
     clock_gettime(CLOCK_MONOTONIC, &end);
-    
+
     // 计算性能指标
-    double duration = (end.tv_sec - start.tv_sec) + 
-                     (end.tv_nsec - start.tv_nsec) / 1e9;
-    double ops_per_sec = BATCH_SIZE / duration;
-    
-    // 验证性能达标（至少1000 ops/s）
+    double elapsed = (end.tv_sec - start.tv_sec) + 
+                    (end.tv_nsec - start.tv_nsec) / 1e9;
+    double ops_per_sec = num_records / elapsed;
+
+    // 确保性能达标（至少1000 ops/s）
     ASSERT_GT(ops_per_sec, 1000.0);
-    
-    ppdb_wal_destroy(wal);
+
+    cleanup_wal(wal);
+    return 0;
 }
 
 int main(void) {
-    TEST_INIT("Write-Ahead Log Test");
-    
     RUN_TEST(test_basic_ops);
     RUN_TEST(test_recovery);
     RUN_TEST(test_performance);
-    
-    TEST_SUMMARY();
-    return TEST_RESULT();
+    return 0;
 } 

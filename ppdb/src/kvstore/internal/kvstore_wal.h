@@ -9,11 +9,11 @@
 #include "kvstore/internal/sync.h"
 #include "kvstore/internal/kvstore_wal_types.h"
 
-// WAL配置
-typedef struct {
+// 内部WAL配置（简化版本）
+typedef struct ppdb_wal_internal_config {
     const char* dir;               // WAL目录路径
     ppdb_sync_mode_t sync_mode;   // 同步模式
-} ppdb_wal_config_t;
+} ppdb_wal_internal_config_t;
 
 // 基础WAL操作
 ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t** wal);
