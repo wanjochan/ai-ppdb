@@ -1,184 +1,237 @@
-#include "cosmopolitan.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <windows.h>
 
 #define PAGE_SIZE 4096
-#define ALIGN_DOWN(x, align) ((x) & ~((align)-1))
-#define ALIGN_UP(x, align) ALIGN_DOWN((x) + (align)-1, (align))
+#define ROUND_UP(x, y) (((x) + (y) - 1) & ~((y) - 1))
+#define ROUND_DOWN(x, y) ((x) & ~((y) - 1))
 
-#ifndef MEM_RESERVE
-#define MEM_RESERVE 0x00002000
-#endif
+typedef struct {
+    uint8_t  e_ident[16];
+    uint16_t e_type;
+    uint16_t e_machine;
+    uint32_t e_version;
+    uint64_t e_entry;
+    uint64_t e_phoff;
+    uint64_t e_shoff;
+    uint32_t e_flags;
+    uint16_t e_ehsize;
+    uint16_t e_phentsize;
+    uint16_t e_phnum;
+    uint16_t e_shentsize;
+    uint16_t e_shnum;
+    uint16_t e_shstrndx;
+} Elf64_Ehdr;
 
-#ifndef MEM_COMMIT
-#define MEM_COMMIT 0x00001000
-#endif
+typedef struct {
+    uint32_t sh_name;
+    uint32_t sh_type;
+    uint64_t sh_flags;
+    uint64_t sh_addr;
+    uint64_t sh_offset;
+    uint64_t sh_size;
+    uint32_t sh_link;
+    uint32_t sh_info;
+    uint64_t sh_addralign;
+    uint64_t sh_entsize;
+} Elf64_Shdr;
 
-#ifndef MEM_RELEASE
-#define MEM_RELEASE 0x00008000
-#endif
+typedef struct {
+    uint32_t st_name;
+    uint8_t  st_info;
+    uint8_t  st_other;
+    uint16_t st_shndx;
+    uint64_t st_value;
+    uint64_t st_size;
+} Elf64_Sym;
 
-#ifndef PAGE_EXECUTE_READ
-#define PAGE_EXECUTE_READ 0x20
-#endif
+static void *map_memory(size_t size, DWORD protect) {
+    void *ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, protect);
+    if (!ptr) {
+        printf("Failed to allocate memory (size: %zu)\n", size);
+        return NULL;
+    }
+    return ptr;
+}
 
-#ifndef PAGE_EXECUTE_READWRITE
-#define PAGE_EXECUTE_READWRITE 0x40
-#endif
+static void unmap_memory(void *addr, size_t size) {
+    VirtualFree(addr, 0, MEM_RELEASE);
+}
+
+static int verify_elf_header(const Elf64_Ehdr *ehdr) {
+    if (memcmp(ehdr->e_ident, "\x7f" "ELF", 4) != 0) {
+        printf("Not an ELF file\n");
+        return 0;
+    }
+    if (ehdr->e_ident[4] != 2) {  // 64-bit
+        printf("Not a 64-bit ELF file\n");
+        return 0;
+    }
+    if (ehdr->e_ident[5] != 1) {  // little endian
+        printf("Not a little-endian ELF file\n");
+        return 0;
+    }
+    if (ehdr->e_type != 1) {  // relocatable
+        printf("Not a relocatable ELF file\n");
+        return 0;
+    }
+    if (ehdr->e_machine != 62) {  // x86_64
+        printf("Not an x86_64 ELF file\n");
+        return 0;
+    }
+    return 1;
+}
+
+static const char *get_string(const char *strtab, uint32_t offset) {
+    return strtab + offset;
+}
 
 typedef int (*module_main_t)(void);
 
-void *load_section(void *base, Elf64_Shdr *section, void *module_base) {
-    if (section->sh_size == 0) {
-        return NULL;
-    }
-
-    // Calculate the target virtual address
-    void *target = (void *)((uintptr_t)base + section->sh_addr);
-    
-    // Copy section data
-    memcpy(target, (char *)module_base + section->sh_offset, section->sh_size);
-    
-    printf("Loaded section to %p (size: %lu)\n", target, section->sh_size);
-    return target;
-}
-
-// Forward declaration
-int main(int argc, char *argv[]);
-
-// Entry point
-void _start(void) {
-    exit(main(0, NULL));
-}
-
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        printf("Usage: %s <module.elf>\n", argv[0]);
+        printf("Usage: %s <module>\n", argv[0]);
         return 1;
     }
 
     const char *module_path = argv[1];
+    FILE *f = fopen(module_path, "rb");
+    if (!f) {
+        printf("Failed to open module: %s\n", module_path);
+        return 1;
+    }
+
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
     printf("Loading module: %s\n", module_path);
+    printf("Module size: %zu bytes\n", size);
 
-    // Open module file
-    int fd = open(module_path, O_RDONLY);
-    if (fd < 0) {
-        printf("Failed to open module\n");
+    uint8_t *data = malloc(size);
+    if (!data) {
+        printf("Failed to allocate memory for module\n");
+        fclose(f);
         return 1;
     }
 
-    // Get file size
-    off_t file_size = lseek(fd, 0, SEEK_END);
-    lseek(fd, 0, SEEK_SET);
-    printf("Module size: %lu bytes\n", file_size);
-
-    // Map module into memory
-    void *module_base = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (module_base == MAP_FAILED) {
-        printf("Failed to map module\n");
-        close(fd);
+    if (fread(data, 1, size, f) != size) {
+        printf("Failed to read module\n");
+        free(data);
+        fclose(f);
         return 1;
     }
+    fclose(f);
 
-    // Verify ELF header
-    Elf64_Ehdr *ehdr = (Elf64_Ehdr *)module_base;
-    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
-        printf("Invalid ELF header\n");
-        munmap(module_base, file_size);
-        close(fd);
+    Elf64_Ehdr *ehdr = (Elf64_Ehdr*)data;
+    if (!verify_elf_header(ehdr)) {
+        free(data);
         return 1;
     }
     printf("ELF header verified\n");
 
-    // Find section headers
-    Elf64_Shdr *shdrs = (Elf64_Shdr *)((char *)module_base + ehdr->e_shoff);
-    
-    // Calculate maximum virtual address
-    uintptr_t max_vaddr = 0;
+    // First pass: find .text section
+    Elf64_Shdr *shdr = (Elf64_Shdr*)(data + ehdr->e_shoff);
+    const char *shstrtab = (const char*)(data + shdr[ehdr->e_shstrndx].sh_offset);
+    Elf64_Shdr *text_shdr = NULL;
+
     for (int i = 0; i < ehdr->e_shnum; i++) {
-        Elf64_Shdr *shdr = &shdrs[i];
-        uintptr_t section_end = shdr->sh_addr + shdr->sh_size;
-        if (section_end > max_vaddr) {
-            max_vaddr = section_end;
-        }
-    }
+        const char *name = get_string(shstrtab, shdr[i].sh_name);
+        printf("Section %d: %s at offset 0x%lx, addr 0x%lx, size 0x%lx, align 0x%lx\n",
+               i, name, shdr[i].sh_offset, shdr[i].sh_addr, shdr[i].sh_size, shdr[i].sh_addralign);
 
-    // Calculate load address and size
-    void *preferred_base = (void *)0x110000000;  // Use a higher base address
-    size_t total_size = ALIGN_UP(max_vaddr, PAGE_SIZE);
-
-    // Map module at preferred address with executable permission
-    void *mapped_base = VirtualAlloc(preferred_base, total_size,
-                                   MEM_RESERVE | MEM_COMMIT,
-                                   PAGE_EXECUTE_READWRITE);
-    if (!mapped_base) {
-        printf("Failed to allocate memory at %p (error: %u)\n",
-               preferred_base, GetLastError());
-        munmap(module_base, file_size);
-        close(fd);
-        return 1;
-    }
-    printf("Mapped module at: %p\n", mapped_base);
-
-    // Load sections
-    for (int i = 0; i < ehdr->e_shnum; i++) {
-        Elf64_Shdr *shdr = &shdrs[i];
-        
-        // Get section name
-        char *shstrtab = (char *)module_base + shdrs[ehdr->e_shstrndx].sh_offset;
-        char *section_name = shstrtab + shdr->sh_name;
-        
-        printf("Section %d: %s at offset 0x%lx, addr 0x%lx\n",
-               i, section_name, shdr->sh_offset, shdr->sh_addr);
-
-        // Load section
-        if (shdr->sh_type == SHT_PROGBITS || shdr->sh_type == SHT_NOBITS) {
-            load_section(mapped_base, shdr, module_base);
-        }
-    }
-
-    // Find module_main symbol
-    Elf64_Shdr *symtab = NULL;
-    Elf64_Shdr *strtab = NULL;
-    
-    for (int i = 0; i < ehdr->e_shnum; i++) {
-        if (shdrs[i].sh_type == SHT_SYMTAB) {
-            symtab = &shdrs[i];
-            strtab = &shdrs[shdrs[i].sh_link];
-            break;
-        }
-    }
-
-    void *module_main = NULL;
-    if (symtab && strtab) {
-        Elf64_Sym *syms = (Elf64_Sym *)((char *)module_base + symtab->sh_offset);
-        char *strs = (char *)module_base + strtab->sh_offset;
-        
-        for (int i = 0; i < symtab->sh_size / sizeof(Elf64_Sym); i++) {
-            if (strcmp(strs + syms[i].st_name, "module_main") == 0) {
-                module_main = (void *)((uintptr_t)mapped_base + syms[i].st_value);
-                printf("Found module_main at virtual address %p\n", module_main);
+        if (shdr[i].sh_type == 1 && shdr[i].sh_size > 0) {  // PROGBITS
+            if (strcmp(name, ".text") == 0) {
+                text_shdr = &shdr[i];
                 break;
             }
         }
     }
 
-    if (!module_main) {
-        printf("Failed to find module_main symbol\n");
-        VirtualFree(mapped_base, 0, MEM_RELEASE);
-        munmap(module_base, file_size);
-        close(fd);
+    if (!text_shdr) {
+        printf(".text section not found\n");
+        free(data);
         return 1;
     }
 
-    // Call module_main
+    // Allocate memory for code
+    size_t text_size = ROUND_UP(text_shdr->sh_size, text_shdr->sh_addralign);
+    void *code_base = map_memory(text_size, PAGE_READWRITE);
+    if (!code_base) {
+        free(data);
+        return 1;
+    }
+    printf("Mapped code at: %p (size: %zu)\n", code_base, text_size);
+
+    // Load .text section
+    memcpy(code_base, data + text_shdr->sh_offset, text_shdr->sh_size);
+    printf("Loaded .text section to %p (size: %zu)\n", code_base, (size_t)text_shdr->sh_size);
+
+    // Find module_main symbol
+    Elf64_Shdr *symtab = NULL;
+    const char *strtab = NULL;
+
+    for (int i = 0; i < ehdr->e_shnum; i++) {
+        if (shdr[i].sh_type == 2) {  // SYMTAB
+            symtab = &shdr[i];
+            strtab = (const char*)(data + shdr[shdr[i].sh_link].sh_offset);
+            break;
+        }
+    }
+
+    if (!symtab || !strtab) {
+        printf("Symbol table not found\n");
+        unmap_memory(code_base, text_size);
+        free(data);
+        return 1;
+    }
+
+    Elf64_Sym *syms = (Elf64_Sym*)(data + symtab->sh_offset);
+    int num_syms = symtab->sh_size / symtab->sh_entsize;
+    module_main_t module_main = NULL;
+
+    for (int i = 0; i < num_syms; i++) {
+        const char *name = get_string(strtab, syms[i].st_name);
+        if (strcmp(name, "module_main") == 0) {
+            module_main = (module_main_t)((char*)code_base + syms[i].st_value);
+            printf("Found module_main at offset 0x%lx\n", syms[i].st_value);
+            break;
+        }
+    }
+
+    if (!module_main) {
+        printf("module_main symbol not found\n");
+        unmap_memory(code_base, text_size);
+        free(data);
+        return 1;
+    }
+
+    // Change memory protection to execute-only
+    DWORD old_protect;
+    if (!VirtualProtect(code_base, text_size, PAGE_EXECUTE_READ, &old_protect)) {
+        printf("Failed to change memory protection\n");
+        unmap_memory(code_base, text_size);
+        free(data);
+        return 1;
+    }
+
+    // Flush instruction cache
+    FlushInstructionCache(GetCurrentProcess(), code_base, text_size);
+
+    // Print code bytes
+    printf("Code bytes at %p: ", module_main);
+    for (int i = 0; i < 16 && i < text_size; i++) {
+        printf("%02x ", ((uint8_t*)module_main)[i]);
+    }
+    printf("\n");
+
     printf("Calling module_main at %p\n", module_main);
-    module_main_t entry = (module_main_t)module_main;
-    int result = entry();
-    printf("Module returned: %d\n", result);
+    int result = module_main();
+    printf("module_main returned %d\n", result);
 
-    // Cleanup
-    VirtualFree(mapped_base, 0, MEM_RELEASE);
-    munmap(module_base, file_size);
-    close(fd);
-
-    return result;
+    unmap_memory(code_base, text_size);
+    free(data);
+    return 0;
 }
