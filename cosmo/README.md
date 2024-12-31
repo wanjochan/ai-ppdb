@@ -1,6 +1,127 @@
-# Cosmo 动态加载器
+# Cosmo - 跨平台动态链接库加载器
 
-这是一个用于加载和执行动态链接库（DLL）的工具。它支持两种编译方式：使用 cross9 工具链和使用 MinGW-w64 工具链。
+Cosmo 是一个跨平台的动态链接库加载器，它可以在不同的操作系统上加载和执行 APE (Actually Portable Executable) 格式的动态链接库。
+
+## 主要目标
+
+参考 Cosmopolitan 的 APE 机制，实现一个跨平台的动态库解决方案。该方案将允许同一个动态库文件在不同操作系统上运行，无需重新编译或修改。
+
+## 分步实现计划
+
+1. **第一阶段：基础框架搭建** [当前]
+   - 实现基本的 PE 格式 DLL 生成器
+   - 实现基本的动态库加载器
+   - 验证在 Windows 上的加载和执行
+
+2. **第二阶段：多格式支持**
+   - 添加 ELF 格式支持
+   - 实现多格式头部的生成和组合
+   - 验证在 Linux 上的加载和执行
+
+3. **第三阶段：跨平台运行时**
+   - 实现平台检测机制
+   - 添加系统调用适配层
+   - 处理不同平台的 ABI 差异
+
+4. **第四阶段：工具链集成**
+   - 整合 MinGW-w64 和 Cross9 工具链
+   - 实现自动化构建流程
+   - 提供完整的开发工具套件
+
+## 当前重点工作
+
+正在进行第一阶段的工作，重点是实现和完善 PE 格式 DLL 的生成和加载：
+
+1. **PE DLL 生成器的实现**
+   - 完善 APE 头部生成
+   - 确保段表和导出表的正确性
+   - 实现可靠的文件生成机制
+
+2. **基础加载器的开发**
+   - 实现基本的 DLL 加载功能
+   - 添加符号解析和重定位支持
+   - 提供错误处理和诊断功能
+
+## 当前具体任务
+
+1. 修复 APE DLL 生成器中的问题：
+   - 确保 PE 头部和段表的正确对齐
+   - 修复 `.text` 和 `.edata` 段的大小和偏移计算
+   - 确保导出表的正确生成和放置
+   - 验证生成的 DLL 文件格式是否符合 PE 规范
+
+2. 改进 Cosmo 加载器：
+   - 增强错误处理和诊断信息
+   - 添加更详细的加载过程日志
+   - 验证加载的 DLL 是否符合 APE 格式要求
+
+3. 测试和验证：
+   - 编写更多的测试用例
+   - 验证在不同操作系统上的兼容性
+   - 测试不同类型的导出函数
+
+4. 文档完善：
+   - 添加详细的设计文档
+   - 编写 API 使用指南
+   - 记录已知问题和解决方案
+
+## 构建说明
+
+```powershell
+# Add MinGW to PATH
+$env:PATH += ";D:\dev\ai-ppdb\mingw64\bin"
+
+# Compile
+gcc.exe -o cosmo.exe cosmo.c
+```
+
+## Tools for Examining APE Files
+
+The following tools can be used to examine APE (Actually Portable Executable) files:
+
+```powershell
+# Check if a file exists and view its properties
+ls test.dll
+
+# View file contents in hexadecimal format (first 512 bytes)
+$bytes = [System.IO.File]::ReadAllBytes("$pwd\test.dll")
+for ($i = 0; $i -lt [Math]::Min(512, $bytes.Length); $i += 16) {
+    $hex = [BitConverter]::ToString($bytes[$i..([Math]::Min($i + 15, $bytes.Length - 1))])
+    Write-Host ("{0:X8}: {1}" -f $i, $hex.Replace("-", " "))
+}
+
+# Examine object file format (MinGW)
+objdump.exe -x test.dll | cat
+
+# Display printable strings (MinGW)
+strings.exe test.dll | cat
+```
+
+## APE File Format
+
+The APE file format combines DOS, ELF, and PE headers to create a multi-format executable that can be loaded on different platforms. The file layout is as follows:
+
+```
+Offset    Size    Description
+0x0000    0x40    DOS Header + DOS Stub
+0x0040    0x40    ELF Header
+0x0080    0x20    PE Header
+0x00A0    0xF0    PE Optional Header
+0x0180    0x28    PE Section Headers (.text)
+0x01A8    0x28    PE Section Headers (.edata)
+0x2000    varies  Export Directory
+0x4000    varies  Code Section
+```
+
+## Debugging APE Files
+
+When examining generated APE files, check the following:
+
+1. DOS Header magic number (should be "MZ")
+2. PE Header signature (should be "PE\0\0")
+3. Section alignments and sizes
+4. Export directory RVAs and contents
+5. Code section placement and alignment
 
 ## APE (Actually Portable Executable) 机制
 

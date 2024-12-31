@@ -1,131 +1,173 @@
 #include "cosmopolitan.h"
-//#include <curl/curl.h>
-//#include <sys/stat.h>
 
-typedef int (*main_fn)(int argc, char* argv[]);
+// Required by Cosmopolitan
+void _apple(void) {}
 
-// 写入回调函数
-size_t write_callback(void *ptr, size_t size, size_t nmemb, FILE *stream) {
-    return fwrite(ptr, size, nmemb, stream);
+// Forward declaration
+int main(int argc, char *argv[]);
+
+// Entry point
+void _start(void) {
+  // Call main with no arguments for now
+  exit(main(0, NULL));
 }
 
-//bool file_exists(const char *filename) {
-//    struct stat buffer;
-//    return stat(filename, &buffer) == 0;
-//}
+int main(int argc, char *argv[]) {
+  printf("Cosmo loader starting...\n");
 
-//bool download_file(const char* url, const char* output_path) {
-//    CURL *curl;
-//    FILE *fp;
-//    CURLcode res;
-//    bool success = false;
-//
-//    curl = curl_easy_init();
-//    if (curl) {
-//        fp = fopen(output_path, "wb");
-//        if (fp) {
-//            curl_easy_setopt(curl, CURLOPT_URL, url);
-//            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-//            curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-//            curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-//            
-//            res = curl_easy_perform(curl);
-//            if (res == CURLE_OK) {
-//                success = true;
-//            } else {
-//                fprintf(stderr, "下载失败: %s\n", curl_easy_strerror(res));
-//            }
-//            fclose(fp);
-//        }
-//        curl_easy_cleanup(curl);
-//    }
-//    return success;
-//}
+  // Load the module
+  const char *module_path = "build/test.dbg";
+  printf("Loading module: %s\n", module_path);
 
-void get_cache_path(const char* url, char* cache_path, size_t size) {
-    // 简单的缓存机制：使用URL的最后部分作为文件名
-    const char* last_slash = strrchr(url, '/');
-    const char* filename = last_slash ? last_slash + 1 : url;
-    snprintf(cache_path, size, ".cosmo_cache/%s", filename);
-}
+  // Open and map the module file
+  int fd = open(module_path, O_RDONLY);
+  if (fd < 0) {
+    printf("Failed to open module file\n");
+    return 1;
+  }
 
-void ensure_cache_dir() {
-    mkdir(".cosmo_cache", 0755);
-}
+  struct stat st;
+  if (fstat(fd, &st) < 0) {
+    printf("Failed to stat module file\n");
+    close(fd);
+    return 1;
+  }
 
-int load_and_execute(const char* module_name, int argc, char* argv[]) {
-    char module_path[512];
-    
-    if (strstr(module_name, "http://") == module_name || 
-        strstr(module_name, "https://") == module_name) {
-        
-        ensure_cache_dir();
-        get_cache_path(module_name, module_path, sizeof(module_path));
-        
-        //if (!file_exists(module_path)) {
-        //    printf("正在从URL下载模块: %s\n", module_name);
-        //    if (!download_file(module_name, module_path)) {
-        //        fprintf(stderr, "模块下载失败\n");
-        //        return 1;
-        //    }
-        //}
-    } else {
-        strncpy(module_path, module_name, sizeof(module_path) - 1);
-        module_path[sizeof(module_path) - 1] = '\0';
+  printf("Module size: %ld bytes\n", st.st_size);
+
+  // Map module into memory, let system choose address
+  void *module = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+  if (module == MAP_FAILED) {
+    printf("Failed to map module file: %d\n", errno);
+    close(fd);
+    return 1;
+  }
+
+  printf("Module mapped at: %p\n", module);
+
+  // Verify ELF header
+  Elf64_Ehdr *ehdr = (Elf64_Ehdr *)module;
+  if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
+    printf("Invalid ELF magic\n");
+    munmap(module, st.st_size);
+    close(fd);
+    return 1;
+  }
+
+  printf("ELF header verified\n");
+
+  // Find the section headers
+  Elf64_Shdr *shdr = (Elf64_Shdr *)((char *)module + ehdr->e_shoff);
+  char *shstrtab = (char *)module + shdr[ehdr->e_shstrndx].sh_offset;
+
+  // Find the symbol table and string table
+  Elf64_Shdr *symtab = NULL;
+  Elf64_Shdr *strtab = NULL;
+  Elf64_Shdr *rela = NULL;
+  Elf64_Shdr *text = NULL;
+  void *module_main = NULL;
+
+  for (int i = 0; i < ehdr->e_shnum; i++) {
+    printf("Section %d: %s at offset 0x%lx, addr 0x%lx\n", 
+           i, 
+           shstrtab + shdr[i].sh_name,
+           shdr[i].sh_offset,
+           shdr[i].sh_addr);
+
+    if (shdr[i].sh_type == SHT_SYMTAB) {
+      symtab = &shdr[i];
+    } else if (shdr[i].sh_type == SHT_STRTAB && 
+               strcmp(shstrtab + shdr[i].sh_name, ".strtab") == 0) {
+      strtab = &shdr[i];
+    } else if (shdr[i].sh_type == SHT_RELA) {
+      rela = &shdr[i];
+    } else if (strcmp(shstrtab + shdr[i].sh_name, ".text") == 0) {
+      text = &shdr[i];
     }
-    
-    printf("Loaded module: %s\n", module_path);
-    printf("Trying to load module: %s\n", module_path);
-    void* handle = cosmo_dlopen(module_path, RTLD_NOW);
-    if (!handle) {
-        printf("Failed to load %s: %s\n", module_path, cosmo_dlerror());
-        return 1;
-    }
 
-    printf("Module loaded successfully, looking for entry point\n");
-    
-    // Try to find the entry point
-    void *entry = cosmo_dlsym(RTLD_DEFAULT, "module_main");
-    printf("Looking for module_main in RTLD_DEFAULT: %p\n", entry);
-    if (!entry) {
-        entry = cosmo_dlsym(handle, "module_main");
-        printf("Looking for module_main in handle: %p\n", entry);
-        if (!entry) {
-            entry = cosmo_dlsym(handle, "_module_main");
-            printf("Looking for _module_main in handle: %p\n", entry);
-            if (!entry) {
-                entry = cosmo_dlsym(RTLD_DEFAULT, "_module_main");
-                printf("Looking for _module_main in RTLD_DEFAULT: %p\n", entry);
-                if (!entry) {
-                    // Try to list all symbols
-                    printf("Available symbols:\n");
-                    char cmd[1024];
-                    snprintf(cmd, sizeof(cmd), "d:\\dev\\ai-ppdb\\cross9\\bin\\x86_64-pc-linux-gnu-readelf.exe -s d:\\dev\\ai-ppdb\\cosmo\\build\\main.dbg");
-                    system(cmd);
-                    fprintf(stderr, "Failed to find module_main or _module_main symbol: %s\n", cosmo_dlerror());
-                    cosmo_dlclose(handle);
-                    return 1;
-                }
-            }
-        }
+    // Find module_main section
+    if (strcmp(shstrtab + shdr[i].sh_name, ".text.module_main") == 0) {
+      module_main = (void *)((char *)module + shdr[i].sh_offset);
+      printf("Found module_main at offset 0x%lx, addr 0x%lx\n", 
+             shdr[i].sh_offset, shdr[i].sh_addr);
     }
-    printf("Found module entry at %p\n", entry);
-    
-    // 执行模块
-    main_fn entry_point = (main_fn)entry;
-    int result = entry_point(argc, argv);
-    
-    // 清理
-    cosmo_dlclose(handle);
-    return result;
-}
+  }
 
-int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        fprintf(stderr, "Usage: %s <module> [args...]\n", argv[0]);
-        return 1;
+  if (!symtab || !strtab) {
+    printf("Failed to find symbol tables\n");
+    munmap(module, st.st_size);
+    close(fd);
+    return 1;
+  }
+
+  // Make text section executable
+  if (text) {
+    void *text_addr = (void *)((char *)module + text->sh_offset);
+    size_t text_size = text->sh_size;
+    if (mprotect(text_addr, text_size, PROT_READ | PROT_EXEC) < 0) {
+      printf("Failed to make text section executable: %d\n", errno);
+      munmap(module, st.st_size);
+      close(fd);
+      return 1;
     }
-    
-    printf("Loaded module: %s\n", argv[1]);
-    return load_and_execute(argv[1], argc - 1, argv + 1);
+    printf("Made text section executable at %p, size %ld\n", text_addr, text_size);
+  }
+
+  // Process relocations if present
+  if (rela) {
+    printf("Processing relocations...\n");
+    Elf64_Rela *rels = (Elf64_Rela *)((char *)module + rela->sh_offset);
+    Elf64_Sym *syms = (Elf64_Sym *)((char *)module + symtab->sh_offset);
+    char *strs = (char *)module + strtab->sh_offset;
+    int nrels = rela->sh_size / sizeof(Elf64_Rela);
+
+    for (int i = 0; i < nrels; i++) {
+      Elf64_Rela *rel = &rels[i];
+      Elf64_Sym *sym = &syms[ELF64_R_SYM(rel->r_info)];
+      const char *name = strs + sym->st_name;
+
+      printf("Relocation: offset=0x%lx type=%ld symbol=%s\n",
+             rel->r_offset, ELF64_R_TYPE(rel->r_info), name);
+
+      // Apply relocation
+      uint64_t *target = (uint64_t *)((char *)module + rel->r_offset);
+      uint64_t symbol_addr = (uint64_t)module + sym->st_value;
+
+      switch (ELF64_R_TYPE(rel->r_info)) {
+        case R_X86_64_RELATIVE:
+          *target = (uint64_t)module + rel->r_addend;
+          break;
+        case R_X86_64_64:
+          *target = symbol_addr + rel->r_addend;
+          break;
+        case R_X86_64_PC32:
+          *target = (uint32_t)(symbol_addr + rel->r_addend - (uint64_t)target);
+          break;
+        case R_X86_64_PLT32:
+          *target = (uint32_t)(symbol_addr + rel->r_addend - (uint64_t)target);
+          break;
+        default:
+          printf("Unknown relocation type: %ld\n", ELF64_R_TYPE(rel->r_info));
+          break;
+      }
+    }
+  }
+
+  if (!module_main) {
+    printf("Failed to find module_main\n");
+    munmap(module, st.st_size);
+    close(fd);
+    return 1;
+  }
+
+  // Call module_main
+  printf("Calling module_main at %p...\n", module_main);
+  int (*main_fn)(void) = module_main;
+  int result = main_fn();
+
+  printf("Module returned: %d\n", result);
+
+  munmap(module, st.st_size);
+  close(fd);
+  return 0;
 }

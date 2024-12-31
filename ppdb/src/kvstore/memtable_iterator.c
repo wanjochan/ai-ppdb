@@ -19,6 +19,7 @@ ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table,
     if (!new_iter) return PPDB_ERR_OUT_OF_MEMORY;
 
     new_iter->table = table;
+    new_iter->current_shard = 0;
     new_iter->it = NULL;
     new_iter->valid = false;
     memset(&new_iter->current_pair, 0, sizeof(ppdb_kv_pair_t));
@@ -28,12 +29,23 @@ ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table,
         .spin_count = 1000
     };
 
-    ppdb_error_t err = ppdb_skiplist_iterator_create(table->basic->skiplist,
-                                                   &new_iter->it,
-                                                   &sync_config);
-    if (err != PPDB_OK) {
-        free(new_iter);
-        return err;
+    // 创建第一个分片的迭代器
+    if (table->shards) {
+        ppdb_error_t err = ppdb_skiplist_iterator_create(table->shards[0].basic->skiplist,
+                                                       &new_iter->it,
+                                                       &sync_config);
+        if (err != PPDB_OK) {
+            free(new_iter);
+            return err;
+        }
+    } else {
+        ppdb_error_t err = ppdb_skiplist_iterator_create(table->basic->skiplist,
+                                                       &new_iter->it,
+                                                       &sync_config);
+        if (err != PPDB_OK) {
+            free(new_iter);
+            return err;
+        }
     }
 
     *iter = new_iter;
@@ -42,29 +54,67 @@ ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table,
 
 // 迭代器移动到下一个元素
 ppdb_error_t ppdb_memtable_iterator_next_basic(ppdb_memtable_iterator_t* iter,
-                                              void** key, size_t* key_len,
-                                              void** value, size_t* value_len) {
-    if (!iter || !key || !key_len || !value || !value_len) {
+                                              ppdb_kv_pair_t** pair) {
+    if (!iter || !pair) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    void* tmp_key;
-    void* tmp_value;
-    ppdb_error_t err = ppdb_skiplist_iterator_next(iter->it,
-                                                  &tmp_key, key_len,
-                                                  &tmp_value, value_len);
-    if (err == PPDB_OK) {
-        *key = tmp_key;
-        *value = tmp_value;
-        iter->valid = true;
-        iter->current_pair.key = tmp_key;
-        iter->current_pair.key_size = *key_len;
-        iter->current_pair.value = tmp_value;
-        iter->current_pair.value_size = *value_len;
-    } else {
-        iter->valid = false;
+    if (!iter->it) {
+        return PPDB_ERR_NOT_FOUND;
     }
-    return err;
+
+    ppdb_error_t err = ppdb_skiplist_iterator_next(iter->it, &iter->current_pair);
+    if (err != PPDB_OK) {
+        // 当前分片迭代完成，尝试下一个分片
+        if (iter->table->shards) {
+            ppdb_skiplist_iterator_destroy(iter->it);
+            iter->it = NULL;
+
+            iter->current_shard++;
+            if (iter->current_shard >= iter->table->shard_count) {
+                return PPDB_ERR_NOT_FOUND;  // 所有分片都迭代完成
+            }
+
+            ppdb_sync_config_t sync_config = {
+                .type = PPDB_SYNC_MUTEX,
+                .spin_count = 1000
+            };
+
+            err = ppdb_skiplist_iterator_create(
+                iter->table->shards[iter->current_shard].basic->skiplist,
+                &iter->it,
+                &sync_config
+            );
+
+            if (err != PPDB_OK) {
+                return err;
+            }
+
+            err = ppdb_skiplist_iterator_next(iter->it, &iter->current_pair);
+            if (err != PPDB_OK) {
+                return err;
+            }
+        } else {
+            return err;
+        }
+    }
+
+    *pair = &iter->current_pair;
+    return PPDB_OK;
+}
+
+// 获取当前键值对
+ppdb_error_t ppdb_memtable_iterator_get_basic(ppdb_memtable_iterator_t* iter,
+                                             ppdb_kv_pair_t* pair) {
+    if (!iter || !pair) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    if (!iter->it) {
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    return ppdb_skiplist_iterator_get(iter->it, pair);
 }
 
 // 销毁迭代器
@@ -75,4 +125,4 @@ void ppdb_memtable_iterator_destroy_basic(ppdb_memtable_iterator_t* iter) {
         ppdb_skiplist_iterator_destroy(iter->it);
     }
     free(iter);
-} 
+}

@@ -30,8 +30,6 @@ node_modules/
 # ppdb
 cosmocc.zip
 /build/
-*.lds
-!ape.lds
 cosmopolitan.zip
 #cosmopolitan.a
 *.exe
@@ -60,3 +58,6 @@ cosmo/build/
 cosmo/main.dat
 cosmo/mingw64.7z
 mingw64/
+cosmo/ape/ape.o
+cosmo/ape/test.dll
+cosmo/test.dll

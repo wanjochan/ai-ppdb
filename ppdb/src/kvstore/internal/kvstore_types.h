@@ -14,4 +14,4 @@ typedef struct ppdb_iterator {
     ppdb_error_t (*get)(struct ppdb_iterator*, ppdb_kv_pair_t*);
 } ppdb_iterator_t;
 
-#endif // PPDB_KVSTORE_TYPES_H 
+#endif // PPDB_KVSTORE_TYPES_H

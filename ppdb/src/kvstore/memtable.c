@@ -61,6 +61,242 @@ const ppdb_metrics_t* ppdb_memtable_get_metrics(ppdb_memtable_t* table) {
     return ppdb_memtable_get_metrics_basic(table);
 }
 
+// 获取分片索引
+static size_t ppdb_memtable_get_shard_index(const void* key, size_t key_len, size_t shard_count);
+
+// 分片内存表操作
+ppdb_error_t ppdb_memtable_create_sharded_basic(size_t size_limit, ppdb_memtable_t** table) {
+    if (!table) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    // 如果没有指定大小限制，使用默认值
+    if (size_limit == 0) {
+        size_limit = 1024 * 1024 * 1024; // 1GB
+    }
+
+    // 初始化同步配置
+    ppdb_sync_config_t sync_config = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000,
+        .use_lockfree = false,
+        .stripe_count = 8,
+        .backoff_us = 1,
+        .enable_ref_count = false
+    };
+
+    // 分配内存表结构
+    ppdb_memtable_t* new_table = calloc(1, sizeof(ppdb_memtable_t));
+    if (!new_table) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 分配分片数组
+    new_table->shards = calloc(8, sizeof(ppdb_memtable_shard_t));
+    if (!new_table->shards) {
+        free(new_table);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 初始化内存表
+    new_table->type = PPDB_MEMTABLE_SHARDED;
+    new_table->size_limit = size_limit;
+    atomic_init(&new_table->current_size, 0);
+    new_table->shard_count = 8;  // 默认8个分片
+    new_table->is_immutable = false;
+
+    // 初始化性能指标
+    atomic_init(&new_table->metrics.put_count, 0);
+    atomic_init(&new_table->metrics.get_count, 0);
+    atomic_init(&new_table->metrics.delete_count, 0);
+    atomic_init(&new_table->metrics.total_ops, 0);
+    atomic_init(&new_table->metrics.total_latency, 0);
+    atomic_init(&new_table->metrics.total_latency_us, 0);
+    atomic_init(&new_table->metrics.max_latency_us, 0);
+    atomic_init(&new_table->metrics.min_latency_us, UINT64_MAX);
+    atomic_init(&new_table->metrics.total_bytes, 0);
+    atomic_init(&new_table->metrics.total_keys, 0);
+    atomic_init(&new_table->metrics.total_values, 0);
+    atomic_init(&new_table->metrics.bytes_written, 0);
+    atomic_init(&new_table->metrics.bytes_read, 0);
+    atomic_init(&new_table->metrics.get_miss_count, 0);
+
+    // 初始化每个分片
+    for (size_t i = 0; i < new_table->shard_count; i++) {
+        // 初始化同步原语
+        ppdb_error_t err = ppdb_sync_init(&new_table->shards[i].sync, &sync_config);
+        if (err != PPDB_OK) {
+            for (size_t j = 0; j < i; j++) {
+                ppdb_skiplist_destroy(new_table->shards[j].skiplist);
+                ppdb_sync_destroy(&new_table->shards[j].sync);
+            }
+            free(new_table->shards);
+            free(new_table);
+            return err;
+        }
+
+        // 创建跳表
+        ppdb_skiplist_t* skiplist = NULL;
+        if ((err = ppdb_skiplist_create(&skiplist,
+                                PPDB_SKIPLIST_MAX_LEVEL,
+                                ppdb_skiplist_default_compare,
+                                &sync_config)) != PPDB_OK) {
+            printf("Error creating skiplist: %d\n", err);
+            ppdb_sync_destroy(&new_table->shards[i].sync);
+            for (size_t j = 0; j < i; j++) {
+                ppdb_skiplist_destroy(new_table->shards[j].skiplist);
+                ppdb_sync_destroy(&new_table->shards[j].sync);
+            }
+            free(new_table->shards);
+            free(new_table);
+            return err;
+        }
+        new_table->shards[i].skiplist = skiplist;
+
+        // 初始化分片大小
+        atomic_init(&new_table->shards[i].size, 0);
+    }
+
+    *table = new_table;
+    return PPDB_OK;
+}
+
+void ppdb_memtable_destroy_sharded(ppdb_memtable_t* table) {
+    if (!table) {
+        return;
+    }
+
+    // 销毁每个分片
+    if (table->shards) {
+        for (size_t i = 0; i < table->shard_count; i++) {
+            ppdb_skiplist_destroy(table->shards[i].skiplist);
+            ppdb_sync_destroy(&table->shards[i].sync);
+        }
+        free(table->shards);
+    }
+
+    // 释放内存表结构
+    free(table);
+}
+
+ppdb_error_t ppdb_memtable_put_sharded_basic(ppdb_memtable_t* table,
+                                           const void* key, size_t key_len,
+                                           const void* value, size_t value_len) {
+    if (!table || !table->shards || !key || !value) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0 || value_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+    if (table->is_immutable) {
+        return PPDB_ERR_IMMUTABLE;
+    }
+
+    // 计算所需总空间
+    size_t total_size = key_len + value_len + PPDB_SKIPLIST_NODE_SIZE;
+    
+    // 检查是否超过大小限制
+    size_t current = atomic_load(&table->current_size);
+    if (current + total_size > table->size_limit) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 计算分片索引
+    size_t shard_index = ppdb_memtable_get_shard_index(key, key_len, table->shard_count);
+    ppdb_memtable_shard_t* shard = &table->shards[shard_index];
+
+    ppdb_error_t err;
+    if ((err = ppdb_sync_lock(&shard->sync)) != PPDB_OK) {
+        return err;
+    }
+
+    // 写入键值对
+    err = ppdb_skiplist_put(shard->skiplist, key, key_len, value, value_len);
+    if (err == PPDB_OK) {
+        atomic_fetch_add(&shard->size, total_size);
+        atomic_fetch_add(&table->current_size, total_size);
+        table->metrics.put_count++;
+        table->metrics.bytes_written += total_size;
+    }
+
+    ppdb_sync_unlock(&shard->sync);
+    return err;
+}
+
+ppdb_error_t ppdb_memtable_get_sharded_basic(ppdb_memtable_t* table,
+                                           const void* key, size_t key_len,
+                                           void** value, size_t* value_len) {
+    if (!table || !table->shards || !key || !value || !value_len) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // 计算分片索引
+    size_t shard_index = ppdb_memtable_get_shard_index(key, key_len, table->shard_count);
+    ppdb_memtable_shard_t* shard = &table->shards[shard_index];
+
+    ppdb_error_t err;
+    if ((err = ppdb_sync_lock(&shard->sync)) != PPDB_OK) {
+        return err;
+    }
+
+    // 读取键值对
+    err = ppdb_skiplist_get(shard->skiplist, key, key_len, value, value_len);
+    if (err == PPDB_OK) {
+        table->metrics.get_count++;
+        table->metrics.bytes_read += key_len + *value_len;
+    } else {
+        table->metrics.get_miss_count++;
+    }
+
+    ppdb_sync_unlock(&shard->sync);
+    return err;
+}
+
+ppdb_error_t ppdb_memtable_delete_sharded_basic(ppdb_memtable_t* table,
+                                              const void* key, size_t key_len) {
+    if (!table || !table->shards || !key) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+    if (table->is_immutable) {
+        return PPDB_ERR_IMMUTABLE;
+    }
+
+    // 计算分片索引
+    size_t shard_index = ppdb_memtable_get_shard_index(key, key_len, table->shard_count);
+    ppdb_memtable_shard_t* shard = &table->shards[shard_index];
+
+    ppdb_error_t err;
+    if ((err = ppdb_sync_lock(&shard->sync)) != PPDB_OK) {
+        return err;
+    }
+
+    // 删除键值对
+    err = ppdb_skiplist_delete(shard->skiplist, key, key_len);
+    if (err == PPDB_OK) {
+        table->metrics.delete_count++;
+    }
+
+    ppdb_sync_unlock(&shard->sync);
+    return err;
+}
+
+// 获取分片索引
+static size_t ppdb_memtable_get_shard_index(const void* key, size_t key_len, size_t shard_count) {
+    // 简单的哈希函数
+    size_t hash = 0;
+    const unsigned char* bytes = (const unsigned char*)key;
+    for (size_t i = 0; i < key_len; i++) {
+        hash = hash * 31 + bytes[i];
+    }
+    return hash % shard_count;
+}
+
 // 创建内存表
 ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** table) {
     if (!table) {
@@ -69,6 +305,16 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     if (size_limit == 0) {
         return PPDB_ERR_INVALID_ARG;
     }
+
+    // 初始化同步配置
+    ppdb_sync_config_t sync_config = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000,
+        .use_lockfree = false,
+        .stripe_count = 8,
+        .backoff_us = 1,
+        .enable_ref_count = false
+    };
 
     // 分配内存表结构
     ppdb_memtable_t* new_table = calloc(1, sizeof(ppdb_memtable_t));
@@ -95,15 +341,21 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     new_table->basic->used = 0;
     new_table->basic->size = size_limit;
 
-    // 初始化同步配置
-    ppdb_sync_config_t sync_config = {
-        .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000,
-        .use_lockfree = false,
-        .stripe_count = 1,
-        .backoff_us = 100,
-        .enable_ref_count = false
-    };
+    // 初始化性能指标
+    atomic_init(&new_table->metrics.put_count, 0);
+    atomic_init(&new_table->metrics.get_count, 0);
+    atomic_init(&new_table->metrics.delete_count, 0);
+    atomic_init(&new_table->metrics.total_ops, 0);
+    atomic_init(&new_table->metrics.total_latency, 0);
+    atomic_init(&new_table->metrics.total_latency_us, 0);
+    atomic_init(&new_table->metrics.max_latency_us, 0);
+    atomic_init(&new_table->metrics.min_latency_us, UINT64_MAX);
+    atomic_init(&new_table->metrics.total_bytes, 0);
+    atomic_init(&new_table->metrics.total_keys, 0);
+    atomic_init(&new_table->metrics.total_values, 0);
+    atomic_init(&new_table->metrics.bytes_written, 0);
+    atomic_init(&new_table->metrics.bytes_read, 0);
+    atomic_init(&new_table->metrics.get_miss_count, 0);
 
     // 初始化同步原语
     ppdb_error_t err = ppdb_sync_init(&new_table->basic->sync, &sync_config);
@@ -114,16 +366,18 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     }
 
     // 创建跳表
-    err = ppdb_skiplist_create(&new_table->basic->skiplist,
+    ppdb_skiplist_t* skiplist = NULL;
+    if ((err = ppdb_skiplist_create(&skiplist,
                              PPDB_SKIPLIST_MAX_LEVEL,
                              ppdb_skiplist_default_compare,
-                             &sync_config);
-    if (err != PPDB_OK) {
+                             &sync_config)) != PPDB_OK) {
+        printf("Error creating skiplist: %d\n", err);
         ppdb_sync_destroy(&new_table->basic->sync);
         free(new_table->basic);
         free(new_table);
         return err;
     }
+    new_table->basic->skiplist = skiplist;
 
     *table = new_table;
     return PPDB_OK;
@@ -290,4 +544,102 @@ void ppdb_memtable_set_immutable_basic(ppdb_memtable_t* table) {
 // 获取性能指标
 const ppdb_metrics_t* ppdb_memtable_get_metrics_basic(ppdb_memtable_t* table) {
     return table ? &table->metrics : NULL;
+}
+
+// 创建迭代器
+ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table, ppdb_memtable_iterator_t** iter) {
+    if (!table || !iter) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+
+    ppdb_memtable_iterator_t* new_iter = malloc(sizeof(ppdb_memtable_iterator_t));
+    if (!new_iter) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    new_iter->table = table;
+    new_iter->it = NULL;
+    new_iter->valid = true;
+    memset(&new_iter->current_pair, 0, sizeof(ppdb_kv_pair_t));
+
+    ppdb_sync_config_t sync_config = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000,
+        .use_lockfree = false,
+        .stripe_count = 1,
+        .backoff_us = 100,
+        .enable_ref_count = false
+    };
+
+    ppdb_error_t err = ppdb_skiplist_iterator_create(table->basic->skiplist,
+                                                   &new_iter->it,
+                                                   &sync_config);
+    if (err != PPDB_OK) {
+        free(new_iter);
+        return err;
+    }
+
+    // 获取第一个键值对
+    err = ppdb_skiplist_iterator_get(new_iter->it, &new_iter->current_pair);
+    if (err != PPDB_OK && err != PPDB_ERR_NOT_FOUND) {
+        ppdb_skiplist_iterator_destroy(new_iter->it);
+        free(new_iter);
+        return err;
+    }
+
+    *iter = new_iter;
+    return PPDB_OK;
+}
+
+// 迭代器移动到下一个元素
+ppdb_error_t ppdb_memtable_iterator_next_basic(ppdb_memtable_iterator_t* iter,
+                                              ppdb_kv_pair_t** pair) {
+    if (!iter || !pair) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    if (!iter->it) {
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    // 先返回当前键值对
+    *pair = &iter->current_pair;
+
+    // 再移动到下一个
+    ppdb_error_t err = ppdb_skiplist_iterator_next(iter->it, &iter->current_pair);
+    if (err != PPDB_OK) {
+        iter->valid = false;
+        return err;
+    }
+
+    return PPDB_OK;
+}
+
+// 获取当前键值对
+ppdb_error_t ppdb_memtable_iterator_get_basic(ppdb_memtable_iterator_t* iter,
+                                             ppdb_kv_pair_t* pair) {
+    if (!iter || !pair) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    if (!iter->it || !iter->valid) {
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    // 复制当前键值对
+    *pair = iter->current_pair;
+    return PPDB_OK;
+}
+
+// 销毁迭代器
+void ppdb_memtable_iterator_destroy_basic(ppdb_memtable_iterator_t* iter) {
+    if (!iter) {
+        return;
+    }
+
+    if (iter->it) {
+        ppdb_skiplist_iterator_destroy(iter->it);
+    }
+
+    free(iter);
 }

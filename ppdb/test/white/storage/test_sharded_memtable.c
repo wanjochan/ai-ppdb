@@ -85,7 +85,7 @@ static void* concurrent_worker(void* arg) {
 // 基本操作测试
 static int test_basic_ops(void) {
     ppdb_sharded_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_sharded_memtable_create(NUM_SHARDS, TABLE_SIZE, &table);
+    ppdb_error_t err = ppdb_sharded_memtable_create(&table, NUM_SHARDS);
     TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
     TEST_ASSERT(table != NULL, "Sharded memtable is NULL");
 
@@ -126,7 +126,7 @@ static int test_basic_ops(void) {
 // 分片均衡性测试
 static int test_shard_distribution(void) {
     ppdb_sharded_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_sharded_memtable_create(NUM_SHARDS, TABLE_SIZE, &table);
+    ppdb_error_t err = ppdb_sharded_memtable_create(&table, NUM_SHARDS);
     TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
 
     // 写入大量数据以测试分片分布
@@ -171,7 +171,7 @@ static int test_shard_distribution(void) {
 // 并发操作测试
 static int test_concurrent_ops(void) {
     ppdb_sharded_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_sharded_memtable_create(NUM_SHARDS, TABLE_SIZE, &table);
+    ppdb_error_t err = ppdb_sharded_memtable_create(&table, NUM_SHARDS);
     TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
 
     pthread_t threads[NUM_THREADS];
@@ -198,7 +198,7 @@ static int test_concurrent_ops(void) {
 // 迭代器测试
 static int test_iterator(void) {
     ppdb_sharded_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_sharded_memtable_create(NUM_SHARDS, TABLE_SIZE, &table);
+    ppdb_error_t err = ppdb_sharded_memtable_create(&table, NUM_SHARDS);
     TEST_ASSERT(err == PPDB_OK, "Create sharded memtable failed");
 
     // 插入有序的键值对
@@ -212,6 +212,7 @@ static int test_iterator(void) {
             (const void*)key, strlen(key),
             (const void*)value, strlen(value));
         TEST_ASSERT(err == PPDB_OK, "Put operation failed");
+        printf("Inserted key: %s, value: %s\n", key, value);
     }
 
     // 创建迭代器
@@ -222,13 +223,9 @@ static int test_iterator(void) {
 
     // 验证迭代顺序
     int count = 0;
-    while (ppdb_iterator_valid(iter)) {
-        void* key = NULL;
-        void* value = NULL;
-        size_t key_size = 0;
-        size_t value_size = 0;
-
-        err = ppdb_iterator_get(iter, &key, &key_size, &value, &value_size);
+    while (iter->valid(iter)) {
+        ppdb_kv_pair_t pair;
+        err = iter->get(iter, &pair);
         TEST_ASSERT(err == PPDB_OK, "Iterator get failed");
 
         char expected_key[KEY_SIZE];
@@ -236,15 +233,19 @@ static int test_iterator(void) {
         snprintf(expected_key, sizeof(expected_key), "iter_key_%03d", count);
         snprintf(expected_value, sizeof(expected_value), "iter_value_%03d", count);
 
-        TEST_ASSERT(key_size == strlen(expected_key), "Key size mismatch");
-        TEST_ASSERT(value_size == strlen(expected_value), "Value size mismatch");
-        TEST_ASSERT(memcmp(key, expected_key, key_size) == 0, "Key content mismatch");
-        TEST_ASSERT(memcmp(value, expected_value, value_size) == 0, "Value content mismatch");
+        printf("Count: %d\n", count);
+        printf("Expected key: %s (%zu bytes)\n", expected_key, strlen(expected_key));
+        printf("Actual key: %.*s (%zu bytes)\n", (int)pair.key_size, (char*)pair.key, pair.key_size);
+        printf("Expected value: %s (%zu bytes)\n", expected_value, strlen(expected_value));
+        printf("Actual value: %.*s (%zu bytes)\n\n", (int)pair.value_size, (char*)pair.value, pair.value_size);
 
-        free(key);
-        free(value);
+        TEST_ASSERT(pair.key_size == strlen(expected_key), "Key size mismatch");
+        TEST_ASSERT(pair.value_size == strlen(expected_value), "Value size mismatch");
+        TEST_ASSERT(memcmp(pair.key, expected_key, pair.key_size) == 0, "Key content mismatch");
+        TEST_ASSERT(memcmp(pair.value, expected_value, pair.value_size) == 0, "Value content mismatch");
+
         count++;
-        ppdb_iterator_next(iter);
+        iter->next(iter);
     }
 
     TEST_ASSERT(count == num_entries, "Iterator count mismatch");

@@ -1,0 +1,4 @@
+VERS_1.0 { 
+  global: module_main; test_func1; test_func2; 
+  local: *; 
+}; 

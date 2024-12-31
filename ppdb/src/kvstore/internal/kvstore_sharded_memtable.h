@@ -8,6 +8,9 @@
 // 分片内存表类型
 typedef struct ppdb_sharded_memtable ppdb_sharded_memtable_t;
 
+// 迭代器类型
+typedef struct ppdb_iterator ppdb_iterator_t;
+
 // 创建分片内存表
 ppdb_error_t ppdb_sharded_memtable_create(ppdb_sharded_memtable_t** table, size_t shard_count);
 
@@ -19,4 +22,14 @@ ppdb_error_t ppdb_sharded_memtable_put(ppdb_sharded_memtable_t* table, const voi
 ppdb_error_t ppdb_sharded_memtable_get(ppdb_sharded_memtable_t* table, const void* key, size_t key_len, void* value, size_t* value_len);
 ppdb_error_t ppdb_sharded_memtable_delete(ppdb_sharded_memtable_t* table, const void* key, size_t key_len);
 
-#endif // PPDB_KVSTORE_SHARDED_MEMTABLE_H 
+// 迭代器操作
+ppdb_error_t ppdb_sharded_memtable_iterator_create(ppdb_sharded_memtable_t* table, ppdb_iterator_t** iter);
+bool ppdb_iterator_valid(ppdb_iterator_t* iter);
+ppdb_error_t ppdb_iterator_get(ppdb_iterator_t* iter, void** key, size_t* key_size, void** value, size_t* value_size);
+void ppdb_iterator_next(ppdb_iterator_t* iter);
+void ppdb_iterator_destroy(ppdb_iterator_t* iter);
+
+// 内部工具函数
+size_t ppdb_sharded_memtable_get_shard_index(ppdb_sharded_memtable_t* table, const void* key, size_t key_len);
+
+#endif // PPDB_KVSTORE_SHARDED_MEMTABLE_H

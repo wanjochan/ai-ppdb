@@ -1,5 +1,4 @@
 @echo off
-rem 设置代码页为 UTF-8
 chcp 65001 > nul
 setlocal EnableDelayedExpansion
 

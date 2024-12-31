@@ -58,8 +58,7 @@ void ppdb_skiplist_iterator_destroy(ppdb_skiplist_iterator_t* iter);
 
 // 迭代器移动到下一个元素
 ppdb_error_t ppdb_skiplist_iterator_next(ppdb_skiplist_iterator_t* iter,
-                                       void** key, size_t* key_len,
-                                       void** value, size_t* value_len);
+                                       ppdb_kv_pair_t* pair);
 
 // 检查迭代器是否有效
 bool ppdb_skiplist_iterator_valid(ppdb_skiplist_iterator_t* iter);

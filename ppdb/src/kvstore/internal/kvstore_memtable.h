@@ -44,9 +44,13 @@ ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table, const void* key,
 ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* table, const void* key, size_t key_len, void** value, size_t* value_len);
 ppdb_error_t ppdb_memtable_delete_lockfree(ppdb_memtable_t* table, const void* key, size_t key_len);
 
-// 迭代器操作
-ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table, ppdb_memtable_iterator_t** iter);
-ppdb_error_t ppdb_memtable_iterator_next_basic(ppdb_memtable_iterator_t* iter, void** key, size_t* key_len, void** value, size_t* value_len);
+// 内存表迭代器基本操作
+ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table,
+                                                ppdb_memtable_iterator_t** iter);
+ppdb_error_t ppdb_memtable_iterator_next_basic(ppdb_memtable_iterator_t* iter,
+                                              ppdb_kv_pair_t** pair);
+ppdb_error_t ppdb_memtable_iterator_get_basic(ppdb_memtable_iterator_t* iter,
+                                             ppdb_kv_pair_t* pair);
 void ppdb_memtable_iterator_destroy_basic(ppdb_memtable_iterator_t* iter);
 
 // 工厂函数
@@ -65,4 +69,4 @@ bool ppdb_memtable_empty(ppdb_memtable_t* memtable);
 bool ppdb_memtable_full(ppdb_memtable_t* memtable);
 size_t ppdb_memtable_max_size(ppdb_memtable_t* memtable);
 
-#endif // PPDB_KVSTORE_MEMTABLE_H 
+#endif // PPDB_KVSTORE_MEMTABLE_H
