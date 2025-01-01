@@ -320,7 +320,8 @@
         }
         
         function loadConfig() {
-            const savedConfig = sessionStorage.getItem('agenticConfig');
+            // 优先从 localStorage 加载配置
+            const savedConfig = localStorage.getItem('agenticConfig');
             if (savedConfig) {
                 config = JSON.parse(savedConfig);
                 document.getElementById('provider').value = config.provider;
@@ -352,7 +353,8 @@
             config.baseUrl = document.getElementById('baseUrl').value;
             config.saveLocally = document.getElementById('saveLocally').checked;
 
-            sessionStorage.setItem('agenticConfig', JSON.stringify(config));
+            // 始终保存到 localStorage
+            localStorage.setItem('agenticConfig', JSON.stringify(config));
 
             if (config.saveLocally && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
