@@ -15,12 +15,26 @@ PPDB 提供了自动化的环境初始化脚本，它们会：
 
 ### 1.1 Windows 平台
 ```batch
+# 直接运行
+scripts\setup.bat
+
+# 使用代理
+scripts\setup.bat http://proxy.example.com:8080
+# 或者设置环境变量
+set HTTP_PROXY=http://proxy.example.com:8080
 scripts\setup.bat
 ```
 
 ### 1.2 Linux/macOS 平台
 ```bash
+# 直接运行
 chmod +x scripts/setup.sh
+./scripts/setup.sh
+
+# 使用代理
+./scripts/setup.sh http://proxy.example.com:8080
+# 或者设置环境变量
+export HTTP_PROXY=http://proxy.example.com:8080
 ./scripts/setup.sh
 ```
 
@@ -28,13 +42,12 @@ chmod +x scripts/setup.sh
 初始化后的目录结构如下：
 ```
 ppdb/
-├── repos/              # 参考代码仓库
-│   └── leveldb/       # LevelDB 参考实现
-└── tools/             # 工具链和运行时依赖
-    ├── cosmocc/       # 编译器和基础工具
-    ├── cross9/        # 交叉编译工具链
-    ├── cosmopolitan/  # 运行时文件
-    └── mingw64/       # Windows本地开发工具（可选）
+├── repos/              # 第三方代码和工具链
+│   ├── leveldb/       # LevelDB 参考实现
+│   ├── cosmopolitan/  # 运行时文件
+│   └── cross9/        # 交叉编译工具链
+└── tools/             # 编译工具
+    └── cosmocc/       # 编译器和基础工具
 ```
 
 ### 1.4 注意事项
@@ -42,6 +55,16 @@ ppdb/
 - Linux/macOS 用户需要安装 curl、unzip 和 Git
 - 所有路径配置都相对于项目根目录
 - 初始化完成后请运行 build 命令验证环境
+- 如果需要使用代理，可以通过命令行参数或环境变量设置
+- 生成的可执行文件后缀会根据操作系统不同而不同：
+  - Windows: `.exe`
+  - macOS: `.osx`
+  - Linux: `.lnx`
+- Windows 批处理脚本（.bat）的重要说明：
+  * 脚本开头的 `chcp 65001` 命令用于设置控制台代码页为 UTF-8
+  * 这行代码对于正确显示中文输出至关重要
+  * 在修改脚本时必须保留这个设置
+  * 格式：`chcp 65001 > nul`（重定向到 nul 避免显示切换提示）
 
 ## 2. 构建环境
 
