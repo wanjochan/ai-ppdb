@@ -44,7 +44,7 @@ static void* concurrent_worker(void* arg) {
             (const void*)key, strlen(key),
             (const void*)value, strlen(value));
         if (err != PPDB_OK) {
-            ppdb_log_error("Put operation failed in thread %d", args->thread_id);
+            PPDB_LOG_ERROR("Put operation failed in thread %d", args->thread_id);
             args->success = false;
             return NULL;
         }
@@ -56,7 +56,7 @@ static void* concurrent_worker(void* arg) {
             (const void*)key, strlen(key),
             &read_value, &value_size);
         if (err != PPDB_OK) {
-            ppdb_log_error("Get operation failed in thread %d", args->thread_id);
+            PPDB_LOG_ERROR("Get operation failed in thread %d", args->thread_id);
             args->success = false;
             return NULL;
         }

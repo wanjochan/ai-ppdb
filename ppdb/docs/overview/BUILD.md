@@ -5,9 +5,85 @@
 > - 系统设计见 `overview/DESIGN.md`
 > - 代码改进计划见 `overview/REFACTOR.md`
 
-## 1. 构建环境
+## 1. 初始化环境
 
-### 1.1 环境要求
+### 1.1 目录准备
+```bash
+# 在项目根目录创建 repos 目录（此目录不会提交到远程）
+mkdir -p repos
+cd repos
+```
+
+### 1.2 克隆依赖仓库
+```bash
+# 克隆 cosmopolitan 仓库（用于跨平台支持）
+git clone https://github.com/jart/cosmopolitan.git
+cd cosmopolitan
+git checkout v3.2.1  # 使用稳定版本
+cd ..
+
+# 克隆其他参考项目
+git clone https://github.com/google/leveldb.git
+cd leveldb
+git checkout v1.23
+cd ..
+```
+
+### 1.3 下载工具链
+```bash
+# Windows 平台
+## 下载 cosmocc
+curl -L https://cosmo.zip/pub/cosmocc/cosmocc.zip -o cosmocc.zip
+unzip cosmocc.zip -d cosmocc
+mv cosmocc ../tools/
+
+## 下载 cross9
+curl -L https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.zip -o cross9.zip
+unzip cross9.zip -d cross9
+mv cross9 ../tools/
+
+## 下载 mingw64（可选，用于本地开发）
+curl -L https://github.com/niXman/mingw-builds-binaries/releases/download/13.2.0-rt_v11-rev0/x86_64-13.2.0-release-win32-seh-msvcrt-rt_v11-rev0.7z -o mingw64.7z
+7z x mingw64.7z -o../tools/
+
+# Linux/macOS 平台
+## 下载 cosmocc
+curl -L https://cosmo.zip/pub/cosmocc/cosmocc.zip -o cosmocc.zip
+unzip cosmocc.zip -d cosmocc
+mv cosmocc ../tools/
+
+## 下载 cross9
+curl -L https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.tar.gz -o cross9.tar.gz
+tar xf cross9.tar.gz
+mv cross9 ../tools/
+```
+
+### 1.4 验证环境
+```bash
+# 检查工具链
+../tools/cosmocc/bin/cosmocc --version
+../tools/cross9/bin/cosmocc --version
+
+# 检查目录结构
+tree -L 2 repos/
+tree -L 2 tools/
+
+# 验证编译器可用性
+echo 'int main() { return 0; }' > test.c
+../tools/cosmocc/bin/cosmocc test.c -o test
+./test
+rm test.c test
+```
+
+### 1.5 注意事项
+- `repos/` 目录已添加到 `.gitignore`，其内容不会提交到远程
+- 所有工具链和依赖库都应放在 `tools/` 或 `repos/` 目录下
+- 确保使用指定版本的依赖，避免兼容性问题
+- Windows 用户可能需要安装 7-Zip 来解压工具链
+
+## 2. 构建环境
+
+### 2.1 环境要求
 - 操作系统：
   - Windows 10/11
   - Ubuntu 20.04或以上
@@ -18,7 +94,7 @@
   - Git
   - Python 3.8或以上 (可选，用于测试)
 
-### 1.2 目录结构
+### 2.2 目录结构
 ```
 ppdb/
 ├── src/
@@ -32,9 +108,9 @@ ppdb/
 └── third_party/    # 第三方依赖
 ```
 
-## 2. 构建步骤
+## 3. 构建步骤
 
-### 2.1 Windows构建
+### 3.1 Windows构建
 ```batch
 # 1. 配置环境变量
 set PPDB_ROOT=%CD%
@@ -54,7 +130,7 @@ ninja
 ctest --output-on-failure
 ```
 
-### 2.2 Linux/macOS构建
+### 3.2 Linux/macOS构建
 ```bash
 # 1. 配置环境变量
 export PPDB_ROOT=$(pwd)
@@ -73,9 +149,9 @@ make -j$(nproc)
 ctest --output-on-failure
 ```
 
-## 3. 构建选项
+## 4. 构建选项
 
-### 3.1 CMake选项
+### 4.1 CMake选项
 ```cmake
 # 启用调试模式
 -DCMAKE_BUILD_TYPE=Debug
@@ -90,7 +166,7 @@ ctest --output-on-failure
 -DPPDB_ENABLE_SANITIZER=ON
 ```
 
-### 3.2 编译选项
+### 4.2 编译选项
 ```cmake
 set(PPDB_COMPILE_OPTIONS
     -Wall
@@ -101,9 +177,9 @@ set(PPDB_COMPILE_OPTIONS
 )
 ```
 
-## 4. 常见问题
+## 5. 常见问题
 
-### 4.1 构建错误
+### 5.1 构建错误
 1. CMake配置错误
    ```
    解决方案：确保CMake版本正确，且PATH中包含正确的工具链
@@ -119,7 +195,7 @@ set(PPDB_COMPILE_OPTIONS
    解决方案：检查库文件是否正确生成，路径是否正确
    ```
 
-### 4.2 性能优化
+### 5.2 性能优化
 1. 启用优化
    ```cmake
    -DCMAKE_BUILD_TYPE=Release
@@ -130,9 +206,9 @@ set(PPDB_COMPILE_OPTIONS
    -DPPDB_ENABLE_LTO=ON
    ```
 
-## 5. 发布构建
+## 6. 发布构建
 
-### 5.1 版本控制
+### 6.1 版本控制
 ```bash
 # 设置版本号
 git tag -a v1.0.0 -m "Release version 1.0.0"
@@ -141,14 +217,14 @@ git tag -a v1.0.0 -m "Release version 1.0.0"
 git push origin v1.0.0
 ```
 
-### 5.2 发布检查清单
+### 6.2 发布检查清单
 1. 更新版本号
 2. 运行完整测试套件
 3. 更新文档
 4. 创建release notes
 5. 打包发布文件
 
-### 5.3 发布包内容
+### 6.3 发布包内容
 ```
 ppdb-1.0.0/
 ├── bin/           # 可执行文件

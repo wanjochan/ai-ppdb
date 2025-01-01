@@ -285,6 +285,9 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
+    // 设置同步写入标志
+    new_wal->sync_on_write = config->sync_write;
+
     // 创建目录
     if (mkdir(new_wal->dir_path, 0755) != 0 && errno != EEXIST) {
         free(new_wal->dir_path);

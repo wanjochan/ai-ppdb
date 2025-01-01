@@ -17,6 +17,7 @@ PPDB (Peer-to-Peer Distributed Database) 是一个跨平台、自组织的分布
 
 ### 1. 项目概览
 - [开发计划](PLAN.md) - 项目整体规划和任务管理 **(主要工作文档)**
+- [全局认知](overview/OVERVIEW.md) - 项目整体认知和关键信息
 - [设计概览](overview/DESIGN.md) - 系统整体设计和架构
 - [开发指南](overview/DEVELOPMENT.md) - 开发环境配置、编码规范和错误处理指南
 - [构建指南](overview/BUILD.md) - 详细的构建环境、步骤和选项说明

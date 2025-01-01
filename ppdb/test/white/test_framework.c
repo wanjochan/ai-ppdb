@@ -14,15 +14,15 @@ int test_case_failed = 0;
 // 段错误处理函数
 static void segv_handler(int signo) {
     (void)signo;
-    ppdb_log_error("Segmentation fault in test: %s", current_test_name);
+    PPDB_LOG_ERROR("Segmentation fault in test: %s", current_test_name);
     exit(1);
 }
 
 // 超时处理函数
 static void timeout_handler(int signo) {
     (void)signo;
-    ppdb_log_error("Test timeout: %s", current_test_name);
-    longjmp(g_test_state.timeout_jmp, 1);
+    PPDB_LOG_ERROR("Test timeout: %s", current_test_name);
+    exit(1);
 }
 
 // 初始化测试框架

@@ -66,6 +66,7 @@ typedef struct ppdb_wal {
     size_t current_size;         // 当前大小
     void* write_buffer;          // 写入缓冲区
     bool closed;                 // 是否已关闭
+    bool sync_on_write;          // 是否同步写入
     ppdb_sync_t* sync;          // 同步对象
 } ppdb_wal_t;
 
