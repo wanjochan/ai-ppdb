@@ -33,10 +33,39 @@ done
 # Detect OS and check compiler toolchain
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # Check macOS toolchain
+    echo "macOS detected. Setting up LLVM toolchain..."
+    
+    # Try to find LLVM tools in common locations
+    LLVM_PATHS=(
+        "/usr/local/opt/llvm/bin"
+        "/opt/homebrew/opt/llvm/bin"
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    )
+    
+    LLVM_FOUND=0
+    for prefix in "${LLVM_PATHS[@]}"; do
+        if [ -d "$prefix" ]; then
+            export PATH="$prefix:$PATH"
+            LLVM_FOUND=1
+            echo "Found LLVM tools at $prefix"
+            break
+        fi
+    done
+    
+    if [ $LLVM_FOUND -eq 0 ]; then
+        echo "LLVM tools not found. Installing via Homebrew..."
+        if ! command -v brew &> /dev/null; then
+            echo "Homebrew not found. Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        brew install llvm
+        export PATH="/usr/local/opt/llvm/bin:$PATH"
+    fi
+    
+    # Verify LLVM tools
     for cmd in clang llvm-ar llvm-objcopy; do
         if ! command -v $cmd &> /dev/null; then
-            echo "Error: Required command '$cmd' not found"
-            echo "Please install llvm tools: brew install llvm"
+            echo "Error: Required command '$cmd' not found after setup"
             exit 1
         fi
     done
@@ -65,23 +94,40 @@ echo "Downloading toolchains..."
 
 if [ ! -d "tools/cosmocc/bin" ]; then
     echo "Downloading cosmocc..."
-    if [ ! -z "$PROXY" ]; then
-        if ! curl -x "$PROXY" -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip; then
-            echo "Error: Failed to download cosmocc"
-            exit 1
+    MAX_RETRIES=3
+    RETRY_DELAY=5
+    DOWNLOAD_SUCCESS=0
+    
+    for ((i=1; i<=MAX_RETRIES; i++)); do
+        echo "Attempt $i of $MAX_RETRIES..."
+        
+        if [ ! -z "$PROXY" ]; then
+            curl -x "$PROXY" -L --retry 10 --retry-delay 30 --max-time 300 --speed-limit 100 --speed-time 10 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+        else
+            curl -L --retry 10 --retry-delay 30 --max-time 300 --speed-limit 100 --speed-time 10 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
         fi
-    else
-        if ! curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip; then
-            echo "Error: Failed to download cosmocc"
-            exit 1
+        
+        if [ $? -eq 0 ]; then
+            DOWNLOAD_SUCCESS=1
+            break
+        else
+            echo "Download failed, retrying in $RETRY_DELAY seconds..."
+            sleep $RETRY_DELAY
         fi
+    done
+    
+    if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
+        echo "Error: Failed to download cosmocc after $MAX_RETRIES attempts"
+        exit 1
     fi
+    
     echo "Extracting cosmocc..."
     if ! unzip -q cosmocc.zip -d tools/cosmocc; then
         echo "Error: Failed to extract cosmocc"
         rm -f cosmocc.zip
         exit 1
     fi
+    
     echo "Copying runtime files..."
     cp -f tools/cosmocc/lib/cosmo/cosmopolitan.* repos/cosmopolitan/
     cp -f tools/cosmocc/lib/cosmo/ape.* repos/cosmopolitan/
@@ -169,4 +215,4 @@ echo "=== Environment setup complete ==="
 echo "You can now start building PPDB"
 echo "Run 'scripts/build.sh help' to see build options"
 
-exit 0 
+exit 0
