@@ -17,7 +17,7 @@ KV存储层（KVStore）- 键值操作、事务管理、版本控制
 
 ### 2. 模块层次关系
 ```
-最底层：skiplist（无锁数据结构）
+最底层：skiplist（支持有锁/无锁两种实现）
     ↓
 中间层：memtable（内存管理和生命周期）
     ↓
@@ -29,6 +29,34 @@ KV存储层（KVStore）- 键值操作、事务管理、版本控制
 ## 可重用抽象分类
 
 ### 1. 高度可重用组件
+
+#### Skiplist 实现
+```c
+// skiplist 配置结构
+typedef struct {
+    bool use_lockfree;          // 是否使用无锁版本
+    size_t max_height;          // 最大层数
+    size_t initial_capacity;    // 初始容量
+    ppdb_metric_t* metrics;     // 性能指标收集
+} ppdb_skiplist_config_t;
+
+// 统一的性能指标结构
+typedef struct {
+    ppdb_metric_t put_latency;
+    ppdb_metric_t get_latency;
+    ppdb_metric_t delete_latency;
+    ppdb_metric_t conflict_count;    // 并发冲突次数
+    ppdb_metric_t retry_count;       // 重试次数（无锁版本特有）
+    ppdb_metric_t lock_contention;   // 锁竞争（有锁版本特有）
+} ppdb_skiplist_metrics_t;
+
+// 统一的接口
+typedef struct {
+    void* impl;                 // 具体实现（有锁或无锁）
+    ppdb_skiplist_config_t config;
+    ppdb_skiplist_metrics_t* metrics;
+} ppdb_skiplist_t;
+```
 
 #### 引用计数管理
 ```c
@@ -137,6 +165,12 @@ typedef struct {
   - [x] 错误上下文
   - [ ] 错误链支持
   - [ ] 日志集成
+- [ ] Skiplist 双实现支持
+  - [ ] 统一接口设计
+  - [ ] 有锁版本完善
+  - [ ] 无锁版本实现
+  - [ ] 性能指标收集
+  - [ ] 完整测试覆盖
 - [ ] 资源管理框架
   - [ ] 基础资源跟踪
   - [ ] 内存限制
@@ -169,6 +203,63 @@ typedef struct {
   - [ ] 异步日志
   - [ ] 日志分级
   - [ ] 日志轮转
+
+## Skiplist 实现规划
+
+### 1. 代码组织
+```
+src/kvstore/skiplist/
+  ├── interface.h     - 统一接口定义
+  ├── common.h        - 共享类型和常量
+  ├── metrics.h       - 性能指标定义
+  ├── locked.c        - 有锁版本实现
+  ├── lockfree.c      - 无锁版本实现
+  └── utils.c         - 共享工具函数
+```
+
+### 2. 测试覆盖
+```
+test/white/skiplist/
+  ├── test_basic.c    - 基础功能测试
+  ├── test_concurrent.c- 并发测试
+  ├── test_edge.c     - 边界条件测试
+  ├── test_iterator.c - 迭代器测试
+  └── benchmark/      - 性能测试
+      ├── single_thread.c  - 单线程基准
+      ├── multi_thread.c   - 多线程扩展性
+      └── mixed_ops.c      - 混合操作测试
+```
+
+### 3. 性能测试矩阵
+- 数据规模：小(1K)、中(100K)、大(1M)
+- 线程数：1、2、4、8、16、32
+- 操作比例：
+  * 读多写少 (90/10)
+  * 读写均衡 (50/50)
+  * 写多读少 (10/90)
+- 数据分布：
+  * 顺序
+  * 随机
+  * 热点
+
+### 4. 监控指标
+- 基础指标：
+  * 操作延迟（avg/p99）
+  * 吞吐量
+  * 内存使用
+- 版本特有指标：
+  * 有锁版本：锁竞争、等待时间
+  * 无锁版本：CAS 冲突、重试次数
+
+### 5. 配置选项
+- 版本选择：
+  * 环境变量：PPDB_SKIPLIST_TYPE
+  * 配置文件：skiplist_type
+- 性能参数：
+  * 初始大小
+  * 最大层数
+  * 内存限制
+  * 并发参数
 
 ## 预期收益
 
@@ -211,3 +302,5 @@ typedef struct {
 2. 收集性能数据
 3. 及时响应反馈
 4. 持续改进文档
+5. 性能测试报告
+6. 版本切换工具
