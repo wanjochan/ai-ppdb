@@ -2,20 +2,36 @@
 
 ## 系统架构概览
 
-### 1. 分层结构
+### 1. 项目结构
 ```
-应用层（API/CLI）
-    ↓
-数据库层（PPDB）- 分布式协议、成员管理、一致性保证
-    ↓
-KV存储层（KVStore）- 键值操作、事务管理、版本控制
-    ↓
-存储层（Storage）- 内存表、WAL、持久化
-    ↓
-核心层（Core）- 同步原语、内存管理、错误处理
+PPDB 项目
+├── memkv    - 纯内存 KV 存储系统
+│   特点：高性能、内存存储、支持过期、协议兼容
+│
+└── diskv    - 持久化 KV 存储系统
+    特点：持久化、事务支持、一致性保证
 ```
 
-### 2. 模块层次关系
+### 2. 分层结构
+```
+应用层（API/CLI/Network Service）
+    ↓
+┌────────────┴───────────┐
+↓                        ↓
+memkv                   diskv
+(内存KV存储)             (持久化KV存储)
+    ↓                        ↓
+    └────────────┬─────────┘
+                 ↓
+            共享组件层
+   - skiplist（有锁/无锁）
+   - memtable
+   - sync原语
+   - 错误处理
+   - 监控系统
+```
+
+### 3. 模块层次关系
 ```
 最底层：skiplist（支持有锁/无锁两种实现）
     ↓
@@ -304,3 +320,85 @@ test/white/skiplist/
 4. 持续改进文档
 5. 性能测试报告
 6. 版本切换工具
+
+## memkv 实现规划
+
+### 1. 核心组件
+```c
+// 网络服务
+typedef struct {
+    int port;
+    void* event_loop;
+    ppdb_metric_t* metrics;
+    void (*on_request)(void* ctx, const char* cmd, void* args);
+} ppdb_server_t;
+
+// 协议解析
+typedef struct {
+    char* command;
+    char* key;
+    void* data;
+    size_t data_len;
+    uint32_t flags;
+    time_t exptime;
+} ppdb_protocol_request_t;
+
+// 过期管理
+typedef struct {
+    uint64_t expire_time;
+    void* data;
+    size_t data_len;
+    uint32_t flags;
+} ppdb_cache_item_t;
+```
+
+### 2. 目录结构
+```
+src/
+  ├── memkv/
+  │   ├── server.c     - 网络服务
+  │   ├── protocol.c   - 协议处理
+  │   └── expire.c     - 过期管理
+  ├── kvstore/         - 共享组件
+  │   ├── skiplist/    
+  │   └── memtable/    
+  └── common/          - 基础设施
+      └── sync/        
+
+test/
+  ├── memkv/          
+  │   ├── test_protocol.c
+  │   ├── test_expire.c
+  │   └── benchmark/
+  │       ├── single_client.c
+  │       └── multi_clients.c
+  └── kvstore/         - 共享组件测试
+```
+
+### 3. 接口设计
+```c
+// 基本接口
+ppdb_error_t ppdb_cache_set(const char* key, const void* value, 
+    size_t value_len, uint32_t flags, time_t exptime);
+ppdb_error_t ppdb_cache_get(const char* key, void** value, 
+    size_t* value_len, uint32_t* flags);
+ppdb_error_t ppdb_cache_delete(const char* key);
+ppdb_error_t ppdb_cache_incr(const char* key, uint64_t delta, 
+    uint64_t* new_value);
+ppdb_error_t ppdb_cache_decr(const char* key, uint64_t delta, 
+    uint64_t* new_value);
+
+// 统计接口
+ppdb_error_t ppdb_cache_stats(ppdb_stats_t* stats);
+```
+
+### 4. 配置选项
+```c
+typedef struct {
+    uint16_t port;              // 服务端口
+    size_t max_memory;          // 最大内存使用
+    size_t max_item_size;       // 单个项最大大小
+    bool use_lockfree;          // 是否使用无锁实现
+    int worker_threads;         // 工作线程数
+} ppdb_cache_config_t;
+```
