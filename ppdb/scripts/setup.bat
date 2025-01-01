@@ -35,33 +35,27 @@ echo.
 echo 下载工具链...
 
 rem 下载并安装 cosmocc
-if not exist "tools\cosmocc\bin" (
-    echo 下载 cosmocc...
-    if not "%PROXY%"=="" (
-        curl -x "%PROXY%" -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+if not exist "tools\cosmocc\bin\cosmocc" (
+    if not exist "cosmocc.zip" (
+        echo 下载 cosmocc...
+        if not "%PROXY%"=="" (
+            curl -x "%PROXY%" -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+        ) else (
+            curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+        )
     ) else (
-        curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+        echo 使用已下载的 cosmocc.zip
     )
     echo 解压 cosmocc...
     powershell -Command "Expand-Archive -Path 'cosmocc.zip' -DestinationPath 'tools\cosmocc' -Force"
     echo 复制运行时文件...
-    copy /Y "tools\cosmocc\lib\cosmo\cosmopolitan.*" "repos\cosmopolitan\"
-    copy /Y "tools\cosmocc\lib\cosmo\ape.*" "repos\cosmopolitan\"
-    copy /Y "tools\cosmocc\lib\cosmo\crt.*" "repos\cosmopolitan\"
+    copy /Y "tools\cosmocc\bin\ape-x86_64.elf" "repos\cosmopolitan\ape.elf"
+    copy /Y "tools\cosmocc\bin\ape-x86_64.elf" "repos\cosmopolitan\crt.o"
+    copy /Y "tools\cosmocc\bin\ape-x86_64.elf" "repos\cosmopolitan\ape.o"
+    copy /Y "tools\cosmocc\bin\ape-x86_64.elf" "repos\cosmopolitan\cosmopolitan.a"
     del /F /Q cosmocc.zip
 ) else (
     echo cosmocc 已存在，跳过
-)
-
-rem 下载并安装 cross9
-if not exist "repos\cross9\bin" (
-    echo 下载 cross9...
-    powershell -Command "Invoke-WebRequest -Uri 'https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.zip' -OutFile 'cross9.zip'"
-    echo 解压 cross9...
-    powershell -Command "Expand-Archive -Path 'cross9.zip' -DestinationPath 'repos\cross9' -Force"
-    del /F /Q cross9.zip
-) else (
-    echo cross9 已存在，跳过
 )
 
 rem 克隆参考代码
@@ -85,7 +79,7 @@ cd ..
 rem 复制运行时文件到构建目录
 echo.
 echo 准备构建目录...
-copy /Y "repos\cosmopolitan\ape.lds" "build\"
+copy /Y "repos\cosmopolitan\ape.elf" "build\ape.lds"
 copy /Y "repos\cosmopolitan\crt.o" "build\"
 copy /Y "repos\cosmopolitan\ape.o" "build\"
 copy /Y "repos\cosmopolitan\cosmopolitan.a" "build\"
@@ -95,18 +89,13 @@ echo.
 echo 验证环境...
 
 rem 检查工具链
-if not exist "tools\cosmocc\bin\cosmocc.exe" (
+if not exist "tools\cosmocc\bin\cosmocc" (
     echo 错误：cosmocc 未正确安装
     exit /b 1
 )
 
-if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
-    echo 错误：cross9 未正确安装
-    exit /b 1
-)
-
 rem 检查运行时文件
-if not exist "repos\cosmopolitan\cosmopolitan.h" (
+if not exist "repos\cosmopolitan\ape.elf" (
     echo 错误：cosmopolitan 运行时文件未正确安装
     exit /b 1
 )
