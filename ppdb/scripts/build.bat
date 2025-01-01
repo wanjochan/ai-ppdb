@@ -103,7 +103,7 @@ rem Set final CFLAGS
 set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
 
 rem Set linker flags
-set "LDFLAGS=-static -nostdlib -Wl,-T,%BUILD_DIR%\ape.lds -Wl,--gc-sections -fuse-ld=bfd -Wl,-z,max-page-size=0x1000 -no-pie"
+set "LDFLAGS=-static -nostdlib -Wl,-T,%BUILD_DIR%\ape.lds -Wl,--gc-sections -B%CROSS9% -Wl,-z,max-page-size=0x1000 -no-pie"
 set "LIBS=%BUILD_DIR%\crt.o %BUILD_DIR%\ape.o %BUILD_DIR%\cosmopolitan.a"
 
 rem Check if we need to rebuild test
@@ -112,7 +112,7 @@ if not exist "%BUILD_DIR%\%TEST_TYPE%_test.exe" set "NEED_REBUILD=1"
 
 rem Main logic
 if "%TEST_TYPE%"=="test42" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test 42 "%PPDB_DIR%\test\white\test_42.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test 42 "" "%PPDB_DIR%\test\white\test_42.c"
     if exist "%BUILD_DIR%\42_test.exe" "%BUILD_DIR%\42_test.exe"
 ) else if "%TEST_TYPE%"=="sync" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test sync "%PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\infra\test_sync.c"
@@ -332,14 +332,14 @@ for %%F in (!EXTRA_SOURCES!) do (
 set "OBJ_FILES=!OBJ_FILES! !TEST_OBJ!"
 
 echo Linking !TEST_EXE!...
-"%GCC%" %LDFLAGS% -o "!TEST_EXE!" !OBJ_FILES! %LIBS%
+"%GCC%" %LDFLAGS% -o "!TEST_EXE!.dbg" !OBJ_FILES! %LIBS%
 if errorlevel 1 (
     echo Error: Failed to link test executable
     exit /b 1
 )
 echo Converting to APE format...
-echo Command: "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%TEST_NAME%_test.dbg" "%BUILD_DIR%\%TEST_NAME%_test.exe"
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\%TEST_NAME%_test.dbg" "%BUILD_DIR%\%TEST_NAME%_test.exe"
+echo Command: "%OBJCOPY%" -S -O binary "!TEST_EXE!.dbg" "!TEST_EXE!"
+"%OBJCOPY%" -S -O binary "!TEST_EXE!.dbg" "!TEST_EXE!"
 if errorlevel 1 (
     echo Error: objcopy failed
     exit /b 1
