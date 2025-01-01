@@ -1,95 +1,150 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>我的智能体</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
+        * {
             margin: 0;
             padding: 0;
-            background-color: #f5f5f5;
+            box-sizing: border-box;
         }
-        .container {
-            max-width: 800px;
-            margin: 0 auto;
-            background-color: white;
-            padding: 10px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+
+        html, body {
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
         }
+
+        .layout {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
+
         .left-panel {
             width: 38%;
             min-width: 640px;
-            background-color: white;
+            height: 100vh;
             display: flex;
             flex-direction: column;
             border-right: 1px solid #ddd;
-            padding: 0;
         }
+
+        .right-panel {
+            flex: 1;
+            height: 100vh;
+            background: #f5f5f5;
+        }
+
         .config-panel {
-            padding: 10px;
+            padding: 8px;
             border-bottom: 1px solid #ddd;
-            background-color: #fff;
         }
+
         .config-item {
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
+
         .config-item label {
             display: block;
-            margin-bottom: 3px;
-            font-weight: bold;
+            margin-bottom: 2px;
             font-size: 0.9em;
         }
+
         .config-item input {
             width: 100%;
-            padding: 6px;
+            padding: 4px 6px;
             border: 1px solid #ddd;
-            border-radius: 4px;
+            border-radius: 3px;
         }
+
         .save-locally {
-            margin-top: 8px;
+            margin: 6px 0;
             font-size: 0.9em;
         }
+
         h3 {
-            margin: 0 0 10px 0;
-            font-size: 1.1em;
+            margin-bottom: 8px;
+            font-size: 1em;
         }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .chat-window {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
         .input-area {
-            padding: 10px;
+            padding: 8px;
             border-top: 1px solid #ddd;
             display: flex;
-            gap: 8px;
+            gap: 6px;
         }
-        .message {
-            margin-bottom: 8px;
-            padding: 6px 8px;
-            border-radius: 4px;
-            max-width: 85%;
-            font-size: 0.95em;
-        }
-        .chat-window {
-            height: 400px;
+
+        .input-area input {
+            flex: 1;
+            padding: 4px 6px;
             border: 1px solid #ddd;
-            padding: 10px;
-            margin-bottom: 20px;
-            overflow-y: auto;
-            border-radius: 4px;
+            border-radius: 3px;
         }
+
+        .input-area button {
+            padding: 4px 12px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .input-area button:hover {
+            background: #0056b3;
+        }
+
+        .message {
+            margin-bottom: 6px;
+            padding: 6px 8px;
+            border-radius: 3px;
+            max-width: 85%;
+        }
+
         .user-message {
-            background-color: #e3f2fd;
+            background: #e3f2fd;
+            margin-left: auto;
         }
+
         .system-message {
-            background-color: #f5f5f5;
+            background: #f5f5f5;
+            margin-right: auto;
+        }
+
+        button {
+            padding: 4px 12px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0056b3;
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="layout">
         <div class="left-panel">
-            <!-- 配置面板 -->
-            <div class="config-panel" id="configPanel">
+            <div class="config-panel">
                 <h3>API配置</h3>
                 <div class="config-item">
                     <label for="apiKey">OpenAI API Key</label>
@@ -105,15 +160,17 @@
                 </div>
                 <button onclick="saveConfig()">保存配置</button>
             </div>
-
-            <div class="chat-window" id="chatWindow"></div>
-            <div class="input-area">
-                <input type="text" id="messageInput" placeholder="输入消息...">
-                <button onclick="sendMessage()">发送</button>
+            <div class="chat-container">
+                <div class="chat-window" id="chatWindow"></div>
+                <div class="input-area">
+                    <input type="text" id="messageInput" placeholder="输入消息...">
+                    <button onclick="sendMessage()">发送</button>
+                </div>
             </div>
         </div>
+        <div class="right-panel">
+        </div>
     </div>
-
     <script>
         let ws;
         let config = {
@@ -122,7 +179,6 @@
             saveLocally: false
         };
         
-        // 初始化时加载配置
         function loadConfig() {
             const savedConfig = sessionStorage.getItem('agenticConfig');
             if (savedConfig) {
@@ -133,16 +189,13 @@
             }
         }
 
-        // 保存配置
         function saveConfig() {
             config.apiKey = document.getElementById('apiKey').value;
             config.apiModel = document.getElementById('apiModel').value;
             config.saveLocally = document.getElementById('saveLocally').checked;
 
-            // 总是保存到会话存储
             sessionStorage.setItem('agenticConfig', JSON.stringify(config));
 
-            // 如果选择了本地保存，发送到服务器
             if (config.saveLocally && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
                     type: 'config',
@@ -159,7 +212,6 @@
             
             ws.onopen = function() {
                 addMessage("系统已连接", "system");
-                // 连接后加载配置
                 loadConfig();
             };
             
@@ -170,7 +222,6 @@
             
             ws.onclose = function() {
                 addMessage("连接已关闭", "system");
-                // 尝试重连
                 setTimeout(connect, 1000);
             };
             
@@ -185,7 +236,6 @@
             const message = input.value.trim();
             
             if (message && ws.readyState === WebSocket.OPEN) {
-                // 检查是否已配置API Key
                 if (!config.apiKey) {
                     addMessage("请先配置API Key", "system");
                     return;
@@ -213,14 +263,12 @@
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
 
-        // 支持Enter键发送消息
         document.getElementById('messageInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 sendMessage();
             }
         });
 
-        // 初始连接
         connect();
     </script>
 </body>
