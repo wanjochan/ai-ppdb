@@ -16,15 +16,16 @@ if not "%PROXY%"=="" (
 
 :: Set paths
 set "SCRIPT_DIR=%~dp0"
-pushd "%SCRIPT_DIR%\.."
+cd /d "%SCRIPT_DIR%\..\..\"
 set "ROOT_DIR=%CD%"
-set "BUILD_DIR=%ROOT_DIR%\build"
-set "INCLUDE_DIR=%ROOT_DIR%\include"
-set "TEST_DIR=%ROOT_DIR%\test"
+set "PPDB_DIR=%ROOT_DIR%\ppdb"
+set "BUILD_DIR=%PPDB_DIR%\build"
+set "INCLUDE_DIR=%PPDB_DIR%\include"
+set "TEST_DIR=%PPDB_DIR%\test"
 
 rem Set tool paths (using absolute paths)
-set "COSMO=%ROOT_DIR%\..\repos\cosmopolitan"
-set "CROSS9=%ROOT_DIR%\..\repos\cross9\bin"
+set "COSMO=%ROOT_DIR%\repos\cosmopolitan"
+set "CROSS9=%ROOT_DIR%\repos\cross9\bin"
 set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
 set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
 set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
@@ -96,7 +97,7 @@ if /i "%BUILD_MODE%"=="release" (
 )
 
 rem Set include paths
-set "INCLUDE_FLAGS=-nostdinc -I%ROOT_DIR% -I%ROOT_DIR%\include -I%ROOT_DIR%\src -I%ROOT_DIR%\src\kvstore -I%ROOT_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white"
+set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white"
 
 rem Set final CFLAGS
 set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
@@ -114,22 +115,22 @@ if "%TEST_TYPE%"=="test42" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test 42 ""
     if exist "%BUILD_DIR%\42_test.exe" "%BUILD_DIR%\42_test.exe"
 ) else if "%TEST_TYPE%"=="sync" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test sync "src\kvstore\sync.c src\common\logger.c src\common\error.c test\white\test_framework.c" "test\white\infra\test_sync.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test sync "%PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\infra\test_sync.c"
     if exist "%BUILD_DIR%\sync_test.exe" "%BUILD_DIR%\sync_test.exe"
 ) else if "%TEST_TYPE%"=="skiplist" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test skiplist "src\kvstore\skiplist.c src\kvstore\sync.c src\common\logger.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test skiplist "%PPDB_DIR%\src\kvstore\skiplist.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c"
     if exist "%BUILD_DIR%\skiplist_test.exe" "%BUILD_DIR%\skiplist_test.exe"
 ) else if "%TEST_TYPE%"=="memtable" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test memtable "src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\common\logger.c test\white\test_framework.c" "test\white\storage\test_memtable.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test memtable "%PPDB_DIR%\src\kvstore\memtable.c %PPDB_DIR%\src\kvstore\skiplist.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_memtable.c"
     if exist "%BUILD_DIR%\memtable_test.exe" "%BUILD_DIR%\memtable_test.exe"
 ) else if "%TEST_TYPE%"=="wal_core" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test wal_core "src\kvstore\wal.c src\kvstore\wal_write.c src\kvstore\sync.c src\common\logger.c src\common\error.c src\common\fs.c test\white\test_framework.c" "test\white\storage\test_wal_core.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test wal_core "%PPDB_DIR%\src\kvstore\wal.c %PPDB_DIR%\src\kvstore\wal_write.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\src\common\fs.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_wal_core.c"
     if exist "%BUILD_DIR%\wal_core_test.exe" "%BUILD_DIR%\wal_core_test.exe"
 ) else if "%TEST_TYPE%"=="wal_func" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test wal_func "src\kvstore\wal.c src\kvstore\wal_write.c src\kvstore\wal_iterator.c src\kvstore\sync.c src\common\logger.c src\common\error.c src\common\fs.c test\white\test_framework.c" "test\white\storage\test_wal_func.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test wal_func "%PPDB_DIR%\src\kvstore\wal.c %PPDB_DIR%\src\kvstore\wal_write.c %PPDB_DIR%\src\kvstore\wal_iterator.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\src\common\fs.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_wal_func.c"
     if exist "%BUILD_DIR%\wal_func_test.exe" "%BUILD_DIR%\wal_func_test.exe"
 ) else if "%TEST_TYPE%"=="wal_advanced" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test wal_advanced "src\kvstore\wal.c src\kvstore\wal_write.c src\kvstore\wal_iterator.c src\kvstore\wal_maintenance.c src\kvstore\wal_recovery.c src\kvstore\sync.c src\common\logger.c src\common\error.c src\common\fs.c test\white\test_framework.c" "test\white\storage\test_wal_advanced.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test wal_advanced "%PPDB_DIR%\src\kvstore\wal.c %PPDB_DIR%\src\kvstore\wal_write.c %PPDB_DIR%\src\kvstore\wal_iterator.c %PPDB_DIR%\src\kvstore\wal_maintenance.c %PPDB_DIR%\src\kvstore\wal_recovery.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\src\common\fs.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_wal_advanced.c"
     if exist "%BUILD_DIR%\wal_advanced_test.exe" "%BUILD_DIR%\wal_advanced_test.exe"
 ) else if "%TEST_TYPE%"=="ppdb" (
     echo Building PPDB main program...
@@ -137,8 +138,8 @@ if "%TEST_TYPE%"=="test42" (
     rem Check paths
     echo Checking paths:
     set "WORKSPACE_ROOT=%ROOT_DIR%"
-    set "COSMO=%WORKSPACE_ROOT%\cosmopolitan"
-    set "CROSS9=%WORKSPACE_ROOT%\cross9\bin"
+    set "COSMO=%WORKSPACE_ROOT%\repos\cosmopolitan"
+    set "CROSS9=%WORKSPACE_ROOT%\repos\cross9\bin"
     set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
     set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
     set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
@@ -150,7 +151,7 @@ if "%TEST_TYPE%"=="test42" (
     echo OBJCOPY: %OBJCOPY%
 
     rem Set include paths
-    set "INCLUDE_PATHS=-nostdinc -I%ROOT_DIR%\include -I%ROOT_DIR%\src -I%ROOT_DIR% -I%ROOT_DIR%\src\kvstore -I%ROOT_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white"
+    set "INCLUDE_PATHS=-nostdinc -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR% -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white"
 
     rem Set compiler flags for ppdb
     set "PPDB_CFLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
@@ -162,7 +163,7 @@ if "%TEST_TYPE%"=="test42" (
     echo Compiling common modules...
     for %%F in (error fs logger) do (
         echo   Compiling src\common\%%F.c...
-        "%GCC%" %PPDB_CFLAGS% -c "%ROOT_DIR%\src\common\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        "%GCC%" %PPDB_CFLAGS% -c "%PPDB_DIR%\src\common\%%F.c" -o "%BUILD_DIR%\%%F.o"
         if errorlevel 1 exit /b 1
     )
 
@@ -170,13 +171,13 @@ if "%TEST_TYPE%"=="test42" (
     echo Compiling KVStore modules...
     for %%F in (kvstore memtable memtable_iterator metrics monitor sharded_memtable skiplist sync wal wal_write wal_iterator wal_maintenance wal_recovery kvstore_impl) do (
         echo   Compiling src\kvstore\%%F.c...
-        "%GCC%" %PPDB_CFLAGS% -c "%ROOT_DIR%\src\kvstore\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        "%GCC%" %PPDB_CFLAGS% -c "%PPDB_DIR%\src\kvstore\%%F.c" -o "%BUILD_DIR%\%%F.o"
         if errorlevel 1 exit /b 1
     )
 
     rem Compile main program
     echo Compiling main program...
-    "%GCC%" %PPDB_CFLAGS% -c "%ROOT_DIR%\src\main.c" -o "%BUILD_DIR%\main.o"
+    "%GCC%" %PPDB_CFLAGS% -c "%PPDB_DIR%\src\main.c" -o "%BUILD_DIR%\main.o"
     if errorlevel 1 exit /b 1
 
     rem Create static library
@@ -199,11 +200,11 @@ if "%TEST_TYPE%"=="test42" (
     if "%NEED_REBUILD%"=="1" (
         echo Building unit tests...
         "%GCC%" %CFLAGS% ^
-            src/kvstore/memtable.c ^
-            src/kvstore/skiplist.c ^
-            src/kvstore/sync.c ^
-            test/white/test_basic.c ^
-            test/white/test_framework.c ^
+            %PPDB_DIR%\src\kvstore\memtable.c ^
+            %PPDB_DIR%\src\kvstore\skiplist.c ^
+            %PPDB_DIR%\src\kvstore\sync.c ^
+            %PPDB_DIR%\test\white\test_basic.c ^
+            %PPDB_DIR%\test\white\test_framework.c ^
             %LDFLAGS% %LIBS% ^
             -o "%BUILD_DIR%\unit_test.exe"
         if errorlevel 1 (
@@ -217,13 +218,13 @@ if "%TEST_TYPE%"=="test42" (
     if "%NEED_REBUILD%"=="1" (
         echo Building all tests...
         "%GCC%" %CFLAGS% ^
-            src/kvstore/memtable.c ^
-            src/kvstore/skiplist.c ^
-            src/kvstore/sync.c ^
-            test/white/test_basic.c ^
-            test/white/test_sync.c ^
-            test/white/test_42.c ^
-            test/white/test_framework.c ^
+            %PPDB_DIR%\src\kvstore\memtable.c ^
+            %PPDB_DIR%\src\kvstore\skiplist.c ^
+            %PPDB_DIR%\src\kvstore\sync.c ^
+            %PPDB_DIR%\test\white\test_basic.c ^
+            %PPDB_DIR%\test\white\test_sync.c ^
+            %PPDB_DIR%\test\white\test_42.c ^
+            %PPDB_DIR%\test\white\test_framework.c ^
             %LDFLAGS% %LIBS% ^
             -o "%BUILD_DIR%\all_test.exe"
         if errorlevel 1 (
@@ -234,10 +235,10 @@ if "%TEST_TYPE%"=="test42" (
     echo Running all tests...
     "%BUILD_DIR%\all_test.exe"
 ) else if "%TEST_TYPE%"=="sharded" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test sharded_memtable "src\kvstore\sharded_memtable.c src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\common\logger.c test\white\test_framework.c" "test\white\storage\test_sharded_memtable.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test sharded_memtable "%PPDB_DIR%\src\kvstore\sharded_memtable.c %PPDB_DIR%\src\kvstore\memtable.c %PPDB_DIR%\src\kvstore\skiplist.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_sharded_memtable.c"
     if exist "%BUILD_DIR%\sharded_memtable_test.exe" "%BUILD_DIR%\sharded_memtable_test.exe"
 ) else if "%TEST_TYPE%"=="kvstore" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test kvstore "src\kvstore\kvstore.c src\kvstore\kvstore_impl.c src\kvstore\sharded_memtable.c src\kvstore\memtable.c src\kvstore\skiplist.c src\kvstore\sync.c src\kvstore\wal.c src\common\logger.c src\common\error.c src\common\fs.c test\white\test_framework.c" "test\white\storage\test_kvstore.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test kvstore "%PPDB_DIR%\src\kvstore\kvstore.c %PPDB_DIR%\src\kvstore\kvstore_impl.c %PPDB_DIR%\src\kvstore\sharded_memtable.c %PPDB_DIR%\src\kvstore\memtable.c %PPDB_DIR%\src\kvstore\skiplist.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\kvstore\wal.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\src\common\fs.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_kvstore.c"
     if exist "%BUILD_DIR%\kvstore_test.exe" "%BUILD_DIR%\kvstore_test.exe"
 ) else (
     echo Error: Unknown module '%TEST_TYPE%'
