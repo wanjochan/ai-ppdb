@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# Set proxy if provided
+PROXY=""
+if [ ! -z "$HTTP_PROXY" ]; then
+    PROXY="$HTTP_PROXY"
+elif [ ! -z "$HTTPS_PROXY" ]; then
+    PROXY="$HTTPS_PROXY"
+fi
+
+if [ ! -z "$PROXY" ]; then
+    echo "Using proxy: $PROXY"
+fi
+
 # Set paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
@@ -187,23 +199,35 @@ fi
 echo
 echo "===== Linking ====="
 echo
-TEST_EXE="$BUILD_DIR/${TEST_NAME}_test.exe"
+
+# Set output extension based on OS
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    EXT="osx"
+elif [[ "$OSTYPE" == "linux"* ]]; then
+    EXT="lnx"
+else
+    EXT="exe"
+fi
+
+TEST_EXE="$BUILD_DIR/${TEST_NAME}_test.$EXT"
+DBG_EXE="$BUILD_DIR/${TEST_NAME}_test.dbg"
+
 OBJ_FILES=""
 for src in $EXTRA_SOURCES; do
     OBJ_FILES="$OBJ_FILES $BUILD_DIR/$(basename ${src%.*}).o"
 done
 OBJ_FILES="$OBJ_FILES $TEST_OBJ"
 
-echo "Linking $TEST_EXE..."
-"$CC" $LDFLAGS -o "$TEST_EXE" $OBJ_FILES $LIBS
+echo "Linking $DBG_EXE..."
+"$CC" $LDFLAGS -o "$DBG_EXE" $OBJ_FILES $LIBS
 if [ $? -ne 0 ]; then
     echo "Error: Failed to link test executable"
     exit 1
 fi
 
 echo "Converting to APE format..."
-echo "Command: $OBJCOPY -S -O binary $BUILD_DIR/${TEST_NAME}_test.dbg $BUILD_DIR/${TEST_NAME}_test.exe"
-"$OBJCOPY" -S -O binary "$BUILD_DIR/${TEST_NAME}_test.dbg" "$BUILD_DIR/${TEST_NAME}_test.exe"
+echo "Command: $OBJCOPY -S -O binary $DBG_EXE $TEST_EXE"
+"$OBJCOPY" -S -O binary "$DBG_EXE" "$TEST_EXE"
 if [ $? -ne 0 ]; then
     echo "Error: objcopy failed"
     exit 1

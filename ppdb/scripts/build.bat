@@ -1,8 +1,19 @@
 @echo off
-chcp 65001 > nul
 setlocal EnableDelayedExpansion
 
-rem Set paths
+:: Set proxy if provided
+set "PROXY="
+if not "%HTTP_PROXY%"=="" (
+    set "PROXY=%HTTP_PROXY%"
+) else if not "%HTTPS_PROXY%"=="" (
+    set "PROXY=%HTTPS_PROXY%"
+)
+
+if not "%PROXY%"=="" (
+    echo Using proxy: %PROXY%
+)
+
+:: Set paths
 set "SCRIPT_DIR=%~dp0"
 pushd "%SCRIPT_DIR%\.."
 set "ROOT_DIR=%CD%"

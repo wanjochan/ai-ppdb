@@ -1,8 +1,21 @@
 @echo off
-chcp 65001 > nul
 setlocal EnableDelayedExpansion
 
-rem 设置路径
+:: Set proxy if provided
+set "PROXY="
+if not "%HTTP_PROXY%"=="" (
+    set "PROXY=%HTTP_PROXY%"
+) else if not "%HTTPS_PROXY%"=="" (
+    set "PROXY=%HTTPS_PROXY%"
+) else if not "%~1"=="" (
+    set "PROXY=%~1"
+)
+
+if not "%PROXY%"=="" (
+    echo Using proxy: %PROXY%
+)
+
+:: Set paths
 set "SCRIPT_DIR=%~dp0"
 cd /d "%SCRIPT_DIR%\.."
 set "ROOT_DIR=%CD%"
@@ -23,7 +36,11 @@ echo 下载工具链...
 rem 下载并安装 cosmocc
 if not exist "tools\cosmocc\bin" (
     echo 下载 cosmocc...
-    powershell -Command "Invoke-WebRequest -Uri 'https://cosmo.zip/pub/cosmocc/cosmocc.zip' -OutFile 'cosmocc.zip'"
+    if not "%PROXY%"=="" (
+        curl -x "%PROXY%" -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+    ) else (
+        curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+    )
     echo 解压 cosmocc...
     powershell -Command "Expand-Archive -Path 'cosmocc.zip' -DestinationPath 'tools\cosmocc' -Force"
     echo 复制运行时文件...
@@ -53,7 +70,11 @@ cd repos
 
 if not exist "leveldb" (
     echo 克隆 leveldb...
-    git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+    if not "%PROXY%"=="" (
+        git -c http.proxy="%PROXY%" clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+    ) else (
+        git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+    )
 ) else (
     echo leveldb 已存在，跳过
 )

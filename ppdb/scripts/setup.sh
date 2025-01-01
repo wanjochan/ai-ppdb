@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Set proxy if provided
+PROXY=""
+if [ ! -z "$HTTP_PROXY" ]; then
+    PROXY="$HTTP_PROXY"
+elif [ ! -z "$HTTPS_PROXY" ]; then
+    PROXY="$HTTPS_PROXY"
+elif [ ! -z "$1" ]; then
+    PROXY="$1"
+fi
+
+if [ ! -z "$PROXY" ]; then
+    echo "Using proxy: $PROXY"
+fi
+
 # Set paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
@@ -51,7 +65,11 @@ echo "Downloading toolchains..."
 
 if [ ! -d "tools/cosmocc/bin" ]; then
     echo "Downloading cosmocc..."
-    curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+    if [ ! -z "$PROXY" ]; then
+        curl -x "$PROXY" -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+    else
+        curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+    fi
     echo "Extracting cosmocc..."
     unzip -q cosmocc.zip -d tools/cosmocc
     echo "Copying runtime files..."
@@ -70,7 +88,11 @@ cd repos
 
 if [ ! -d "leveldb" ]; then
     echo "Cloning leveldb..."
-    git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+    if [ ! -z "$PROXY" ]; then
+        git -c http.proxy="$PROXY" clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+    else
+        git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+    fi
 else
     echo "leveldb already exists, skipping"
 fi
@@ -95,19 +117,33 @@ if [ ! -f "repos/cosmopolitan/cosmopolitan.h" ]; then
     exit 1
 fi
 
-# Verify compiler
-echo "int main() { return 0; }" > test.c
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    clang test.c -o test.com
-else
-    gcc test.c -o test.com
-fi
-if [ $? -ne 0 ]; then
-    echo "Error: compilation test failed"
-    rm -f test.c
+# Run test42 as verification
+echo "Running basic test..."
+if ! scripts/build.sh test42; then
+    echo "Error: basic test failed"
     exit 1
 fi
-rm -f test.c test.com
+
+# Optional: APE Loader installation for Linux
+if [[ "$OSTYPE" == "linux"* ]]; then
+    echo "Do you want to install APE Loader? (y/n)"
+    read answer
+    if [ "$answer" = "y" ]; then
+        sudo wget -O /usr/bin/ape https://cosmo.zip/pub/cosmos/bin/ape-$(uname -m).elf
+        sudo chmod +x /usr/bin/ape
+        sudo sh -c "echo ':APE:M::MZqFpD::/usr/bin/ape:' >/proc/sys/fs/binfmt_misc/register"
+        sudo sh -c "echo ':APE-jart:M::jartsr::/usr/bin/ape:' >/proc/sys/fs/binfmt_misc/register"
+    fi
+    
+    # WSL configuration
+    if grep -q Microsoft /proc/version; then
+        echo "WSL detected. Do you want to configure WSL for APE? (y/n)"
+        read answer
+        if [ "$answer" = "y" ]; then
+            sudo sh -c "echo -1 >/proc/sys/fs/binfmt_misc/WSLInterop"
+        fi
+    fi
+fi
 
 echo
 echo "=== Environment setup complete ==="
