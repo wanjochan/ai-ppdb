@@ -36,6 +36,8 @@ echo 下载工具链...
 
 rem 下载并安装 cross9
 if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
+    echo cross9 不存在或不完整，开始下载...
+    if exist "repos\cross9" rd /s /q "repos\cross9"
     if not exist "cross9.zip" (
         echo 下载 cross9...
         if not "%PROXY%"=="" (
@@ -48,9 +50,8 @@ if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
     )
     echo 解压 cross9...
     powershell -Command "Expand-Archive -Path 'cross9.zip' -DestinationPath 'repos\cross9' -Force"
-    del /F /Q cross9.zip
 ) else (
-    echo cross9 已存在，跳过
+    echo cross9 已存在且完整，跳过
 )
 
 rem 克隆参考代码
@@ -74,6 +75,11 @@ cd ..
 rem 复制运行时文件到构建目录
 echo.
 echo 准备构建目录...
+if not exist "repos\cross9\x86_64-pc-linux-gnu\lib\ape.lds" (
+    echo 错误：cross9 运行时文件未找到
+    exit /b 1
+)
+
 copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\ape.lds" "ppdb\build\"
 copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\crt.o" "ppdb\build\"
 copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\ape.o" "ppdb\build\"

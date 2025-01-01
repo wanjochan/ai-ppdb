@@ -18,6 +18,10 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/../.."
 ROOT_DIR="$(pwd)"
+PPDB_DIR="$ROOT_DIR/ppdb"
+BUILD_DIR="$PPDB_DIR/build"
+INCLUDE_DIR="$PPDB_DIR/include"
+TEST_DIR="$PPDB_DIR/test"
 
 echo "=== PPDB Environment Setup Script ==="
 echo
@@ -93,38 +97,22 @@ echo
 echo "Downloading toolchains..."
 
 if [ ! -d "repos/cosmocc/bin" ]; then
-    echo "Downloading cosmocc..."
-    MAX_RETRIES=3
-    RETRY_DELAY=5
-    DOWNLOAD_SUCCESS=0
-    
-    for ((i=1; i<=MAX_RETRIES; i++)); do
-        echo "Attempt $i of $MAX_RETRIES..."
-        
+    echo "cosmocc not found or incomplete, starting download..."
+    [ -d "repos/cosmocc" ] && rm -rf "repos/cosmocc"
+    if [ ! -f "cosmocc.zip" ]; then
+        echo "Downloading cosmocc..."
         if [ ! -z "$PROXY" ]; then
             curl -x "$PROXY" -L --retry 10 --retry-delay 30 --max-time 300 --speed-limit 100 --speed-time 10 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
         else
             curl -L --retry 10 --retry-delay 30 --max-time 300 --speed-limit 100 --speed-time 10 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
         fi
-        
-        if [ $? -eq 0 ]; then
-            DOWNLOAD_SUCCESS=1
-            break
-        else
-            echo "Download failed, retrying in $RETRY_DELAY seconds..."
-            sleep $RETRY_DELAY
-        fi
-    done
-    
-    if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
-        echo "Error: Failed to download cosmocc after $MAX_RETRIES attempts"
-        exit 1
+    else
+        echo "Using existing cosmocc.zip"
     fi
     
     echo "Extracting cosmocc..."
     if ! unzip -q cosmocc.zip -d repos/cosmocc; then
         echo "Error: Failed to extract cosmocc"
-        rm -f cosmocc.zip
         exit 1
     fi
     
@@ -132,9 +120,8 @@ if [ ! -d "repos/cosmocc/bin" ]; then
     cp -f repos/cosmocc/lib/cosmo/cosmopolitan.* repos/cosmopolitan/
     cp -f repos/cosmocc/lib/cosmo/ape.* repos/cosmopolitan/
     cp -f repos/cosmocc/lib/cosmo/crt.* repos/cosmopolitan/
-    rm -f cosmocc.zip
 else
-    echo "cosmocc already exists, skipping"
+    echo "cosmocc exists and is complete, skipping"
 fi
 
 # Clone reference code
