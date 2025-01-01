@@ -23,7 +23,13 @@ TEST_DIR="$ROOT_DIR/test"
 # Set tool paths based on OS
 COSMO="$ROOT_DIR/../repos/cosmopolitan"
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS toolchain
+    # macOS toolchain (try to find LLVM tools in standard locations)
+    for prefix in /usr/local/opt/llvm/bin /opt/homebrew/opt/llvm/bin; do
+        if [ -d "$prefix" ]; then
+            export PATH="$prefix:$PATH"
+            break
+        fi
+    done
     CC="clang"
     AR="llvm-ar"
     OBJCOPY="llvm-objcopy"
@@ -101,6 +107,10 @@ INCLUDE_FLAGS="-nostdinc -I$ROOT_DIR -I$ROOT_DIR/include -I$ROOT_DIR/src -I$ROOT
 # Set final CFLAGS
 CFLAGS="$BUILD_FLAGS $INCLUDE_FLAGS -include $COSMO/cosmopolitan.h"
 
+# Set linker flags
+LDFLAGS="-static -nostdlib -Wl,-T,$BUILD_DIR/ape.lds -Wl,--gc-sections -fuse-ld=bfd -Wl,-z,max-page-size=0x1000 -no-pie"
+LIBS="$BUILD_DIR/crt.o $BUILD_DIR/ape.o $BUILD_DIR/cosmopolitan.a"
+
 # Function to check if rebuild is needed
 check_need_rebuild() {
     local src="$1"
@@ -119,35 +129,35 @@ case "$TEST_TYPE" in
         ;;
     "sync")
         TEST_NAME="sync"
-        EXTRA_SOURCES="src/base/sync.c"
+        EXTRA_SOURCES="src/kvstore/sync.c"
         ;;
     "skiplist")
         TEST_NAME="skiplist"
-        EXTRA_SOURCES="src/base/sync.c src/kvstore/internal/skiplist.c"
+        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/skiplist.c"
         ;;
     "memtable")
         TEST_NAME="memtable"
-        EXTRA_SOURCES="src/base/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c"
+        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c"
         ;;
     "sharded")
         TEST_NAME="sharded"
-        EXTRA_SOURCES="src/base/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c src/kvstore/internal/sharded_memtable.c"
+        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c src/kvstore/internal/sharded_memtable.c"
         ;;
     "wal_core")
         TEST_NAME="wal_core"
-        EXTRA_SOURCES="src/base/sync.c src/kvstore/internal/wal.c"
+        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/wal.c"
         ;;
     "wal_func")
         TEST_NAME="wal_func"
-        EXTRA_SOURCES="src/base/sync.c src/kvstore/internal/wal.c"
+        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/wal.c"
         ;;
     "wal_advanced")
         TEST_NAME="wal_advanced"
-        EXTRA_SOURCES="src/base/sync.c src/kvstore/internal/wal.c"
+        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/wal.c"
         ;;
     "kvstore")
         TEST_NAME="kvstore"
-        EXTRA_SOURCES="src/base/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c src/kvstore/internal/sharded_memtable.c src/kvstore/internal/wal.c src/kvstore/kvstore.c"
+        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c src/kvstore/internal/sharded_memtable.c src/kvstore/internal/wal.c src/kvstore/kvstore.c"
         ;;
     *)
         echo "Error: Unknown test type: $TEST_TYPE"
@@ -232,5 +242,8 @@ if [ $? -ne 0 ]; then
     echo "Error: objcopy failed"
     exit 1
 fi
+
+# Set executable permission
+chmod +x "$TEST_EXE"
 
 exit 0 

@@ -42,10 +42,10 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     done
 elif [[ "$OSTYPE" == "linux"* ]]; then
     # Check Linux toolchain
-    for cmd in gcc ar objcopy; do
+    for cmd in gcc ar objcopy wget; do
         if ! command -v $cmd &> /dev/null; then
             echo "Error: Required command '$cmd' not found"
-            echo "Please install build-essential package"
+            echo "Please install build-essential and wget packages"
             exit 1
         fi
     done
@@ -66,12 +66,22 @@ echo "Downloading toolchains..."
 if [ ! -d "tools/cosmocc/bin" ]; then
     echo "Downloading cosmocc..."
     if [ ! -z "$PROXY" ]; then
-        curl -x "$PROXY" -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+        if ! curl -x "$PROXY" -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip; then
+            echo "Error: Failed to download cosmocc"
+            exit 1
+        fi
     else
-        curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+        if ! curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip; then
+            echo "Error: Failed to download cosmocc"
+            exit 1
+        fi
     fi
     echo "Extracting cosmocc..."
-    unzip -q cosmocc.zip -d tools/cosmocc
+    if ! unzip -q cosmocc.zip -d tools/cosmocc; then
+        echo "Error: Failed to extract cosmocc"
+        rm -f cosmocc.zip
+        exit 1
+    fi
     echo "Copying runtime files..."
     cp -f tools/cosmocc/lib/cosmo/cosmopolitan.* repos/cosmopolitan/
     cp -f tools/cosmocc/lib/cosmo/ape.* repos/cosmopolitan/
@@ -89,9 +99,15 @@ cd repos
 if [ ! -d "leveldb" ]; then
     echo "Cloning leveldb..."
     if [ ! -z "$PROXY" ]; then
-        git -c http.proxy="$PROXY" clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+        if ! git -c http.proxy="$PROXY" clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git; then
+            echo "Error: Failed to clone leveldb"
+            exit 1
+        fi
     else
-        git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+        if ! git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git; then
+            echo "Error: Failed to clone leveldb"
+            exit 1
+        fi
     fi
 else
     echo "leveldb already exists, skipping"
@@ -129,14 +145,17 @@ if [[ "$OSTYPE" == "linux"* ]]; then
     echo "Do you want to install APE Loader? (y/n)"
     read answer
     if [ "$answer" = "y" ]; then
-        sudo wget -O /usr/bin/ape https://cosmo.zip/pub/cosmos/bin/ape-$(uname -m).elf
+        if ! wget -O /usr/bin/ape https://cosmo.zip/pub/cosmos/bin/ape-$(uname -m).elf; then
+            echo "Error: Failed to download APE Loader"
+            exit 1
+        fi
         sudo chmod +x /usr/bin/ape
         sudo sh -c "echo ':APE:M::MZqFpD::/usr/bin/ape:' >/proc/sys/fs/binfmt_misc/register"
         sudo sh -c "echo ':APE-jart:M::jartsr::/usr/bin/ape:' >/proc/sys/fs/binfmt_misc/register"
     fi
     
-    # WSL configuration
-    if grep -q Microsoft /proc/version; then
+    # WSL configuration (using more robust detection)
+    if grep -q "microsoft" /proc/version 2>/dev/null || grep -q "Microsoft" /proc/version 2>/dev/null; then
         echo "WSL detected. Do you want to configure WSL for APE? (y/n)"
         read answer
         if [ "$answer" = "y" ]; then
