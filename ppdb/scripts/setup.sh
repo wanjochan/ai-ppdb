@@ -94,23 +94,40 @@ echo "Downloading toolchains..."
 
 if [ ! -d "tools/cosmocc/bin" ]; then
     echo "Downloading cosmocc..."
-    if [ ! -z "$PROXY" ]; then
-        if ! curl -x "$PROXY" -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip; then
-            echo "Error: Failed to download cosmocc"
-            exit 1
+    MAX_RETRIES=3
+    RETRY_DELAY=5
+    DOWNLOAD_SUCCESS=0
+    
+    for ((i=1; i<=MAX_RETRIES; i++)); do
+        echo "Attempt $i of $MAX_RETRIES..."
+        
+        if [ ! -z "$PROXY" ]; then
+            curl -x "$PROXY" -L --retry 10 --retry-delay 30 --max-time 600 --speed-limit 100 --speed-time 30 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+        else
+            curl -L --retry 10 --retry-delay 30 --max-time 600 --speed-limit 100 --speed-time 30 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
         fi
-    else
-        if ! curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip; then
-            echo "Error: Failed to download cosmocc"
-            exit 1
+        
+        if [ $? -eq 0 ]; then
+            DOWNLOAD_SUCCESS=1
+            break
+        else
+            echo "Download failed, retrying in $RETRY_DELAY seconds..."
+            sleep $RETRY_DELAY
         fi
+    done
+    
+    if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
+        echo "Error: Failed to download cosmocc after $MAX_RETRIES attempts"
+        exit 1
     fi
+    
     echo "Extracting cosmocc..."
     if ! unzip -q cosmocc.zip -d tools/cosmocc; then
         echo "Error: Failed to extract cosmocc"
         rm -f cosmocc.zip
         exit 1
     fi
+    
     echo "Copying runtime files..."
     cp -f tools/cosmocc/lib/cosmo/cosmopolitan.* repos/cosmopolitan/
     cp -f tools/cosmocc/lib/cosmo/ape.* repos/cosmopolitan/
