@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual Environment
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets and Configs
+.env
+.secrets/
+*.key
+*.pem
+
+# Logs
+*.log
+logs/
+
+# Temp files
+*.tmp
+*.temp
+.DS_Store

@@ -3,21 +3,71 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agentic Python</title>
+    <title>我的智能体</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 0;
-            padding: 20px;
+            padding: 0;
             background-color: #f5f5f5;
         }
         .container {
             max-width: 800px;
             margin: 0 auto;
             background-color: white;
-            padding: 20px;
+            padding: 10px;
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .left-panel {
+            width: 38%;
+            min-width: 640px;
+            background-color: white;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #ddd;
+            padding: 0;
+        }
+        .config-panel {
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            background-color: #fff;
+        }
+        .config-item {
+            margin-bottom: 8px;
+        }
+        .config-item label {
+            display: block;
+            margin-bottom: 3px;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        .config-item input {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .save-locally {
+            margin-top: 8px;
+            font-size: 0.9em;
+        }
+        h3 {
+            margin: 0 0 10px 0;
+            font-size: 1.1em;
+        }
+        .input-area {
+            padding: 10px;
+            border-top: 1px solid #ddd;
+            display: flex;
+            gap: 8px;
+        }
+        .message {
+            margin-bottom: 8px;
+            padding: 6px 8px;
+            border-radius: 4px;
+            max-width: 85%;
+            font-size: 0.95em;
         }
         .chat-window {
             height: 400px;
@@ -25,32 +75,6 @@
             padding: 10px;
             margin-bottom: 20px;
             overflow-y: auto;
-            border-radius: 4px;
-        }
-        .input-area {
-            display: flex;
-            gap: 10px;
-        }
-        input {
-            flex-grow: 1;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        button {
-            padding: 8px 16px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-        .message {
-            margin-bottom: 10px;
-            padding: 8px;
             border-radius: 4px;
         }
         .user-message {
@@ -63,22 +87,80 @@
 </head>
 <body>
     <div class="container">
-        <h1>Agentic Python</h1>
-        <div class="chat-window" id="chatWindow"></div>
-        <div class="input-area">
-            <input type="text" id="messageInput" placeholder="Type your message...">
-            <button onclick="sendMessage()">Send</button>
+        <div class="left-panel">
+            <!-- 配置面板 -->
+            <div class="config-panel" id="configPanel">
+                <h3>API配置</h3>
+                <div class="config-item">
+                    <label for="apiKey">OpenAI API Key</label>
+                    <input type="password" id="apiKey" placeholder="sk-...">
+                </div>
+                <div class="config-item">
+                    <label for="apiModel">模型</label>
+                    <input type="text" id="apiModel" value="gpt-3.5-turbo">
+                </div>
+                <div class="save-locally">
+                    <input type="checkbox" id="saveLocally">
+                    <label for="saveLocally">在本地保存配置（仅保存在您的机器上）</label>
+                </div>
+                <button onclick="saveConfig()">保存配置</button>
+            </div>
+
+            <div class="chat-window" id="chatWindow"></div>
+            <div class="input-area">
+                <input type="text" id="messageInput" placeholder="输入消息...">
+                <button onclick="sendMessage()">发送</button>
+            </div>
         </div>
     </div>
 
     <script>
         let ws;
+        let config = {
+            apiKey: '',
+            apiModel: 'gpt-3.5-turbo',
+            saveLocally: false
+        };
+        
+        // 初始化时加载配置
+        function loadConfig() {
+            const savedConfig = sessionStorage.getItem('agenticConfig');
+            if (savedConfig) {
+                config = JSON.parse(savedConfig);
+                document.getElementById('apiKey').value = config.apiKey;
+                document.getElementById('apiModel').value = config.apiModel;
+                document.getElementById('saveLocally').checked = config.saveLocally;
+            }
+        }
+
+        // 保存配置
+        function saveConfig() {
+            config.apiKey = document.getElementById('apiKey').value;
+            config.apiModel = document.getElementById('apiModel').value;
+            config.saveLocally = document.getElementById('saveLocally').checked;
+
+            // 总是保存到会话存储
+            sessionStorage.setItem('agenticConfig', JSON.stringify(config));
+
+            // 如果选择了本地保存，发送到服务器
+            if (config.saveLocally && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'config',
+                    action: 'save',
+                    data: config
+                }));
+            }
+
+            addMessage("配置已保存", "system");
+        }
         
         function connect() {
             ws = new WebSocket(`ws://${window.location.host}/ws`);
             
             ws.onopen = function() {
                 addMessage("系统已连接", "system");
+                // 连接后加载配置
+                loadConfig();
             };
             
             ws.onmessage = function(event) {
@@ -103,9 +185,18 @@
             const message = input.value.trim();
             
             if (message && ws.readyState === WebSocket.OPEN) {
+                // 检查是否已配置API Key
+                if (!config.apiKey) {
+                    addMessage("请先配置API Key", "system");
+                    return;
+                }
+
                 const data = {
-                    type: "message",
-                    content: message
+                    type: "chat",
+                    content: message,
+                    config: {
+                        model: config.apiModel
+                    }
                 };
                 ws.send(JSON.stringify(data));
                 addMessage(message, "user");
