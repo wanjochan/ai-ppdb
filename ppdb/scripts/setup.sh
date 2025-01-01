@@ -99,19 +99,19 @@ echo "Downloading toolchains..."
 if [ ! -d "repos/cosmocc/bin" ]; then
     echo "cosmocc not found or incomplete, starting download..."
     [ -d "repos/cosmocc" ] && rm -rf "repos/cosmocc"
-    if [ ! -f "cosmocc.zip" ]; then
+    if [ ! -f "repos/cosmocc.zip" ]; then
         echo "Downloading cosmocc..."
         if [ ! -z "$PROXY" ]; then
-            curl -x "$PROXY" -L --retry 10 --retry-delay 30 --max-time 300 --speed-limit 100 --speed-time 10 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+            curl -x "$PROXY" -L --retry 10 --retry-delay 30 --max-time 300 --speed-limit 100 --speed-time 10 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o "repos/cosmocc.zip"
         else
-            curl -L --retry 10 --retry-delay 30 --max-time 300 --speed-limit 100 --speed-time 10 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+            curl -L --retry 10 --retry-delay 30 --max-time 300 --speed-limit 100 --speed-time 10 --retry-max-time 3600 --continue-at - --progress-bar "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o "repos/cosmocc.zip"
         fi
     else
         echo "Using existing cosmocc.zip"
     fi
     
     echo "Extracting cosmocc..."
-    if ! unzip -q cosmocc.zip -d repos/cosmocc; then
+    if ! unzip -q "repos/cosmocc.zip" -d repos/cosmocc; then
         echo "Error: Failed to extract cosmocc"
         exit 1
     fi

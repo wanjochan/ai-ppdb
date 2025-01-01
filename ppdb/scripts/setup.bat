@@ -38,18 +38,18 @@ rem 下载并安装 cross9
 if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
     echo cross9 不存在或不完整，开始下载...
     if exist "repos\cross9" rd /s /q "repos\cross9"
-    if not exist "cross9.zip" (
+    if not exist "repos\cross9.zip" (
         echo 下载 cross9...
         if not "%PROXY%"=="" (
-            curl --retry 10 --retry-delay 5 --retry-max-time 0 --retry-all-errors --connect-timeout 30 --max-time 600 -C - -x "%PROXY%" -L "https://justine.lol/linux-compiler-on-windows/cross9.zip" -o cross9.zip
+            curl --retry 10 --retry-delay 5 --retry-max-time 0 --retry-all-errors --connect-timeout 30 --max-time 600 -C - -x "%PROXY%" -L "https://justine.lol/linux-compiler-on-windows/cross9.zip" -o "repos\cross9.zip"
         ) else (
-            curl --retry 10 --retry-delay 5 --retry-max-time 0 --retry-all-errors --connect-timeout 30 --max-time 600 -C - -L "https://justine.lol/linux-compiler-on-windows/cross9.zip" -o cross9.zip
+            curl --retry 10 --retry-delay 5 --retry-max-time 0 --retry-all-errors --connect-timeout 30 --max-time 600 -C - -L "https://justine.lol/linux-compiler-on-windows/cross9.zip" -o "repos\cross9.zip"
         )
     ) else (
         echo 使用已下载的 cross9.zip
     )
     echo 解压 cross9...
-    powershell -Command "Expand-Archive -Path 'cross9.zip' -DestinationPath 'repos\cross9' -Force"
+    powershell -Command "Expand-Archive -Path 'repos\cross9.zip' -DestinationPath 'repos\cross9' -Force"
 ) else (
     echo cross9 已存在且完整，跳过
 )
