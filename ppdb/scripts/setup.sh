@@ -1,112 +1,117 @@
 #!/bin/bash
 
-# 设置路径
+# Set paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 ROOT_DIR="$(pwd)"
 
-echo "=== PPDB 环境初始化脚本 ==="
+echo "=== PPDB Environment Setup Script ==="
 echo
 
-# 创建必要的目录
-echo "创建目录结构..."
-mkdir -p repos
-mkdir -p tools/{cosmocc,cross9,cosmopolitan}
+# Check required commands
+for cmd in curl unzip git; do
+    if ! command -v $cmd &> /dev/null; then
+        echo "Error: Required command '$cmd' not found"
+        exit 1
+    fi
+done
+
+# Detect OS and check compiler toolchain
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # Check macOS toolchain
+    for cmd in clang llvm-ar llvm-objcopy; do
+        if ! command -v $cmd &> /dev/null; then
+            echo "Error: Required command '$cmd' not found"
+            echo "Please install llvm tools: brew install llvm"
+            exit 1
+        fi
+    done
+elif [[ "$OSTYPE" == "linux"* ]]; then
+    # Check Linux toolchain
+    for cmd in gcc ar objcopy; do
+        if ! command -v $cmd &> /dev/null; then
+            echo "Error: Required command '$cmd' not found"
+            echo "Please install build-essential package"
+            exit 1
+        fi
+    done
+else
+    echo "Error: Unsupported operating system: $OSTYPE"
+    exit 1
+fi
+
+# Create necessary directories
+mkdir -p repos/cosmopolitan
+mkdir -p tools
 mkdir -p build
 
-# 下载并安装工具链
+# Download and install cosmocc (for runtime files)
 echo
-echo "下载工具链..."
+echo "Downloading toolchains..."
 
-# 下载并安装 cosmocc
 if [ ! -d "tools/cosmocc/bin" ]; then
-    echo "下载 cosmocc..."
-    curl -L https://cosmo.zip/pub/cosmocc/cosmocc.zip -o cosmocc.zip
-    echo "解压 cosmocc..."
+    echo "Downloading cosmocc..."
+    curl -L "https://cosmo.zip/pub/cosmocc/cosmocc.zip" -o cosmocc.zip
+    echo "Extracting cosmocc..."
     unzip -q cosmocc.zip -d tools/cosmocc
-    echo "复制运行时文件..."
-    cp tools/cosmocc/lib/cosmo/cosmopolitan.* tools/cosmopolitan/
-    cp tools/cosmocc/lib/cosmo/ape.* tools/cosmopolitan/
-    cp tools/cosmocc/lib/cosmo/crt.* tools/cosmopolitan/
+    echo "Copying runtime files..."
+    cp -f tools/cosmocc/lib/cosmo/cosmopolitan.* repos/cosmopolitan/
+    cp -f tools/cosmocc/lib/cosmo/ape.* repos/cosmopolitan/
+    cp -f tools/cosmocc/lib/cosmo/crt.* repos/cosmopolitan/
     rm -f cosmocc.zip
 else
-    echo "cosmocc 已存在，跳过"
+    echo "cosmocc already exists, skipping"
 fi
 
-# 下载并安装 cross9
-if [ ! -d "tools/cross9/bin" ]; then
-    echo "下载 cross9..."
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        curl -L https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.zip -o cross9.zip
-        unzip -q cross9.zip -d tools/cross9
-        rm -f cross9.zip
-    else
-        # Linux
-        curl -L https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.tar.gz -o cross9.tar.gz
-        tar xf cross9.tar.gz -C tools/cross9
-        rm -f cross9.tar.gz
-    fi
-else
-    echo "cross9 已存在，跳过"
-fi
-
-# 克隆参考代码
+# Clone reference code
 echo
-echo "克隆参考代码..."
+echo "Cloning reference code..."
 cd repos
 
 if [ ! -d "leveldb" ]; then
-    echo "克隆 leveldb..."
+    echo "Cloning leveldb..."
     git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
 else
-    echo "leveldb 已存在，跳过"
+    echo "leveldb already exists, skipping"
 fi
 
 cd ..
 
-# 复制运行时文件到构建目录
+# Copy runtime files to build directory
 echo
-echo "准备构建目录..."
-cp -f tools/cosmopolitan/ape.lds build/
-cp -f tools/cosmopolitan/crt.o build/
-cp -f tools/cosmopolitan/ape.o build/
-cp -f tools/cosmopolitan/cosmopolitan.a build/
+echo "Preparing build directory..."
+cp -f repos/cosmopolitan/ape.lds build/
+cp -f repos/cosmopolitan/crt.o build/
+cp -f repos/cosmopolitan/ape.o build/
+cp -f repos/cosmopolitan/cosmopolitan.a build/
 
-# 验证环境
+# Verify environment
 echo
-echo "验证环境..."
+echo "Verifying environment..."
 
-# 检查工具链
-if [ ! -x "tools/cosmocc/bin/cosmocc" ]; then
-    echo "错误：cosmocc 未正确安装"
+# Check runtime files
+if [ ! -f "repos/cosmopolitan/cosmopolitan.h" ]; then
+    echo "Error: cosmopolitan runtime files not properly installed"
     exit 1
 fi
 
-if [ ! -x "tools/cross9/bin/x86_64-pc-linux-gnu-gcc" ]; then
-    echo "错误：cross9 未正确安装"
-    exit 1
-fi
-
-# 检查运行时文件
-if [ ! -f "tools/cosmopolitan/cosmopolitan.h" ]; then
-    echo "错误：cosmopolitan 运行时文件未正确安装"
-    exit 1
-fi
-
-# 验证编译器
+# Verify compiler
 echo "int main() { return 0; }" > test.c
-tools/cosmocc/bin/cosmocc test.c -o test.com
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    clang test.c -o test.com
+else
+    gcc test.c -o test.com
+fi
 if [ $? -ne 0 ]; then
-    echo "错误：编译测试失败"
+    echo "Error: compilation test failed"
     rm -f test.c
     exit 1
 fi
 rm -f test.c test.com
 
 echo
-echo "=== 环境初始化完成 ==="
-echo "你现在可以开始构建 PPDB 了"
-echo "运行 'scripts/build.sh help' 查看构建选项"
+echo "=== Environment setup complete ==="
+echo "You can now start building PPDB"
+echo "Run 'scripts/build.sh help' to see build options"
 
 exit 0 

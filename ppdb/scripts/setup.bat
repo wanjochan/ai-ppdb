@@ -11,12 +11,9 @@ echo === PPDB 环境初始化脚本 ===
 echo.
 
 rem 创建必要的目录
-echo 创建目录结构...
 if not exist "repos" mkdir repos
+if not exist "repos\cosmopolitan" mkdir repos\cosmopolitan
 if not exist "tools" mkdir tools
-if not exist "tools\cosmocc" mkdir tools\cosmocc
-if not exist "tools\cross9" mkdir tools\cross9
-if not exist "tools\cosmopolitan" mkdir tools\cosmopolitan
 if not exist "build" mkdir build
 
 rem 下载并安装工具链
@@ -30,20 +27,20 @@ if not exist "tools\cosmocc\bin" (
     echo 解压 cosmocc...
     powershell -Command "Expand-Archive -Path 'cosmocc.zip' -DestinationPath 'tools\cosmocc' -Force"
     echo 复制运行时文件...
-    copy /Y "tools\cosmocc\lib\cosmo\cosmopolitan.*" "tools\cosmopolitan\"
-    copy /Y "tools\cosmocc\lib\cosmo\ape.*" "tools\cosmopolitan\"
-    copy /Y "tools\cosmocc\lib\cosmo\crt.*" "tools\cosmopolitan\"
+    copy /Y "tools\cosmocc\lib\cosmo\cosmopolitan.*" "repos\cosmopolitan\"
+    copy /Y "tools\cosmocc\lib\cosmo\ape.*" "repos\cosmopolitan\"
+    copy /Y "tools\cosmocc\lib\cosmo\crt.*" "repos\cosmopolitan\"
     del /F /Q cosmocc.zip
 ) else (
     echo cosmocc 已存在，跳过
 )
 
 rem 下载并安装 cross9
-if not exist "tools\cross9\bin" (
+if not exist "repos\cross9\bin" (
     echo 下载 cross9...
     powershell -Command "Invoke-WebRequest -Uri 'https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.zip' -OutFile 'cross9.zip'"
     echo 解压 cross9...
-    powershell -Command "Expand-Archive -Path 'cross9.zip' -DestinationPath 'tools\cross9' -Force"
+    powershell -Command "Expand-Archive -Path 'cross9.zip' -DestinationPath 'repos\cross9' -Force"
     del /F /Q cross9.zip
 ) else (
     echo cross9 已存在，跳过
@@ -66,10 +63,10 @@ cd ..
 rem 复制运行时文件到构建目录
 echo.
 echo 准备构建目录...
-copy /Y "tools\cosmopolitan\ape.lds" "build\"
-copy /Y "tools\cosmopolitan\crt.o" "build\"
-copy /Y "tools\cosmopolitan\ape.o" "build\"
-copy /Y "tools\cosmopolitan\cosmopolitan.a" "build\"
+copy /Y "repos\cosmopolitan\ape.lds" "build\"
+copy /Y "repos\cosmopolitan\crt.o" "build\"
+copy /Y "repos\cosmopolitan\ape.o" "build\"
+copy /Y "repos\cosmopolitan\cosmopolitan.a" "build\"
 
 rem 验证环境
 echo.
@@ -81,13 +78,13 @@ if not exist "tools\cosmocc\bin\cosmocc.exe" (
     exit /b 1
 )
 
-if not exist "tools\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
+if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
     echo 错误：cross9 未正确安装
     exit /b 1
 )
 
 rem 检查运行时文件
-if not exist "tools\cosmopolitan\cosmopolitan.h" (
+if not exist "repos\cosmopolitan\cosmopolitan.h" (
     echo 错误：cosmopolitan 运行时文件未正确安装
     exit /b 1
 )

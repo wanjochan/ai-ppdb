@@ -4,16 +4,32 @@ setlocal EnableDelayedExpansion
 
 rem Set paths
 set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%\.."
+pushd "%SCRIPT_DIR%\.."
 set "ROOT_DIR=%CD%"
 set "BUILD_DIR=%ROOT_DIR%\build"
 set "INCLUDE_DIR=%ROOT_DIR%\include"
 set "TEST_DIR=%ROOT_DIR%\test"
-set "COSMO=%ROOT_DIR%\tools\cosmopolitan"
-set "CROSS9=%ROOT_DIR%\tools\cross9\bin"
+
+rem Set tool paths (using absolute paths)
+set "COSMO=%ROOT_DIR%\..\repos\cosmopolitan"
+set "CROSS9=%ROOT_DIR%\..\repos\cross9\bin"
 set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
 set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
 set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
+
+rem Verify tool paths
+if not exist "%GCC%" (
+    echo Error: GCC not found at %GCC%
+    exit /b 1
+)
+if not exist "%AR%" (
+    echo Error: AR not found at %AR%
+    exit /b 1
+)
+if not exist "%OBJCOPY%" (
+    echo Error: OBJCOPY not found at %OBJCOPY%
+    exit /b 1
+)
 
 rem Get test type and build mode
 set "TEST_TYPE=%1"
@@ -58,8 +74,12 @@ if "%TEST_TYPE%"=="help" (
 
 rem Set compilation flags based on build mode
 if /i "%BUILD_MODE%"=="release" (
+    set "COMMON_FLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
+    set "RELEASE_FLAGS=-DNDEBUG"
     set "BUILD_FLAGS=%COMMON_FLAGS% %RELEASE_FLAGS%"
 ) else (
+    set "COMMON_FLAGS=-g -O0 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
+    set "DEBUG_FLAGS=-DDEBUG"
     set "BUILD_FLAGS=%COMMON_FLAGS% %DEBUG_FLAGS%"
 )
 
@@ -275,7 +295,7 @@ set "TEST_OBJ=%BUILD_DIR%\test_%TEST_NAME%.o"
 if not "!TEST_FILE!"=="" (
     set "TEST_SRC=!TEST_FILE!"
 ) else (
-    set "TEST_SRC=test/white/test_%TEST_NAME%.c"
+    set "TEST_SRC=test\white\test_%TEST_NAME%.c"
 )
 call :check_need_rebuild "!TEST_SRC!" "!TEST_OBJ!"
 if !errorlevel! equ 1 (

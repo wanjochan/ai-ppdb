@@ -2,6 +2,14 @@
 
 ## 构建脚本 (scripts/)
 - `build.bat` - 构建脚本，复用主构建配置编译测试用例，参数ppdb则为编译主程序，其它则为编译测试用例
+- `build.sh` - Unix 平台构建脚本
+- `setup.bat` - Windows 平台环境初始化脚本，用于：
+  * 创建必要的目录结构
+  * 下载和安装工具链（cosmocc、cross9）
+  * 准备运行时文件
+  * 克隆参考代码
+  * 验证环境配置
+- `setup.sh` - Unix 平台环境初始化脚本，功能同 setup.bat
 
 ## 核心源代码 (src/)
 
