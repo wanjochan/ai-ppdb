@@ -1,8 +1,7 @@
 # PPDB 源码索引
 
 ## 构建脚本 (scripts/)
-- `build_ppdb.bat` - 主程序构建脚本，负责编译核心模块并生成可执行文件
-- `build_test.bat` - 测试程序构建脚本，复用主构建配置编译测试用例
+- `build.bat` - 构建脚本，复用主构建配置编译测试用例，参数ppdb则为编译主程序，其它则为编译测试用例
 
 ## 核心源代码 (src/)
 
@@ -23,6 +22,10 @@
 - `skiplist.c` - 无锁跳表实现，作为内存表的基础数据结构
 - `sync.c` - 同步原语实现，提供并发控制机制
 - `wal.c` - Write-Ahead Log 实现，保证数据持久性
+- `wal_write.c` - WAL 写入相关实现
+- `wal_iterator.c` - WAL 迭代器实现
+- `wal_maintenance.c` - WAL 维护相关实现
+- `wal_recovery.c` - WAL 恢复相关实现
 - `monitor.c` - 监控系统实现，收集性能指标
 - `metrics.c` - 性能指标统计实现
 
@@ -33,6 +36,7 @@
 - `ppdb_types.h` - 基础类型定义，包含压缩、运行模式等公共类型
 - `ppdb_kvstore.h` - KVStore 公共接口定义，提供所有 KV 存储操作
 - `ppdb_fs.h` - 文件系统操作接口，提供统一的文件操作抽象
+- `ppdb_wal.h` - WAL 公共接口定义，提供 WAL 相关操作
 
 ## 内部头文件 (src/kvstore/internal/)
 

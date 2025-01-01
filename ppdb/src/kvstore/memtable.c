@@ -6,7 +6,7 @@
 // 内部头文件
 #include "kvstore/internal/kvstore_types.h"
 #include "kvstore/internal/kvstore_memtable.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "ppdb/ppdb_logger.h"
 #include "kvstore/internal/kvstore_fs.h"
 #include "kvstore/internal/skiplist.h"
 #include "kvstore/internal/sync.h"

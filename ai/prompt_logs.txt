@@ -2,13 +2,19 @@ as warm-up, read *.md in docs/;
 特别注意：项目ai-ppdb用的是cosmopolitan跨平台底层!，构建工具已经在的，遇到不在时先停下来问；如果你要新建文件、或已经没有严重的问题要处理时先停下来；遇到特别不明白的问题，你可以使用curl工具（使用代理http://127.0.0.1:8888）去上网查询解决方案；
 
 【测试类构建】
-按顺序执行 scripts\ 中的（一个测试没有任何问题才进入下一个）：
+按顺序执行 ppdb/scripts/ 中的（一个测试没有任何问题才进入下一个）：
 .\build.bat test42
 .\build.bat sync
 .\build.bat skiplist
 .\build.bat memtable
 .\build.bat sharded 
-.\build.bat wal
+.\build.bat wal_core
+.\build.bat wal_func
+.\build.bat wal_advanced
+.\build.bat kvstore
+.\build.bat unit
+.\build.bat all
+.\build.bat ppdb
 
 每个测试后就把问题按严重程度列出来，先做一个完整的修改计划，然后再进行修复。
 修复后执行的顺序还是从test42那个开始从头来，直到没有问题才停下。

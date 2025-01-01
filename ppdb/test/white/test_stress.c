@@ -4,7 +4,7 @@
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_types.h"
 #include "ppdb/ppdb_kvstore.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "ppdb/ppdb_logger.h"
 
 // 压力测试配置
 #define STRESS_TEST_DIR "./tmp_test_stress"

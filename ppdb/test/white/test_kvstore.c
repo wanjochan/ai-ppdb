@@ -5,7 +5,7 @@
 #include "ppdb/ppdb_types.h"
 #include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_internal.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "ppdb/ppdb_logger.h"
 #include "kvstore/internal/kvstore_fs.h"
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_wal.h"

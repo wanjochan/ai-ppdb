@@ -14,7 +14,7 @@
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_wal.h"
 #include "kvstore/internal/kvstore_monitor.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "ppdb/ppdb_logger.h"
 #include "kvstore/internal/kvstore_impl.h"
 #include "kvstore/internal/sync.h"
 #include "kvstore/internal/metrics.h"

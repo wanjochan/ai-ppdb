@@ -3,25 +3,12 @@
 
 #include "ppdb_error.h"
 #include "ppdb_types.h"
+#include "ppdb_wal.h"
 #include <cosmopolitan.h>
 
 // 前向声明
 typedef struct ppdb_iterator ppdb_iterator_t;
 typedef struct ppdb_wal ppdb_wal_t;
-
-// WAL配置
-typedef struct ppdb_wal_config {
-    char dir_path[PPDB_MAX_PATH_SIZE];  // WAL目录路径
-    char filename[PPDB_MAX_PATH_SIZE];  // WAL文件名
-    size_t segment_size;                // 段大小
-    ppdb_compression_t compression;      // 压缩算法
-    bool sync_write;                    // 是否同步写入
-    bool use_buffer;                    // 是否使用缓冲区
-    size_t buffer_size;                 // 缓冲区大小
-    uint32_t max_segments;              // 最大段数
-    bool sync_on_write;
-    bool enable_compression;  // 启用压缩选项
-} ppdb_wal_config_t;
 
 // KVStore配置
 typedef struct ppdb_kvstore_config {

@@ -2,7 +2,7 @@
 #include "test_framework.h"
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_types.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "ppdb/ppdb_logger.h"
 
 // 全局测试状态变量定义
 test_state_t g_test_state = {0};

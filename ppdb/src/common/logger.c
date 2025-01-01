@@ -2,7 +2,7 @@
 
 // 公共头文件
 #include "ppdb/ppdb_error.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "ppdb/ppdb_logger.h"
 
 static ppdb_log_level_t current_level = PPDB_LOG_INFO;
 static bool is_enabled = true;

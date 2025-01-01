@@ -15,7 +15,7 @@
 
 #include <cosmopolitan.h>
 #include "internal/sync.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "ppdb/ppdb_logger.h"
 
 // FNV-1a哈希函数实现
 uint32_t ppdb_sync_hash(const void* data, size_t len) {

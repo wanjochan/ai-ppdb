@@ -1,31 +1,22 @@
 #include "cosmopolitan.h"
 
-// 跨平台文件操作测试
-bool write_test_file(void) {
-    FILE *f = fopen("test3.txt", "w");
-    if (!f) return false;
-    fprintf(f, "Hello from %s!\n", get_platform_name());
-    fclose(f);
-    return true;
-}
-
 // 获取平台名称
-const char* get_platform_name(void) {
+static const char* get_platform_name(void) {
     if (IsWindows()) return "Windows";
     if (IsLinux()) return "Linux";
-    if (IsMachos()) return "macOS";
+    if (IsMacho()) return "macOS";
     return "Unknown Platform";
 }
 
 // 系统信息测试
-void print_system_info(void) {
+static void print_system_info(void) {
     printf("Platform: %s\n", get_platform_name());
-    printf("CPU: %s\n", IsAmd64() ? "x86_64" : "other");
-    printf("Endian: %s\n", IsBigEndian() ? "big" : "little");
+    printf("CPU: %s\n", IsX86_64() ? "x86_64" : "other");
+    printf("Endian: %s\n", IsLittleEndian() ? "little" : "big");
 }
 
 // 字符串处理测试
-char* str_reverse(const char* str) {
+static char* str_reverse(const char* str) {
     static char buffer[256];
     size_t len = strlen(str);
     for (size_t i = 0; i < len; i++) {
@@ -33,6 +24,15 @@ char* str_reverse(const char* str) {
     }
     buffer[len] = '\0';
     return buffer;
+}
+
+// 跨平台文件操作测试
+static bool write_test_file(void) {
+    FILE *f = fopen("test3.txt", "w");
+    if (!f) return false;
+    fprintf(f, "Hello from %s!\n", get_platform_name());
+    fclose(f);
+    return true;
 }
 
 // 主入口函数

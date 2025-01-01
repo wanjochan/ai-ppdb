@@ -104,35 +104,11 @@ if "%TEST_TYPE%"=="test42" (
 ) else if "%TEST_TYPE%"=="ppdb" (
     echo Building PPDB main program...
     
-    rem Check paths
-    echo Checking paths:
-    set "WORKSPACE_ROOT=%ROOT_DIR%"
-    set "COSMO=%WORKSPACE_ROOT%\cosmopolitan"
-    set "CROSS9=%WORKSPACE_ROOT%\cross9\bin"
-    set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
-    set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
-    set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
-
-    echo WORKSPACE_ROOT: %WORKSPACE_ROOT%
-    echo COSMO: %COSMO%
-    echo GCC: %GCC%
-    echo AR: %AR%
-    echo OBJCOPY: %OBJCOPY%
-
-    rem Set include paths
-    set "INCLUDE_PATHS=-nostdinc -I%ROOT_DIR%\include -I%ROOT_DIR%\src -I%ROOT_DIR% -I%ROOT_DIR%\src\kvstore -I%ROOT_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white"
-
-    rem Set compiler flags for ppdb
-    set "PPDB_CFLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
-    set "PPDB_CFLAGS=%PPDB_CFLAGS% %INCLUDE_PATHS% -include %COSMO%\cosmopolitan.h"
-    set "PPDB_LDFLAGS=-static -nostdlib -Wl,-T,%COSMO%\ape.lds -Wl,--gc-sections -fuse-ld=bfd -Wl,-z,max-page-size=0x1000"
-    set "PPDB_LIBS=%COSMO%\crt.o %COSMO%\ape.o %COSMO%\cosmopolitan.a"
-    
     rem Compile common modules
     echo Compiling common modules...
     for %%F in (error fs logger) do (
         echo   Compiling src\common\%%F.c...
-        "%GCC%" %PPDB_CFLAGS% -c "%ROOT_DIR%\src\common\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        "%GCC%" %CFLAGS% -c "%ROOT_DIR%\src\common\%%F.c" -o "%BUILD_DIR%\%%F.o"
         if errorlevel 1 exit /b 1
     )
 
@@ -140,13 +116,13 @@ if "%TEST_TYPE%"=="test42" (
     echo Compiling KVStore modules...
     for %%F in (kvstore memtable memtable_iterator metrics monitor sharded_memtable skiplist sync wal wal_write wal_iterator wal_maintenance wal_recovery kvstore_impl) do (
         echo   Compiling src\kvstore\%%F.c...
-        "%GCC%" %PPDB_CFLAGS% -c "%ROOT_DIR%\src\kvstore\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        "%GCC%" %CFLAGS% -c "%ROOT_DIR%\src\kvstore\%%F.c" -o "%BUILD_DIR%\%%F.o"
         if errorlevel 1 exit /b 1
     )
 
     rem Compile main program
     echo Compiling main program...
-    "%GCC%" %PPDB_CFLAGS% -c "%ROOT_DIR%\src\main.c" -o "%BUILD_DIR%\main.o"
+    "%GCC%" %CFLAGS% -c "%ROOT_DIR%\src\main.c" -o "%BUILD_DIR%\main.o"
     if errorlevel 1 exit /b 1
 
     rem Create static library
@@ -156,10 +132,10 @@ if "%TEST_TYPE%"=="test42" (
 
     rem Link executable
     echo Linking executable...
-    "%GCC%" %PPDB_LDFLAGS% -o "%BUILD_DIR%\ppdb.exe.dbg" "%BUILD_DIR%\main.o" "%BUILD_DIR%\libppdb.a" %PPDB_LIBS%
+    "%GCC%" %LDFLAGS% -o "%BUILD_DIR%\ppdb.exe.dbg" "%BUILD_DIR%\main.o" "%BUILD_DIR%\libppdb.a" %LIBS%
     if errorlevel 1 exit /b 1
 
-    rem Process with objcopy for cosmopolitan format
+    rem Process with objcopy
     echo Processing for cosmopolitan format...
     "%OBJCOPY%" -S -O binary "%BUILD_DIR%\ppdb.exe.dbg" "%BUILD_DIR%\ppdb.exe"
     if errorlevel 1 exit /b 1
@@ -282,30 +258,37 @@ if not "!TEST_FILE!"=="" (
 call :check_need_rebuild "!TEST_SRC!" "!TEST_OBJ!"
 if !errorlevel! equ 1 (
     echo Compiling !TEST_SRC!...
-    "%GCC%" %CFLAGS% -c "%ROOT_DIR%\!TEST_SRC!" -o "!TEST_OBJ!"
+    "%GCC%" %CFLAGS% -c "!TEST_SRC!" -o "!TEST_OBJ!"
     if errorlevel 1 (
         echo Error: Failed to compile test file
         exit /b 1
     )
+) else (
+    echo Test object file !TEST_OBJ! is up to date
 )
 
 rem Finally link everything together
 echo.
 echo ===== Linking =====
 echo.
-set "TEST_EXE=%BUILD_DIR%\%TEST_NAME%_test.exe"
 set "OBJ_FILES="
-for %%F in (!EXTRA_SOURCES!) do (
-    set "OBJ_FILES=!OBJ_FILES! %BUILD_DIR%\%%~nF.o"
+if not "!EXTRA_SOURCES!"=="" (
+    for %%F in (!EXTRA_SOURCES!) do (
+        set "OBJ_FILES=!OBJ_FILES! %BUILD_DIR%\%%~nF.o"
+    )
 )
-set "OBJ_FILES=!OBJ_FILES! !TEST_OBJ!"
+echo Linking with object files: !OBJ_FILES!
+"%GCC%" %LDFLAGS% ^
+    "%BUILD_DIR%\test_%TEST_NAME%.o" ^
+    !OBJ_FILES! ^
+    %LIBS% ^
+    -o "%BUILD_DIR%\%TEST_NAME%_test.dbg"
 
-echo Linking !TEST_EXE!...
-"%GCC%" %LDFLAGS% -o "!TEST_EXE!" !OBJ_FILES! %LIBS%
 if errorlevel 1 (
-    echo Error: Failed to link test executable
+    echo Error: Test build failed
     exit /b 1
 )
+
 echo Converting to APE format...
 echo Command: "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%TEST_NAME%_test.dbg" "%BUILD_DIR%\%TEST_NAME%_test.exe"
 "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%TEST_NAME%_test.dbg" "%BUILD_DIR%\%TEST_NAME%_test.exe"

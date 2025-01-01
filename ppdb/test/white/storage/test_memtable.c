@@ -4,7 +4,7 @@
 #include "ppdb/ppdb_types.h"
 #include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_memtable.h"
-#include "kvstore/internal/kvstore_logger.h"
+#include "ppdb/ppdb_logger.h"
 
 // 测试配置
 #define OPS_PER_THREAD 100
