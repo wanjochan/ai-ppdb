@@ -19,7 +19,7 @@ else
 fi
 
 # 启动服务器
-python -m uvicorn src.server:app --reload --port 8000 &
+python -m uvicorn src.server:app --reload --port 18000 &
 SERVER_PID=$!
 
 # 等待服务器启动
@@ -28,15 +28,15 @@ sleep 2
 # 打开浏览器
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS
-    open http://localhost:8000
+    open http://localhost:18000
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     # Linux
-    xdg-open http://localhost:8000 2>/dev/null || \
-    sensible-browser http://localhost:8000 2>/dev/null || \
-    echo "Please open http://localhost:8000 in your browser"
+    xdg-open http://localhost:18000 2>/dev/null || \
+    sensible-browser http://localhost:18000 2>/dev/null || \
+    echo "Please open http://localhost:18000 in your browser"
 fi
 
-echo "Agentic Python is running at http://localhost:8000"
+echo "Agentic Python is running at http://localhost:18000"
 echo "Press Ctrl+C to stop the server"
 
 # 等待中断信号

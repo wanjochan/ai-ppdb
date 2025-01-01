@@ -18,9 +18,9 @@ if not exist venv (
 call venv\Scripts\activate.bat
 python -m pip install -r requirements.txt
 
-start /B cmd /c "python -m uvicorn src.server:app --reload --port 8000"
+start /B cmd /c "python -m uvicorn src.server:app --reload --port 18000"
 timeout /t 2 /nobreak >nul
-start http://localhost:8000
+start http://localhost:18000
 
-echo Server is running at http://localhost:8000
+echo Server is running at http://localhost:18000
 echo Press Ctrl+C to stop

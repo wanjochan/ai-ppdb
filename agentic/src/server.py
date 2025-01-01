@@ -1,15 +1,27 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, RedirectResponse
 import json
 import logging
 import os
+import sys
+from pathlib import Path
+
+# 获取项目根目录
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 # 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    encoding='utf-8'  # 添加utf-8编码支持
-)
+if sys.version_info >= (3, 9):
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        encoding='utf-8'  # Python 3.9+ 支持
+    )
+else:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -18,7 +30,7 @@ app = FastAPI(
 )
 
 # 挂载静态文件目录
-app.mount("/static", StaticFiles(directory="web"), name="static")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web")), name="static")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -48,5 +60,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/")
 async def root():
-    # 重定向到静态文件
-    return {"url": "/static/index.html"}
+    index_path = BASE_DIR / "web" / "index.html"
+    if index_path.exists():
+        return FileResponse(str(index_path))
+    return {"error": "index.html not found"}
