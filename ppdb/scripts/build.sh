@@ -14,14 +14,15 @@ fi
 
 # Set paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/.."
+cd "$SCRIPT_DIR/../.."
 ROOT_DIR="$(pwd)"
-BUILD_DIR="$ROOT_DIR/build"
-INCLUDE_DIR="$ROOT_DIR/include"
-TEST_DIR="$ROOT_DIR/test"
+PPDB_DIR="$ROOT_DIR/ppdb"
+BUILD_DIR="$PPDB_DIR/build"
+INCLUDE_DIR="$PPDB_DIR/include"
+TEST_DIR="$PPDB_DIR/test"
 
 # Set tool paths based on OS
-COSMO="$ROOT_DIR/../repos/cosmopolitan"
+COSMO="$ROOT_DIR/repos/cosmopolitan"
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # macOS toolchain
     echo "macOS detected. Verifying LLVM toolchain..."
@@ -128,7 +129,7 @@ else
 fi
 
 # Set include paths
-INCLUDE_FLAGS="-nostdinc -I$ROOT_DIR -I$ROOT_DIR/include -I$ROOT_DIR/src -I$ROOT_DIR/src/kvstore -I$ROOT_DIR/src/kvstore/internal -I$COSMO -I$TEST_DIR/white"
+INCLUDE_FLAGS="-nostdinc -I$PPDB_DIR -I$PPDB_DIR/include -I$PPDB_DIR/src -I$PPDB_DIR/src/kvstore -I$PPDB_DIR/src/kvstore/internal -I$COSMO -I$TEST_DIR/white"
 
 # Set final CFLAGS
 CFLAGS="$BUILD_FLAGS $INCLUDE_FLAGS -include $COSMO/cosmopolitan.h"
@@ -155,35 +156,35 @@ case "$TEST_TYPE" in
         ;;
     "sync")
         TEST_NAME="sync"
-        EXTRA_SOURCES="src/kvstore/sync.c"
+        EXTRA_SOURCES="$PPDB_DIR/src/kvstore/sync.c"
         ;;
     "skiplist")
         TEST_NAME="skiplist"
-        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/skiplist.c"
+        EXTRA_SOURCES="$PPDB_DIR/src/kvstore/sync.c $PPDB_DIR/src/kvstore/internal/skiplist.c"
         ;;
     "memtable")
         TEST_NAME="memtable"
-        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c"
+        EXTRA_SOURCES="$PPDB_DIR/src/kvstore/sync.c $PPDB_DIR/src/kvstore/internal/skiplist.c $PPDB_DIR/src/kvstore/internal/memtable.c"
         ;;
     "sharded")
         TEST_NAME="sharded"
-        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c src/kvstore/internal/sharded_memtable.c"
+        EXTRA_SOURCES="$PPDB_DIR/src/kvstore/sync.c $PPDB_DIR/src/kvstore/internal/skiplist.c $PPDB_DIR/src/kvstore/internal/memtable.c $PPDB_DIR/src/kvstore/internal/sharded_memtable.c"
         ;;
     "wal_core")
         TEST_NAME="wal_core"
-        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/wal.c"
+        EXTRA_SOURCES="$PPDB_DIR/src/kvstore/sync.c $PPDB_DIR/src/kvstore/internal/wal.c"
         ;;
     "wal_func")
         TEST_NAME="wal_func"
-        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/wal.c"
+        EXTRA_SOURCES="$PPDB_DIR/src/kvstore/sync.c $PPDB_DIR/src/kvstore/internal/wal.c"
         ;;
     "wal_advanced")
         TEST_NAME="wal_advanced"
-        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/wal.c"
+        EXTRA_SOURCES="$PPDB_DIR/src/kvstore/sync.c $PPDB_DIR/src/kvstore/internal/wal.c"
         ;;
     "kvstore")
         TEST_NAME="kvstore"
-        EXTRA_SOURCES="src/kvstore/sync.c src/kvstore/internal/skiplist.c src/kvstore/internal/memtable.c src/kvstore/internal/sharded_memtable.c src/kvstore/internal/wal.c src/kvstore/kvstore.c"
+        EXTRA_SOURCES="$PPDB_DIR/src/kvstore/sync.c $PPDB_DIR/src/kvstore/internal/skiplist.c $PPDB_DIR/src/kvstore/internal/memtable.c $PPDB_DIR/src/kvstore/internal/sharded_memtable.c $PPDB_DIR/src/kvstore/internal/wal.c $PPDB_DIR/src/kvstore/kvstore.c"
         ;;
     *)
         echo "Error: Unknown test type: $TEST_TYPE"
@@ -198,9 +199,9 @@ if [ ! -z "$EXTRA_SOURCES" ]; then
     echo
     for src in $EXTRA_SOURCES; do
         obj="$BUILD_DIR/$(basename ${src%.*}).o"
-        if check_need_rebuild "$ROOT_DIR/$src" "$obj"; then
+        if check_need_rebuild "$src" "$obj"; then
             echo "Compiling $src..."
-            "$CC" $CFLAGS -c "$ROOT_DIR/$src" -o "$obj"
+            "$CC" $CFLAGS -c "$src" -o "$obj"
             if [ $? -ne 0 ]; then
                 echo "Error: Failed to compile $src"
                 exit 1
@@ -219,12 +220,12 @@ TEST_OBJ="$BUILD_DIR/test_${TEST_NAME}.o"
 if [ ! -z "$TEST_FILE" ]; then
     TEST_SRC="$TEST_FILE"
 else
-    TEST_SRC="test/white/test_${TEST_NAME}.c"
+    TEST_SRC="$PPDB_DIR/test/white/test_${TEST_NAME}.c"
 fi
 
-if check_need_rebuild "$ROOT_DIR/$TEST_SRC" "$TEST_OBJ"; then
+if check_need_rebuild "$TEST_SRC" "$TEST_OBJ"; then
     echo "Compiling $TEST_SRC..."
-    "$CC" $CFLAGS -c "$ROOT_DIR/$TEST_SRC" -o "$TEST_OBJ"
+    "$CC" $CFLAGS -c "$TEST_SRC" -o "$TEST_OBJ"
     if [ $? -ne 0 ]; then
         echo "Error: Failed to compile test file"
         exit 1
