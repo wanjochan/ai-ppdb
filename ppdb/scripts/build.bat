@@ -9,6 +9,11 @@ set "ROOT_DIR=%CD%"
 set "BUILD_DIR=%ROOT_DIR%\build"
 set "INCLUDE_DIR=%ROOT_DIR%\include"
 set "TEST_DIR=%ROOT_DIR%\test"
+set "COSMO=%ROOT_DIR%\tools\cosmopolitan"
+set "CROSS9=%ROOT_DIR%\tools\cross9\bin"
+set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
+set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
+set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
 
 rem Get test type and build mode
 set "TEST_TYPE=%1"
@@ -49,13 +54,6 @@ if "%TEST_TYPE%"=="help" (
     echo "  build.bat memtable release  以发布模式运行内存表测试"
     echo "  build.bat all               运行所有测试"
     exit /b 0
-)
-
-rem Call cosmo_build.bat to setup environment
-call "%SCRIPT_DIR%\cosmo_build.bat"
-if errorlevel 1 (
-    echo Error: Failed to setup Cosmopolitan environment
-    exit /b 1
 )
 
 rem Set compilation flags based on build mode

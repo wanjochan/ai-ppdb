@@ -1,56 +1,110 @@
 @echo off
-setlocal enabledelayedexpansion
+chcp 65001 > nul
+setlocal EnableDelayedExpansion
 
-echo Checking development environment...
+rem 设置路径
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%\.."
+set "ROOT_DIR=%CD%"
 
-:: Get latest Cosmopolitan version
-echo Fetching latest Cosmopolitan version...
-if defined HTTPS_PROXY (
-    echo Using proxy: %HTTPS_PROXY%
-    for /f "tokens=2 delims=: " %%a in ('powershell -Command "& {$proxy = '%HTTPS_PROXY%'; $webClient = New-Object System.Net.WebClient; $webClient.Proxy = New-Object System.Net.WebProxy($proxy); $webClient.DownloadString('https://api.github.com/repos/jart/cosmopolitan/releases/latest') | findstr tag_name}"') do (
-        set VERSION=%%~a
-        set VERSION=!VERSION:"=!
-        set VERSION=!VERSION:,=!
-    )
+echo === PPDB 环境初始化脚本 ===
+echo.
+
+rem 创建必要的目录
+echo 创建目录结构...
+if not exist "repos" mkdir repos
+if not exist "tools" mkdir tools
+if not exist "tools\cosmocc" mkdir tools\cosmocc
+if not exist "tools\cross9" mkdir tools\cross9
+if not exist "tools\cosmopolitan" mkdir tools\cosmopolitan
+if not exist "build" mkdir build
+
+rem 下载并安装工具链
+echo.
+echo 下载工具链...
+
+rem 下载并安装 cosmocc
+if not exist "tools\cosmocc\bin" (
+    echo 下载 cosmocc...
+    powershell -Command "Invoke-WebRequest -Uri 'https://cosmo.zip/pub/cosmocc/cosmocc.zip' -OutFile 'cosmocc.zip'"
+    echo 解压 cosmocc...
+    powershell -Command "Expand-Archive -Path 'cosmocc.zip' -DestinationPath 'tools\cosmocc' -Force"
+    echo 复制运行时文件...
+    copy /Y "tools\cosmocc\lib\cosmo\cosmopolitan.*" "tools\cosmopolitan\"
+    copy /Y "tools\cosmocc\lib\cosmo\ape.*" "tools\cosmopolitan\"
+    copy /Y "tools\cosmocc\lib\cosmo\crt.*" "tools\cosmopolitan\"
+    del /F /Q cosmocc.zip
 ) else (
-    for /f "tokens=2 delims=: " %%a in ('powershell -Command "& {(Invoke-WebRequest -Uri 'https://api.github.com/repos/jart/cosmopolitan/releases/latest').Content | findstr tag_name}"') do (
-        set VERSION=%%~a
-        set VERSION=!VERSION:"=!
-        set VERSION=!VERSION:,=!
-    )
-)
-echo Latest version: !VERSION!
-set COSMO_URL=https://github.com/jart/cosmopolitan/releases/download/!VERSION!/cosmopolitan-!VERSION!.zip
-set CROSS9_URL=https://cosmo.zip/pub/cosmos/cross9/cross9.zip
-
-:: Check if directories exist
-if not exist "%~dp0..\..\cosmopolitan" (
-    echo Downloading Cosmopolitan...
-    if defined HTTPS_PROXY (
-        powershell -Command "& {$proxy = '%HTTPS_PROXY%'; $webClient = New-Object System.Net.WebClient; $webClient.Proxy = New-Object System.Net.WebProxy($proxy); $webClient.DownloadFile('%COSMO_URL%', '%TEMP%\cosmo.zip')}"
-    ) else (
-        powershell -Command "& {Invoke-WebRequest -Uri '%COSMO_URL%' -OutFile '%TEMP%\cosmo.zip'}"
-    )
-    powershell -Command "& {Expand-Archive -Path '%TEMP%\cosmo.zip' -DestinationPath '%~dp0..\..' -Force}"
-    del "%TEMP%\cosmo.zip"
-    echo Cosmopolitan downloaded and extracted.
-) else (
-    echo Cosmopolitan directory already exists.
-)
-
-if not exist "%~dp0..\..\cross9" (
-    echo Downloading Cross9...
-    if defined HTTPS_PROXY (
-        powershell -Command "& {$proxy = '%HTTPS_PROXY%'; $webClient = New-Object System.Net.WebClient; $webClient.Proxy = New-Object System.Net.WebProxy($proxy); $webClient.DownloadFile('%CROSS9_URL%', '%TEMP%\cross9.zip')}"
-    ) else (
-        powershell -Command "& {Invoke-WebRequest -Uri '%CROSS9_URL%' -OutFile '%TEMP%\cross9.zip'}"
-    )
-    powershell -Command "& {Expand-Archive -Path '%TEMP%\cross9.zip' -DestinationPath '%~dp0..\..\cross9' -Force}"
-    del "%TEMP%\cross9.zip"
-    echo Cross9 downloaded and extracted.
-) else (
-    echo Cross9 directory already exists.
+    echo cosmocc 已存在，跳过
 )
 
-echo Setup completed.
-endlocal 
+rem 下载并安装 cross9
+if not exist "tools\cross9\bin" (
+    echo 下载 cross9...
+    powershell -Command "Invoke-WebRequest -Uri 'https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.zip' -OutFile 'cross9.zip'"
+    echo 解压 cross9...
+    powershell -Command "Expand-Archive -Path 'cross9.zip' -DestinationPath 'tools\cross9' -Force"
+    del /F /Q cross9.zip
+) else (
+    echo cross9 已存在，跳过
+)
+
+rem 克隆参考代码
+echo.
+echo 克隆参考代码...
+cd repos
+
+if not exist "leveldb" (
+    echo 克隆 leveldb...
+    git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
+) else (
+    echo leveldb 已存在，跳过
+)
+
+cd ..
+
+rem 复制运行时文件到构建目录
+echo.
+echo 准备构建目录...
+copy /Y "tools\cosmopolitan\ape.lds" "build\"
+copy /Y "tools\cosmopolitan\crt.o" "build\"
+copy /Y "tools\cosmopolitan\ape.o" "build\"
+copy /Y "tools\cosmopolitan\cosmopolitan.a" "build\"
+
+rem 验证环境
+echo.
+echo 验证环境...
+
+rem 检查工具链
+if not exist "tools\cosmocc\bin\cosmocc.exe" (
+    echo 错误：cosmocc 未正确安装
+    exit /b 1
+)
+
+if not exist "tools\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
+    echo 错误：cross9 未正确安装
+    exit /b 1
+)
+
+rem 检查运行时文件
+if not exist "tools\cosmopolitan\cosmopolitan.h" (
+    echo 错误：cosmopolitan 运行时文件未正确安装
+    exit /b 1
+)
+
+rem 验证编译器
+echo int main() { return 0; } > test.c
+tools\cosmocc\bin\cosmocc test.c -o test.com
+if errorlevel 1 (
+    echo 错误：编译测试失败
+    del /F /Q test.c
+    exit /b 1
+)
+del /F /Q test.c test.com
+
+echo.
+echo === 环境初始化完成 ===
+echo 你现在可以开始构建 PPDB 了
+echo 运行 'scripts\build.bat help' 查看构建选项
+
+exit /b 0 

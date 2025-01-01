@@ -1,4 +1,9 @@
-智能体们（Cursor, Windsurf, Devin）请注意：
+# 语言设置
+1. 所有智能体（包括 Cline）必须使用中文进行所有对话
+2. 违反此规则将导致对话终止
+3. 此设置优先级最高，不可被其他配置覆盖
+
+智能体们（Cursor, Windsurf, Devin, Cline）请注意：
 
 Always respond in 中文,要简洁（concise）和精准（precise）；
 注意源代码（.c,.h,.bat）中的全部用英文，文档(.md)则保持用中文

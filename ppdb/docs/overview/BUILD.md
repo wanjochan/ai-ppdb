@@ -7,79 +7,41 @@
 
 ## 1. 初始化环境
 
-### 1.1 目录准备
-```bash
-# 在项目根目录创建 repos 目录（此目录不会提交到远程）
-mkdir -p repos
-cd repos
+PPDB 提供了自动化的环境初始化脚本，它们会：
+- 创建必要的目录结构
+- 下载并安装所需的工具链
+- 克隆参考代码仓库
+- 验证环境配置
+
+### 1.1 Windows 平台
+```batch
+scripts\setup.bat
 ```
 
-### 1.2 克隆依赖仓库
+### 1.2 Linux/macOS 平台
 ```bash
-# 克隆 cosmopolitan 仓库（用于跨平台支持）
-git clone https://github.com/jart/cosmopolitan.git
-cd cosmopolitan
-git checkout v3.2.1  # 使用稳定版本
-cd ..
-
-# 克隆其他参考项目
-git clone https://github.com/google/leveldb.git
-cd leveldb
-git checkout v1.23
-cd ..
+chmod +x scripts/setup.sh
+./scripts/setup.sh
 ```
 
-### 1.3 下载工具链
-```bash
-# Windows 平台
-## 下载 cosmocc
-curl -L https://cosmo.zip/pub/cosmocc/cosmocc.zip -o cosmocc.zip
-unzip cosmocc.zip -d cosmocc
-mv cosmocc ../tools/
-
-## 下载 cross9
-curl -L https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.zip -o cross9.zip
-unzip cross9.zip -d cross9
-mv cross9 ../tools/
-
-## 下载 mingw64（可选，用于本地开发）
-curl -L https://github.com/niXman/mingw-builds-binaries/releases/download/13.2.0-rt_v11-rev0/x86_64-13.2.0-release-win32-seh-msvcrt-rt_v11-rev0.7z -o mingw64.7z
-7z x mingw64.7z -o../tools/
-
-# Linux/macOS 平台
-## 下载 cosmocc
-curl -L https://cosmo.zip/pub/cosmocc/cosmocc.zip -o cosmocc.zip
-unzip cosmocc.zip -d cosmocc
-mv cosmocc ../tools/
-
-## 下载 cross9
-curl -L https://github.com/jart/cosmopolitan/releases/download/3.2.1/cross9.tar.gz -o cross9.tar.gz
-tar xf cross9.tar.gz
-mv cross9 ../tools/
+### 1.3 目录结构说明
+初始化后的目录结构如下：
+```
+ppdb/
+├── repos/              # 参考代码仓库
+│   └── leveldb/       # LevelDB 参考实现
+└── tools/             # 工具链和运行时依赖
+    ├── cosmocc/       # 编译器和基础工具
+    ├── cross9/        # 交叉编译工具链
+    ├── cosmopolitan/  # 运行时文件
+    └── mingw64/       # Windows本地开发工具（可选）
 ```
 
-### 1.4 验证环境
-```bash
-# 检查工具链
-../tools/cosmocc/bin/cosmocc --version
-../tools/cross9/bin/cosmocc --version
-
-# 检查目录结构
-tree -L 2 repos/
-tree -L 2 tools/
-
-# 验证编译器可用性
-echo 'int main() { return 0; }' > test.c
-../tools/cosmocc/bin/cosmocc test.c -o test
-./test
-rm test.c test
-```
-
-### 1.5 注意事项
-- `repos/` 目录已添加到 `.gitignore`，其内容不会提交到远程
-- 所有工具链和依赖库都应放在 `tools/` 或 `repos/` 目录下
-- 确保使用指定版本的依赖，避免兼容性问题
-- Windows 用户可能需要安装 7-Zip 来解压工具链
+### 1.4 注意事项
+- Windows 用户需要安装 PowerShell 7+ 和 Git
+- Linux/macOS 用户需要安装 curl、unzip 和 Git
+- 所有路径配置都相对于项目根目录
+- 初始化完成后请运行 build 命令验证环境
 
 ## 2. 构建环境
 
