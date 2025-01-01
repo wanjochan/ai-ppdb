@@ -39,9 +39,9 @@ if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
     if not exist "cross9.zip" (
         echo 下载 cross9...
         if not "%PROXY%"=="" (
-            curl -C - -x "%PROXY%" -L "https://justine.lol/linux-compiler-on-windows/cross9.zip" -o cross9.zip
+            curl --retry 10 --retry-delay 5 --retry-max-time 0 -C - -x "%PROXY%" -L "https://justine.lol/linux-compiler-on-windows/cross9.zip" -o cross9.zip
         ) else (
-            curl -C - -L "https://justine.lol/linux-compiler-on-windows/cross9.zip" -o cross9.zip
+            curl --retry 10 --retry-delay 5 --retry-max-time 0 -C - -L "https://justine.lol/linux-compiler-on-windows/cross9.zip" -o cross9.zip
         )
     ) else (
         echo 使用已下载的 cross9.zip

@@ -41,6 +41,26 @@
         .config-panel {
             padding: 8px;
             border-bottom: 1px solid #ddd;
+            display: none;  /* 默认隐藏 */
+        }
+
+        .config-toggle {
+            padding: 4px 8px;
+            background: transparent;
+            color: #666;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2em;
+        }
+
+        .config-toggle:hover {
+            color: #007bff;
+            background: transparent;
+        }
+
+        /* 当配置面板显示时的样式 */
+        .config-panel.show {
+            display: block;
         }
 
         .config-item {
@@ -88,6 +108,7 @@
             border-top: 1px solid #ddd;
             display: flex;
             gap: 6px;
+            align-items: center;
         }
 
         .input-area input {
@@ -139,12 +160,47 @@
         button:hover {
             background: #0056b3;
         }
+
+        /* 图片预览区域 */
+        .preview-area {
+            position: relative;
+            padding: 8px;
+            border-top: 1px solid #ddd;
+            display: none;
+        }
+
+        .preview-area img {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 4px;
+        }
+
+        .preview-area .remove-preview {
+            position: absolute;
+            right: 4px;
+            top: 4px;
+            background: rgba(0,0,0,0.5);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
+            text-align: center;
+            cursor: pointer;
+            padding: 0;
+        }
+
+        .preview-area.show {
+            display: block;
+        }
     </style>
 </head>
 <body>
     <div class="layout">
         <div class="left-panel">
-            <div class="config-panel">
+            <button class="config-toggle" onclick="toggleConfig()" title="显示/隐藏配置">⚙️</button>
+            <div class="config-panel" id="configPanel">
                 <h3>API配置</h3>
                 <div class="config-item">
                     <label for="apiKey">OpenAI API Key</label>
@@ -162,8 +218,13 @@
             </div>
             <div class="chat-container">
                 <div class="chat-window" id="chatWindow"></div>
+                <div class="preview-area" id="previewArea">
+                    <img id="imagePreview">
+                    <button class="remove-preview" onclick="removePreview()">×</button>
+                </div>
                 <div class="input-area">
-                    <input type="text" id="messageInput" placeholder="输入消息...">
+                    <button class="config-toggle" onclick="toggleConfig()" title="显示/隐藏配置">⚙️</button>
+                    <input type="text" id="messageInput" placeholder="输入消息...或粘贴图片">
                     <button onclick="sendMessage()">发送</button>
                 </div>
             </div>
@@ -186,7 +247,17 @@
                 document.getElementById('apiKey').value = config.apiKey;
                 document.getElementById('apiModel').value = config.apiModel;
                 document.getElementById('saveLocally').checked = config.saveLocally;
+                // 如果有保存的配置，保持配置面板隐藏
+                document.getElementById('configPanel').classList.remove('show');
+            } else {
+                // 如果没有配置，显示配置面板
+                document.getElementById('configPanel').classList.add('show');
             }
+        }
+
+        function toggleConfig() {
+            const configPanel = document.getElementById('configPanel');
+            configPanel.classList.toggle('show');
         }
 
         function saveConfig() {
@@ -204,6 +275,8 @@
                 }));
             }
 
+            // 保存后自动隐藏配置面板
+            document.getElementById('configPanel').classList.remove('show');
             addMessage("配置已保存", "system");
         }
         
@@ -231,11 +304,41 @@
             };
         }
 
+        // 处理粘贴事件
+        document.addEventListener('paste', function(e) {
+            const items = e.clipboardData.items;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    const blob = items[i].getAsFile();
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        // 显示预览
+                        document.getElementById('imagePreview').src = e.target.result;
+                        document.getElementById('previewArea').classList.add('show');
+                        // 保存图片数据用于发送
+                        window.currentImage = {
+                            data: e.target.result,
+                            type: 'image'
+                        };
+                    };
+                    reader.readAsDataURL(blob);
+                    break;
+                }
+            }
+        });
+
+        function removePreview() {
+            document.getElementById('previewArea').classList.remove('show');
+            document.getElementById('imagePreview').src = '';
+            window.currentImage = null;
+        }
+
         function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
+            const hasImage = window.currentImage != null;
             
-            if (message && ws.readyState === WebSocket.OPEN) {
+            if ((message || hasImage) && ws.readyState === WebSocket.OPEN) {
                 if (!config.apiKey) {
                     addMessage("请先配置API Key", "system");
                     return;
@@ -248,8 +351,33 @@
                         model: config.apiModel
                     }
                 };
+
+                // 如果有图片，添加到消息中
+                if (hasImage) {
+                    data.image = window.currentImage;
+                    // 在聊天窗口显示图片预览
+                    const imgElement = document.createElement('img');
+                    imgElement.src = window.currentImage.data;
+                    imgElement.style.maxWidth = '200px';
+                    imgElement.style.maxHeight = '200px';
+                    imgElement.style.borderRadius = '4px';
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = 'message user-message';
+                    messageDiv.appendChild(imgElement);
+                    if (message) {
+                        const textDiv = document.createElement('div');
+                        textDiv.textContent = message;
+                        textDiv.style.marginTop = '4px';
+                        messageDiv.appendChild(textDiv);
+                    }
+                    document.getElementById('chatWindow').appendChild(messageDiv);
+                    // 清除预览
+                    removePreview();
+                } else {
+                    addMessage(message, "user");
+                }
+
                 ws.send(JSON.stringify(data));
-                addMessage(message, "user");
                 input.value = '';
             }
         }
