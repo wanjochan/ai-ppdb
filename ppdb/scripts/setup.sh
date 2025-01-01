@@ -16,7 +16,7 @@ fi
 
 # Set paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/.."
+cd "$SCRIPT_DIR/../.."
 ROOT_DIR="$(pwd)"
 
 echo "=== PPDB Environment Setup Script ==="
@@ -85,14 +85,14 @@ fi
 
 # Create necessary directories
 mkdir -p repos/cosmopolitan
-mkdir -p tools
-mkdir -p build
+mkdir -p ppdb/tools
+mkdir -p ppdb/build
 
 # Download and install cosmocc (for runtime files)
 echo
 echo "Downloading toolchains..."
 
-if [ ! -d "tools/cosmocc/bin" ]; then
+if [ ! -d "repos/cosmocc/bin" ]; then
     echo "Downloading cosmocc..."
     MAX_RETRIES=3
     RETRY_DELAY=5
@@ -122,16 +122,16 @@ if [ ! -d "tools/cosmocc/bin" ]; then
     fi
     
     echo "Extracting cosmocc..."
-    if ! unzip -q cosmocc.zip -d tools/cosmocc; then
+    if ! unzip -q cosmocc.zip -d repos/cosmocc; then
         echo "Error: Failed to extract cosmocc"
         rm -f cosmocc.zip
         exit 1
     fi
     
     echo "Copying runtime files..."
-    cp -f tools/cosmocc/lib/cosmo/cosmopolitan.* repos/cosmopolitan/
-    cp -f tools/cosmocc/lib/cosmo/ape.* repos/cosmopolitan/
-    cp -f tools/cosmocc/lib/cosmo/crt.* repos/cosmopolitan/
+    cp -f repos/cosmocc/lib/cosmo/cosmopolitan.* repos/cosmopolitan/
+    cp -f repos/cosmocc/lib/cosmo/ape.* repos/cosmopolitan/
+    cp -f repos/cosmocc/lib/cosmo/crt.* repos/cosmopolitan/
     rm -f cosmocc.zip
 else
     echo "cosmocc already exists, skipping"
@@ -164,10 +164,10 @@ cd ..
 # Copy runtime files to build directory
 echo
 echo "Preparing build directory..."
-cp -f repos/cosmopolitan/ape.lds build/
-cp -f repos/cosmopolitan/crt.o build/
-cp -f repos/cosmopolitan/ape.o build/
-cp -f repos/cosmopolitan/cosmopolitan.a build/
+cp -f repos/cosmopolitan/ape.lds ppdb/build/
+cp -f repos/cosmopolitan/crt.o ppdb/build/
+cp -f repos/cosmopolitan/ape.o ppdb/build/
+cp -f repos/cosmopolitan/cosmopolitan.a ppdb/build/
 
 # Verify environment
 echo
@@ -181,6 +181,7 @@ fi
 
 # Run test42 as verification
 echo "Running basic test..."
+cd ppdb
 if ! scripts/build.sh test42; then
     echo "Error: basic test failed"
     exit 1

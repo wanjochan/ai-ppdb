@@ -18,7 +18,7 @@ if not "%PROXY%"=="" (
 
 :: Set paths
 set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%\.."
+cd /d "%SCRIPT_DIR%\..\..\"
 set "ROOT_DIR=%CD%"
 
 echo === PPDB 环境初始化脚本 ===
@@ -27,8 +27,8 @@ echo.
 rem 创建必要的目录
 if not exist "repos" mkdir repos
 if not exist "repos\cosmopolitan" mkdir repos\cosmopolitan
-if not exist "tools" mkdir tools
-if not exist "build" mkdir build
+if not exist "ppdb\tools" mkdir ppdb\tools
+if not exist "ppdb\build" mkdir ppdb\build
 
 rem 下载并安装工具链
 echo.
@@ -74,10 +74,10 @@ cd ..
 rem 复制运行时文件到构建目录
 echo.
 echo 准备构建目录...
-copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\ape.lds" "build\"
-copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\crt.o" "build\"
-copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\ape.o" "build\"
-copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\cosmopolitan.a" "build\"
+copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\ape.lds" "ppdb\build\"
+copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\crt.o" "ppdb\build\"
+copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\ape.o" "ppdb\build\"
+copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\cosmopolitan.a" "ppdb\build\"
 
 rem 验证环境
 echo.
@@ -90,7 +90,7 @@ if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
 )
 
 rem 检查运行时文件
-if not exist "build\ape.lds" (
+if not exist "ppdb\build\ape.lds" (
     echo 错误：运行时文件未正确安装
     exit /b 1
 )
@@ -98,6 +98,7 @@ if not exist "build\ape.lds" (
 rem 运行测试
 echo.
 echo 运行测试...
+cd ppdb
 call scripts\build.bat test42
 if errorlevel 1 (
     echo 错误：测试失败
