@@ -3,7 +3,6 @@
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_fs.h"
 #include "ppdb/ppdb_logger.h"
-#include "kvstore/internal/kvstore_logger.h"
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_wal.h"
 #include "kvstore/internal/kvstore_wal_types.h"

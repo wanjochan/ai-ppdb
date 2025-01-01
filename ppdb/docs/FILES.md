@@ -54,7 +54,6 @@
 
 ### 辅助组件
 - `kvstore_monitor.h` - 监控系统实现
-- `kvstore_logger.h` - 日志系统实现
 - `kvstore_fs.h` - 文件系统操作的内部实现
 
 ### 基础设施
@@ -110,11 +109,11 @@
        └── kvstore/internal/kvstore_logger.h
    ```
 
-### 通用组件依赖
+### 公共组件依赖
 - 所有组件依赖 `ppdb_error.h` 进行错误处理
 - 所有组件依赖 `ppdb_types.h` 获取基础类型定义
 - 所有组件依赖 `sync.h` 进行并发控制
-- 所有组件使用 `kvstore_logger.h` 进行日志记录
+- 所有组件使用 `ppdb_logger.h` 进行日志记录
 
 ### 实现说明
 1. 命名规范：
