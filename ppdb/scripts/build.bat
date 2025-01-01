@@ -112,7 +112,7 @@ if not exist "%BUILD_DIR%\%TEST_TYPE%_test.exe" set "NEED_REBUILD=1"
 
 rem Main logic
 if "%TEST_TYPE%"=="test42" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test 42 ""
+    if "%NEED_REBUILD%"=="1" call :build_simple_test 42 "%PPDB_DIR%\test\white\test_42.c"
     if exist "%BUILD_DIR%\42_test.exe" "%BUILD_DIR%\42_test.exe"
 ) else if "%TEST_TYPE%"=="sync" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test sync "%PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\infra\test_sync.c"
@@ -286,10 +286,10 @@ if not "!EXTRA_SOURCES!"=="" (
     echo.
     for %%F in (!EXTRA_SOURCES!) do (
         set "OBJ_FILE=%BUILD_DIR%\%%~nF.o"
-        call :check_need_rebuild "%ROOT_DIR%\%%F" "!OBJ_FILE!"
+        call :check_need_rebuild "%%F" "!OBJ_FILE!"
         if !errorlevel! equ 1 (
             echo Compiling %%F...
-            "%GCC%" %CFLAGS% -c "%ROOT_DIR%\%%F" -o "!OBJ_FILE!"
+            "%GCC%" %CFLAGS% -c "%%F" -o "!OBJ_FILE!"
             if errorlevel 1 (
                 echo Error: Failed to compile %%F
                 exit /b 1
@@ -308,12 +308,12 @@ set "TEST_OBJ=%BUILD_DIR%\test_%TEST_NAME%.o"
 if not "!TEST_FILE!"=="" (
     set "TEST_SRC=!TEST_FILE!"
 ) else (
-    set "TEST_SRC=test\white\test_%TEST_NAME%.c"
+    set "TEST_SRC=%PPDB_DIR%\test\white\test_%TEST_NAME%.c"
 )
 call :check_need_rebuild "!TEST_SRC!" "!TEST_OBJ!"
 if !errorlevel! equ 1 (
     echo Compiling !TEST_SRC!...
-    "%GCC%" %CFLAGS% -c "%ROOT_DIR%\!TEST_SRC!" -o "!TEST_OBJ!"
+    "%GCC%" %CFLAGS% -c "!TEST_SRC!" -o "!TEST_OBJ!"
     if errorlevel 1 (
         echo Error: Failed to compile test file
         exit /b 1

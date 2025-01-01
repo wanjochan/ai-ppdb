@@ -16,8 +16,8 @@
 0. 为了防止因为目录路径原因导致的重复的意外下载，请先搜索一下代码仓目录是不是已经有解开后的构建工具了
 1. 获取必要文件
 ```bash
-# 下载 Cosmopolitan 库文件
-curl -o cosmopolitan.zip https://cosmo.zip/pub/cosmocc/cosmopolitan.zip
+# 下载 cosmocc (https://github.com/jart/cosmopolitan)
+curl -L -o cosmocc.zip https://cosmo.zip/pub/cosmocc/cosmocc.zip
 
 # 解压后需要的文件：
 # - cosmopolitan.h
@@ -25,6 +25,10 @@ curl -o cosmopolitan.zip https://cosmo.zip/pub/cosmocc/cosmopolitan.zip
 # - ape.lds
 # - crt.o
 # - ape.o
+
+# 下载 cross.zip (https://justine.lol/cosmopolitan/windows-compiling.html)
+curl -L -o cross9.zip https://justine.lol/linux-compiler-on-windows/cross9.zip
+
 ```
 
 2. 设置文件

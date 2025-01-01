@@ -44,8 +44,8 @@
             background: #fff;
         }
 
-        .config-panel.show {
-            display: block;
+        .config-panel.hidden {
+            display: none;
         }
 
         .config-item {
@@ -176,10 +176,16 @@
         }
 
         .message {
-            margin-bottom: 6px;
-            padding: 6px 8px;
-            border-radius: 3px;
-            max-width: 85%;
+            margin: 8px;
+            padding: 8px;
+            border-radius: 4px;
+            max-width: 80%;
+            word-break: break-word;
+        }
+
+        .system-message {
+            background: #f0f0f0;
+            color: #666;
         }
 
         .user-message {
@@ -187,61 +193,28 @@
             margin-left: auto;
         }
 
-        .system-message {
-            background: #f5f5f5;
-            margin-right: auto;
-        }
-
         .error-message {
             background: #fbe0e0;
-            margin-right: auto;
-            color: #666;
+            color: #d32f2f;
         }
 
-        .response-message {
-            background: #e3f2fd;
-            margin-left: auto;
+        .preview-container {
+            margin: 8px;
+            text-align: right;
         }
 
-        /* 图片预览区域 */
-        .preview-area {
-            position: relative;
-            padding: 8px;
-            border-top: 1px solid #ddd;
-            display: none;
-        }
-
-        .preview-area img {
+        .preview-container img {
             max-width: 200px;
             max-height: 200px;
             border-radius: 4px;
-        }
-
-        .preview-area .remove-preview {
-            position: absolute;
-            right: 4px;
-            top: 4px;
-            background: rgba(0,0,0,0.5);
-            color: white;
-            border: none;
-            border-radius: 50%;
-            width: 20px;
-            height: 20px;
-            line-height: 20px;
-            text-align: center;
-            cursor: pointer;
-            padding: 0;
-        }
-
-        .preview-area.show {
-            display: block;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
     </style>
 </head>
 <body>
     <div class="layout">
         <div class="left-panel">
-            <div class="config-panel show" id="configPanel">
+            <div class="config-panel" id="configPanel">
                 <div class="config-item">
                     <label for="provider">供应商</label>
                     <select id="provider" onchange="updateProviderConfig()">
@@ -272,10 +245,6 @@
             </div>
             <div class="chat-container">
                 <div class="chat-window" id="chatWindow"></div>
-                <div class="preview-area" id="previewArea">
-                    <img id="imagePreview">
-                    <button class="remove-preview" onclick="removePreview()">×</button>
-                </div>
                 <div class="input-area">
                     <button class="config-toggle" onclick="toggleConfig()" title="显示/隐藏配置">⚙️</button>
                     <input type="text" id="messageInput" placeholder="输入消息...或粘贴图片">
@@ -288,13 +257,13 @@
         </div>
     </div>
     <script>
-        let ws;
+        let ws = null;
         let config = {
-            provider: 'openai',
+            provider: 'Deepseek Chat',
             apiKey: '',
-            apiModel: 'gpt-3.5-turbo',
-            baseUrl: '',
-            saveLocally: false
+            apiModel: 'deepseek-chat',
+            baseUrl: 'https://api.deepseek.com',
+            saveLocally: true
         };
 
         const providerConfigs = {
@@ -332,82 +301,75 @@
         }
         
         function loadConfig() {
-            const savedConfig = localStorage.getItem('agenticConfig');
-            if (savedConfig) {
-                try {
-                    config = JSON.parse(savedConfig);
-                    document.getElementById('provider').value = config.provider || '';
-                    document.getElementById('apiKey').value = config.apiKey || '';
-                    document.getElementById('saveLocally').checked = config.saveLocally || false;
-                    document.getElementById('baseUrl').value = config.baseUrl || '';
-                    updateProviderConfig();
-                    document.getElementById('apiModel').value = config.apiModel || '';
-                    
-                    // 只有当有API Key时才隐藏配置面板
-                    if (config.apiKey && config.apiKey.trim()) {
-                        document.getElementById('configPanel').classList.remove('show');
-                    } else {
-                        document.getElementById('configPanel').classList.add('show');
-                    }
-                } catch (e) {
-                    console.error('加载配置失败:', e);
-                    document.getElementById('configPanel').classList.add('show');
-                }
-            } else {
-                document.getElementById('configPanel').classList.add('show');
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log('请求加载配置');
+                ws.send(JSON.stringify({
+                    type: 'config',
+                    action: 'load'
+                }));
             }
+        }
+
+        function saveConfig() {
+            const provider = document.getElementById('provider').value;
+            const apiKey = document.getElementById('apiKey').value;
+            const apiModel = document.getElementById('apiModel').value;
+            const baseUrl = document.getElementById('baseUrl').value;
+            const saveLocally = document.getElementById('saveLocally').checked;
+
+            config = {
+                provider: provider,
+                apiKey: apiKey,
+                apiModel: apiModel,
+                baseUrl: baseUrl,
+                saveLocally: saveLocally
+            };
+
+            console.log('保存配置:', {...config, apiKey: '***'});
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'config',
+                    action: 'save',
+                    config: config
+                }));
+            }
+
+            // 更新UI状态
+            updateConfigPanel();
             updateInputState();
+        }
+
+        function updateConfigPanel() {
+            const configPanel = document.getElementById('configPanel');
+            const hasApiKey = config.apiKey && config.apiKey.trim() !== '';
+            
+            if (hasApiKey && !configPanel.classList.contains('hidden')) {
+                configPanel.classList.add('hidden');
+            } else if (!hasApiKey && configPanel.classList.contains('hidden')) {
+                configPanel.classList.remove('hidden');
+            }
         }
 
         function toggleConfig() {
             const configPanel = document.getElementById('configPanel');
-            configPanel.classList.toggle('show');
+            configPanel.classList.toggle('hidden');
         }
 
-        function saveConfig() {
-            const apiKey = document.getElementById('apiKey').value.trim();
-            config = {
-                provider: document.getElementById('provider').value,
-                apiKey: apiKey,
-                apiModel: document.getElementById('apiModel').value,
-                baseUrl: document.getElementById('baseUrl').value,
-                saveLocally: document.getElementById('saveLocally').checked
-            };
-
-            localStorage.setItem('agenticConfig', JSON.stringify(config));
-
-            if (config.saveLocally && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    type: 'config',
-                    action: 'save',
-                    data: config
-                }));
-            }
-
-            // 只有当API Key不为空时才隐藏配置面板
-            if (apiKey) {
-                document.getElementById('configPanel').classList.remove('show');
-            }
-            
-            addMessage("配置已保存", "system");
-            updateInputState();
-        }
-        
         function updateInputState() {
-            const messageInput = document.getElementById('messageInput');
-            const sendButton = document.querySelector('.input-area button:last-child');
-            const isConnected = ws && ws.readyState === WebSocket.OPEN;
+            const input = document.getElementById('messageInput');
+            const sendButton = document.getElementById('sendButton');
             const hasApiKey = config.apiKey && config.apiKey.trim() !== '';
+            const isConnected = ws && ws.readyState === WebSocket.OPEN;
             
-            messageInput.disabled = !isConnected || !hasApiKey;
-            sendButton.disabled = !isConnected || !hasApiKey;
+            const enabled = hasApiKey && isConnected;
+            input.disabled = !enabled;
+            sendButton.disabled = !enabled;
             
-            if (!isConnected) {
-                messageInput.placeholder = "正在连接服务器...";
-            } else if (!hasApiKey) {
-                messageInput.placeholder = "请先配置 API Key";
+            if (!enabled) {
+                input.placeholder = !hasApiKey ? '请先配置API Key' : '正在连接服务器...';
             } else {
-                messageInput.placeholder = "输入消息...或粘贴图片";
+                input.placeholder = '输入消息...或粘贴图片';
             }
         }
         
@@ -415,16 +377,19 @@
             ws = new WebSocket(`ws://${window.location.host}/ws`);
             
             ws.onopen = function() {
+                console.log('WebSocket连接已建立');
                 addMessage("系统已连接", "system");
                 loadConfig();
                 updateInputState();
             };
             
             ws.onmessage = function(event) {
+                console.log('收到消息:', event.data);
                 handleMessage(event);
             };
             
             ws.onclose = function() {
+                console.log('WebSocket连接已关闭');
                 addMessage("连接已关闭", "system");
                 updateInputState();
                 setTimeout(connect, 1000);
@@ -435,6 +400,100 @@
                 addMessage("连接错误", "system");
                 updateInputState();
             };
+        }
+
+        // 处理粘贴事件
+        document.addEventListener('paste', function(e) {
+            if (!document.getElementById('messageInput').matches(':focus')) {
+                return;
+            }
+            
+            e.preventDefault();
+            const items = e.clipboardData.items;
+            
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                console.log('粘贴项类型:', item.type);
+                
+                if (item.type.indexOf('image') !== -1) {
+                    console.log('检测到图片粘贴');
+                    const file = item.getAsFile();
+                    const reader = new FileReader();
+                    
+                    reader.onload = function(event) {
+                        const imageData = event.target.result;
+                        console.log('图片已读取，准备发送');
+                        
+                        // 显示预览
+                        showImagePreview(imageData);
+                        
+                        // 发送图片数据
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            const message = {
+                                type: 'chat',
+                                content: document.getElementById('messageInput').value.trim(),
+                                image: {
+                                    data: imageData,
+                                    name: file.name || 'pasted-image.png',
+                                    type: file.type
+                                }
+                            };
+                            console.log('发送图片消息');
+                            ws.send(JSON.stringify(message));
+                        } else {
+                            console.error('WebSocket未连接');
+                            addMessage('发送失败：未连接到服务器', 'error');
+                        }
+                    };
+                    
+                    reader.onerror = function(error) {
+                        console.error('读取图片失败:', error);
+                        addMessage('图片处理失败', 'error');
+                    };
+                    
+                    reader.readAsDataURL(file);
+                    break;
+                }
+            }
+        });
+
+        function showImagePreview(imageData) {
+            const container = document.createElement('div');
+            container.className = 'preview-container';
+            
+            const img = document.createElement('img');
+            img.src = imageData;
+            container.appendChild(img);
+            
+            document.getElementById('chatWindow').appendChild(container);
+            document.getElementById('chatWindow').scrollTop = document.getElementById('chatWindow').scrollHeight;
+        }
+
+        function handleMessage(event) {
+            const data = JSON.parse(event.data);
+            console.log('处理服务器消息:', data);
+            
+            if (data.type === 'image_info') {
+                const info = data.info;
+                if (info.error) {
+                    addMessage(`图片处理错误: ${info.error}`, 'error');
+                } else {
+                    addMessage(`图片信息: 格式=${info.format}, 大小=${info.size}, 尺寸=${info.dimensions}`, 'system');
+                }
+            } else if (data.type === 'error') {
+                addMessage(data.content, 'error');
+            } else {
+                addMessage(data.content, 'system');
+            }
+        }
+
+        function addMessage(message, type = 'system') {
+            const chatWindow = document.getElementById('chatWindow');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.textContent = message;
+            chatWindow.appendChild(messageDiv);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
         }
 
         function sendMessage() {
@@ -474,84 +533,11 @@
             updateInputState();
         }
 
-        function handleMessage(event) {
-            const data = JSON.parse(event.data);
-            console.log("收到服务器消息:", data);
-            
-            if (data.type === 'image_info') {
-                const info = data.info;
-                if (info.error) {
-                    addMessage(`图片处理错误: ${info.error}`, 'error');
-                } else {
-                    addMessage(`图片信息: 格式=${info.format}, 大小=${info.size}, 尺寸=${info.dimensions}`, 'system');
-                }
-            } else if (data.type === 'error') {
-                addMessage(data.content, 'error');
-            } else {
-                addMessage(data.content, 'response');
-            }
-        }
-
-        function addMessage(message, type) {
-            const chatWindow = document.getElementById('chatWindow');
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${type}-message`;
-            messageDiv.textContent = message;
-            chatWindow.appendChild(messageDiv);
-            chatWindow.scrollTop = chatWindow.scrollHeight;
-        }
-
         document.getElementById('messageInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 sendMessage();
             }
         });
-
-        document.getElementById('messageInput').addEventListener('paste', function(e) {
-            const items = e.clipboardData.items;
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].type.indexOf('image') !== -1) {
-                    const file = items[i].getAsFile();
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        const imageData = e.target.result;
-                        console.log("发送图片消息");
-                        ws.send(JSON.stringify({
-                            type: 'chat',
-                            content: document.getElementById('messageInput').value.trim(),
-                            image: {
-                                name: file.name || 'pasted-image.png',
-                                type: file.type,
-                                data: imageData
-                            },
-                            config: config
-                        }));
-                        // 清空输入框
-                        document.getElementById('messageInput').value = '';
-                    };
-                    reader.readAsDataURL(file);
-                    break;
-                }
-            }
-        });
-
-        function showPreview(imageData) {
-            const previewArea = document.createElement('div');
-            previewArea.className = 'preview-area';
-            const img = document.createElement('img');
-            img.src = imageData;
-            img.style.maxWidth = '200px';
-            img.style.maxHeight = '200px';
-            previewArea.appendChild(img);
-            document.getElementById('chatWindow').appendChild(previewArea);
-            document.getElementById('chatWindow').scrollTop = document.getElementById('chatWindow').scrollHeight;
-        }
-
-        function removePreview() {
-            document.getElementById('previewArea').classList.remove('show');
-            document.getElementById('imagePreview').src = '';
-            window.currentImage = null;
-        }
 
         connect();
     </script>
