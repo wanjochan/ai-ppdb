@@ -97,7 +97,7 @@ if /i "%BUILD_MODE%"=="release" (
 )
 
 rem Set include paths
-set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white"
+set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%PPDB_DIR%\src\common -I%COSMO% -I%TEST_DIR%\white"
 
 rem Set final CFLAGS
 set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"

@@ -76,4 +76,34 @@ DEFINE_LOG_FUNC(error, ERROR)
 DEFINE_LOG_TYPE_FUNC(debug, DEBUG)
 DEFINE_LOG_TYPE_FUNC(info, INFO)
 DEFINE_LOG_TYPE_FUNC(warn, WARN)
-DEFINE_LOG_TYPE_FUNC(error, ERROR) 
+DEFINE_LOG_TYPE_FUNC(error, ERROR)
+
+void ppdb_log(ppdb_log_level_t level, const char* file, int line, const char* fmt, ...) {
+    if (!is_enabled || level < current_level) return;
+    
+    char buffer[1024];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    
+    const char* level_str = "UNKNOWN";
+    switch (level) {
+        case PPDB_LOG_DEBUG: level_str = "DEBUG"; break;
+        case PPDB_LOG_INFO:  level_str = "INFO"; break;
+        case PPDB_LOG_WARN:  level_str = "WARN"; break;
+        case PPDB_LOG_ERROR: level_str = "ERROR"; break;
+        case PPDB_LOG_FATAL: level_str = "FATAL"; break;
+    }
+    
+    char final_buffer[2048];
+    snprintf(final_buffer, sizeof(final_buffer), "[%s] %s:%d - %s", level_str, file, line, buffer);
+    
+    if (current_outputs & PPDB_LOG_CONSOLE) {
+        printf("%s\n", final_buffer);
+    }
+    if ((current_outputs & PPDB_LOG_FILE) && log_file) {
+        fprintf(log_file, "%s\n", final_buffer);
+        fflush(log_file);
+    }
+} 

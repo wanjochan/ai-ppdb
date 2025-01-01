@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "kvstore/internal/sync.h"
 #include "ppdb/ppdb_error.h"
-#include "test_framework.h"
+#include "../test_framework.h"
 
 // 测试线程数据结构
 typedef struct {

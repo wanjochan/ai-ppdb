@@ -80,6 +80,14 @@ void test_framework_cleanup(void);
 #define TEST_SUMMARY() test_print_stats()
 #define TEST_RESULT() test_get_result()
 
+#define TEST_ASSERT(condition, message) do { \
+    if (!(condition)) { \
+        printf("Assertion failed: %s\n", message); \
+        printf("  at %s:%d\n", __FILE__, __LINE__); \
+        return -1; \
+    } \
+} while(0)
+
 #define ASSERT_EQ(actual, expected) do { \
     if ((actual) != (expected)) { \
         printf("Assertion failed: %s == %s\n", #actual, #expected); \
@@ -106,8 +114,18 @@ void test_framework_cleanup(void);
 
 #define RUN_TEST(test_fn) do { \
     printf("Running test: %s\n", #test_fn); \
+    test_case_count++; \
     if (test_fn() != 0) { \
         printf("Test failed: %s\n", #test_fn); \
+        test_case_failed++; \
+        return -1; \
+    } \
+} while(0)
+
+#define ASSERT_TRUE(condition) do { \
+    if (!(condition)) { \
+        printf("Assertion failed: %s\n", #condition); \
+        printf("  at %s:%d\n", __FILE__, __LINE__); \
         return -1; \
     } \
 } while(0)
