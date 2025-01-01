@@ -13,7 +13,18 @@ PPDB 提供了自动化的环境初始化脚本，它们会：
 - 克隆参考代码仓库
 - 验证环境配置
 
-### 1.1 Windows 平台
+### 1.1 工具链说明
+PPDB 在不同平台使用不同的工具链：
+- Windows 平台：
+  - 使用 cross9 工具链（从 justine.lol 下载）
+  - 用于在 Windows 上进行交叉编译
+- Linux/macOS 平台：
+  - 使用 cosmocc 工具链（从 cosmo.zip 下载）
+  - 直接在本地编译
+
+这种设计使得我们能在不同平台上获得最佳的开发体验。
+
+### 1.2 Windows 平台
 ```batch
 # 直接运行
 scripts\setup.bat
@@ -25,7 +36,7 @@ set HTTP_PROXY=http://proxy.example.com:8080
 scripts\setup.bat
 ```
 
-### 1.2 Linux/macOS 平台
+### 1.3 Linux/macOS 平台
 ```bash
 # 直接运行
 chmod +x scripts/setup.sh
@@ -38,19 +49,19 @@ export HTTP_PROXY=http://proxy.example.com:8080
 ./scripts/setup.sh
 ```
 
-### 1.3 目录结构说明
+### 1.4 目录结构说明
 初始化后的目录结构如下：
 ```
 ppdb/
 ├── repos/              # 第三方代码和工具链
 │   ├── leveldb/       # LevelDB 参考实现
 │   ├── cosmopolitan/  # 运行时文件
-│   └── cross9/        # 交叉编译工具链
+│   └── cross9/        # Windows平台的交叉编译工具链
 └── tools/             # 编译工具
-    └── cosmocc/       # 编译器和基础工具
+    └── cosmocc/       # Linux/macOS平台的编译器和基础工具
 ```
 
-### 1.4 注意事项
+### 1.5 注意事项
 - Windows 用户需要安装 PowerShell 7+ 和 Git
 - Linux/macOS 用户需要安装 curl、unzip 和 Git
 - 所有路径配置都相对于项目根目录

@@ -78,7 +78,7 @@
             ws = new WebSocket(`ws://${window.location.host}/ws`);
             
             ws.onopen = function() {
-                addMessage("System connected", "system");
+                addMessage("系统已连接", "system");
             };
             
             ws.onmessage = function(event) {
@@ -87,14 +87,14 @@
             };
             
             ws.onclose = function() {
-                addMessage("Connection closed", "system");
+                addMessage("连接已关闭", "system");
                 // 尝试重连
                 setTimeout(connect, 1000);
             };
             
             ws.onerror = function(error) {
-                console.error('WebSocket error:', error);
-                addMessage("Connection error", "system");
+                console.error('WebSocket错误:', error);
+                addMessage("连接错误", "system");
             };
         }
 
