@@ -188,12 +188,12 @@ static int test_concurrent_ops(void) {
 }
 
 int main(void) {
-    test_framework_init();
+    TEST_INIT("Memtable Tests");
     
     RUN_TEST(test_basic_ops);
     RUN_TEST(test_sharding);
     RUN_TEST(test_concurrent_ops);
     
-    test_print_stats();
-    return test_get_result();
+    TEST_SUMMARY();
+    return TEST_RESULT();
 } 

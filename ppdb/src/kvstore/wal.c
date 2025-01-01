@@ -249,44 +249,49 @@ ppdb_error_t cleanup_old_segments(ppdb_wal_t* wal) {
         return PPDB_OK;
     }
 
+    // 保留最新的段
     size_t segments_to_remove = wal->segment_count - wal->config.max_segments;
-    wal_segment_t* curr = wal->segments;
+    wal_segment_t* current = wal->segments;
+    wal_segment_t* prev = NULL;
 
-    for (size_t i = 0; i < segments_to_remove && curr; i++) {
-        wal_segment_t* to_remove = curr;
-        curr = curr->next;
+    for (size_t i = 0; i < segments_to_remove && current; i++) {
+        wal_segment_t* to_remove = current;
+        current = current->next;
 
         // 关闭并删除文件
         close(to_remove->fd);
         unlink(to_remove->filename);
-        
         free(to_remove->filename);
         free(to_remove);
 
         wal->segment_count--;
     }
 
-    wal->segments = curr;
+    // 更新段链表头
+    wal->segments = current;
     return PPDB_OK;
 }
 
-// 基础WAL操作实现
+// 创建 WAL
 ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t** wal) {
-    if (!config || !wal) return PPDB_ERR_INVALID_ARG;
+    if (!config || !wal) {
+        return PPDB_ERR_INVALID_ARG;
+    }
 
-    ppdb_wal_t* new_wal = calloc(1, sizeof(ppdb_wal_t));
-    if (!new_wal) return PPDB_ERR_OUT_OF_MEMORY;
+    // 分配 WAL 结构
+    ppdb_wal_t* new_wal = malloc(sizeof(ppdb_wal_t));
+    if (!new_wal) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
 
-    // 复制配置
-    memcpy(&new_wal->config, config, sizeof(ppdb_wal_config_t));
+    // 初始化 WAL 结构
+    memset(new_wal, 0, sizeof(ppdb_wal_t));
+    new_wal->config = *config;
     new_wal->dir_path = strdup(config->dir_path);
     if (!new_wal->dir_path) {
         free(new_wal);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
-
-    // 设置同步写入标志
-    new_wal->sync_on_write = config->sync_write;
 
     // 创建目录
     if (mkdir(new_wal->dir_path, 0755) != 0 && errno != EEXIST) {
@@ -295,272 +300,176 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
         return PPDB_ERR_IO;
     }
 
-    // 初始化同步对象
-    new_wal->sync = malloc(sizeof(ppdb_sync_t));
+    // 初始化同步原语
+    new_wal->sync = ppdb_sync_create();
     if (!new_wal->sync) {
         free(new_wal->dir_path);
         free(new_wal);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
-    ppdb_sync_config_t sync_config = {
-        .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000
-    };
-
-    ppdb_error_t err = ppdb_sync_init(new_wal->sync, &sync_config);
-    if (err != PPDB_OK) {
-        free(new_wal->sync);
-        free(new_wal->dir_path);
-        free(new_wal);
-        return err;
-    }
-
     // 扫描现有段
-    err = scan_existing_segments(new_wal);
+    ppdb_error_t err = scan_existing_segments(new_wal);
     if (err != PPDB_OK) {
         ppdb_sync_destroy(new_wal->sync);
-        free(new_wal->sync);
         free(new_wal->dir_path);
         free(new_wal);
         return err;
     }
 
-    // 如果没有段，创建第一个段
-    if (!new_wal->segments) {
-        wal_segment_t* first_segment;
-        err = create_new_segment(new_wal, &first_segment);
-        if (err != PPDB_OK) {
-            ppdb_sync_destroy(new_wal->sync);
-            free(new_wal->sync);
-            free(new_wal->dir_path);
-            free(new_wal);
-            return err;
-        }
+    // 创建新段
+    wal_segment_t* first_segment;
+    err = create_new_segment(new_wal, &first_segment);
+    if (err != PPDB_OK) {
+        ppdb_sync_destroy(new_wal->sync);
+        free(new_wal->dir_path);
+        free(new_wal);
+        return err;
     }
 
-    new_wal->closed = false;
     *wal = new_wal;
     return PPDB_OK;
 }
 
+// 销毁 WAL
 void ppdb_wal_destroy_basic(ppdb_wal_t* wal) {
     if (!wal) return;
 
-    // 清理所有段
-    wal_segment_t* curr = wal->segments;
-    while (curr) {
-        wal_segment_t* next = curr->next;
-        if (curr->fd >= 0) {
-            close(curr->fd);
-        }
-        free(curr->filename);
-        free(curr);
-        curr = next;
+    // 关闭所有段
+    wal_segment_t* current = wal->segments;
+    while (current) {
+        wal_segment_t* next = current->next;
+        close(current->fd);
+        free(current->filename);
+        free(current);
+        current = next;
     }
 
-    if (wal->sync) {
-        ppdb_sync_destroy(wal->sync);
-        free(wal->sync);
-    }
-
-    free(wal->write_buffer);
+    // 释放资源
+    ppdb_sync_destroy(wal->sync);
     free(wal->dir_path);
     free(wal);
 }
 
-// 写入记录到当前段
-ppdb_error_t write_record_to_segment(wal_segment_t* segment, const void* key, size_t key_size,
+// 写入记录到段
+static ppdb_error_t write_record_to_segment(wal_segment_t* segment, const void* key, size_t key_size,
                                           const void* value, size_t value_size, uint64_t sequence) {
-    if (!segment || !key || !value) return PPDB_ERR_INVALID_ARG;
+    if (!segment || !key || !value) {
+        return PPDB_ERR_INVALID_ARG;
+    }
 
-    // 计算记录大小
-    size_t record_size = sizeof(wal_record_header_t) + key_size + value_size;
-    
     // 准备记录头部
     wal_record_header_t header = {
         .magic = WAL_MAGIC,
+        .type = PPDB_WAL_RECORD_PUT,
         .key_size = key_size,
         .value_size = value_size,
         .sequence = sequence,
         .checksum = 0
     };
 
-    // 计算记录校验和
+    // 计算校验和
     header.checksum = calculate_crc32(&header, sizeof(header));
     header.checksum = calculate_crc32(key, key_size);
     header.checksum = calculate_crc32(value, value_size);
 
-    // 写入记录头部
-    ssize_t written = pwrite(segment->fd, &header, sizeof(header), segment->size);
-    if (written != sizeof(header)) {
+    // 写入头部
+    ssize_t write_size = write(segment->fd, &header, sizeof(header));
+    if (write_size != sizeof(header)) {
         return PPDB_ERR_IO;
     }
 
     // 写入键
-    written = pwrite(segment->fd, key, key_size, segment->size + sizeof(header));
-    if (written != key_size) {
+    write_size = write(segment->fd, key, key_size);
+    if (write_size != key_size) {
         return PPDB_ERR_IO;
     }
 
     // 写入值
-    written = pwrite(segment->fd, value, value_size, 
-                    segment->size + sizeof(header) + key_size);
-    if (written != value_size) {
+    write_size = write(segment->fd, value, value_size);
+    if (write_size != value_size) {
         return PPDB_ERR_IO;
     }
 
     // 更新段信息
-    segment->size += record_size;
+    segment->size += sizeof(header) + key_size + value_size;
     segment->last_sequence = sequence;
 
     return PPDB_OK;
 }
 
-// 写入记录
-ppdb_error_t ppdb_wal_write_basic(ppdb_wal_t* wal, const void* key, size_t key_size,
-                                 const void* value, size_t value_size) {
-    if (!wal || !key || !value || wal->closed) {
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    ppdb_error_t err = PPDB_OK;
-    bool need_new_segment = false;
-
-    // 获取锁
-    err = ppdb_sync_lock(wal->sync);
-    if (err != PPDB_OK) {
-        return err;
-    }
-
-    // 获取当前活动段
-    wal_segment_t* curr_segment = wal->segments;
-    while (curr_segment && curr_segment->next) {
-        curr_segment = curr_segment->next;
-    }
-
-    // 检查是否需要新段
-    if (!curr_segment || curr_segment->is_sealed || 
-        curr_segment->size + sizeof(wal_record_header_t) + key_size + value_size > 
-        wal->config.segment_size) {
-        need_new_segment = true;
-    }
-
-    // 如果需要，创建新段
-    if (need_new_segment) {
-        if (curr_segment) {
-            err = seal_segment(curr_segment);
-            if (err != PPDB_OK) {
-                ppdb_sync_unlock(wal->sync);
-                return err;
-            }
-        }
-
-        err = create_new_segment(wal, &curr_segment);
-        if (err != PPDB_OK) {
-            ppdb_sync_unlock(wal->sync);
-            return err;
-        }
-
-        // 清理旧段
-        err = cleanup_old_segments(wal);
-        if (err != PPDB_OK) {
-            ppdb_sync_unlock(wal->sync);
-            return err;
-        }
-    }
-
-    // 写入记录
-    err = write_record_to_segment(curr_segment, key, key_size, value, value_size, 
-                                wal->next_sequence++);
-    if (err != PPDB_OK) {
-        ppdb_sync_unlock(wal->sync);
-        return err;
-    }
-
-    // 如果需要同步
-    if (wal->config.sync_write) {
-        if (fsync(curr_segment->fd) != 0) {
-            ppdb_sync_unlock(wal->sync);
-            return PPDB_ERR_IO;
-        }
-    }
-
-    ppdb_sync_unlock(wal->sync);
-    return PPDB_OK;
-}
-
+// 同步 WAL
 ppdb_error_t ppdb_wal_sync_basic(ppdb_wal_t* wal) {
     if (!wal) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    wal_segment_t* curr = wal->segments;
+    if (wal->closed) {
+        return PPDB_ERR_WAL_CLOSED;
+    }
 
-    // 遍历所有段
-    while (curr) {
-        if (!curr->is_sealed) {
-            if (fsync(curr->fd) != 0) {
-                return PPDB_ERR_IO;
-            }
-        }
-        curr = curr->next;
+    // 同步当前段
+    if (fsync(wal->current_fd) != 0) {
+        return PPDB_ERR_IO;
     }
 
     return PPDB_OK;
 }
 
+// 获取 WAL 大小
 size_t ppdb_wal_size_basic(ppdb_wal_t* wal) {
     if (!wal) {
         return 0;
     }
-    return wal->current_size;
+
+    return wal->total_size;
 }
 
+// 获取下一个序列号
 uint64_t ppdb_wal_next_sequence_basic(ppdb_wal_t* wal) {
     if (!wal) {
         return 0;
     }
-    return wal->next_sequence++;
+
+    return wal->next_sequence;
 }
 
-// 工厂函数实现
+// 创建 WAL
 ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal) {
     return ppdb_wal_create_basic(config, wal);
 }
 
+// 销毁 WAL
 void ppdb_wal_destroy(ppdb_wal_t* wal) {
     ppdb_wal_destroy_basic(wal);
 }
 
-ppdb_error_t ppdb_wal_write(ppdb_wal_t* wal, const void* key, size_t key_size,
-                           const void* value, size_t value_size) {
-    return ppdb_wal_write_basic(wal, key, key_size, value, value_size);
-}
-
+// 同步 WAL
 ppdb_error_t ppdb_wal_sync(ppdb_wal_t* wal) {
     return ppdb_wal_sync_basic(wal);
 }
 
+// 获取 WAL 大小
 size_t ppdb_wal_size(ppdb_wal_t* wal) {
     return ppdb_wal_size_basic(wal);
 }
 
+// 获取下一个序列号
 uint64_t ppdb_wal_next_sequence(ppdb_wal_t* wal) {
     return ppdb_wal_next_sequence_basic(wal);
 }
 
-// 关闭WAL
+// 关闭 WAL
 void ppdb_wal_close(ppdb_wal_t* wal) {
-    if (!wal) {
+    if (!wal || wal->closed) {
         return;
     }
 
-    // 同步并关闭文件
-    if (wal->current_fd >= 0) {
-        ppdb_wal_sync(wal);
-        close(wal->current_fd);
-        wal->current_fd = -1;
+    // 关闭所有段
+    wal_segment_t* current = wal->segments;
+    while (current) {
+        close(current->fd);
+        current = current->next;
     }
 
     wal->closed = true;
@@ -568,7 +477,9 @@ void ppdb_wal_close(ppdb_wal_t* wal) {
 
 // 获取段数量
 size_t ppdb_wal_segment_count(ppdb_wal_t* wal) {
-    if (!wal) return 0;
+    if (!wal) {
+        return 0;
+    }
     return wal->segment_count;
 }
 

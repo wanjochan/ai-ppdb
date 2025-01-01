@@ -31,6 +31,10 @@ void test_framework_init(void) {
         return;
     }
     
+    // 重置计数器
+    test_case_count = 0;
+    test_case_failed = 0;
+    
     // 初始化日志系统
     ppdb_log_config_t log_config = {
         .enabled = true,

@@ -124,7 +124,7 @@ if "%TEST_TYPE%"=="test42" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test memtable "%PPDB_DIR%\src\kvstore\memtable.c %PPDB_DIR%\src\kvstore\skiplist.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_memtable.c"
     if exist "%BUILD_DIR%\memtable_test.exe" "%BUILD_DIR%\memtable_test.exe"
 ) else if "%TEST_TYPE%"=="wal_core" (
-    if "%NEED_REBUILD%"=="1" call :build_simple_test wal_core "%PPDB_DIR%\src\kvstore\wal.c %PPDB_DIR%\src\kvstore\wal_write.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\src\common\fs.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_wal_core.c"
+    if "%NEED_REBUILD%"=="1" call :build_simple_test wal_core "%PPDB_DIR%\src\kvstore\wal.c %PPDB_DIR%\src\kvstore\wal_write.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\src\common\fs.c %PPDB_DIR%\test\white\test_framework.c %PPDB_DIR%\src\kvstore\memtable.c %PPDB_DIR%\src\kvstore\skiplist.c" "%PPDB_DIR%\test\white\storage\test_wal_core.c"
     if exist "%BUILD_DIR%\wal_core_test.exe" "%BUILD_DIR%\wal_core_test.exe"
 ) else if "%TEST_TYPE%"=="wal_func" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test wal_func "%PPDB_DIR%\src\kvstore\wal.c %PPDB_DIR%\src\kvstore\wal_write.c %PPDB_DIR%\src\kvstore\wal_iterator.c %PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\src\common\fs.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\test_wal_func.c"

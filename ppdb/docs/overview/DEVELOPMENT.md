@@ -26,7 +26,7 @@ curl -L -o cosmocc.zip https://cosmo.zip/pub/cosmocc/cosmocc.zip
 # - crt.o
 # - ape.o
 
-# 下载 cross.zip (https://justine.lol/cosmopolitan/windows-compiling.html)
+# 下载 cross9.zip (https://justine.lol/cosmopolitan/windows-compiling.html)
 curl -L -o cross9.zip https://justine.lol/linux-compiler-on-windows/cross9.zip
 
 ```
