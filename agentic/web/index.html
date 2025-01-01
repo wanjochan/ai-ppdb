@@ -192,6 +192,17 @@
             margin-right: auto;
         }
 
+        .error-message {
+            background: #fbe0e0;
+            margin-right: auto;
+            color: #666;
+        }
+
+        .response-message {
+            background: #e3f2fd;
+            margin-left: auto;
+        }
+
         /* 图片预览区域 */
         .preview-area {
             position: relative;
@@ -268,6 +279,7 @@
                 <div class="input-area">
                     <button class="config-toggle" onclick="toggleConfig()" title="显示/隐藏配置">⚙️</button>
                     <input type="text" id="messageInput" placeholder="输入消息...或粘贴图片">
+                    <input type="file" id="imageInput" style="display: none;">
                     <button onclick="sendMessage()">发送</button>
                 </div>
             </div>
@@ -320,25 +332,31 @@
         }
         
         function loadConfig() {
-            // 优先从 localStorage 加载配置
             const savedConfig = localStorage.getItem('agenticConfig');
             if (savedConfig) {
-                config = JSON.parse(savedConfig);
-                document.getElementById('provider').value = config.provider;
-                document.getElementById('apiKey').value = config.apiKey;
-                document.getElementById('saveLocally').checked = config.saveLocally;
-                if (config.baseUrl) {
-                    document.getElementById('baseUrl').value = config.baseUrl;
+                try {
+                    config = JSON.parse(savedConfig);
+                    document.getElementById('provider').value = config.provider || '';
+                    document.getElementById('apiKey').value = config.apiKey || '';
+                    document.getElementById('saveLocally').checked = config.saveLocally || false;
+                    document.getElementById('baseUrl').value = config.baseUrl || '';
+                    updateProviderConfig();
+                    document.getElementById('apiModel').value = config.apiModel || '';
+                    
+                    // 只有当有API Key时才隐藏配置面板
+                    if (config.apiKey && config.apiKey.trim()) {
+                        document.getElementById('configPanel').classList.remove('show');
+                    } else {
+                        document.getElementById('configPanel').classList.add('show');
+                    }
+                } catch (e) {
+                    console.error('加载配置失败:', e);
+                    document.getElementById('configPanel').classList.add('show');
                 }
-                updateProviderConfig();
-                document.getElementById('apiModel').value = config.apiModel;
-                // 如果有保存的配置，保持配置面板隐藏
-                document.getElementById('configPanel').classList.remove('show');
             } else {
-                // 如果没有配置，显示配置面板
                 document.getElementById('configPanel').classList.add('show');
-                updateProviderConfig();
             }
+            updateInputState();
         }
 
         function toggleConfig() {
@@ -347,13 +365,15 @@
         }
 
         function saveConfig() {
-            config.provider = document.getElementById('provider').value;
-            config.apiKey = document.getElementById('apiKey').value;
-            config.apiModel = document.getElementById('apiModel').value;
-            config.baseUrl = document.getElementById('baseUrl').value;
-            config.saveLocally = document.getElementById('saveLocally').checked;
+            const apiKey = document.getElementById('apiKey').value.trim();
+            config = {
+                provider: document.getElementById('provider').value,
+                apiKey: apiKey,
+                apiModel: document.getElementById('apiModel').value,
+                baseUrl: document.getElementById('baseUrl').value,
+                saveLocally: document.getElementById('saveLocally').checked
+            };
 
-            // 始终保存到 localStorage
             localStorage.setItem('agenticConfig', JSON.stringify(config));
 
             if (config.saveLocally && ws.readyState === WebSocket.OPEN) {
@@ -364,7 +384,11 @@
                 }));
             }
 
-            document.getElementById('configPanel').classList.remove('show');
+            // 只有当API Key不为空时才隐藏配置面板
+            if (apiKey) {
+                document.getElementById('configPanel').classList.remove('show');
+            }
+            
             addMessage("配置已保存", "system");
             updateInputState();
         }
@@ -397,12 +421,7 @@
             };
             
             ws.onmessage = function(event) {
-                const response = JSON.parse(event.data);
-                if (response.type === 'image_info') {
-                    addMessage(`图片信息：${JSON.stringify(response.info)}`, "system");
-                } else {
-                    addMessage(response.content, "system");
-                }
+                handleMessage(event);
             };
             
             ws.onclose = function() {
@@ -418,83 +437,58 @@
             };
         }
 
-        // 处理粘贴事件
-        document.addEventListener('paste', function(e) {
-            const items = e.clipboardData.items;
-            for (let i = 0; i < items.length; i++) {
-                if (items[i].type.indexOf('image') !== -1) {
-                    const blob = items[i].getAsFile();
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        // 显示预览
-                        document.getElementById('imagePreview').src = e.target.result;
-                        document.getElementById('previewArea').classList.add('show');
-                        // 保存图片数据用于发送
-                        window.currentImage = {
-                            data: e.target.result,
-                            type: 'image'
-                        };
-                    };
-                    reader.readAsDataURL(blob);
-                    break;
-                }
-            }
-        });
-
-        function removePreview() {
-            document.getElementById('previewArea').classList.remove('show');
-            document.getElementById('imagePreview').src = '';
-            window.currentImage = null;
-        }
-
         function sendMessage() {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
-            const hasImage = window.currentImage != null;
+            const imageInput = document.getElementById('imageInput');
             
-            if ((message || hasImage) && ws.readyState === WebSocket.OPEN) {
-                if (!config.apiKey) {
-                    addMessage("请先配置API Key", "system");
-                    return;
-                }
-
-                const data = {
-                    type: "chat",
-                    content: message,
-                    config: {
-                        model: config.apiModel,
-                        provider: config.provider,
-                        baseUrl: config.baseUrl
-                    }
+            // 检查是否有图片
+            if (imageInput.files.length > 0) {
+                const file = imageInput.files[0];
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const imageData = e.target.result;
+                    console.log("发送图片消息");
+                    ws.send(JSON.stringify({
+                        type: 'chat',
+                        content: message,
+                        image: {
+                            name: file.name,
+                            type: file.type,
+                            data: imageData
+                        },
+                        config: config
+                    }));
                 };
+                reader.readAsDataURL(file);
+            } else if (message) {
+                ws.send(JSON.stringify({
+                    type: 'chat',
+                    content: message,
+                    config: config
+                }));
+            }
 
-                // 如果有图片，添加到消息中
-                if (hasImage) {
-                    data.image = window.currentImage;
-                    // 在聊天窗口显示图片预览
-                    const imgElement = document.createElement('img');
-                    imgElement.src = window.currentImage.data;
-                    imgElement.style.maxWidth = '200px';
-                    imgElement.style.maxHeight = '200px';
-                    imgElement.style.borderRadius = '4px';
-                    const messageDiv = document.createElement('div');
-                    messageDiv.className = 'message user-message';
-                    messageDiv.appendChild(imgElement);
-                    if (message) {
-                        const textDiv = document.createElement('div');
-                        textDiv.textContent = message;
-                        textDiv.style.marginTop = '4px';
-                        messageDiv.appendChild(textDiv);
-                    }
-                    document.getElementById('chatWindow').appendChild(messageDiv);
-                    // 清除预览
-                    removePreview();
+            input.value = '';
+            imageInput.value = '';
+            updateInputState();
+        }
+
+        function handleMessage(event) {
+            const data = JSON.parse(event.data);
+            console.log("收到服务器消息:", data);
+            
+            if (data.type === 'image_info') {
+                const info = data.info;
+                if (info.error) {
+                    addMessage(`图片处理错误: ${info.error}`, 'error');
                 } else {
-                    addMessage(message, "user");
+                    addMessage(`图片信息: 格式=${info.format}, 大小=${info.size}, 尺寸=${info.dimensions}`, 'system');
                 }
-
-                ws.send(JSON.stringify(data));
-                input.value = '';
+            } else if (data.type === 'error') {
+                addMessage(data.content, 'error');
+            } else {
+                addMessage(data.content, 'response');
             }
         }
 
@@ -512,6 +506,52 @@
                 sendMessage();
             }
         });
+
+        document.getElementById('messageInput').addEventListener('paste', function(e) {
+            const items = e.clipboardData.items;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf('image') !== -1) {
+                    const file = items[i].getAsFile();
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const imageData = e.target.result;
+                        console.log("发送图片消息");
+                        ws.send(JSON.stringify({
+                            type: 'chat',
+                            content: document.getElementById('messageInput').value.trim(),
+                            image: {
+                                name: file.name || 'pasted-image.png',
+                                type: file.type,
+                                data: imageData
+                            },
+                            config: config
+                        }));
+                        // 清空输入框
+                        document.getElementById('messageInput').value = '';
+                    };
+                    reader.readAsDataURL(file);
+                    break;
+                }
+            }
+        });
+
+        function showPreview(imageData) {
+            const previewArea = document.createElement('div');
+            previewArea.className = 'preview-area';
+            const img = document.createElement('img');
+            img.src = imageData;
+            img.style.maxWidth = '200px';
+            img.style.maxHeight = '200px';
+            previewArea.appendChild(img);
+            document.getElementById('chatWindow').appendChild(previewArea);
+            document.getElementById('chatWindow').scrollTop = document.getElementById('chatWindow').scrollHeight;
+        }
+
+        function removePreview() {
+            document.getElementById('previewArea').classList.remove('show');
+            document.getElementById('imagePreview').src = '';
+            window.currentImage = null;
+        }
 
         connect();
     </script>

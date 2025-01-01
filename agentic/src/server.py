@@ -54,37 +54,6 @@ async def handle_config(websocket: WebSocket, message: Dict[str, Any]):
 
 async def handle_chat(websocket: WebSocket, message: Dict[str, Any]):
     try:
-        # 如果消息中包含图片
-        if "image" in message:
-            logger.info("检测到图片消息")
-            image_data = message["image"]["data"]
-            try:
-                # 移除base64前缀
-                image_base64 = image_data.split(',')[1] if ',' in image_data else image_data
-                # 解码base64数据
-                image_bytes = base64.b64decode(image_base64)
-                # 使用PIL打开图片获取信息
-                with Image.open(io.BytesIO(image_bytes)) as img:
-                    image_info = {
-                        "format": img.format,
-                        "size": f"{len(image_bytes) / 1024:.1f}KB",
-                        "dimensions": f"{img.width}x{img.height}",
-                        "mode": img.mode
-                    }
-                    logger.info(f"图片信息: {image_info}")
-                    await websocket.send_json({
-                        "type": "image_info",
-                        "info": image_info
-                    })
-            except Exception as e:
-                error_msg = f"处理图片时出错: {str(e)}"
-                logger.error(error_msg)
-                await websocket.send_json({
-                    "type": "image_info",
-                    "info": {"error": error_msg}
-                })
-
-        # 继续处理文本消息
         content = message.get("content", "")
         config = message.get("config", {})
         
@@ -106,22 +75,48 @@ async def handle_chat(websocket: WebSocket, message: Dict[str, Any]):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    logger.info("WebSocket连接已建立")
+    
     try:
         while True:
             data = await websocket.receive_json()
-            logger.info(f"收到消息: {data}")
+            logger.info(f"收到消息类型: {data.get('type')}")
             
-            msg_type = data.get('type', '')
-            if msg_type == 'config':
+            if data.get("type") == "chat" and "image" in data:
+                logger.info("检测到图片数据")
+                image_data = data["image"]["data"]
+                try:
+                    # 移除base64前缀
+                    image_base64 = image_data.split(',')[1] if ',' in image_data else image_data
+                    # 解码base64数据
+                    image_bytes = base64.b64decode(image_base64)
+                    # 使用PIL打开图片获取信息
+                    with Image.open(io.BytesIO(image_bytes)) as img:
+                        image_info = {
+                            "format": img.format,
+                            "size": f"{len(image_bytes) / 1024:.1f}KB",
+                            "dimensions": f"{img.width}x{img.height}",
+                            "mode": img.mode
+                        }
+                        logger.info(f"成功处理图片: {image_info}")
+                        await websocket.send_json({
+                            "type": "image_info",
+                            "info": image_info
+                        })
+                except Exception as e:
+                    error_msg = f"处理图片时出错: {str(e)}"
+                    logger.error(error_msg)
+                    await websocket.send_json({
+                        "type": "image_info",
+                        "info": {"error": error_msg}
+                    })
+            
+            # 继续处理消息
+            if data.get("type") == "config":
                 await handle_config(websocket, data)
-            elif msg_type == 'chat':
+            elif data.get("type") == "chat":
                 await handle_chat(websocket, data)
-            else:
-                await websocket.send_json({
-                    "type": "error",
-                    "content": f"未知的消息类型: {msg_type}"
-                })
-                
+            
     except WebSocketDisconnect:
         logger.info("Client disconnected")
     except Exception as e:
