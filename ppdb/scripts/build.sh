@@ -23,16 +23,42 @@ TEST_DIR="$ROOT_DIR/test"
 # Set tool paths based on OS
 COSMO="$ROOT_DIR/../repos/cosmopolitan"
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS toolchain (try to find LLVM tools in standard locations)
-    for prefix in /usr/local/opt/llvm/bin /opt/homebrew/opt/llvm/bin; do
+    # macOS toolchain
+    echo "macOS detected. Verifying LLVM toolchain..."
+    
+    # Try to find LLVM tools in common locations
+    LLVM_PATHS=(
+        "/usr/local/opt/llvm/bin"
+        "/opt/homebrew/opt/llvm/bin"
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    )
+    
+    LLVM_FOUND=0
+    for prefix in "${LLVM_PATHS[@]}"; do
         if [ -d "$prefix" ]; then
             export PATH="$prefix:$PATH"
+            LLVM_FOUND=1
+            echo "Found LLVM tools at $prefix"
             break
         fi
     done
+    
+    if [ $LLVM_FOUND -eq 0 ]; then
+        echo "Error: LLVM tools not found. Please run setup.sh first to install required tools."
+        exit 1
+    fi
+    
     CC="clang"
     AR="llvm-ar"
     OBJCOPY="llvm-objcopy"
+    
+    # Verify LLVM tools
+    for cmd in $CC $AR $OBJCOPY; do
+        if ! command -v $cmd &> /dev/null; then
+            echo "Error: Required command '$cmd' not found. Please run setup.sh first."
+            exit 1
+        fi
+    done
 elif [[ "$OSTYPE" == "linux"* ]]; then
     # Linux toolchain
     CC="gcc"
@@ -246,4 +272,4 @@ fi
 # Set executable permission
 chmod +x "$TEST_EXE"
 
-exit 0 
+exit 0

@@ -33,10 +33,39 @@ done
 # Detect OS and check compiler toolchain
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # Check macOS toolchain
+    echo "macOS detected. Setting up LLVM toolchain..."
+    
+    # Try to find LLVM tools in common locations
+    LLVM_PATHS=(
+        "/usr/local/opt/llvm/bin"
+        "/opt/homebrew/opt/llvm/bin"
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin"
+    )
+    
+    LLVM_FOUND=0
+    for prefix in "${LLVM_PATHS[@]}"; do
+        if [ -d "$prefix" ]; then
+            export PATH="$prefix:$PATH"
+            LLVM_FOUND=1
+            echo "Found LLVM tools at $prefix"
+            break
+        fi
+    done
+    
+    if [ $LLVM_FOUND -eq 0 ]; then
+        echo "LLVM tools not found. Installing via Homebrew..."
+        if ! command -v brew &> /dev/null; then
+            echo "Homebrew not found. Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        fi
+        brew install llvm
+        export PATH="/usr/local/opt/llvm/bin:$PATH"
+    fi
+    
+    # Verify LLVM tools
     for cmd in clang llvm-ar llvm-objcopy; do
         if ! command -v $cmd &> /dev/null; then
-            echo "Error: Required command '$cmd' not found"
-            echo "Please install llvm tools: brew install llvm"
+            echo "Error: Required command '$cmd' not found after setup"
             exit 1
         fi
     done
@@ -169,4 +198,4 @@ echo "=== Environment setup complete ==="
 echo "You can now start building PPDB"
 echo "Run 'scripts/build.sh help' to see build options"
 
-exit 0 
+exit 0
