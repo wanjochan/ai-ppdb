@@ -284,28 +284,26 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
-    // 初始化 WAL 结构
-    memset(new_wal, 0, sizeof(ppdb_wal_t));
+    // 初始化基本字段
     new_wal->config = *config;
     new_wal->dir_path = strdup(config->dir_path);
-    if (!new_wal->dir_path) {
-        free(new_wal);
-        return PPDB_ERR_OUT_OF_MEMORY;
-    }
+    new_wal->segments = NULL;
+    new_wal->segment_count = 0;
+    new_wal->next_sequence = 1;
+    new_wal->next_segment_id = 0;
+    new_wal->current_fd = -1;
+    new_wal->current_size = 0;
+    new_wal->total_size = 0;
+    new_wal->write_buffer = malloc(WAL_BUFFER_SIZE);
+    new_wal->closed = false;
+    new_wal->sync_on_write = config->sync_write;
+    new_wal->sync = ppdb_sync_create();
 
     // 创建目录
     if (mkdir(new_wal->dir_path, 0755) != 0 && errno != EEXIST) {
         free(new_wal->dir_path);
         free(new_wal);
         return PPDB_ERR_IO;
-    }
-
-    // 初始化同步原语
-    new_wal->sync = ppdb_sync_create();
-    if (!new_wal->sync) {
-        free(new_wal->dir_path);
-        free(new_wal);
-        return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     // 扫描现有段

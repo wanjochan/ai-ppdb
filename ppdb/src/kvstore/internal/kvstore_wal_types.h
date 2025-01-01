@@ -64,6 +64,7 @@ typedef struct ppdb_wal {
     uint64_t next_segment_id;    // 下一个段 ID
     int current_fd;              // 当前文件描述符
     size_t current_size;         // 当前大小
+    size_t total_size;          // 总大小
     void* write_buffer;          // 写入缓冲区
     bool closed;                 // 是否已关闭
     bool sync_on_write;          // 是否同步写入

@@ -14,8 +14,10 @@
  */
 
 #include <cosmopolitan.h>
-#include "internal/sync.h"
+#include "kvstore/internal/sync.h"
 #include "ppdb/ppdb_logger.h"
+#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_error.h"
 
 // FNV-1a哈希函数实现
 uint32_t ppdb_sync_hash(const void* data, size_t len) {
@@ -206,7 +208,7 @@ ppdb_error_t ppdb_sync_file(const char* filename) {
     // 使用 Cosmopolitan 的 POSIX 兼容层
     int fd = open(filename, O_RDWR | O_CLOEXEC);
     if (fd < 0) {
-        ppdb_log_error("Failed to open file for sync: %s (errno: %d)", filename, errno);
+        PPDB_LOG_ERROR("Failed to open file for sync: %s (errno: %d)", filename, errno);
         return PPDB_ERR_IO;
     }
 
@@ -215,7 +217,7 @@ ppdb_error_t ppdb_sync_file(const char* filename) {
     close(fd);
 
     if (ret != 0) {
-        ppdb_log_error("Failed to sync file: %s (errno: %d)", filename, errno);
+        PPDB_LOG_ERROR("Failed to sync file: %s (errno: %d)", filename, errno);
         return PPDB_ERR_IO;
     }
 
@@ -231,9 +233,29 @@ ppdb_error_t ppdb_sync_fd(int fd) {
     // fsync 在 Cosmopolitan 中是跨平台的
     int ret = fsync(fd);
     if (ret != 0) {
-        ppdb_log_error("Failed to sync file descriptor: %d (errno: %d)", fd, errno);
+        PPDB_LOG_ERROR("Failed to sync file descriptor: %d (errno: %d)", fd, errno);
         return PPDB_ERR_IO;
     }
 
     return PPDB_OK;
+}
+
+// 创建同步原语对象
+ppdb_sync_t* ppdb_sync_create(void) {
+    ppdb_sync_t* sync = malloc(sizeof(ppdb_sync_t));
+    if (!sync) return NULL;
+
+    // 初始化为默认的互斥锁模式
+    ppdb_sync_config_t config = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000,
+        .timeout_ms = 0
+    };
+
+    if (ppdb_sync_init(sync, &config) != PPDB_OK) {
+        free(sync);
+        return NULL;
+    }
+
+    return sync;
 }

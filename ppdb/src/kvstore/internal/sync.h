@@ -19,6 +19,12 @@
 #include "ppdb/ppdb_types.h"
 
 /**
+ * @brief 创建同步原语对象
+ * @return 新创建的同步原语对象，失败返回 NULL
+ */
+ppdb_sync_t* ppdb_sync_create(void);
+
+/**
  * @brief 初始化同步原语
  * @param sync 同步原语对象
  * @param config 配置参数，包含同步模式类型

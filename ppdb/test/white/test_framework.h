@@ -89,7 +89,8 @@ void test_framework_cleanup(void);
 } while(0)
 
 #define ASSERT_OK(err) do { \
-    if ((err) != PPDB_OK) { \
+    ppdb_error_t _err = (err); \
+    if (_err != PPDB_OK) { \
         printf("Assertion failed: %s should be PPDB_OK\n", #err); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
         return -1; \
