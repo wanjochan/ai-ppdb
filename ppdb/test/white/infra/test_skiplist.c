@@ -19,9 +19,9 @@ static int thread_safe_rand() {
 }
 
 // 基本操作测试
-void test_basic_ops(void) {
+static void test_skiplist_basic(bool use_lockfree) {
     ppdb_skiplist_t* list = NULL;
-    ppdb_error_t err = ppdb_skiplist_create(16, false, &list);
+    ppdb_error_t err = ppdb_skiplist_create(16, use_lockfree, &list);
     ASSERT_EQ(err, PPDB_OK);
 
     // 测试插入
@@ -121,9 +121,9 @@ static void* concurrent_test_thread(void* arg) {
 }
 
 // 并发操作测试
-void test_concurrent_ops(void) {
+static void test_skiplist_concurrent(bool use_lockfree) {
     ppdb_skiplist_t* list = NULL;
-    ppdb_error_t err = ppdb_skiplist_create(16, false, &list);
+    ppdb_error_t err = ppdb_skiplist_create(16, use_lockfree, &list);
     ASSERT_EQ(err, PPDB_OK);
 
     pthread_t threads[NUM_THREADS];
@@ -150,9 +150,9 @@ void test_concurrent_ops(void) {
 }
 
 // 迭代器测试
-void test_iterator(void) {
+static void test_skiplist_iterator(bool use_lockfree) {
     ppdb_skiplist_t* list = NULL;
-    ppdb_error_t err = ppdb_skiplist_create(16, false, &list);
+    ppdb_error_t err = ppdb_skiplist_create(16, use_lockfree, &list);
     ASSERT_EQ(err, PPDB_OK);
 
     // 插入有序数据
@@ -197,11 +197,16 @@ void test_iterator(void) {
 }
 
 int main(void) {
-    TEST_INIT("Lock-free Skiplist Test");
+    // 从环境变量获取测试模式
+    const char* test_mode = getenv("PPDB_SYNC_MODE");
+    bool use_lockfree = (test_mode && strcmp(test_mode, "lockfree") == 0);
     
-    RUN_TEST(test_basic_ops);
-    RUN_TEST(test_concurrent_ops);
-    RUN_TEST(test_iterator);
+    TEST_INIT(use_lockfree ? "Lock-free Skiplist Test" : "Locked Skiplist Test");
+    PPDB_LOG_INFO("Testing %s version...", use_lockfree ? "lockfree" : "locked");
+    
+    test_skiplist_basic(use_lockfree);
+    test_skiplist_concurrent(use_lockfree);
+    test_skiplist_iterator(use_lockfree);
     
     TEST_SUMMARY();
     return TEST_RESULT();

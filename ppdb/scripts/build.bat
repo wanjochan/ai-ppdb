@@ -205,7 +205,8 @@ rem ===== 辅助函数 =====
 
 :build_sync_locked
     echo Building sync locked test...
-    "%GCC%" %CFLAGS% -DPPDB_SYNC_USE_LOCK=1 ^
+    set "PPDB_SYNC_MODE=locked"
+    "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\kvstore\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
         "%PPDB_DIR%\src\common\error.c" ^
@@ -220,7 +221,8 @@ rem ===== 辅助函数 =====
 
 :build_sync_lockfree
     echo Building sync lockfree test...
-    "%GCC%" %CFLAGS% -DPPDB_SYNC_USE_LOCK=0 ^
+    set "PPDB_SYNC_MODE=lockfree"
+    "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\kvstore\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
         "%PPDB_DIR%\src\common\error.c" ^
@@ -246,6 +248,38 @@ rem ===== 辅助函数 =====
     "%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_test.exe.dbg" "%BUILD_DIR%\skiplist_test.exe"
     if errorlevel 1 exit /b 1
     "%BUILD_DIR%\skiplist_test.exe"
+    exit /b 0
+
+:build_skiplist_locked
+    echo Building skiplist locked test...
+    set "PPDB_SYNC_MODE=locked"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
+        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\test_skiplist.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_locked_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_locked_test.exe.dbg" "%BUILD_DIR%\skiplist_locked_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\skiplist_locked_test.exe"
+    exit /b 0
+
+:build_skiplist_lockfree
+    echo Building skiplist lockfree test...
+    set "PPDB_SYNC_MODE=lockfree"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
+        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\test_skiplist.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_lockfree_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_lockfree_test.exe.dbg" "%BUILD_DIR%\skiplist_lockfree_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\skiplist_lockfree_test.exe"
     exit /b 0
 
 :build_memtable
@@ -365,3 +399,32 @@ rem ===== 辅助函数 =====
     echo 重新构建完成
     echo.
     exit /b 0 
+
+:help
+@echo Usage: build.bat [target]
+@echo Available targets:
+@echo   clean       - Clean build directory
+@echo   rebuild     - Force rebuild all
+@echo   test42     - Run test 42
+@echo   sync_locked   - Build and run sync test with locks
+@echo   sync_lockfree - Build and run sync test without locks
+@echo   skiplist_locked   - Build and run skiplist test with locks
+@echo   skiplist_lockfree - Build and run skiplist test without locks
+@echo   memtable   - Build and run memtable test
+@echo   sharded    - Build and run sharded test
+@echo   ppdb       - Build and run ppdb test
+goto :eof
+
+:main
+if "%1"=="" goto help
+if "%1"=="clean" goto clean_build
+if "%1"=="rebuild" goto build_rebuild
+if "%1"=="test42" goto build_test42
+if "%1"=="sync_locked" goto build_sync_locked
+if "%1"=="sync_lockfree" goto build_sync_lockfree
+if "%1"=="skiplist_locked" goto build_skiplist_locked
+if "%1"=="skiplist_lockfree" goto build_skiplist_lockfree
+if "%1"=="memtable" goto build_memtable
+if "%1"=="sharded" goto build_sharded
+if "%1"=="ppdb" goto build_ppdb
+goto help 

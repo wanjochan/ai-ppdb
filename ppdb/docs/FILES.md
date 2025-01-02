@@ -202,6 +202,9 @@
   * `sync_locked` - 测试有锁版本的同步原语
   * `sync_lockfree` - 测试无锁版本的同步原语
 - `test_skiplist.c` - 无锁跳表测试
+  * 跳表数据结构的测试，包括基本操作、并发操作和迭代器测试。支持有锁和无锁两种模式，通过环境变量 PPDB_SYNC_MODE 控制。
+    - `skiplist_locked`: 使用互斥锁的跳表测试
+    - `skiplist_lockfree`: 使用无锁算法的跳表测试
 - `test_metrics.c` - 性能指标测试
 
 ### 存储引擎测试 (test/white/storage/)

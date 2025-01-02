@@ -153,12 +153,15 @@ static int test_concurrent_operations(void) {
     PPDB_LOG_INFO("Testing concurrent operations...");
     
     ppdb_skiplist_t* list = NULL;
+    const char* test_mode = getenv("PPDB_SYNC_MODE");
+    bool use_lockfree = (test_mode && strcmp(test_mode, "lockfree") == 0);
+    
     ppdb_sync_config_t config = {
         .type = PPDB_SYNC_MUTEX,
         .spin_count = 10000,
-        .use_lockfree = false,
+        .use_lockfree = use_lockfree,
         .stripe_count = 16,
-        .backoff_us = 1,
+        .backoff_us = use_lockfree ? 1 : 100,
         .enable_ref_count = true
     };
 
