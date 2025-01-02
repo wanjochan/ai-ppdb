@@ -72,9 +72,9 @@ void test_framework_init(void);
 void test_framework_cleanup(void);
 
 // 测试宏定义
-#define TEST_INIT(name) do { \
+#define TEST_INIT() do { \
     test_framework_init(); \
-    printf("Running test suite: %s\n", name); \
+    printf("Running test suite...\n"); \
 } while(0)
 
 #define TEST_SUMMARY() test_print_stats()
@@ -127,14 +127,6 @@ void test_framework_cleanup(void);
     if (test_fn() != 0) { \
         printf("Test failed: %s\n", #test_fn); \
         test_case_failed++; \
-        return -1; \
-    } \
-} while(0)
-
-#define ASSERT_TRUE(condition) do { \
-    if (!(condition)) { \
-        printf("Assertion failed: %s\n", #condition); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
         return -1; \
     } \
 } while(0)

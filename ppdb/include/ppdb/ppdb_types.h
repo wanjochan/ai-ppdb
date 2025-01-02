@@ -46,6 +46,7 @@ typedef enum ppdb_mode {
 typedef struct ppdb_sync_config {
     ppdb_sync_type_t type;         // 同步类型
     uint32_t spin_count;           // 自旋次数
+    uint32_t timeout_ms;           // 超时时间（毫秒）
     bool use_lockfree;             // 是否使用无锁模式
     uint32_t stripe_count;         // 分片数量
     uint32_t backoff_us;           // 退避时间（微秒）

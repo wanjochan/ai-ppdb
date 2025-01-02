@@ -10,6 +10,16 @@
 #include "kvstore/internal/sync.h"
 #include "kvstore/internal/metrics.h"
 
+// 创建 WAL
+ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal) {
+    return ppdb_wal_create_basic(config, wal);
+}
+
+// 销毁 WAL
+void ppdb_wal_destroy(ppdb_wal_t* wal) {
+    ppdb_wal_destroy_basic(wal);
+}
+
 // 内部函数声明
 static ppdb_error_t scan_existing_segments(ppdb_wal_t* wal);
 static ppdb_error_t create_new_segment(ppdb_wal_t* wal, wal_segment_t** segment);
@@ -24,11 +34,17 @@ uint32_t calculate_crc32(const void* data, size_t size) {
     return crc32c(0, data, size);
 }
 
+// CRC32更新函数
+uint32_t calculate_crc32_update(uint32_t crc, const void* data, size_t size) {
+    if (!data || size == 0) return crc;
+    return crc32c(crc, data, size);
+}
+
 // 生成段文件名
 char* generate_segment_filename(const char* dir_path, uint64_t segment_id) {
     char* filename = malloc(strlen(dir_path) + 32);
     if (!filename) return NULL;
-    snprintf(filename, strlen(dir_path) + 32, "%s/wal-%06" PRIu64 ".log", dir_path, segment_id);
+    snprintf(filename, strlen(dir_path) + 32, "%s\\wal-%06" PRIu64 ".log", dir_path, segment_id);
     return filename;
 }
 
@@ -36,10 +52,34 @@ char* generate_segment_filename(const char* dir_path, uint64_t segment_id) {
 ppdb_error_t validate_segment(wal_segment_t* segment) {
     if (!segment || segment->fd < 0) return PPDB_ERR_INVALID_ARG;
 
+    // 获取文件句柄
+    HANDLE file_handle = (HANDLE)_get_osfhandle(segment->fd);
+    if (file_handle == INVALID_HANDLE_VALUE) {
+        return PPDB_ERR_IO;
+    }
+
     // 读取段头部
     wal_segment_header_t header;
-    ssize_t read_size = pread(segment->fd, &header, WAL_SEGMENT_HEADER_SIZE, 0);
-    if (read_size != WAL_SEGMENT_HEADER_SIZE) return PPDB_ERR_IO;
+    DWORD bytes_read;
+    LARGE_INTEGER offset;
+    offset.QuadPart = 0;
+
+    // 分配对齐的缓冲区
+    void* aligned_buffer = _aligned_malloc(WAL_SEGMENT_HEADER_SIZE, 512);
+    if (!aligned_buffer) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    if (!SetFilePointerEx(file_handle, offset, NULL, FILE_BEGIN) ||
+        !ReadFile(file_handle, aligned_buffer, WAL_SEGMENT_HEADER_SIZE, &bytes_read, NULL) ||
+        bytes_read != WAL_SEGMENT_HEADER_SIZE) {
+        _aligned_free(aligned_buffer);
+        return PPDB_ERR_IO;
+    }
+
+    // 复制数据到头部结构
+    memcpy(&header, aligned_buffer, WAL_SEGMENT_HEADER_SIZE);
+    _aligned_free(aligned_buffer);
 
     // 验证魔数和版本
     if (header.magic != WAL_MAGIC || header.version != WAL_VERSION) {
@@ -63,93 +103,114 @@ ppdb_error_t validate_segment(wal_segment_t* segment) {
 
 // 扫描现有段
 ppdb_error_t scan_existing_segments(ppdb_wal_t* wal) {
-    DIR* dir = opendir(wal->dir_path);
-    if (!dir) return PPDB_ERR_IO;
+    char search_path[PATH_MAX];
+    snprintf(search_path, sizeof(search_path), "%s\\*", wal->dir_path);
 
-    struct dirent* entry;
-    uint64_t max_segment_id = 0;
-    
-    // 第一遍：收集所有段ID
-    while ((entry = readdir(dir)) != NULL) {
-        if (strncmp(entry->d_name, "wal-", 4) == 0 && 
-            strstr(entry->d_name, ".log") != NULL) {
-            uint64_t segment_id;
-            if (sscanf(entry->d_name, "wal-%06" PRIu64 ".log", &segment_id) == 1) {
-                max_segment_id = max_segment_id > segment_id ? max_segment_id : segment_id;
-            }
-        }
+    WIN32_FIND_DATA find_data;
+    HANDLE find_handle = FindFirstFile(search_path, &find_data);
+    if (find_handle == INVALID_HANDLE_VALUE) {
+        return PPDB_OK;  // 目录为空
     }
 
-    // 重置目录流
-    rewinddir(dir);
-    
-    // 第二遍：按顺序加载段
-    for (uint64_t id = 0; id <= max_segment_id; id++) {
-        char filename[256];
-        snprintf(filename, sizeof(filename), "wal-%06" PRIu64 ".log", id);
-        
-        while ((entry = readdir(dir)) != NULL) {
-            if (strcmp(entry->d_name, filename) == 0) {
-                wal_segment_t* segment = malloc(sizeof(wal_segment_t));
-                if (!segment) {
-                    closedir(dir);
-                    return PPDB_ERR_OUT_OF_MEMORY;
-                }
-
-                segment->id = id;
-                segment->filename = generate_segment_filename(wal->dir_path, id);
-                if (!segment->filename) {
-                    free(segment);
-                    closedir(dir);
-                    return PPDB_ERR_OUT_OF_MEMORY;
-                }
-
-                segment->fd = open(segment->filename, O_RDWR, 0644);
-                if (segment->fd < 0) {
-                    free(segment->filename);
-                    free(segment);
-                    continue;  // 跳过无法打开的段
-                }
-
-                // 获取段大小
-                segment->size = lseek(segment->fd, 0, SEEK_END);
-                if (segment->size < 0) {
-                    close(segment->fd);
-                    free(segment->filename);
-                    free(segment);
-                    continue;
-                }
-
-                // 验证段完整性
-                if (validate_segment(segment) != PPDB_OK) {
-                    close(segment->fd);
-                    free(segment->filename);
-                    free(segment);
-                    continue;
-                }
-
-                segment->next = NULL;
-                segment->is_sealed = true;  // 已存在的段都视为已封存
-
-                // 添加到链表
-                if (!wal->segments) {
-                    wal->segments = segment;
-                } else {
-                    wal_segment_t* last = wal->segments;
-                    while (last->next) {
-                        last = last->next;
-                    }
-                    last->next = segment;
-                }
-
-                wal->segment_count++;
-                break;
-            }
+    do {
+        if (strcmp(find_data.cFileName, ".") == 0 || strcmp(find_data.cFileName, "..") == 0) {
+            continue;
         }
-    }
 
-    closedir(dir);
-    wal->next_segment_id = max_segment_id + 1;
+        // 检查是否是 WAL 段文件
+        if (strstr(find_data.cFileName, ".log") == NULL) {
+            continue;
+        }
+
+        // 解析段 ID
+        uint64_t segment_id;
+        if (sscanf(find_data.cFileName, "wal-%06" PRIu64 ".log", &segment_id) != 1) {
+            continue;
+        }
+
+        // 创建新段
+        wal_segment_t* segment = malloc(sizeof(wal_segment_t));
+        if (!segment) {
+            FindClose(find_handle);
+            return PPDB_ERR_OUT_OF_MEMORY;
+        }
+
+        // 设置段信息
+        segment->id = segment_id;
+        segment->filename = malloc(strlen(wal->dir_path) + strlen(find_data.cFileName) + 2);
+        if (!segment->filename) {
+            free(segment);
+            FindClose(find_handle);
+            return PPDB_ERR_OUT_OF_MEMORY;
+        }
+        snprintf(segment->filename, strlen(wal->dir_path) + strlen(find_data.cFileName) + 2,
+                "%s\\%s", wal->dir_path, find_data.cFileName);
+
+        // 打开段文件
+        HANDLE file_handle = CreateFile(segment->filename,
+                                      GENERIC_READ | GENERIC_WRITE,
+                                      FILE_SHARE_READ,
+                                      NULL,
+                                      OPEN_EXISTING,
+                                      FILE_ATTRIBUTE_NORMAL,
+                                      NULL);
+        if (file_handle == INVALID_HANDLE_VALUE) {
+            free(segment->filename);
+            free(segment);
+            FindClose(find_handle);
+            return PPDB_ERR_IO;
+        }
+
+        // 转换为文件描述符
+        segment->fd = _open_osfhandle((intptr_t)file_handle, _O_RDWR | _O_BINARY);
+        if (segment->fd < 0) {
+            CloseHandle(file_handle);
+            free(segment->filename);
+            free(segment);
+            FindClose(find_handle);
+            return PPDB_ERR_IO;
+        }
+
+        // 验证段完整性
+        ppdb_error_t err = validate_segment(segment);
+        if (err != PPDB_OK) {
+            close(segment->fd);
+            free(segment->filename);
+            free(segment);
+            FindClose(find_handle);
+            return err;
+        }
+
+        // 更新段大小
+        LARGE_INTEGER size;
+        size.LowPart = GetFileSize((HANDLE)_get_osfhandle(segment->fd), (LPDWORD)&size.HighPart);
+        segment->size = size.QuadPart;
+
+        // 更新 WAL 状态
+        if (segment->id >= wal->next_segment_id) {
+            wal->next_segment_id = segment->id + 1;
+        }
+        if (segment->last_sequence >= wal->next_sequence) {
+            wal->next_sequence = segment->last_sequence + 1;
+        }
+        wal->total_size += segment->size;
+
+        // 将段添加到链表
+        segment->next = NULL;
+        if (!wal->segments) {
+            wal->segments = segment;
+        } else {
+            wal_segment_t* curr = wal->segments;
+            while (curr->next) {
+                curr = curr->next;
+            }
+            curr->next = segment;
+        }
+        wal->segment_count++;
+
+    } while (FindNextFile(find_handle, &find_data));
+
+    FindClose(find_handle);
     return PPDB_OK;
 }
 
@@ -165,9 +226,101 @@ ppdb_error_t create_new_segment(ppdb_wal_t* wal, wal_segment_t** segment) {
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
-    // 创建并打开段文件
-    new_segment->fd = open(new_segment->filename, O_CREAT | O_RDWR, 0644);
+    // 创建新文件
+    SECURITY_ATTRIBUTES sa = {
+        .nLength = sizeof(SECURITY_ATTRIBUTES),
+        .lpSecurityDescriptor = NULL,
+        .bInheritHandle = FALSE
+    };
+    HANDLE file_handle = CreateFile(new_segment->filename,
+                                  GENERIC_READ | GENERIC_WRITE,
+                                  FILE_SHARE_READ,  // 允许其他进程读取
+                                  &sa,
+                                  CREATE_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_NO_BUFFERING,
+                                  NULL);
+    if (file_handle == INVALID_HANDLE_VALUE) {
+        free(new_segment->filename);
+        free(new_segment);
+        return PPDB_ERR_IO;
+    }
+
+    // 复制文件句柄
+    HANDLE dup_handle;
+    if (!DuplicateHandle(GetCurrentProcess(), file_handle,
+                        GetCurrentProcess(), &dup_handle,
+                        GENERIC_READ | GENERIC_WRITE,
+                        FALSE,
+                        0)) {
+        CloseHandle(file_handle);
+        free(new_segment->filename);
+        free(new_segment);
+        return PPDB_ERR_IO;
+    }
+
+    // 创建事件对象
+    HANDLE event_handle = CreateEvent(&sa, TRUE, FALSE, NULL);
+    if (event_handle == NULL) {
+        CloseHandle(dup_handle);
+        CloseHandle(file_handle);
+        free(new_segment->filename);
+        free(new_segment);
+        return PPDB_ERR_IO;
+    }
+
+    // 锁定文件
+    OVERLAPPED overlapped = {0};
+    overlapped.hEvent = event_handle;
+
+    // 尝试获取锁
+    DWORD start_time = GetTickCount();
+    while (TRUE) {
+        if (LockFileEx(dup_handle, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &overlapped)) {
+            break;
+        }
+
+        DWORD err = GetLastError();
+        if (err == ERROR_IO_PENDING) {
+            // 等待锁定完成
+            DWORD wait_result = WaitForSingleObject(event_handle, 100);  // 等待100毫秒
+            if (wait_result == WAIT_OBJECT_0) {
+                break;
+            } else if (wait_result == WAIT_TIMEOUT) {
+                // 检查是否超时
+                if (GetTickCount() - start_time > 5000) {  // 5秒超时
+                    CloseHandle(event_handle);
+                    CloseHandle(dup_handle);
+                    CloseHandle(file_handle);
+                    free(new_segment->filename);
+                    free(new_segment);
+                    return PPDB_ERR_TIMEOUT;
+                }
+                continue;
+            } else {
+                CloseHandle(event_handle);
+                CloseHandle(dup_handle);
+                CloseHandle(file_handle);
+                free(new_segment->filename);
+                free(new_segment);
+                return PPDB_ERR_IO;
+            }
+        } else {
+            CloseHandle(event_handle);
+            CloseHandle(dup_handle);
+            CloseHandle(file_handle);
+            free(new_segment->filename);
+            free(new_segment);
+            return PPDB_ERR_IO;
+        }
+    }
+
+    // 转换为文件描述符
+    new_segment->fd = _open_osfhandle((intptr_t)file_handle, _O_RDWR | _O_BINARY | _O_SEQUENTIAL | _O_DIRECT);
     if (new_segment->fd < 0) {
+        UnlockFileEx(dup_handle, 0, MAXDWORD, MAXDWORD, &overlapped);
+        CloseHandle(event_handle);
+        CloseHandle(dup_handle);
+        CloseHandle(file_handle);
         free(new_segment->filename);
         free(new_segment);
         return PPDB_ERR_IO;
@@ -186,14 +339,55 @@ ppdb_error_t create_new_segment(ppdb_wal_t* wal, wal_segment_t** segment) {
     // 计算校验和
     header.checksum = calculate_crc32(&header, WAL_SEGMENT_HEADER_SIZE);
 
-    if (write(new_segment->fd, &header, WAL_SEGMENT_HEADER_SIZE) != WAL_SEGMENT_HEADER_SIZE) {
+    // 分配对齐的缓冲区用于头部
+    void* aligned_header_buffer = _aligned_malloc(512, 512);
+    if (!aligned_header_buffer) {
+        UnlockFileEx(dup_handle, 0, MAXDWORD, MAXDWORD, &overlapped);
+        CloseHandle(event_handle);
+        CloseHandle(dup_handle);
         close(new_segment->fd);
-        unlink(new_segment->filename);
+        free(new_segment->filename);
+        free(new_segment);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 复制头部到对齐的缓冲区
+    memcpy(aligned_header_buffer, &header, sizeof(header));
+    memset((char*)aligned_header_buffer + sizeof(header), 0, 512 - sizeof(header));
+
+    // 移动到文件开头
+    LARGE_INTEGER offset = {0};
+    if (!SetFilePointerEx(dup_handle, offset, NULL, FILE_BEGIN)) {
+        _aligned_free(aligned_header_buffer);
+        UnlockFileEx(dup_handle, 0, MAXDWORD, MAXDWORD, &overlapped);
+        CloseHandle(event_handle);
+        CloseHandle(dup_handle);
+        close(new_segment->fd);
         free(new_segment->filename);
         free(new_segment);
         return PPDB_ERR_IO;
     }
 
+    // 写入头部
+    DWORD bytes_written;
+    if (!WriteFile(dup_handle, aligned_header_buffer, 512, &bytes_written, NULL) ||
+        bytes_written != 512) {
+        _aligned_free(aligned_header_buffer);
+        UnlockFileEx(dup_handle, 0, MAXDWORD, MAXDWORD, &overlapped);
+        CloseHandle(event_handle);
+        CloseHandle(dup_handle);
+        close(new_segment->fd);
+        free(new_segment->filename);
+        free(new_segment);
+        return PPDB_ERR_IO;
+    }
+
+    _aligned_free(aligned_header_buffer);
+
+    // 确保段头部写入磁盘
+    FlushFileBuffers(dup_handle);
+
+    // 初始化段信息
     new_segment->size = WAL_SEGMENT_HEADER_SIZE;
     new_segment->next = NULL;
     new_segment->is_sealed = false;
@@ -211,31 +405,85 @@ ppdb_error_t create_new_segment(ppdb_wal_t* wal, wal_segment_t** segment) {
         last->next = new_segment;
     }
 
+    // 更新 WAL 状态
     wal->segment_count++;
+    wal->current_fd = new_segment->fd;
+    wal->current_size = new_segment->size;
+
+    // 确保目录项写入磁盘
+    HANDLE dir_handle = CreateFile(wal->dir_path,
+                                 GENERIC_READ,
+                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                 &sa,
+                                 OPEN_EXISTING,
+                                 FILE_FLAG_BACKUP_SEMANTICS,
+                                 NULL);
+    if (dir_handle != INVALID_HANDLE_VALUE) {
+        FlushFileBuffers(dir_handle);
+        CloseHandle(dir_handle);
+    }
+
+    // 解锁文件
+    UnlockFileEx(dup_handle, 0, MAXDWORD, MAXDWORD, &overlapped);
+    CloseHandle(event_handle);
+    CloseHandle(dup_handle);
+
     *segment = new_segment;
     return PPDB_OK;
 }
 
 // 封存段
-ppdb_error_t seal_segment(wal_segment_t* segment) {
+static ppdb_error_t seal_segment(wal_segment_t* segment) {
     if (!segment || segment->is_sealed) return PPDB_OK;
     
-    // 更新段头部
-    wal_segment_header_t header;
-    if (pread(segment->fd, &header, WAL_SEGMENT_HEADER_SIZE, 0) != WAL_SEGMENT_HEADER_SIZE) {
+    // 获取文件句柄
+    HANDLE file_handle = (HANDLE)_get_osfhandle(segment->fd);
+    if (file_handle == INVALID_HANDLE_VALUE) {
         return PPDB_ERR_IO;
     }
+
+    // 分配对齐的缓冲区
+    void* aligned_buffer = _aligned_malloc(WAL_SEGMENT_HEADER_SIZE, 512);
+    if (!aligned_buffer) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 更新段头部
+    wal_segment_header_t header;
+    DWORD bytes_read;
+    LARGE_INTEGER offset;
+    offset.QuadPart = 0;
+
+    if (!SetFilePointerEx(file_handle, offset, NULL, FILE_BEGIN) ||
+        !ReadFile(file_handle, aligned_buffer, WAL_SEGMENT_HEADER_SIZE, &bytes_read, NULL) ||
+        bytes_read != WAL_SEGMENT_HEADER_SIZE) {
+        _aligned_free(aligned_buffer);
+        return PPDB_ERR_IO;
+    }
+
+    // 复制数据到头部结构
+    memcpy(&header, aligned_buffer, WAL_SEGMENT_HEADER_SIZE);
 
     header.last_sequence = segment->last_sequence;
     header.checksum = 0;
     header.checksum = calculate_crc32(&header, WAL_SEGMENT_HEADER_SIZE);
 
-    if (pwrite(segment->fd, &header, WAL_SEGMENT_HEADER_SIZE, 0) != WAL_SEGMENT_HEADER_SIZE) {
+    // 复制回对齐的缓冲区
+    memcpy(aligned_buffer, &header, WAL_SEGMENT_HEADER_SIZE);
+
+    DWORD bytes_written;
+    offset.QuadPart = 0;
+    if (!SetFilePointerEx(file_handle, offset, NULL, FILE_BEGIN) ||
+        !WriteFile(file_handle, aligned_buffer, WAL_SEGMENT_HEADER_SIZE, &bytes_written, NULL) ||
+        bytes_written != WAL_SEGMENT_HEADER_SIZE) {
+        _aligned_free(aligned_buffer);
         return PPDB_ERR_IO;
     }
 
+    _aligned_free(aligned_buffer);
+
     // 同步文件
-    if (fsync(segment->fd) != 0) {
+    if (!FlushFileBuffers(file_handle)) {
         return PPDB_ERR_IO;
     }
 
@@ -278,6 +526,13 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
         return PPDB_ERR_INVALID_ARG;
     }
 
+    // 验证配置
+    if (!config->dir_path[0] || 
+        config->segment_size < WAL_SEGMENT_HEADER_SIZE || 
+        config->max_segments < 1) {
+        return PPDB_ERR_INVALID_CONFIG;
+    }
+
     // 分配 WAL 结构
     ppdb_wal_t* new_wal = malloc(sizeof(ppdb_wal_t));
     if (!new_wal) {
@@ -287,6 +542,11 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
     // 初始化基本字段
     new_wal->config = *config;
     new_wal->dir_path = strdup(config->dir_path);
+    if (!new_wal->dir_path) {
+        free(new_wal);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
     new_wal->segments = NULL;
     new_wal->segment_count = 0;
     new_wal->next_sequence = 1;
@@ -294,13 +554,39 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
     new_wal->current_fd = -1;
     new_wal->current_size = 0;
     new_wal->total_size = 0;
-    new_wal->write_buffer = malloc(WAL_BUFFER_SIZE);
     new_wal->closed = false;
     new_wal->sync_on_write = config->sync_write;
-    new_wal->sync = ppdb_sync_create();
+
+    // 分配写入缓冲区
+    new_wal->write_buffer = malloc(WAL_BUFFER_SIZE);
+    if (!new_wal->write_buffer) {
+        free(new_wal->dir_path);
+        free(new_wal);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 创建同步对象
+    ppdb_sync_config_t sync_config = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000,
+        .timeout_ms = 1000,
+        .use_lockfree = false,
+        .stripe_count = 1,
+        .backoff_us = 100,
+        .enable_ref_count = false
+    };
+    new_wal->sync = ppdb_sync_create(&sync_config);
+    if (!new_wal->sync) {
+        free(new_wal->write_buffer);
+        free(new_wal->dir_path);
+        free(new_wal);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
 
     // 创建目录
-    if (mkdir(new_wal->dir_path, 0755) != 0 && errno != EEXIST) {
+    if (!CreateDirectory(new_wal->dir_path, NULL) && GetLastError() != ERROR_ALREADY_EXISTS) {
+        ppdb_sync_destroy(new_wal->sync);
+        free(new_wal->write_buffer);
         free(new_wal->dir_path);
         free(new_wal);
         return PPDB_ERR_IO;
@@ -310,6 +596,7 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
     ppdb_error_t err = scan_existing_segments(new_wal);
     if (err != PPDB_OK) {
         ppdb_sync_destroy(new_wal->sync);
+        free(new_wal->write_buffer);
         free(new_wal->dir_path);
         free(new_wal);
         return err;
@@ -320,6 +607,7 @@ ppdb_error_t ppdb_wal_create_basic(const ppdb_wal_config_t* config, ppdb_wal_t**
     err = create_new_segment(new_wal, &first_segment);
     if (err != PPDB_OK) {
         ppdb_sync_destroy(new_wal->sync);
+        free(new_wal->write_buffer);
         free(new_wal->dir_path);
         free(new_wal);
         return err;
@@ -430,16 +718,6 @@ uint64_t ppdb_wal_next_sequence_basic(ppdb_wal_t* wal) {
     }
 
     return wal->next_sequence;
-}
-
-// 创建 WAL
-ppdb_error_t ppdb_wal_create(const ppdb_wal_config_t* config, ppdb_wal_t** wal) {
-    return ppdb_wal_create_basic(config, wal);
-}
-
-// 销毁 WAL
-void ppdb_wal_destroy(ppdb_wal_t* wal) {
-    ppdb_wal_destroy_basic(wal);
 }
 
 // 同步 WAL

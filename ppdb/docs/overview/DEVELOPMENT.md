@@ -16,10 +16,10 @@
 0. 为了防止因为目录路径原因导致的重复的意外下载，请先搜索一下代码仓目录是不是已经有解开后的构建工具了
 1. 获取必要文件
 ```bash
-# 下载 cosmocc (https://github.com/jart/cosmopolitan)
-curl -L -o cosmocc.zip https://cosmo.zip/pub/cosmocc/cosmocc.zip
 
-# 解压后需要的文件：
+# for windows (https://justine.lol/cosmopolitan/windows-compiling.html)
+
+curl -L -o cosmopolitan.zip https://justine.lol/cosmopolitan/cosmopolitan.zip
 # - cosmopolitan.h
 # - cosmopolitan.a
 # - ape.lds
@@ -29,16 +29,18 @@ curl -L -o cosmocc.zip https://cosmo.zip/pub/cosmocc/cosmocc.zip
 # 下载 cross9.zip (https://justine.lol/cosmopolitan/windows-compiling.html)
 curl -L -o cross9.zip https://justine.lol/linux-compiler-on-windows/cross9.zip
 
+# for unix (https://github.com/jart/cosmopolitan)
+curl -L -o cosmocc.zip https://cosmo.zip/pub/cosmocc/cosmocc.zip
+
 ```
 
 2. 设置文件
-- 将 cosmopolitan.h、cosmopolitan.a 和 ape.lds 放在项目根目录
-- 将 crt.o 和 ape.o 放在 build 目录下
+- 将 cosmopolitan.h, cosmopolitan.a, ape.lds, crt.o, ape.o 放在 build 目录下
 
 3. 验证安装
 ```bash
 # 运行构建脚本
-scripts/build_ppdb.bat
+scripts/build.bat test42
 ```
 
 ## 2. 编码规范
