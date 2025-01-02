@@ -35,6 +35,25 @@
   * 调优指南
   * 问题诊断
 
+### 1.5 设计文档
+- [无锁数据结构](design/lockfree.md)
+- [预写日志(WAL)](design/wal.md)
+- [存储引擎](design/storage.md)
+- [SSTable 实现](design/sstable.md)
+- [内存表设计](design/memtable.md)
+- [成员管理](design/membership.md)
+
+### 1.6 API 文档
+- [存储接口](api/STORAGE.md)
+- [监控接口](api/MONITOR.md)
+- [命令行工具](api/CLI.md)
+
+### 1.7 测试文档
+- [测试计划](test/PLAN.md)
+- [性能测试](test/PERFORMANCE.md)
+- [测试框架](test/FRAMEWORK.md)
+- [测试用例](test/CASES.md)
+
 ## 2. 快速入门
 
 ### 2.1 新手上路
@@ -48,17 +67,13 @@
 - 构建问题：参考 [开发者指南 - 构建指南](overview/DEVELOPER_GUIDE.md#3-构建指南)
 - 性能问题：参考 [性能优化指南 - 问题诊断](overview/PERFORMANCE_GUIDE.md#5-性能问题诊断)
 
-## 3. 文档更新记录
-
-### 3.1 最近更新
-- 2024-01-02: 重组文档结构，整合为四个核心文档
-- 2024-01-01: 完善性能优化指南
-- 2023-12-31: 更新系统架构文档
-
-### 3.2 计划更新
-- API 文档完善
-- 运维手册编写
-- 示例代码补充
+## 3. 学习资料
+- [共识算法](learn/consensus.md)
+- [分布式系统基础](learn/distributed.md)
+- [存储引擎学习](learn/storage_engine_study.md)
+- [分布式模式](learn/distributed_patterns.md)
+- [智能学习过程](learn/intelligent_learning_process.md)
+- [分布式数据库研究](learn/distributed_db_study.md)
 
 ## 4. 文档约定
 
