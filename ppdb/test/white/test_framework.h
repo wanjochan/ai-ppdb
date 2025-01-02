@@ -88,6 +88,14 @@ void test_framework_cleanup(void);
     } \
 } while(0)
 
+#define ASSERT_TRUE(condition) do { \
+    if (!(condition)) { \
+        printf("Assertion failed: %s should be true\n", #condition); \
+        printf("  at %s:%d\n", __FILE__, __LINE__); \
+        return -1; \
+    } \
+} while(0)
+
 #define ASSERT_OK(err) do { \
     ppdb_error_t _err = (err); \
     if (_err != PPDB_OK) { \

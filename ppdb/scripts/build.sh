@@ -94,11 +94,12 @@ if [ "$TEST_TYPE" = "help" ]; then
     echo "  skiplist  Run skiplist test"
     echo "  memtable  Run memtable test"
     echo "  sharded   Run sharded memtable test"
+    echo "  ppdb_memkv Build memkv program"
+    echo
     echo "  kvstore   Run KVStore test"
     echo "  wal_core  Run WAL core test"
     echo "  wal_func  Run WAL functionality test"
     echo "  wal_advanced Run WAL advanced test"
-    echo "  ppdb_memkv Build memkv program"
     echo "  ppdb      Build main program"
     echo "  help      Show this help message"
     echo
@@ -112,7 +113,6 @@ if [ "$TEST_TYPE" = "help" ]; then
     echo "  build.sh test42            Run basic test"
     echo "  build.sh sync debug        Run sync test in debug mode"
     echo "  build.sh memtable release  Run memtable test in release mode"
-    echo "  build.sh all               Run all tests"
     exit 0
 fi
 

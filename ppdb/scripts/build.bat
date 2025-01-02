@@ -62,11 +62,12 @@ if "%TEST_TYPE%"=="help" (
     echo "  skiplist  运行跳表测试"
     echo "  memtable  运行内存表测试"
     echo "  sharded   运行分片内存表测试"
+    echo "  ppdb_memkv 构建纯内存KV版本"
+    echo.
     echo "  kvstore   运行KVStore测试"
     echo "  wal_core  运行WAL核心测试"
     echo "  wal_func  运行WAL功能测试"
     echo "  wal_advanced 运行WAL高级测试"
-    echo "  ppdb_memkv 构建纯内存KV版本"
     echo "  ppdb      构建主程序"
     echo "  help      显示此帮助信息"
     echo.
@@ -80,7 +81,6 @@ if "%TEST_TYPE%"=="help" (
     echo "  build.bat test42            运行基础测试"
     echo "  build.bat sync debug        以调试模式运行同步测试"
     echo "  build.bat memtable release  以发布模式运行内存表测试"
-    echo "  build.bat all               运行所有测试"
     exit /b 0
 )
 
