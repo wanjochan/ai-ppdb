@@ -115,7 +115,7 @@ static void* concurrent_worker(void* arg) {
         ppdb_error_t err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1,
                                                     value, strlen(value) + 1);
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d: Failed to put key-value pair", thread_id);
+            PPDB_LOG_ERROR("Thread %d: Failed to put key-value pair", thread_id);
             return NULL;
         }
 
@@ -124,18 +124,18 @@ static void* concurrent_worker(void* arg) {
         err = ppdb_sharded_memtable_get(table, key, strlen(key) + 1,
                                        retrieved_value, &value_size);
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d: Failed to get value", thread_id);
+            PPDB_LOG_ERROR("Thread %d: Failed to get value", thread_id);
             return NULL;
         }
         if (value_size != strlen(value) + 1 || memcmp(retrieved_value, value, value_size) != 0) {
-            ppdb_log_error("Thread %d: Value mismatch", thread_id);
+            PPDB_LOG_ERROR("Thread %d: Value mismatch", thread_id);
             return NULL;
         }
 
         // 删除
         err = ppdb_sharded_memtable_delete(table, key, strlen(key) + 1);
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d: Failed to delete key-value pair", thread_id);
+            PPDB_LOG_ERROR("Thread %d: Failed to delete key-value pair", thread_id);
             return NULL;
         }
     }

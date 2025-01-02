@@ -47,7 +47,7 @@ static void* concurrent_worker(void* arg) {
             (const void*)key, strlen(key),
             (const void*)value, strlen(value));
         if (err != PPDB_OK) {
-            ppdb_log_error("Put operation failed in thread %d", args->thread_id);
+            PPDB_LOG_ERROR("Put operation failed in thread %d", args->thread_id);
             args->success = false;
             return NULL;
         }
@@ -59,12 +59,12 @@ static void* concurrent_worker(void* arg) {
             (const void*)key, strlen(key),
             &read_value, &value_size);
         if (err != PPDB_OK) {
-            ppdb_log_error("Get operation failed in thread %d", args->thread_id);
+            PPDB_LOG_ERROR("Get operation failed in thread %d", args->thread_id);
             args->success = false;
             return NULL;
         }
         if (memcmp(read_value, value, strlen(value)) != 0) {
-            ppdb_log_error("Value mismatch in thread %d", args->thread_id);
+            PPDB_LOG_ERROR("Value mismatch in thread %d", args->thread_id);
             args->success = false;
             free(read_value);
             return NULL;
@@ -76,7 +76,7 @@ static void* concurrent_worker(void* arg) {
             err = ppdb_kvstore_delete(args->store,
                 (const void*)key, strlen(key));
             if (err != PPDB_OK) {
-                ppdb_log_error("Delete operation failed in thread %d", args->thread_id);
+                PPDB_LOG_ERROR("Delete operation failed in thread %d", args->thread_id);
                 args->success = false;
                 return NULL;
             }

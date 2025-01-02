@@ -47,22 +47,19 @@ void test_framework_init(void) {
     };
     ppdb_log_init(&log_config);
     
-    // 设置信号处理
+    // 设置信号处理器
     struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
     sa.sa_handler = timeout_handler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-    
-    if (sigaction(SIGALRM, &sa, NULL) != 0) {
-        ppdb_log_error("Failed to set SIGALRM handler");
+    sa.sa_flags = 0;
+    if (sigaction(SIGALRM, &sa, NULL) < 0) {
+        PPDB_LOG_ERROR("Failed to set SIGALRM handler");
         return;
     }
-    
-    // 设置段错误处理
+
     sa.sa_handler = segv_handler;
-    if (sigaction(SIGSEGV, &sa, NULL) != 0) {
-        ppdb_log_error("Failed to set SIGSEGV handler");
+    if (sigaction(SIGSEGV, &sa, NULL) < 0) {
+        PPDB_LOG_ERROR("Failed to set SIGSEGV handler");
         return;
     }
     
@@ -109,8 +106,10 @@ int run_test_case(const test_case_t* test_case) {
     current_test_name[sizeof(current_test_name) - 1] = '\0';
     
     // 打印测试信息
-    ppdb_log_info("Running test: %s", test_case->name);
-    ppdb_log_info("Description: %s", test_case->description);
+    PPDB_LOG_INFO("Running test: %s", test_case->name);
+    if (test_case->description) {
+        PPDB_LOG_INFO("Description: %s", test_case->description);
+    }
     
     // 设置超时处理
     if (setjmp(g_test_state.timeout_jmp) == 0) {
@@ -147,7 +146,7 @@ int run_test_suite(const test_suite_t* suite) {
     }
     
     // 打印套件信息
-    ppdb_log_info("Running test suite: %s", suite->name);
+    PPDB_LOG_INFO("Running test suite: %s", suite->name);
     
     // 运行套件初始化
     if (suite->setup) {
@@ -159,7 +158,7 @@ int run_test_suite(const test_suite_t* suite) {
     for (size_t i = 0; i < suite->num_cases; i++) {
         const test_case_t* test_case = &suite->cases[i];
         if (test_case->skip) {
-            ppdb_log_info("Skipping test: %s", test_case->name);
+            PPDB_LOG_INFO("Skipping test: %s", test_case->name);
             continue;
         }
         
@@ -174,11 +173,11 @@ int run_test_suite(const test_suite_t* suite) {
     }
     
     // 打印测试结果
-    ppdb_log_info("Test Results:");
-    ppdb_log_info("  Total Cases: %d", test_case_count);
-    ppdb_log_info("  Failed: %d", test_case_failed);
-    ppdb_log_info("  Duration: %.2f seconds", (double)(clock() - g_test_state.stats.start_time) / CLOCKS_PER_SEC);
-    ppdb_log_info("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
+    PPDB_LOG_INFO("Test Results:");
+    PPDB_LOG_INFO("  Total Cases: %d", test_case_count);
+    PPDB_LOG_INFO("  Failed: %d", test_case_failed);
+    PPDB_LOG_INFO("  Duration: %.2f seconds", (double)(clock() - g_test_state.stats.start_time) / CLOCKS_PER_SEC);
+    PPDB_LOG_INFO("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
     
     return failed;
 }
@@ -192,20 +191,20 @@ bool test_framework_should_run(test_type_t type) {
 void test_print_stats(void) {
     double duration = (double)(g_test_state.stats.end_time - g_test_state.stats.start_time) / CLOCKS_PER_SEC;
     
-    ppdb_log_info("Test Results:");
-    ppdb_log_info("  Total Cases: %d", test_case_count);
-    ppdb_log_info("  Failed: %d", test_case_failed);
-    ppdb_log_info("  Duration: %.2f seconds", duration);
-    ppdb_log_info("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
+    PPDB_LOG_INFO("Test Results:");
+    PPDB_LOG_INFO("  Total Cases: %d", test_case_count);
+    PPDB_LOG_INFO("  Failed: %d", test_case_failed);
+    PPDB_LOG_INFO("  Duration: %.2f seconds", duration);
+    PPDB_LOG_INFO("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
 }
 
 // 获取测试结果
 int test_get_result(void) {
-    ppdb_log_info("Test Results:");
-    ppdb_log_info("  Total Cases: %d", test_case_count);
-    ppdb_log_info("  Failed: %d", test_case_failed);
-    ppdb_log_info("  Duration: %.2f seconds", (double)(clock() - g_test_state.stats.start_time) / CLOCKS_PER_SEC);
-    ppdb_log_info("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
+    PPDB_LOG_INFO("Test Results:");
+    PPDB_LOG_INFO("  Total Cases: %d", test_case_count);
+    PPDB_LOG_INFO("  Failed: %d", test_case_failed);
+    PPDB_LOG_INFO("  Duration: %.2f seconds", (double)(clock() - g_test_state.stats.start_time) / CLOCKS_PER_SEC);
+    PPDB_LOG_INFO("  Peak Memory: %zu bytes", g_test_state.stats.peak_memory);
     
     return test_case_failed;
 }

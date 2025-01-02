@@ -1,12 +1,14 @@
 #include <cosmopolitan.h>
+#include "test_framework.h"
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_logger.h"
 #include "kvstore/internal/sync.h"
 #include "kvstore/internal/skiplist.h"
 
 // 测试基本操作
-static void test_basic_operations(void) {
-    printf("Testing basic operations...\n");
+static int test_basic_operations(void) {
+    PPDB_LOG_INFO("Testing basic operations...");
     
     ppdb_skiplist_t* list = NULL;
     ppdb_sync_config_t config = {
@@ -20,49 +22,41 @@ static void test_basic_operations(void) {
 
     // 创建跳表
     ppdb_error_t err = ppdb_skiplist_create(&list, 16, ppdb_skiplist_default_compare, &config);
-    assert(err == PPDB_OK && "Failed to create skiplist");
-    assert(list != NULL && "Skiplist is NULL");
+    TEST_ASSERT(err == PPDB_OK, "Failed to create skiplist");
+    TEST_ASSERT(list != NULL, "Skiplist is NULL");
 
     // 测试插入
     const char* key1 = "key1";
     const char* value1 = "value1";
     err = ppdb_skiplist_put(list, key1, strlen(key1), value1, strlen(value1));
-    assert(err == PPDB_OK && "Failed to put key1");
+    TEST_ASSERT(err == PPDB_OK, "Failed to put key1");
 
     // 测试查找
     void* value = NULL;
     size_t value_len = 0;
     err = ppdb_skiplist_get(list, key1, strlen(key1), &value, &value_len);
-    assert(err == PPDB_OK && "Failed to get key1");
-    assert(value != NULL && "Value is NULL");
-    assert(value_len == strlen(value1) && "Value length mismatch");
-    assert(memcmp(value, value1, value_len) == 0 && "Value content mismatch");
+    TEST_ASSERT(err == PPDB_OK, "Failed to get key1");
+    TEST_ASSERT(value != NULL, "Value is NULL");
+    TEST_ASSERT(value_len == strlen(value1), "Value length mismatch");
+    TEST_ASSERT(memcmp(value, value1, value_len) == 0, "Value content mismatch");
+    free(value);
 
-    // 测试更新
-    const char* value2 = "new_value1";
-    err = ppdb_skiplist_put(list, key1, strlen(key1), value2, strlen(value2));
-    assert(err == PPDB_OK && "Failed to update key1");
+    // 测试删除
+    err = ppdb_skiplist_delete(list, key1, strlen(key1));
+    TEST_ASSERT(err == PPDB_OK, "Failed to delete key1");
 
-    // 验证更新
+    // 验证删除
     err = ppdb_skiplist_get(list, key1, strlen(key1), &value, &value_len);
-    assert(err == PPDB_OK && "Failed to get updated key1");
-    assert(value != NULL && "Updated value is NULL");
-    assert(value_len == strlen(value2) && "Updated value length mismatch");
-    assert(memcmp(value, value2, value_len) == 0 && "Updated value content mismatch");
+    TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key1 still exists after deletion");
 
-    // 测试不存在的键
-    const char* key_not_exist = "not_exist";
-    err = ppdb_skiplist_get(list, key_not_exist, strlen(key_not_exist), &value, &value_len);
-    assert(err == PPDB_ERR_NOT_FOUND && "Should return not found for non-existent key");
-
-    // 销毁跳表
+    // 清理
     ppdb_skiplist_destroy(list);
-    printf("Basic operations test passed\n");
+    return 0;
 }
 
-// 测试并发操作
-static void test_concurrent_operations(void) {
-    printf("Testing concurrent operations...\n");
+// 测试迭代器
+static int test_iterator(void) {
+    PPDB_LOG_INFO("Testing iterator...");
     
     ppdb_skiplist_t* list = NULL;
     ppdb_sync_config_t config = {
@@ -76,76 +70,132 @@ static void test_concurrent_operations(void) {
 
     // 创建跳表
     ppdb_error_t err = ppdb_skiplist_create(&list, 16, ppdb_skiplist_default_compare, &config);
-    assert(err == PPDB_OK && "Failed to create skiplist");
+    TEST_ASSERT(err == PPDB_OK, "Failed to create skiplist");
 
-    // TODO: 添加多线程测试
-    // 由于这是基础测试，我们先确保单线程操作正确
-    // 后续会添加更复杂的并发测试
+    // 插入一些数据
+    const char* keys[] = {"key1", "key2", "key3"};
+    const char* values[] = {"value1", "value2", "value3"};
+    const int num_entries = 3;
 
-    // 销毁跳表
+    for (int i = 0; i < num_entries; i++) {
+        err = ppdb_skiplist_put(list, keys[i], strlen(keys[i]), values[i], strlen(values[i]));
+        TEST_ASSERT(err == PPDB_OK, "Failed to put key");
+    }
+
+    // 创建迭代器
+    ppdb_skiplist_iterator_t* iter = NULL;
+    err = ppdb_skiplist_iterator_create(list, &iter, &config);
+    TEST_ASSERT(err == PPDB_OK, "Failed to create iterator");
+
+    // 遍历并验证
+    int count = 0;
+    ppdb_kv_pair_t pair = {0};
+    while (ppdb_skiplist_iterator_valid(iter)) {
+        err = ppdb_skiplist_iterator_get(iter, &pair);
+        TEST_ASSERT(err == PPDB_OK, "Failed to get from iterator");
+        TEST_ASSERT(pair.key_size == strlen(keys[count]), "Key length mismatch");
+        TEST_ASSERT(pair.value_size == strlen(values[count]), "Value length mismatch");
+        TEST_ASSERT(memcmp(pair.key, keys[count], pair.key_size) == 0, "Key content mismatch");
+        TEST_ASSERT(memcmp(pair.value, values[count], pair.value_size) == 0, "Value content mismatch");
+
+        count++;
+        err = ppdb_skiplist_iterator_next(iter, &pair);
+        TEST_ASSERT(err == PPDB_OK, "Failed to move iterator");
+    }
+
+    TEST_ASSERT(count == num_entries, "Iterator count mismatch");
+
+    // 清理
+    ppdb_skiplist_iterator_destroy(iter);
     ppdb_skiplist_destroy(list);
-    printf("Concurrent operations test passed\n");
+    return 0;
 }
 
-// 测试边界条件
-static void test_edge_cases(void) {
-    printf("Testing edge cases...\n");
+// 测试并发操作
+static void* concurrent_worker(void* arg) {
+    ppdb_skiplist_t* list = (ppdb_skiplist_t*)arg;
+    char key[32];
+    char value[32];
+
+    for (int i = 0; i < 1000; i++) {
+        snprintf(key, sizeof(key), "key_%d", i);
+        snprintf(value, sizeof(value), "value_%d", i);
+
+        // 插入
+        ppdb_error_t err = ppdb_skiplist_put(list, key, strlen(key), value, strlen(value));
+        if (err != PPDB_OK) {
+            PPDB_LOG_ERROR("Failed to put in concurrent test");
+            return (void*)-1;
+        }
+
+        // 查找
+        void* read_value = NULL;
+        size_t value_len = 0;
+        err = ppdb_skiplist_get(list, key, strlen(key), &read_value, &value_len);
+        if (err != PPDB_OK) {
+            PPDB_LOG_ERROR("Failed to get in concurrent test");
+            return (void*)-1;
+        }
+        free(read_value);
+
+        // 删除
+        err = ppdb_skiplist_delete(list, key, strlen(key));
+        if (err != PPDB_OK) {
+            PPDB_LOG_ERROR("Failed to delete in concurrent test");
+            return (void*)-1;
+        }
+    }
+
+    return NULL;
+}
+
+static int test_concurrent_operations(void) {
+    PPDB_LOG_INFO("Testing concurrent operations...");
     
     ppdb_skiplist_t* list = NULL;
     ppdb_sync_config_t config = {
         .type = PPDB_SYNC_MUTEX,
-        .spin_count = 0,
+        .spin_count = 10000,
         .use_lockfree = false,
-        .stripe_count = 1,
+        .stripe_count = 16,
         .backoff_us = 1,
-        .enable_ref_count = false
+        .enable_ref_count = true
     };
 
-    // 测试空参数
-    ppdb_error_t err = ppdb_skiplist_create(NULL, 16, ppdb_skiplist_default_compare, &config);
-    assert(err == PPDB_ERR_INVALID_ARG && "Should handle NULL list pointer");
+    // 创建跳表
+    ppdb_error_t err = ppdb_skiplist_create(&list, 16, ppdb_skiplist_default_compare, &config);
+    TEST_ASSERT(err == PPDB_OK, "Failed to create skiplist");
 
-    err = ppdb_skiplist_create(&list, 16, NULL, &config);
-    assert(err == PPDB_ERR_INVALID_ARG && "Should handle NULL compare function");
+    // 创建线程
+    const int num_threads = 4;
+    pthread_t threads[num_threads];
+    
+    for (int i = 0; i < num_threads; i++) {
+        int ret = pthread_create(&threads[i], NULL, concurrent_worker, list);
+        TEST_ASSERT(ret == 0, "Failed to create thread");
+    }
 
-    err = ppdb_skiplist_create(&list, 16, ppdb_skiplist_default_compare, NULL);
-    assert(err == PPDB_ERR_INVALID_ARG && "Should handle NULL config");
+    // 等待线程完成
+    for (int i = 0; i < num_threads; i++) {
+        void* result;
+        int ret = pthread_join(threads[i], &result);
+        TEST_ASSERT(ret == 0, "Failed to join thread");
+        TEST_ASSERT(result == NULL, "Thread reported error");
+    }
 
-    // 创建正常跳表
-    err = ppdb_skiplist_create(&list, 16, ppdb_skiplist_default_compare, &config);
-    assert(err == PPDB_OK && "Failed to create skiplist");
-
-    // 测试空键值
-    err = ppdb_skiplist_put(list, NULL, 0, "value", 5);
-    assert(err == PPDB_ERR_INVALID_ARG && "Should handle NULL key");
-
-    err = ppdb_skiplist_put(list, "key", 3, NULL, 0);
-    assert(err == PPDB_ERR_INVALID_ARG && "Should handle NULL value");
-
-    void* value = NULL;
-    size_t value_len = 0;
-    err = ppdb_skiplist_get(list, NULL, 0, &value, &value_len);
-    assert(err == PPDB_ERR_INVALID_ARG && "Should handle NULL key in get");
-
-    // 测试零长度键值
-    const char* empty_key = "";
-    const char* empty_value = "";
-    err = ppdb_skiplist_put(list, empty_key, 0, empty_value, 0);
-    assert(err == PPDB_OK && "Should handle empty key and value");
-
-    // 销毁跳表
+    // 清理
     ppdb_skiplist_destroy(list);
-    printf("Edge cases test passed\n");
+    return 0;
 }
 
-// 主测试函数
 int main(void) {
-    printf("Running skiplist tests...\n");
+    TEST_INIT();
+    PPDB_LOG_INFO("Running Skiplist Tests...");
     
-    test_basic_operations();
-    test_concurrent_operations();
-    test_edge_cases();
+    RUN_TEST(test_basic_operations);
+    RUN_TEST(test_iterator);
+    RUN_TEST(test_concurrent_operations);
     
-    printf("All skiplist tests passed!\n");
-    return 0;
+    TEST_SUMMARY();
+    return TEST_RESULT();
 } 

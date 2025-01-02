@@ -62,7 +62,7 @@ static void* concurrent_worker(void* arg) {
             err = ppdb_memtable_delete(args->table,
                 (const void*)key, strlen(key));
             if (err != PPDB_OK) {
-                ppdb_log_error("Delete operation failed");
+                PPDB_LOG_ERROR("Delete operation failed");
                 args->success = false;
                 return NULL;
             }

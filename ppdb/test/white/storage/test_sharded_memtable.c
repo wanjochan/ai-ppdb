@@ -62,7 +62,7 @@ static void* concurrent_worker(void* arg) {
         }
 
         if (value_size != strlen(value) || memcmp(read_value, value, value_size) != 0) {
-            ppdb_log_error("Value mismatch in thread %d", args->thread_id);
+            PPDB_LOG_ERROR("Value mismatch in thread %d", args->thread_id);
             args->success = false;
             free(read_value);
             return NULL;
@@ -74,7 +74,7 @@ static void* concurrent_worker(void* arg) {
             err = ppdb_sharded_memtable_delete(args->table,
                 (const void*)key, strlen(key));
             if (err != PPDB_OK) {
-                ppdb_log_error("Delete operation failed in thread %d", args->thread_id);
+                PPDB_LOG_ERROR("Delete operation failed in thread %d", args->thread_id);
                 args->success = false;
                 return NULL;
             }

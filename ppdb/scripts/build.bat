@@ -99,7 +99,8 @@ rem ===== 辅助函数 =====
     echo.
     echo 可用模块:
     echo "  test42    运行基础测试"
-    echo "  sync      运行同步原语测试"
+    echo "  sync_locked      运行有锁同步原语测试"
+    echo "  sync_lockfree    运行无锁同步原语测试"
     echo "  skiplist  运行跳表测试"
     echo "  memtable  运行内存表测试"
     echo "  sharded   运行分片内存表测试"
@@ -201,19 +202,35 @@ rem ===== 辅助函数 =====
     "%BUILD_DIR%\42_test.exe"
     exit /b 0
 
-:build_sync
-    echo Building sync test...
-    "%GCC%" %CFLAGS% ^
+
+:build_sync_locked
+    echo Building sync locked test...
+    "%GCC%" %CFLAGS% -DPPDB_SYNC_USE_LOCK=1 ^
         "%PPDB_DIR%\src\kvstore\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
         "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\infra\test_sync.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sync_test.exe.dbg"
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sync_locked_test.exe.dbg"
     if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\sync_test.exe.dbg" "%BUILD_DIR%\sync_test.exe"
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\sync_locked_test.exe.dbg" "%BUILD_DIR%\sync_locked_test.exe"
     if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\sync_test.exe"
+    "%BUILD_DIR%\sync_locked_test.exe"
+    exit /b 0
+
+:build_sync_lockfree
+    echo Building sync lockfree test...
+    "%GCC%" %CFLAGS% -DPPDB_SYNC_USE_LOCK=0 ^
+        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\infra\test_sync.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sync_lockfree_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\sync_lockfree_test.exe.dbg" "%BUILD_DIR%\sync_lockfree_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\sync_lockfree_test.exe"
     exit /b 0
 
 :build_skiplist

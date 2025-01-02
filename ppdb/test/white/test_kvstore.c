@@ -102,11 +102,11 @@ static ppdb_kvstore_t* create_test_kvstore(const char* test_dir, ppdb_mode_t mod
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_create(&config, &store);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to create KVStore: %s", ppdb_error_string(err));
+        PPDB_LOG_ERROR("Failed to create KVStore: %s", ppdb_error_string(err));
         return NULL;
     }
     if (!store) {
-        ppdb_log_error("KVStore pointer is NULL");
+        PPDB_LOG_ERROR("KVStore pointer is NULL");
         return NULL;
     }
 
@@ -242,7 +242,7 @@ static void* concurrent_worker(void* arg) {
                                            (const uint8_t*)key, strlen(key),
                                            (const uint8_t*)value, strlen(value));
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d failed to put key-value pair: %s",
+            PPDB_LOG_ERROR("Thread %d failed to put key-value pair: %s",
                           args->thread_id, ppdb_error_string(err));
             continue;
         }
@@ -254,7 +254,7 @@ static void* concurrent_worker(void* arg) {
                               (const uint8_t*)key, strlen(key),
                               &read_value, &read_size);
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d failed to get key-value pair: %s",
+            PPDB_LOG_ERROR("Thread %d failed to get key-value pair: %s",
                           args->thread_id, ppdb_error_string(err));
             continue;
         }
@@ -262,7 +262,7 @@ static void* concurrent_worker(void* arg) {
         // 验证值
         if (read_size != strlen(value) ||
             memcmp(read_value, value, read_size) != 0) {
-            ppdb_log_error("Thread %d value mismatch", args->thread_id);
+            PPDB_LOG_ERROR("Thread %d value mismatch", args->thread_id);
         }
         free(read_value);
 
@@ -270,7 +270,7 @@ static void* concurrent_worker(void* arg) {
         err = ppdb_kvstore_delete(args->store,
                                  (const uint8_t*)key, strlen(key));
         if (err != PPDB_OK) {
-            ppdb_log_error("Thread %d failed to delete key-value pair: %s",
+            PPDB_LOG_ERROR("Thread %d failed to delete key-value pair: %s",
                           args->thread_id, ppdb_error_string(err));
         }
     }

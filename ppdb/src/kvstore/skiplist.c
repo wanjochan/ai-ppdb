@@ -178,6 +178,9 @@ ppdb_error_t ppdb_skiplist_put(ppdb_skiplist_t* list,
         return PPDB_ERR_INVALID_ARG;
     }
 
+    ppdb_error_t err = PPDB_OK;
+    ppdb_sync_lock(&list->sync);
+
     ppdb_skiplist_node_t* update[PPDB_SKIPLIST_MAX_LEVEL];
     ppdb_skiplist_node_t* current = list->head;
 
@@ -198,7 +201,8 @@ ppdb_error_t ppdb_skiplist_put(ppdb_skiplist_t* list,
                                 key, key_len) == 0) {
         void* new_value = aligned_alloc(64, value_len);
         if (!new_value) {
-            return PPDB_ERR_OUT_OF_MEMORY;
+            err = PPDB_ERR_OUT_OF_MEMORY;
+            goto unlock;
         }
 
         memcpy(new_value, value, value_len);
@@ -207,14 +211,15 @@ ppdb_error_t ppdb_skiplist_put(ppdb_skiplist_t* list,
         }
         current->value = new_value;
         current->value_len = value_len;
-        return PPDB_OK;
+        goto unlock;
     }
 
     // 创建新节点
     int level = random_level(list->max_level);
     ppdb_skiplist_node_t* new_node = create_node(key, key_len, value, value_len, level);
     if (!new_node) {
-        return PPDB_ERR_OUT_OF_MEMORY;
+        err = PPDB_ERR_OUT_OF_MEMORY;
+        goto unlock;
     }
 
     // 插入新节点
@@ -227,7 +232,9 @@ ppdb_error_t ppdb_skiplist_put(ppdb_skiplist_t* list,
     list->memory_usage += sizeof(ppdb_skiplist_node_t) + level * sizeof(ppdb_skiplist_node_t*) +
                          key_len + value_len;
 
-    return PPDB_OK;
+unlock:
+    ppdb_sync_unlock(&list->sync);
+    return err;
 }
 
 // 获取键值对
@@ -237,6 +244,9 @@ ppdb_error_t ppdb_skiplist_get(ppdb_skiplist_t* list,
     if (!list || !key || !value_len) {
         return PPDB_ERR_INVALID_ARG;
     }
+
+    ppdb_error_t err = PPDB_OK;
+    ppdb_sync_lock(&list->sync);
 
     ppdb_skiplist_node_t* current = list->head;
 
@@ -254,26 +264,30 @@ ppdb_error_t ppdb_skiplist_get(ppdb_skiplist_t* list,
     // 检查是否找到
     if (!current || list->compare(current->key, current->key_len,
                                 key, key_len) != 0) {
-        return PPDB_ERR_NOT_FOUND;
+        err = PPDB_ERR_NOT_FOUND;
+        goto unlock;
     }
 
     // 如果只需要获取大小
     if (!value) {
         *value_len = current->value_len;
-        return PPDB_OK;
+        goto unlock;
     }
 
     // 分配并复制值
     void* new_value = malloc(current->value_len);
     if (!new_value) {
-        return PPDB_ERR_OUT_OF_MEMORY;
+        err = PPDB_ERR_OUT_OF_MEMORY;
+        goto unlock;
     }
 
     memcpy(new_value, current->value, current->value_len);
     *value = new_value;
     *value_len = current->value_len;
 
-    return PPDB_OK;
+unlock:
+    ppdb_sync_unlock(&list->sync);
+    return err;
 }
 
 // 删除键值对
@@ -283,10 +297,13 @@ ppdb_error_t ppdb_skiplist_delete(ppdb_skiplist_t* list,
         return PPDB_ERR_INVALID_ARG;
     }
 
+    ppdb_error_t err = PPDB_OK;
+    ppdb_sync_lock(&list->sync);
+
     ppdb_skiplist_node_t* update[PPDB_SKIPLIST_MAX_LEVEL];
     ppdb_skiplist_node_t* current = list->head;
 
-    // 查找删除位置
+    // 查找要删除的节点
     for (int i = list->max_level - 1; i >= 0; i--) {
         while (current->next[i] && 
                list->compare(current->next[i]->key, current->next[i]->key_len,
@@ -300,22 +317,28 @@ ppdb_error_t ppdb_skiplist_delete(ppdb_skiplist_t* list,
 
     // 检查是否找到
     if (!current || list->compare(current->key, current->key_len,
-                                 key, key_len) != 0) {
-        return PPDB_ERR_NOT_FOUND;
+                                key, key_len) != 0) {
+        err = PPDB_ERR_NOT_FOUND;
+        goto unlock;
     }
 
     // 更新指针
-    for (int i = 0; i < current->level; i++) {
+    for (int i = 0; i < list->max_level; i++) {
+        if (update[i]->next[i] != current) {
+            break;
+        }
         update[i]->next[i] = current->next[i];
     }
 
+    // 释放节点
     list->size--;
-    list->memory_usage -= sizeof(ppdb_skiplist_node_t) + 
-                         current->level * sizeof(ppdb_skiplist_node_t*) +
+    list->memory_usage -= sizeof(ppdb_skiplist_node_t) + current->level * sizeof(ppdb_skiplist_node_t*) +
                          current->key_len + current->value_len;
-
     destroy_node(current);
-    return PPDB_OK;
+
+unlock:
+    ppdb_sync_unlock(&list->sync);
+    return err;
 }
 
 // 获取大小

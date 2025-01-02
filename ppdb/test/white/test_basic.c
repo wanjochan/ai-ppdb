@@ -1,3 +1,4 @@
+// Need to ensure ppdb_logger.h is included
 #include <cosmopolitan.h>
 #include "test_framework.h"
 #include "ppdb/ppdb_error.h"
@@ -13,23 +14,23 @@ static int test_create_destroy(void) {
     // 创建内存表
     err = ppdb_memtable_create(1024, &table);
     if (err != PPDB_OK) {
-        ppdb_log_error("Failed to create memtable: %s", ppdb_error_string(err));
+        PPDB_LOG_ERROR("Failed to create memtable: %s", ppdb_error_string(err));
         return 1;
     }
     
     if (!table) {
-        ppdb_log_error("Memtable pointer is NULL");
+        PPDB_LOG_ERROR("Memtable pointer is NULL");
         return 1;
     }
     
     if (!table->basic) {
-        ppdb_log_error("Basic memtable structure is NULL");
+        PPDB_LOG_ERROR("Basic memtable structure is NULL");
         ppdb_memtable_destroy(table);
         return 1;
     }
     
     if (!table->basic->skiplist) {
-        ppdb_log_error("Skiplist is NULL");
+        PPDB_LOG_ERROR("Skiplist is NULL");
         ppdb_memtable_destroy(table);
         return 1;
     }
@@ -37,21 +38,21 @@ static int test_create_destroy(void) {
     // 检查初始状态
     size_t size = ppdb_memtable_size_basic(table);
     if (size != 0) {
-        ppdb_log_error("Initial size should be 0, got %zu", size);
+        PPDB_LOG_ERROR("Initial size should be 0, got %zu", size);
         ppdb_memtable_destroy(table);
         return 1;
     }
     
     size_t max_size = ppdb_memtable_max_size_basic(table);
     if (max_size != 1024) {
-        ppdb_log_error("Wrong max size: expected 1024, got %zu", max_size);
+        PPDB_LOG_ERROR("Wrong max size: expected 1024, got %zu", max_size);
         ppdb_memtable_destroy(table);
         return 1;
     }
     
     bool is_immutable = ppdb_memtable_is_immutable_basic(table);
     if (is_immutable) {
-        ppdb_log_error("Should not be immutable initially");
+        PPDB_LOG_ERROR("Should not be immutable initially");
         ppdb_memtable_destroy(table);
         return 1;
     }

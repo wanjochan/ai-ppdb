@@ -46,11 +46,11 @@ int main(void) {
     int failed = test_framework_run();
 
     if (failed > 0) {
-        ppdb_log_error("Tests completed: %d suite(s) failed", failed);
+        PPDB_LOG_ERROR("Tests completed: %d suite(s) failed", failed);
     } else {
-        ppdb_log_info("All test suites passed!");
+        PPDB_LOG_INFO("All test suites passed!");
     }
 
-    ppdb_log_shutdown();
+    ppdb_log_cleanup();
     return failed;
 }
