@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
-#include "kvstore/internal/sync.h"
+#include "ppdb/sync.h"
 #include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_logger.h"
+#include "ppdb/ppdb_types.h"
 #include "test/white/test_framework.h"
 
 // 测试线程数据结构

@@ -190,7 +190,7 @@ rem ===== 辅助函数 =====
     )
 
     rem Set include paths
-    set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%PPDB_DIR%\src\common -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
+    set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\sync -I%PPDB_DIR%\src\kvstore\internal -I%PPDB_DIR%\src\sync\internal -I%PPDB_DIR%\src\common -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
 
     rem Set final CFLAGS
     set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
@@ -214,7 +214,7 @@ rem ===== 辅助函数 =====
     echo Building sync locked test...
     set "PPDB_SYNC_MODE=locked"
     "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
         "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
@@ -230,7 +230,7 @@ rem ===== 辅助函数 =====
     echo Building sync lockfree test...
     set "PPDB_SYNC_MODE=lockfree"
     "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
         "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^

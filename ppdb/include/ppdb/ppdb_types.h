@@ -20,14 +20,6 @@ typedef enum ppdb_compression_type {
     PPDB_COMPRESSION_ZSTD       // ZSTD压缩
 } ppdb_compression_t;
 
-// 同步类型
-typedef enum ppdb_sync_type {
-    PPDB_SYNC_MUTEX,      // 互斥锁
-    PPDB_SYNC_SPINLOCK,   // 自旋锁
-    PPDB_SYNC_RWLOCK,     // 读写锁
-    PPDB_SYNC_LOCKFREE    // 无锁
-} ppdb_sync_type_t;
-
 // WAL同步模式
 typedef enum ppdb_sync_mode {
     PPDB_SYNC_MODE_NONE = 0,    // 不同步
@@ -41,30 +33,6 @@ typedef enum ppdb_mode {
     PPDB_MODE_RECOVERY,      // 恢复模式
     PPDB_MODE_READONLY       // 只读模式
 } ppdb_mode_t;
-
-// 同步配置
-typedef struct ppdb_sync_config {
-    ppdb_sync_type_t type;         // 同步类型
-    uint32_t spin_count;           // 自旋次数
-    uint32_t timeout_ms;           // 超时时间（毫秒）
-    bool use_lockfree;             // 是否使用无锁模式
-    uint32_t stripe_count;         // 分片数量
-    uint32_t backoff_us;           // 退避时间（微秒）
-    bool enable_ref_count;         // 是否启用引用计数
-} ppdb_sync_config_t;
-
-// 同步原语
-typedef struct ppdb_sync {
-    ppdb_sync_type_t type;    // 同步类型
-    union {
-        _Atomic int mutex;     // 互斥锁
-        _Atomic int spinlock;  // 自旋锁
-        struct {
-            _Atomic int readers;  // 读者计数
-            _Atomic int writer;   // 写者标志
-        } rwlock;              // 读写锁
-    };
-} ppdb_sync_t;
 
 // 性能指标
 typedef struct ppdb_metrics {
@@ -119,21 +87,21 @@ typedef struct ppdb_skiplist {
     int max_level;               // 最大层数
     size_t size;                 // 节点数量
     size_t memory_usage;         // 内存使用量
-    ppdb_sync_t sync;            // 同步原语
+    struct ppdb_sync* sync;      // 同步原语
     ppdb_compare_func_t compare; // 比较函数
 } ppdb_skiplist_t;
 
 // 内存表分片
 typedef struct ppdb_memtable_shard {
     ppdb_skiplist_t* skiplist;   // 跳表
-    ppdb_sync_t sync;            // 同步原语
+    struct ppdb_sync* sync;      // 同步原语
     atomic_size_t size;          // 分片大小
 } ppdb_memtable_shard_t;
 
 // 基础内存表
 typedef struct ppdb_memtable_basic {
     ppdb_skiplist_t* skiplist;   // 跳表
-    ppdb_sync_t sync;            // 同步原语
+    struct ppdb_sync* sync;      // 同步原语
     size_t used;                 // 已使用大小
     size_t size;                 // 总大小
 } ppdb_memtable_basic_t;
@@ -158,7 +126,7 @@ typedef struct ppdb_skiplist_iterator {
     ppdb_skiplist_node_t* current; // 当前节点
     bool valid;                    // 是否有效
     ppdb_kv_pair_t current_pair;   // 当前键值对
-    ppdb_sync_t sync;              // 同步原语
+    struct ppdb_sync* sync;        // 同步原语
 } ppdb_skiplist_iterator_t;
 
 // 内存表迭代器
