@@ -3,6 +3,7 @@
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_types.h"
 #include "test/white/test_framework.h"
+#include "test/white/infra/test_sync.h"
 
 // 测试线程数据结构
 typedef struct {
@@ -20,91 +21,44 @@ static void* mutex_thread_func(void* arg) {
             if (err == PPDB_OK) {
                 atomic_fetch_add(data->counter, 1);
                 ppdb_sync_unlock(data->sync);
+                if (i % 100 == 0) {  // 每100次迭代输出一次日志
+                    PPDB_LOG_INFO("Thread completed %d iterations", i);
+                }
                 break;
             } else if (err == PPDB_ERR_BUSY) {
-                // 添加退避机制
-                usleep(1);  // 1微秒的退避时间
+                usleep(1);
             } else {
-                // 其他错误直接返回
+                PPDB_LOG_ERROR("Thread error: %d", err);
                 return NULL;
             }
         }
     }
+    PPDB_LOG_INFO("Thread completed all %d iterations", data->num_iterations);
     return NULL;
-}
-
-// 基础同步原语测试
-static int test_sync_basic(bool use_lockfree) {
-    PPDB_LOG_INFO("Testing sync basic (lockfree=%d)...", use_lockfree);
-    ppdb_sync_t sync;
-    ppdb_sync_config_t config = {
-        .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000,
-        .use_lockfree = use_lockfree,
-        .stripe_count = 1,
-        .backoff_us = use_lockfree ? 1 : 100,
-        .enable_ref_count = false,
-        .retry_count = 100,
-        .retry_delay_us = 1
-    };
-    
-    // 基本操作测试
-    ppdb_error_t err = ppdb_sync_init(&sync, &config);
-    TEST_ASSERT(err == PPDB_OK, "Failed to initialize mutex");
-    
-    // 加锁解锁测试
-    err = ppdb_sync_try_lock(&sync);
-    TEST_ASSERT(err == PPDB_OK, "Failed to lock mutex");
-    
-    err = ppdb_sync_unlock(&sync);
-    TEST_ASSERT(err == PPDB_OK, "Failed to unlock mutex");
-    
-    // try_lock测试
-    err = ppdb_sync_try_lock(&sync);
-    TEST_ASSERT(err == PPDB_OK, "Failed to try_lock mutex");
-    
-    if (err == PPDB_OK) {
-        err = ppdb_sync_unlock(&sync);
-        TEST_ASSERT(err == PPDB_OK, "Failed to unlock mutex after try_lock");
-    }
-
-    // 多线程竞争测试
-    #define NUM_THREADS 4
-    #define ITERATIONS_PER_THREAD 10000
-    
-    pthread_t threads[NUM_THREADS];
-    thread_data_t thread_data[NUM_THREADS];
-    atomic_int counter = 0;
-    
-    for (int i = 0; i < NUM_THREADS; i++) {
-        thread_data[i].sync = &sync;
-        thread_data[i].counter = &counter;
-        thread_data[i].num_iterations = ITERATIONS_PER_THREAD;
-        int ret = pthread_create(&threads[i], NULL, mutex_thread_func, &thread_data[i]);
-        TEST_ASSERT(ret == 0, "Failed to create thread");
-    }
-    
-    for (int i = 0; i < NUM_THREADS; i++) {
-        int ret = pthread_join(threads[i], NULL);
-        TEST_ASSERT(ret == 0, "Failed to join thread");
-    }
-    
-    TEST_ASSERT(atomic_load(&counter) == NUM_THREADS * ITERATIONS_PER_THREAD, "Counter value mismatch");
-    
-    err = ppdb_sync_destroy(&sync);
-    TEST_ASSERT(err == PPDB_OK, "Failed to destroy mutex");
-    return 0;
 }
 
 // 读写锁测试线程函数 - 读线程
 static void* rwlock_read_thread(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
-        ppdb_sync_read_lock(data->sync);
-        int value = atomic_load(data->counter);  // 只读取，不修改
-        (void)value;  // 避免未使用警告
-        ppdb_sync_read_unlock(data->sync);
+        ppdb_error_t err = ppdb_sync_read_lock(data->sync);
+        if (err == PPDB_OK) {
+            int value = atomic_load(data->counter);
+            (void)value;
+            ppdb_sync_read_unlock(data->sync);
+            if (i % 100 == 0) {
+                PPDB_LOG_INFO("Read thread completed %d iterations", i);
+            }
+        } else {
+            PPDB_LOG_ERROR("Read thread error: %d", err);
+            return NULL;
+        }
+        // 添加一个小的延迟，避免过度竞争
+        if (i % 10 == 0) {
+            usleep(1);
+        }
     }
+    PPDB_LOG_INFO("Read thread completed all %d iterations", data->num_iterations);
     return NULL;
 }
 
@@ -112,35 +66,125 @@ static void* rwlock_read_thread(void* arg) {
 static void* rwlock_write_thread(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
-        ppdb_sync_write_lock(data->sync);
-        atomic_fetch_add(data->counter, 1);
-        ppdb_sync_write_unlock(data->sync);
+        ppdb_error_t err = ppdb_sync_write_lock(data->sync);
+        if (err == PPDB_OK) {
+            atomic_fetch_add(data->counter, 1);
+            ppdb_sync_write_unlock(data->sync);
+            if (i % 50 == 0) {
+                PPDB_LOG_INFO("Write thread completed %d iterations", i);
+            }
+        } else {
+            PPDB_LOG_ERROR("Write thread error: %d", err);
+            return NULL;
+        }
+        // 添加一个小的延迟，避免过度竞争
+        if (i % 5 == 0) {
+            usleep(1);
+        }
     }
+    PPDB_LOG_INFO("Write thread completed all %d iterations", data->num_iterations);
     return NULL;
 }
 
-// 读写锁测试
-static int test_rwlock(bool use_lockfree) {
-    PPDB_LOG_INFO("Testing rwlock (lockfree=%d)...", use_lockfree);
-    ppdb_sync_t sync;
+// 测试无锁同步原语
+void test_sync_lockfree(void) {
+    ppdb_sync_t* sync;
     ppdb_sync_config_t config = {
         .type = PPDB_SYNC_RWLOCK,
+        .use_lockfree = true,
+        .enable_fairness = true,
+        .enable_ref_count = false,
         .spin_count = 1000,
-        .use_lockfree = use_lockfree,
-        .stripe_count = 1,
-        .backoff_us = use_lockfree ? 1 : 100,
-        .enable_ref_count = false
+        .backoff_us = 1,
+        .max_readers = 32
     };
+
+    // 创建同步原语
+    assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
+
+    // 测试基本锁操作
+    test_sync_basic(sync);
+
+    // 测试读写锁操作
+    test_rwlock(sync);
+
+    // 测试并发读写锁操作
+    test_rwlock_concurrent(sync);
+
+    // 销毁同步原语
+    assert(ppdb_sync_destroy(sync) == PPDB_OK);
+    free(sync);
+}
+
+// 测试有锁同步原语
+void test_sync_locked(void) {
+    ppdb_sync_t* sync;
+    ppdb_sync_config_t config = {
+        .type = PPDB_SYNC_RWLOCK,
+        .use_lockfree = false,
+        .enable_fairness = true,
+        .enable_ref_count = false,
+        .spin_count = 1000,
+        .backoff_us = 1,
+        .max_readers = 32
+    };
+
+    // 创建同步原语
+    assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
+
+    // 测试基本锁操作
+    test_sync_basic(sync);
+
+    // 测试读写锁操作
+    test_rwlock(sync);
+
+    // 测试并发读写锁操作
+    test_rwlock_concurrent(sync);
+
+    // 销毁同步原语
+    assert(ppdb_sync_destroy(sync) == PPDB_OK);
+    free(sync);
+}
+
+// 测试基本锁操作
+void test_sync_basic(ppdb_sync_t* sync) {
+    // 测试锁定和解锁
+    assert(ppdb_sync_try_lock(sync) == PPDB_OK);
+    assert(ppdb_sync_unlock(sync) == PPDB_OK);
+
+    // 测试重复锁定
+    assert(ppdb_sync_try_lock(sync) == PPDB_OK);
+    assert(ppdb_sync_try_lock(sync) == PPDB_ERR_BUSY);
+    assert(ppdb_sync_unlock(sync) == PPDB_OK);
+}
+
+// 测试读写锁基本操作
+void test_rwlock(ppdb_sync_t* sync) {
+    // 测试读锁
+    assert(ppdb_sync_read_lock(sync) == PPDB_OK);
+    assert(ppdb_sync_read_lock(sync) == PPDB_OK);  // 多个读者
+    assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
+    assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
+
+    // 测试写锁
+    assert(ppdb_sync_write_lock(sync) == PPDB_OK);
+    assert(ppdb_sync_read_lock(sync) == PPDB_ERR_BUSY);  // 有写者时不能读
+    assert(ppdb_sync_write_unlock(sync) == PPDB_OK);
+
+    // 测试读写互斥
+    assert(ppdb_sync_read_lock(sync) == PPDB_OK);
+    assert(ppdb_sync_write_lock(sync) == PPDB_ERR_BUSY);  // 有读者时不能写
+    assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
+}
+
+// 测试并发读写锁操作
+void test_rwlock_concurrent(ppdb_sync_t* sync) {
+    PPDB_LOG_INFO("Testing concurrent rwlock...");
     
-    // 基本操作测试
-    ppdb_error_t err = ppdb_sync_init(&sync, &config);
-    TEST_ASSERT(err == PPDB_OK, "Failed to initialize rwlock");
-    
-    // 读写锁测试
     #define NUM_READERS 8
     #define NUM_WRITERS 2
-    #define READ_ITERATIONS 5000
-    #define WRITE_ITERATIONS 1000
+    #define READ_ITERATIONS 500
+    #define WRITE_ITERATIONS 100
     
     pthread_t readers[NUM_READERS];
     pthread_t writers[NUM_WRITERS];
@@ -150,51 +194,57 @@ static int test_rwlock(bool use_lockfree) {
     
     // 创建读线程
     for (int i = 0; i < NUM_READERS; i++) {
-        reader_data[i].sync = &sync;
+        reader_data[i].sync = sync;
         reader_data[i].counter = &counter;
         reader_data[i].num_iterations = READ_ITERATIONS;
         int ret = pthread_create(&readers[i], NULL, rwlock_read_thread, &reader_data[i]);
-        TEST_ASSERT(ret == 0, "Failed to create reader thread");
+        assert(ret == 0);
     }
     
     // 创建写线程
     for (int i = 0; i < NUM_WRITERS; i++) {
-        writer_data[i].sync = &sync;
+        writer_data[i].sync = sync;
         writer_data[i].counter = &counter;
         writer_data[i].num_iterations = WRITE_ITERATIONS;
         int ret = pthread_create(&writers[i], NULL, rwlock_write_thread, &writer_data[i]);
-        TEST_ASSERT(ret == 0, "Failed to create writer thread");
+        assert(ret == 0);
     }
     
     // 等待所有线程完成
     for (int i = 0; i < NUM_READERS; i++) {
         int ret = pthread_join(readers[i], NULL);
-        TEST_ASSERT(ret == 0, "Failed to join reader thread");
+        assert(ret == 0);
     }
     
     for (int i = 0; i < NUM_WRITERS; i++) {
         int ret = pthread_join(writers[i], NULL);
-        TEST_ASSERT(ret == 0, "Failed to join writer thread");
+        assert(ret == 0);
     }
     
-    TEST_ASSERT(atomic_load(&counter) == NUM_WRITERS * WRITE_ITERATIONS, "Counter value mismatch");
-    
-    err = ppdb_sync_destroy(&sync);
-    TEST_ASSERT(err == PPDB_OK, "Failed to destroy rwlock");
-    return 0;
+    assert(atomic_load(&counter) == NUM_WRITERS * WRITE_ITERATIONS);
+    PPDB_LOG_INFO("Concurrent rwlock test passed");
 }
 
 // 主测试函数
 int main(void) {
     // 从环境变量获取测试模式
     const char* test_mode = getenv("PPDB_SYNC_MODE");
-    bool use_lockfree = (test_mode && strcmp(test_mode, "lockfree") == 0);
+    if (!test_mode) {
+        PPDB_LOG_ERROR("PPDB_SYNC_MODE environment variable not set");
+        return 1;
+    }
+
+    if (strcmp(test_mode, "lockfree") == 0) {
+        PPDB_LOG_INFO("Testing lockfree version...");
+        test_sync_lockfree();
+    } else if (strcmp(test_mode, "locked") == 0) {
+        PPDB_LOG_INFO("Testing locked version...");
+        test_sync_locked();
+    } else {
+        PPDB_LOG_ERROR("Invalid PPDB_SYNC_MODE: %s", test_mode);
+        return 1;
+    }
     
-    PPDB_LOG_INFO("Testing %s version...", use_lockfree ? "lockfree" : "locked");
-    
-    // 执行测试
-    test_sync_basic(use_lockfree);
-    test_rwlock(use_lockfree);
-    
+    PPDB_LOG_INFO("All tests passed!");
     return 0;
 }

@@ -1,134 +1,117 @@
 #include "ppdb/base.h"
 
-// 全局操作表
-static ppdb_ops_t g_ops_table[32] = {0};  // 支持最多32种类型
+// 基础类型
+struct ppdb_base {
+    ppdb_storage_header_t header;
+    ppdb_metrics_t metrics;
+    ppdb_storage_config_t config;
+    ppdb_ops_t* ops;
+    ppdb_array_t array;
+    atomic_size_t refs;
+};
 
-// 初始化函数
-ppdb_error_t ppdb_init(ppdb_base_t* base, ppdb_type_t type) {
-    if (!base || type <= 0) {
-        return PPDB_ERR_INVALID_ARG;
+ppdb_error_t ppdb_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+    if (!base || !config) {
+        return PPDB_ERR_NULL_POINTER;
     }
 
     memset(base, 0, sizeof(ppdb_base_t));
-    base->header.type = type;
-    base->header.refs = 1;
+    memcpy(&base->config, config, sizeof(ppdb_storage_config_t));
+    atomic_init(&base->refs, 1);
+
     return PPDB_OK;
 }
 
-// 注册操作函数
-ppdb_error_t ppdb_register_ops(ppdb_type_t type, const ppdb_ops_t* ops) {
-    if (type <= 0 || !ops) {
-        return PPDB_ERR_INVALID_ARG;
+ppdb_error_t ppdb_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value) {
+    if (!base || !key || !value) {
+        return PPDB_ERR_NULL_POINTER;
     }
 
-    uint32_t index = __builtin_ctz(type);  // 获取最低位1的位置
-    if (index >= 32) {
-        return PPDB_ERR_INVALID_ARG;
+    atomic_fetch_add(&base->metrics.get_count, 1);
+
+    if (base->ops && base->ops->get) {
+        ppdb_error_t err = base->ops->get(base, key, value);
+        if (err == PPDB_OK) {
+            atomic_fetch_add(&base->metrics.get_hits, 1);
+        } else {
+            atomic_fetch_add(&base->metrics.get_miss_count, 1);
+        }
+        return err;
     }
 
-    g_ops_table[index] = *ops;
-    return PPDB_OK;
+    return PPDB_ERR_NOT_SUPPORTED;
 }
 
-// 获取操作函数
-static ppdb_ops_t* ppdb_get_ops(ppdb_type_t type) {
-    if (type <= 0) {
-        return NULL;
+ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value) {
+    if (!base || !key || !value) {
+        return PPDB_ERR_NULL_POINTER;
     }
-    uint32_t index = __builtin_ctz(type);
-    if (index >= 32) {
-        return NULL;
+
+    atomic_fetch_add(&base->metrics.put_count, 1);
+    atomic_fetch_add(&base->metrics.total_bytes, key->size + value->size);
+    atomic_fetch_add(&base->metrics.total_values, 1);
+
+    if (base->ops && base->ops->put) {
+        return base->ops->put(base, key, value);
     }
-    return &g_ops_table[index];
+
+    return PPDB_ERR_NOT_SUPPORTED;
 }
 
-// 核心操作函数
-ppdb_error_t ppdb_get(void* impl, const ppdb_key_t* key, ppdb_value_t* value) {
-    if (!impl || !key || !value) {
-        return PPDB_ERR_INVALID_ARG;
+ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key) {
+    if (!base || !key) {
+        return PPDB_ERR_NULL_POINTER;
     }
 
-    ppdb_base_t* base = (ppdb_base_t*)impl;
-    ppdb_ops_t* ops = ppdb_get_ops(base->header.type);
-    if (!ops || !ops->get) {
-        return PPDB_ERR_NOT_SUPPORTED;
+    atomic_fetch_add(&base->metrics.delete_count, 1);
+
+    if (base->ops && base->ops->remove) {
+        return base->ops->remove(base, key);
     }
 
-    ppdb_error_t err = ops->get(impl, key, value);
-    
-    // 更新统计信息
-    atomic_fetch_add(&base->storage.metrics.get_count, 1);
-    if (err == PPDB_OK) {
-        atomic_fetch_add(&base->storage.metrics.get_hits, 1);
-    } else {
-        atomic_fetch_add(&base->storage.metrics.get_miss_count, 1);
-    }
-    
-    return err;
+    return PPDB_ERR_NOT_SUPPORTED;
 }
 
-ppdb_error_t ppdb_put(void* impl, const ppdb_key_t* key, const ppdb_value_t* value) {
-    if (!impl || !key || !value) {
-        return PPDB_ERR_INVALID_ARG;
+ppdb_error_t ppdb_clear(ppdb_base_t* base) {
+    if (!base) {
+        return PPDB_ERR_NULL_POINTER;
     }
 
-    ppdb_base_t* base = (ppdb_base_t*)impl;
-    ppdb_ops_t* ops = ppdb_get_ops(base->header.type);
-    if (!ops || !ops->put) {
-        return PPDB_ERR_NOT_SUPPORTED;
+    if (base->ops && base->ops->clear) {
+        return base->ops->clear(base);
     }
 
-    ppdb_error_t err = ops->put(impl, key, value);
-    
-    // 更新统计信息
-    if (err == PPDB_OK) {
-        atomic_fetch_add(&base->storage.metrics.put_count, 1);
-        atomic_fetch_add(&base->storage.metrics.total_bytes, key->size + value->size);
-    }
-    
-    return err;
+    return PPDB_ERR_NOT_SUPPORTED;
 }
 
-ppdb_error_t ppdb_remove(void* impl, const ppdb_key_t* key) {
-    if (!impl || !key) {
-        return PPDB_ERR_INVALID_ARG;
+void ppdb_destroy(ppdb_base_t* base) {
+    if (base) {
+        if (atomic_fetch_sub(&base->refs, 1) == 1) {
+            if (base->ops && base->ops->clear) {
+                base->ops->clear(base);
+            }
+            if (base->array.items) {
+                free(base->array.items);
+            }
+            memset(base, 0, sizeof(ppdb_base_t));
+        }
     }
-
-    ppdb_base_t* base = (ppdb_base_t*)impl;
-    ppdb_ops_t* ops = ppdb_get_ops(base->header.type);
-    if (!ops || !ops->remove) {
-        return PPDB_ERR_NOT_SUPPORTED;
-    }
-
-    ppdb_error_t err = ops->remove(impl, key);
-    
-    // 更新统计信息
-    if (err == PPDB_OK) {
-        atomic_fetch_add(&base->storage.metrics.delete_count, 1);
-    }
-    
-    return err;
-}
-
-ppdb_error_t ppdb_clear(void* impl) {
-    if (!impl) {
-        return PPDB_ERR_INVALID_ARG;
-    }
-
-    ppdb_base_t* base = (ppdb_base_t*)impl;
-    ppdb_ops_t* ops = ppdb_get_ops(base->header.type);
-    if (!ops || !ops->clear) {
-        return PPDB_ERR_NOT_SUPPORTED;
-    }
-
-    return ops->clear(impl);
-}
-
-// 工具函数
-void* ppdb_get_extra(ppdb_node_t* node) {
-    return node ? node->extra : NULL;
 }
 
 uint32_t ppdb_get_type(const ppdb_base_t* base) {
-    return base ? base->header.type : 0;
+    return base ? base->header.type : PPDB_TYPE_NONE;
+}
+
+void ppdb_ref(ppdb_base_t* base) {
+    if (base) {
+        atomic_fetch_add(&base->refs, 1);
+    }
+}
+
+void ppdb_unref(ppdb_base_t* base) {
+    if (base) {
+        if (atomic_fetch_sub(&base->refs, 1) == 1) {
+            ppdb_destroy(base);
+        }
+    }
 }

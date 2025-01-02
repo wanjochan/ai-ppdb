@@ -2,6 +2,7 @@
 #define PPDB_MEMKV_H_
 
 #include "cosmopolitan.h"
+#include "ppdb/ppdb_types.h"
 #include "ppdb/base.h"
 #include "ppdb/storage.h"
 
@@ -14,6 +15,12 @@ extern "C" {
  * 如果你在使用原有的 skiplist/memtable/sharded 构建分支，
  * 请使用 memkv.h 而不是这个文件。
  */
+
+// 内存KV存储结构
+typedef struct ppdb_memkv {
+    ppdb_base_t base;
+    ppdb_storage_config_t config;
+} ppdb_memkv_t;
 
 // MemKV配置选项
 typedef struct {
@@ -31,20 +38,10 @@ typedef struct {
     ppdb_metrics_t stats;    // 性能指标
 } ppdb_memkv_status_t;
 
-// 迭代器
-typedef struct ppdb_memkv_iter_t ppdb_memkv_iter_t;
-
-// 批量操作
-typedef struct ppdb_memkv_batch_t ppdb_memkv_batch_t;
-
-// 快照
-typedef struct ppdb_memkv_snapshot_t ppdb_memkv_snapshot_t;
-
-// 创建MemKV实例
-ppdb_error_t ppdb_memkv_create(ppdb_base_t** base, const ppdb_memkv_config_t* config);
-
-// 销毁MemKV实例
-void ppdb_memkv_destroy(ppdb_base_t* base);
+// 内存KV存储操作
+ppdb_error_t ppdb_memkv_create(ppdb_memkv_t** kv, const ppdb_storage_config_t* config);
+ppdb_error_t ppdb_memkv_destroy(ppdb_base_t* base);
+ppdb_error_t ppdb_memkv_get_status(ppdb_base_t* base, ppdb_storage_stats_t* stats);
 
 // 基本操作
 ppdb_error_t ppdb_memkv_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value);

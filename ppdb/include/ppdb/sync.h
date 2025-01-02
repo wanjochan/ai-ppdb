@@ -59,135 +59,93 @@
  *       以减少锁竞争并提高并发性能。
  */
 
-#ifndef PPDB_SYNC_H_
-#define PPDB_SYNC_H_
+#ifndef PPDB_SYNC_H
+#define PPDB_SYNC_H
 
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
 
 // 同步原语类型
-typedef enum {
-    PPDB_SYNC_MUTEX = 0,  // 互斥锁
-    PPDB_SYNC_SPINLOCK,   // 自旋锁
-    PPDB_SYNC_RWLOCK,     // 读写锁
-    PPDB_SYNC_SHARED      // 新增：共享锁模式
+typedef enum ppdb_sync_type {
+    PPDB_SYNC_MUTEX,    // 互斥锁
+    PPDB_SYNC_SPINLOCK, // 自旋锁
+    PPDB_SYNC_RWLOCK    // 读写锁
 } ppdb_sync_type_t;
 
-// 默认配置
-#define PPDB_SYNC_CONFIG_DEFAULT { \
-    .type = PPDB_SYNC_MUTEX,      \
-    .spin_count = 1000,           \
-    .use_lockfree = false,        \
-    .stripe_count = 1,            \
-    .backoff_us = 1,              \
-    .enable_ref_count = false,    \
-    .retry_count = 100,           \
-    .retry_delay_us = 1,          \
-    .max_readers = 32,            \
-    .enable_fairness = true       \
-}
+// 读写锁结构
+typedef struct ppdb_rwlock {
+    atomic_int readers;          // 当前读者数量
+    atomic_int waiting_writers;  // 等待的写者数量
+    atomic_flag writer;          // 写者标志
+    atomic_int atomic_lock;      // 原子锁
+} ppdb_rwlock_t;
 
-/**
- * @brief 同步原语配置
- * 
- * 这些配置参数直接决定了锁的性能和行为特征：
- * 
- * - spin_count: 自旋计数阈值，决定了在进入睡眠前的自旋次数
- *   - 值越大，CPU占用越高，但在高竞争下响应更快
- *   - 值越小，CPU占用越低，但可能增加上下文切换
- * 
- * - backoff_us: 退避睡眠时间（微秒）
- *   - 值越大，CPU占用越低，但响应延迟增加
- *   - 值越小，响应更快，但在高竞争下可能导致CPU占用过高
- * 
- * - retry_count: 重试次数，超过后返回PPDB_ERR_BUSY
- *   - 值越大，等待时间越长，但成功概率增加
- *   - 值越小，快速失败，但可能需要上层重试
- * 
- * - retry_delay_us: 重试间隔（微秒）
- *   - 值越大，CPU占用越低，但响应延迟增加
- *   - 值越小，响应更快，但可能增加竞争
- */
-typedef struct {
-    ppdb_sync_type_t type;        ///< 同步原语类型
-    bool use_lockfree;            ///< 是否使用无锁模式
-    uint32_t stripe_count;        ///< 分片数量（0表示不分片）
-    uint32_t spin_count;          ///< 自旋计数阈值
-    uint32_t backoff_us;          ///< 退避睡眠时间（微秒）
-    bool enable_ref_count;        ///< 是否启用引用计数
-    uint32_t retry_count;         ///< 重试次数
-    uint32_t retry_delay_us;      ///< 重试间隔（微秒）
-    uint32_t max_readers;         ///< 新增：最大读者数量限制
-    bool enable_fairness;         ///< 新增：是否启用公平调度
+// 同步配置
+typedef struct ppdb_sync_config {
+    ppdb_sync_type_t type;      // 同步原语类型
+    bool use_lockfree;          // 是否使用无锁模式
+    bool enable_fairness;       // 是否启用公平性
+    bool enable_ref_count;      // 是否启用引用计数
+    uint32_t spin_count;        // 自旋次数
+    uint32_t backoff_us;        // 退避时间（微秒）
+    uint32_t max_readers;       // 最大读者数量
 } ppdb_sync_config_t;
 
 // 同步原语结构
-struct ppdb_sync {
-    ppdb_sync_type_t type;    // 同步类型
-    bool use_lockfree;        // 是否使用无锁实现
-    union {
-        pthread_mutex_t mutex;     // 互斥锁
-        atomic_flag spinlock;      // 自旋锁
-        struct {
-            atomic_int readers;    // 读者计数
-            atomic_flag writer;    // 写者标志
-            atomic_int waiting_writers; // 等待的写者数量
-            atomic_int waiting_readers; // 等待的读者数量
-            atomic_uint atomic_lock;   // 无锁模式的原子锁
-        } rwlock;                  // 读写锁
-    };
-    atomic_int ref_count;      // 引用计数
-    
-    // 配置参数
-    uint32_t spin_count;      // 自旋次数
-    uint32_t backoff_us;      // 退避时间(微秒)
-    bool enable_ref_count;    // 是否启用引用计数
-    uint32_t max_readers;     // 最大读者数量限制
-    bool enable_fairness;     // 公平调度标志
-    atomic_int total_waiters; // 总等待者计数
-    atomic_flag is_contended; // 竞争状态标志
-};
+typedef struct ppdb_sync {
+    ppdb_sync_type_t type;      // 同步原语类型
+    bool use_lockfree;          // 是否使用无锁模式
+    bool enable_fairness;       // 是否启用公平性
+    bool enable_ref_count;      // 是否启用引用计数
+    uint32_t spin_count;        // 自旋次数
+    uint32_t backoff_us;        // 退避时间（微秒）
+    uint32_t max_readers;       // 最大读者数量
 
-typedef struct ppdb_sync ppdb_sync_t;
+    union {
+        pthread_mutex_t mutex;   // 互斥锁
+        atomic_flag spinlock;    // 自旋锁
+        ppdb_rwlock_t rwlock;   // 读写锁
+    };
+} ppdb_sync_t;
+
+// 无锁操作参数结构
+typedef struct ppdb_sync_lockfree_args {
+    ppdb_sync_t* sync;          // 同步原语
+    void* key;                  // 键
+    size_t key_len;            // 键长度
+    void* value;               // 值
+    void* value_ptr;           // 值指针
+    size_t value_len;          // 值长度
+} ppdb_sync_lockfree_args_t;
+
+// 重试函数类型
+typedef ppdb_error_t (*ppdb_sync_retry_func_t)(void*);
 
 // 基本同步操作
-ppdb_sync_t* ppdb_sync_create(void);
-ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config);
+ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, ppdb_sync_config_t* config);
+ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, ppdb_sync_config_t* config);
 ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync);
 
 // 锁操作
 ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync);
+
+// 读写锁操作
 ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync);
 
-// 共享锁操作
+// 共享读锁操作
 ppdb_error_t ppdb_sync_read_lock_shared(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_read_unlock_shared(ppdb_sync_t* sync);
 
 // 无锁操作
-ppdb_error_t ppdb_sync_lockfree_put(ppdb_sync_t* sync,
-                                   void* key,
-                                   size_t key_len,
-                                   void* value,
-                                   size_t value_len,
-                                   ppdb_sync_config_t* config);
+ppdb_error_t ppdb_sync_lockfree_put(ppdb_sync_t* sync, void* key, size_t key_len, void* value, size_t value_len);
+ppdb_error_t ppdb_sync_lockfree_get(ppdb_sync_t* sync, void* key, size_t key_len, void* value, size_t value_len);
+ppdb_error_t ppdb_sync_lockfree_delete(ppdb_sync_t* sync, void* key, size_t key_len);
 
-ppdb_error_t ppdb_sync_lockfree_get(ppdb_sync_t* sync,
-                                   void* key,
-                                   size_t key_len,
-                                   void** value,
-                                   size_t* value_len,
-                                   ppdb_sync_config_t* config);
+// 重试机制
+ppdb_error_t ppdb_sync_retry(ppdb_sync_t* sync, ppdb_sync_retry_func_t retry_func, void* arg);
 
-ppdb_error_t ppdb_sync_lockfree_delete(ppdb_sync_t* sync,
-                                      void* key,
-                                      size_t key_len,
-                                      ppdb_sync_config_t* config);
-
-// 工具函数
-uint32_t ppdb_sync_hash(const void* data, size_t len);
-
-#endif  // PPDB_SYNC_H_ 
+#endif // PPDB_SYNC_H 

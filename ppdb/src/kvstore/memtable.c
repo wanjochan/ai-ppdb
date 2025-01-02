@@ -159,11 +159,15 @@ ppdb_error_t ppdb_memtable_create_sharded_basic(size_t size_limit, ppdb_memtable
     // 初始化同步配置
     ppdb_sync_config_t sync_config = {
         .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000,
         .use_lockfree = false,
         .stripe_count = 8,
+        .spin_count = 1000,
         .backoff_us = 1,
-        .enable_ref_count = false
+        .enable_ref_count = false,
+        .retry_count = 100,
+        .retry_delay_us = 1,
+        .max_readers = 32,
+        .enable_fairness = true
     };
 
     // 分配内存表结构
@@ -307,10 +311,16 @@ ppdb_error_t ppdb_memtable_put_sharded_basic(ppdb_memtable_t* table,
 ppdb_error_t ppdb_memtable_get_sharded_basic(ppdb_memtable_t* table,
                                            const void* key, size_t key_len,
                                            void** value, size_t* value_len) {
-    if (!table || !table->shards || !key || !value || !value_len) {
+    printf("ppdb_memtable_get_sharded_basic: Starting with key='%.*s' (len=%zu), value=%p, value_len=%p\n",
+           (int)key_len, (const char*)key, key_len, (void*)value, (void*)value_len);
+    
+    if (!table || !table->shards || !key || !value_len) {
+        printf("ppdb_memtable_get_sharded_basic: Invalid parameters - table=%p, shards=%p, key=%p, value_len=%p\n",
+               (void*)table, table ? (void*)table->shards : NULL, key, (void*)value_len);
         return PPDB_ERR_NULL_POINTER;
     }
     if (key_len == 0) {
+        printf("ppdb_memtable_get_sharded_basic: Zero key length\n");
         return PPDB_ERR_INVALID_ARG;
     }
 
@@ -318,21 +328,32 @@ ppdb_error_t ppdb_memtable_get_sharded_basic(ppdb_memtable_t* table,
     size_t shard_index = ppdb_memtable_get_shard_index(key, key_len, table->shard_count);
     ppdb_memtable_shard_t* shard = &table->shards[shard_index];
 
+    printf("ppdb_memtable_get_sharded_basic: Using shard %zu\n", shard_index);
+
     ppdb_error_t err;
-    if ((err = ppdb_sync_try_lock(&shard->sync)) != PPDB_OK) {
+    if ((err = ppdb_sync_read_lock(&shard->sync)) != PPDB_OK) {
+        printf("ppdb_memtable_get_sharded_basic: Failed to acquire read lock: %d\n", err);
         return err;
     }
 
     // 读取键值对
     err = ppdb_skiplist_get(shard->skiplist, key, key_len, value, value_len);
+    printf("ppdb_memtable_get_sharded_basic: skiplist_get returned %d, value_len=%zu\n",
+           err, *value_len);
+    
     if (err == PPDB_OK) {
+        printf("ppdb_memtable_get_sharded_basic: Get successful, updating metrics\n");
         table->metrics.get_count++;
-        table->metrics.bytes_read += key_len + *value_len;
-    } else {
+        table->metrics.bytes_read += *value_len;
+    } else if (err == PPDB_ERR_NOT_FOUND) {
+        printf("ppdb_memtable_get_sharded_basic: Key not found\n");
         table->metrics.get_miss_count++;
+    } else {
+        printf("ppdb_memtable_get_sharded_basic: Get failed with error %d\n", err);
     }
 
-    ppdb_sync_unlock(&shard->sync);
+    ppdb_sync_read_unlock(&shard->sync);
+    printf("ppdb_memtable_get_sharded_basic: Returning %d\n", err);
     return err;
 }
 
@@ -428,14 +449,18 @@ ppdb_error_t ppdb_memtable_create_basic(size_t size_limit, ppdb_memtable_t** tab
     atomic_init(&new_table->metrics.bytes_read, 0);
     atomic_init(&new_table->metrics.get_miss_count, 0);
 
-    // 使用传入的配置初始化同步原语
+    // 初始化同步配置
     ppdb_sync_config_t sync_config = {
         .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000,
         .use_lockfree = getenv("PPDB_SYNC_MODE") && strcmp(getenv("PPDB_SYNC_MODE"), "lockfree") == 0,
-        .stripe_count = 8,
+        .stripe_count = 1,
+        .spin_count = 1000,
         .backoff_us = 1,
-        .enable_ref_count = false
+        .enable_ref_count = false,
+        .retry_count = 100,
+        .retry_delay_us = 1,
+        .max_readers = 32,
+        .enable_fairness = true
     };
 
     // 初始化同步原语
@@ -663,13 +688,18 @@ ppdb_error_t ppdb_memtable_iterator_create_basic(ppdb_memtable_t* table, ppdb_me
     new_iter->valid = true;
     memset(&new_iter->current_pair, 0, sizeof(ppdb_kv_pair_t));
 
+    // 初始化同步配置
     ppdb_sync_config_t sync_config = {
         .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000,
         .use_lockfree = false,
         .stripe_count = 1,
+        .spin_count = 1000,
         .backoff_us = 100,
-        .enable_ref_count = false
+        .enable_ref_count = false,
+        .retry_count = 100,
+        .retry_delay_us = 1,
+        .max_readers = 32,
+        .enable_fairness = true
     };
 
     ppdb_error_t err = ppdb_skiplist_iterator_create(table->basic->skiplist,
@@ -806,16 +836,18 @@ ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** 
     atomic_init(&new_table->metrics.bytes_read, 0);
     atomic_init(&new_table->metrics.get_miss_count, 0);
 
-    // 配置无锁同步原语
+    // 初始化同步配置
     ppdb_sync_config_t sync_config = {
         .type = PPDB_SYNC_MUTEX,
         .use_lockfree = true,
         .stripe_count = 0,
-        .spin_count = 10000,  // 增加自旋次数
-        .backoff_us = 10,     // 减少回退时间
+        .spin_count = 10000,
+        .backoff_us = 10,
         .enable_ref_count = false,
-        .retry_count = 10,    // 增加重试次数
-        .retry_delay_us = 100 // 减少重试延迟
+        .retry_count = 10,
+        .retry_delay_us = 100,
+        .max_readers = 32,
+        .enable_fairness = false
     };
 
     // 初始化同步原语
@@ -880,27 +912,43 @@ ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table,
 }
 
 ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* table,
-                                       const void* key, size_t key_len,
-                                       void** value, size_t* value_len) {
-    if (!table || !table->basic || !key || !value || !value_len) {
+                                        const void* key, size_t key_len,
+                                        void** value, size_t* value_len) {
+    printf("ppdb_memtable_get_lockfree: Starting with key='%.*s' (len=%zu), value=%p, value_len=%p\n",
+           (int)key_len, (const char*)key, key_len, (void*)value, (void*)value_len);
+    
+    if (!table || !table->basic || !key || !value_len) {
+        printf("ppdb_memtable_get_lockfree: Invalid parameters - table=%p, basic=%p, key=%p, value_len=%p\n",
+               (void*)table, table ? (void*)table->basic : NULL, key, (void*)value_len);
         return PPDB_ERR_NULL_POINTER;
     }
     if (key_len == 0) {
+        printf("ppdb_memtable_get_lockfree: Zero key length\n");
         return PPDB_ERR_INVALID_ARG;
     }
 
-    // 读取键值对
-    ppdb_error_t err = ppdb_skiplist_get(table->basic->skiplist,
-                                        key, key_len,
-                                        value, value_len);
+    printf("ppdb_memtable_get_lockfree: Checking skiplist - skiplist=%p\n", 
+           (void*)table->basic->skiplist);
+
+    // 直接调用skiplist_get_internal，无需加锁
+    ppdb_error_t err = skiplist_get_internal(table->basic->skiplist,
+                                           key, key_len,
+                                           value, value_len);
+    printf("ppdb_memtable_get_lockfree: skiplist_get_internal returned %d, value_len=%zu\n", 
+           err, *value_len);
     
     if (err == PPDB_OK) {
+        printf("ppdb_memtable_get_lockfree: Get successful, updating metrics\n");
         atomic_fetch_add(&table->metrics.get_count, 1);
         atomic_fetch_add(&table->metrics.bytes_read, *value_len);
     } else if (err == PPDB_ERR_NOT_FOUND) {
+        printf("ppdb_memtable_get_lockfree: Key not found\n");
         atomic_fetch_add(&table->metrics.get_miss_count, 1);
+    } else {
+        printf("ppdb_memtable_get_lockfree: Get failed with error %d\n", err);
     }
 
+    printf("ppdb_memtable_get_lockfree: Returning %d\n", err);
     return err;
 }
 

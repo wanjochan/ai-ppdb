@@ -426,7 +426,7 @@ ppdb_error_t skiplist_get_internal(ppdb_skiplist_t* list,
                                  const void* key, size_t key_len,
                                  void** value, size_t* value_len) {
     printf("skiplist_get_internal: Starting with key='%.*s' (len=%zu), value=%p, value_len=%p\n",
-           (int)key_len, (const char*)key, key_len, (void*)value, (void*)value_len);
+           (int)(key_len - 1), (const char*)key, key_len, (void*)value, (void*)value_len);
     
     if (!list || !key || !value_len) {
         printf("skiplist_get_internal: Invalid parameters - list=%p, key=%p, value_len=%p\n",
@@ -461,8 +461,8 @@ ppdb_error_t skiplist_get_internal(ppdb_skiplist_t* list,
     // 比较键
     int cmp = list->compare(current->key, current->key_len, key, key_len);
     printf("skiplist_get_internal: Compare result=%d (current_key='%.*s', key='%.*s')\n", 
-           cmp, (int)current->key_len, (const char*)current->key,
-           (int)key_len, (const char*)key);
+           cmp, (int)(current->key_len - 1), (const char*)current->key,
+           (int)(key_len - 1), (const char*)key);
 
     if (cmp != 0) {
         printf("skiplist_get_internal: Key mismatch\n");
