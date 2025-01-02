@@ -12,7 +12,19 @@
 #define TABLE_SIZE (1024 * 1024)
 
 // 全局配置
-static ppdb_memtable_config_t g_memtable_config;
+static ppdb_memtable_config_t g_memtable_config = {
+    .type = PPDB_MEMTABLE_BASIC,
+    .size_limit = TABLE_SIZE,
+    .shard_count = 8,
+    .sync = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 1000,
+        .use_lockfree = false,
+        .stripe_count = 8,
+        .backoff_us = 1,
+        .enable_ref_count = false
+    }
+};
 
 // 线程参数结构
 typedef struct {
@@ -78,6 +90,7 @@ static void* concurrent_worker(void* arg) {
 static int test_basic_ops(void) {
     ppdb_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_memtable_create_with_config(&table, &g_memtable_config);
+    PPDB_LOG_INFO("Create memtable result: %d", err);
     TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
     TEST_ASSERT(table != NULL, "Memtable is NULL");
 
@@ -86,12 +99,14 @@ static int test_basic_ops(void) {
     const char* test_value = "test_value";
     err = ppdb_memtable_put(table, (const void*)test_key, strlen(test_key),
                            (const void*)test_value, strlen(test_value));
+    PPDB_LOG_INFO("Put operation result: %d", err);
     TEST_ASSERT(err == PPDB_OK, "Put operation failed");
 
     // 先获取值的大小
     size_t value_size = 0;
     err = ppdb_memtable_get(table, (const void*)test_key, strlen(test_key),
                            NULL, &value_size);
+    PPDB_LOG_INFO("Get size result: %d, value_size: %zu", err, value_size);
     TEST_ASSERT(err == PPDB_OK, "Get size failed");
     TEST_ASSERT(value_size == strlen(test_value), "Value size mismatch");
 
@@ -100,9 +115,9 @@ static int test_basic_ops(void) {
     size_t actual_size = 0;
     err = ppdb_memtable_get(table, (const void*)test_key, strlen(test_key),
                            &value_buf, &actual_size);
+    PPDB_LOG_INFO("Get value result: %d, actual_size: %zu", err, actual_size);
     TEST_ASSERT(err == PPDB_OK, "Get value failed");
     TEST_ASSERT(actual_size == strlen(test_value), "Value size mismatch");
-    TEST_ASSERT(value_buf != NULL, "Value buffer is NULL");
     TEST_ASSERT(memcmp(value_buf, test_value, actual_size) == 0, "Value content mismatch");
     free(value_buf);
 

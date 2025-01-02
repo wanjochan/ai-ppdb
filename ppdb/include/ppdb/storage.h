@@ -1,6 +1,7 @@
 #ifndef PPDB_STORAGE_H_
 #define PPDB_STORAGE_H_
 
+#include <cosmopolitan.h>
 #include "ppdb/base.h"
 
 #ifdef __cplusplus

@@ -1,6 +1,4 @@
 #include "ppdb/base.h"
-#include <stdlib.h>
-#include <string.h>
 
 // 全局操作表
 static ppdb_ops_t g_ops_table[32] = {0};  // 支持最多32种类型

@@ -3,17 +3,36 @@
 // 公共头文件
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_logger.h"
+#include "ppdb/sync.h"
 
 // 内部头文件
 #include "kvstore/internal/kvstore_types.h"
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_fs.h"
 #include "kvstore/internal/skiplist.h"
-#include "kvstore/internal/sync.h"
 #include "kvstore/internal/metrics.h"
 
 // 跳表节点大小估计
 #define PPDB_SKIPLIST_NODE_SIZE 64
+
+// 创建内存表（带配置）
+ppdb_error_t ppdb_memtable_create_with_config(ppdb_memtable_t** memtable, const ppdb_memtable_config_t* config) {
+    if (!memtable || !config) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+
+    // 根据配置的类型创建内存表
+    switch (config->type) {
+        case PPDB_MEMTABLE_BASIC:
+            return ppdb_memtable_create_basic(config->size_limit, memtable);
+        case PPDB_MEMTABLE_SHARDED:
+            return ppdb_memtable_create_sharded_basic(config->size_limit, memtable);
+        case PPDB_MEMTABLE_LOCKFREE:
+            return ppdb_memtable_create_lockfree(config->size_limit, memtable);
+        default:
+            return PPDB_ERR_INVALID_PARAM;
+    }
+}
 
 // 包装器函数
 ppdb_error_t ppdb_memtable_create(size_t size_limit, ppdb_memtable_t** table) {
@@ -31,12 +50,14 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
         return PPDB_ERR_INVALID_PARAM;
     }
     
-    ppdb_error_t err = ppdb_sync_try_lock(&table->basic->sync);
+    ppdb_error_t err = ppdb_sync_write_lock(&table->basic->sync);
     if (err != PPDB_OK) {
         return err;
     }
     
-    return ppdb_memtable_put_basic(table, key, key_len, value, value_len);
+    err = ppdb_memtable_put_basic(table, key, key_len, value, value_len);
+    ppdb_sync_write_unlock(&table->basic->sync);
+    return err;
 }
 
 ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
@@ -46,12 +67,14 @@ ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
         return PPDB_ERR_INVALID_PARAM;
     }
     
-    ppdb_error_t err = ppdb_sync_try_lock(&table->basic->sync);
+    ppdb_error_t err = ppdb_sync_write_lock(&table->basic->sync);
     if (err != PPDB_OK) {
         return err;
     }
     
-    return ppdb_memtable_get_basic(table, key, key_len, value, value_len);
+    err = ppdb_memtable_get_basic(table, key, key_len, value, value_len);
+    ppdb_sync_write_unlock(&table->basic->sync);
+    return err;
 }
 
 ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
@@ -60,12 +83,14 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
         return PPDB_ERR_INVALID_PARAM;
     }
     
-    ppdb_error_t err = ppdb_sync_try_lock(&table->basic->sync);
+    ppdb_error_t err = ppdb_sync_write_lock(&table->basic->sync);
     if (err != PPDB_OK) {
         return err;
     }
     
-    return ppdb_memtable_delete_basic(table, key, key_len);
+    err = ppdb_memtable_delete_basic(table, key, key_len);
+    ppdb_sync_write_unlock(&table->basic->sync);
+    return err;
 }
 
 size_t ppdb_memtable_size(ppdb_memtable_t* table) {
@@ -233,7 +258,7 @@ ppdb_error_t ppdb_memtable_put_sharded_basic(ppdb_memtable_t* table,
     ppdb_memtable_shard_t* shard = &table->shards[shard_index];
 
     ppdb_error_t err;
-    if ((err = ppdb_sync_lock(&shard->sync)) != PPDB_OK) {
+    if ((err = ppdb_sync_try_lock(&shard->sync)) != PPDB_OK) {
         return err;
     }
 
@@ -265,7 +290,7 @@ ppdb_error_t ppdb_memtable_get_sharded_basic(ppdb_memtable_t* table,
     ppdb_memtable_shard_t* shard = &table->shards[shard_index];
 
     ppdb_error_t err;
-    if ((err = ppdb_sync_lock(&shard->sync)) != PPDB_OK) {
+    if ((err = ppdb_sync_try_lock(&shard->sync)) != PPDB_OK) {
         return err;
     }
 
@@ -299,7 +324,7 @@ ppdb_error_t ppdb_memtable_delete_sharded_basic(ppdb_memtable_t* table,
     ppdb_memtable_shard_t* shard = &table->shards[shard_index];
 
     ppdb_error_t err;
-    if ((err = ppdb_sync_lock(&shard->sync)) != PPDB_OK) {
+    if ((err = ppdb_sync_try_lock(&shard->sync)) != PPDB_OK) {
         return err;
     }
 
@@ -460,7 +485,7 @@ ppdb_error_t ppdb_memtable_put_basic(ppdb_memtable_t* table,
     }
 
     ppdb_error_t err;
-    if ((err = ppdb_sync_lock(&table->basic->sync)) != PPDB_OK) {
+    if ((err = ppdb_sync_try_lock(&table->basic->sync)) != PPDB_OK) {
         return err;
     }
 
@@ -496,7 +521,7 @@ ppdb_error_t ppdb_memtable_get_basic(ppdb_memtable_t* table,
     }
 
     ppdb_error_t err;
-    if ((err = ppdb_sync_lock(&table->basic->sync)) != PPDB_OK) {
+    if ((err = ppdb_sync_try_lock(&table->basic->sync)) != PPDB_OK) {
         return err;
     }
 
@@ -529,7 +554,7 @@ ppdb_error_t ppdb_memtable_delete_basic(ppdb_memtable_t* table,
     }
 
     ppdb_error_t err;
-    if ((err = ppdb_sync_lock(&table->basic->sync)) != PPDB_OK) {
+    if ((err = ppdb_sync_try_lock(&table->basic->sync)) != PPDB_OK) {
         return err;
     }
 
@@ -678,4 +703,44 @@ void ppdb_memtable_iterator_destroy_basic(ppdb_memtable_iterator_t* iter) {
     }
 
     free(iter);
+}
+
+// 创建无锁内存表
+ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** table) {
+    if (!table) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+
+    ppdb_memtable_t* new_table = (ppdb_memtable_t*)malloc(sizeof(ppdb_memtable_t));
+    if (!new_table) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 初始化基本内存表
+    ppdb_error_t err = ppdb_memtable_create_basic(size_limit, table);
+    if (err != PPDB_OK) {
+        free(new_table);
+        return err;
+    }
+
+    // 配置无锁模式
+    ppdb_sync_config_t sync_config = {
+        .type = PPDB_SYNC_MUTEX,
+        .use_lockfree = true,
+        .stripe_count = 0,
+        .spin_count = 1000,
+        .backoff_us = 100,
+        .enable_ref_count = false,
+        .retry_count = 3,
+        .retry_delay_us = 1000
+    };
+
+    // 初始化同步原语
+    err = ppdb_sync_init(&(*table)->basic->sync, &sync_config);
+    if (err != PPDB_OK) {
+        ppdb_memtable_destroy_basic(*table);
+        return err;
+    }
+
+    return PPDB_OK;
 }

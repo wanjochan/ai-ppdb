@@ -1,10 +1,8 @@
 #ifndef PPDB_BASE_H_
 #define PPDB_BASE_H_
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
-#include "ppdb/common.h"
+#include <cosmopolitan.h>
+//#include "ppdb/common.h"
 
 #ifdef __cplusplus
 extern "C" {

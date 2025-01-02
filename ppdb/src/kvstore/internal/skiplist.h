@@ -6,6 +6,9 @@
 #include "ppdb/ppdb_types.h"
 #include "ppdb/sync.h"
 
+// 跳表最大层级
+#define PPDB_SKIPLIST_MAX_LEVEL 32
+
 // 跳表操作函数声明
 
 // 创建跳表

@@ -4,8 +4,8 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_types.h"
+#include "ppdb/sync.h"
 #include "kvstore/internal/kvstore_types.h"
-#include "kvstore/internal/sync.h"
 #include "kvstore/internal/skiplist.h"
 
 // 内存表配置
@@ -37,6 +37,7 @@ ppdb_error_t ppdb_memtable_get_sharded_basic(ppdb_memtable_t* table, const void*
 ppdb_error_t ppdb_memtable_delete_sharded_basic(ppdb_memtable_t* table, const void* key, size_t key_len);
 
 // 无锁内存表操作
+ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** table);
 ppdb_error_t ppdb_memtable_put_lockfree_basic(ppdb_memtable_t* table, const void* key, size_t key_len, const void* value, size_t value_len);
 ppdb_error_t ppdb_memtable_get_lockfree_basic(ppdb_memtable_t* table, const void* key, size_t key_len, void** value, size_t* value_len);
 ppdb_error_t ppdb_memtable_delete_lockfree_basic(ppdb_memtable_t* table, const void* key, size_t key_len);
@@ -57,6 +58,7 @@ void ppdb_memtable_iterator_destroy_basic(ppdb_memtable_iterator_t* iter);
 ppdb_error_t ppdb_memtable_create(size_t size_limit, ppdb_memtable_t** memtable);
 ppdb_error_t ppdb_memtable_create_sharded(size_t size_limit, ppdb_memtable_t** memtable);
 ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** memtable);
+ppdb_error_t ppdb_memtable_create_with_config(ppdb_memtable_t** memtable, const ppdb_memtable_config_t* config);
 
 // 通用操作
 void ppdb_memtable_destroy(ppdb_memtable_t* memtable);

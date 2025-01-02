@@ -322,6 +322,7 @@ rem ===== 辅助函数 =====
         "%PPDB_DIR%\src\kvstore\skiplist.c" ^
         "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_locked_test.exe.dbg"
