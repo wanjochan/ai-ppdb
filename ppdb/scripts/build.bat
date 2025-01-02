@@ -25,9 +25,9 @@ if "%TEST_TYPE%"=="clean" (
 )
 
 rem ===== 强制重新构建 =====
-if "%BUILD_MODE%"=="rebuild" (
-    echo Force rebuilding all files...
-    del /F /Q "%BUILD_DIR%\*.o"
+if "%TEST_TYPE%"=="rebuild" (
+    call :build_rebuild
+    exit /b 0
 )
 
 rem ===== 检查环境 =====
@@ -59,18 +59,20 @@ rem ===== 辅助函数 =====
         echo Using proxy: %PROXY%
     )
 
-    rem Set paths
+    rem Set paths (使用绝对路径)
     set "SCRIPT_DIR=%~dp0"
-    cd /d "%SCRIPT_DIR%\..\..\"
+    set "ROOT_DIR=%SCRIPT_DIR%\.."
+    pushd "%ROOT_DIR%"
     set "ROOT_DIR=%CD%"
-    set "PPDB_DIR=%ROOT_DIR%\ppdb"
+    popd
+    set "PPDB_DIR=%ROOT_DIR%"
     set "BUILD_DIR=%PPDB_DIR%\build"
     set "INCLUDE_DIR=%PPDB_DIR%\include"
     set "TEST_DIR=%PPDB_DIR%\test"
 
     rem Set tool paths
-    set "COSMO=%ROOT_DIR%\repos\cosmopolitan"
-    set "CROSS9=%ROOT_DIR%\repos\cross9\bin"
+    set "COSMO=%ROOT_DIR%\..\repos\cosmopolitan"
+    set "CROSS9=%ROOT_DIR%\..\repos\cross9\bin"
     set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
     set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
     set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
@@ -128,13 +130,33 @@ rem ===== 辅助函数 =====
     del /F /Q "%BUILD_DIR%\*.o"
     del /F /Q "%BUILD_DIR%\*.exe"
     del /F /Q "%BUILD_DIR%\*.exe.dbg"
+    echo Restoring runtime files...
+    copy /Y "%COSMO%\crt.o" "%BUILD_DIR%\" > nul
+    copy /Y "%COSMO%\ape.o" "%BUILD_DIR%\" > nul
+    copy /Y "%COSMO%\ape.lds" "%BUILD_DIR%\" > nul
+    copy /Y "%COSMO%\cosmopolitan.a" "%BUILD_DIR%\" > nul
     exit /b 0
 
 :check_runtime_files
     if not exist "%BUILD_DIR%\crt.o" (
-        echo Runtime files missing, running setup...
-        call "%SCRIPT_DIR%\setup.bat"
-        if errorlevel 1 exit /b 1
+        echo 错误：缺少运行时文件，请先运行 setup.bat 进行环境设置
+        echo 用法：.\setup.bat
+        exit /b 1
+    )
+    if not exist "%BUILD_DIR%\ape.o" (
+        echo 错误：缺少运行时文件，请先运行 setup.bat 进行环境设置
+        echo 用法：.\setup.bat
+        exit /b 1
+    )
+    if not exist "%BUILD_DIR%\cosmopolitan.a" (
+        echo 错误：缺少运行时文件，请先运行 setup.bat 进行环境设置
+        echo 用法：.\setup.bat
+        exit /b 1
+    )
+    if not exist "%BUILD_DIR%\ape.lds" (
+        echo 错误：缺少运行时文件，请先运行 setup.bat 进行环境设置
+        echo 用法：.\setup.bat
+        exit /b 1
     )
     exit /b 0
 
@@ -242,7 +264,87 @@ rem ===== 辅助函数 =====
     "%BUILD_DIR%\sharded_test.exe"
     exit /b 0
 
+:build_wal_core
+    echo Building WAL core test...
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\kvstore\wal.c" ^
+        "%PPDB_DIR%\src\kvstore\wal_write.c" ^
+        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
+        "%PPDB_DIR%\src\common\fs.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\src\kvstore\memtable.c" ^
+        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
+        "%PPDB_DIR%\test\white\storage\test_wal_core.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\wal_core_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\wal_core_test.exe.dbg" "%BUILD_DIR%\wal_core_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\wal_core_test.exe"
+    exit /b 0
+
+:build_wal_func
+    echo Building WAL functional test...
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\kvstore\wal.c" ^
+        "%PPDB_DIR%\src\kvstore\wal_write.c" ^
+        "%PPDB_DIR%\src\kvstore\wal_iterator.c" ^
+        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
+        "%PPDB_DIR%\src\common\fs.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\storage\test_wal_func.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\wal_func_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\wal_func_test.exe.dbg" "%BUILD_DIR%\wal_func_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\wal_func_test.exe"
+    exit /b 0
+
+:build_wal_advanced
+    echo Building WAL advanced test...
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\kvstore\wal.c" ^
+        "%PPDB_DIR%\src\kvstore\wal_write.c" ^
+        "%PPDB_DIR%\src\kvstore\wal_iterator.c" ^
+        "%PPDB_DIR%\src\kvstore\wal_maintenance.c" ^
+        "%PPDB_DIR%\src\kvstore\wal_recovery.c" ^
+        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
+        "%PPDB_DIR%\src\common\fs.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\storage\test_wal_advanced.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\wal_advanced_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\wal_advanced_test.exe.dbg" "%BUILD_DIR%\wal_advanced_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\wal_advanced_test.exe"
+    exit /b 0
+
 :build_ppdb_memkv
     echo Building PPDB MemKV program...
     echo Not implemented yet
     exit /b 1 
+
+:build_rebuild
+    echo.
+    echo ===== 强制重新构建 =====
+    echo 检查运行时文件...
+    call :check_runtime_files
+    if errorlevel 1 exit /b 1
+    echo 清理编译文件...
+    del /F /Q "%BUILD_DIR%\*.o"
+    echo 恢复运行时文件...
+    copy /Y "%COSMO%\crt.o" "%BUILD_DIR%\" > nul
+    copy /Y "%COSMO%\ape.o" "%BUILD_DIR%\" > nul
+    copy /Y "%COSMO%\ape.lds" "%BUILD_DIR%\" > nul
+    copy /Y "%COSMO%\cosmopolitan.a" "%BUILD_DIR%\" > nul
+    echo 清理可执行文件...
+    del /F /Q "%BUILD_DIR%\*.exe"
+    del /F /Q "%BUILD_DIR%\*.exe.dbg"
+    echo 重新构建完成
+    echo.
+    exit /b 0 
