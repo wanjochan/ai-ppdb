@@ -198,6 +198,9 @@
 
 ### 基础设施测试 (test/white/infra/)
 - `test_sync.c` - 同步原语测试
+  * 通过编译宏 `PPDB_SYNC_USE_LOCK` 控制测试模式
+  * `sync_locked` - 测试有锁版本的同步原语
+  * `sync_lockfree` - 测试无锁版本的同步原语
 - `test_skiplist.c` - 无锁跳表测试
 - `test_metrics.c` - 性能指标测试
 

@@ -25,7 +25,9 @@ PPDB采用分层架构设计，从底层到上层包括：
   - [x] 原子操作封装
   - [ ] 分片锁优化
   - [ ] 引用计数管理
-  - 测试：`build.bat sync` - 同步原语测试
+  - 测试：
+    * `build.bat sync_locked` - 有锁同步原语测试
+    * `build.bat sync_lockfree` - 无锁同步原语测试
 
 - [ ] 内存管理 (memory)
   - [ ] 内存池优化

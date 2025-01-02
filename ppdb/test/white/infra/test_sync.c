@@ -22,9 +22,9 @@ static void* mutex_thread_func(void* arg) {
     return NULL;
 }
 
-// 互斥锁测试
-static int test_mutex(bool use_lockfree) {
-    PPDB_LOG_INFO("Testing mutex (lockfree=%d)...", use_lockfree);
+// 基础同步原语测试
+static int test_sync_basic(bool use_lockfree) {
+    PPDB_LOG_INFO("Testing sync basic (lockfree=%d)...", use_lockfree);
     ppdb_sync_t sync;
     ppdb_sync_config_t config = {
         .type = PPDB_SYNC_MUTEX,
@@ -173,16 +173,15 @@ static int test_rwlock(bool use_lockfree) {
 
 // 主测试函数
 int main(void) {
-#if PPDB_SYNC_USE_LOCK
-    PPDB_LOG_INFO("Testing locked version...");
-    // 测试有锁版本
-    test_mutex(false);
-    test_rwlock(false);
-#else
-    PPDB_LOG_INFO("Testing lockfree version...");
-    // 测试无锁版本
-    test_mutex(true);
-    test_rwlock(true);
-#endif
+    // 从环境变量获取测试模式
+    const char* test_mode = getenv("PPDB_SYNC_MODE");
+    bool use_lockfree = (test_mode && strcmp(test_mode, "lockfree") == 0);
+    
+    PPDB_LOG_INFO("Testing %s version...", use_lockfree ? "lockfree" : "locked");
+    
+    // 执行测试
+    test_sync_basic(use_lockfree);
+    test_rwlock(use_lockfree);
+    
     return 0;
 }
