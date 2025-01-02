@@ -33,7 +33,7 @@ static void* concurrent_worker(void* arg) {
             (const void*)key, strlen(key),
             (const void*)value, strlen(value));
         if (err != PPDB_OK) {
-            ppdb_log_error("Put operation failed");
+            PPDB_LOG_ERROR("Put operation failed");
             args->success = false;
             return NULL;
         }
@@ -45,12 +45,12 @@ static void* concurrent_worker(void* arg) {
             (const void*)key, strlen(key),
             &read_value, &value_size);
         if (err != PPDB_OK) {
-            ppdb_log_error("Get operation failed");
+            PPDB_LOG_ERROR("Get operation failed");
             args->success = false;
             return NULL;
         }
         if (memcmp(read_value, value, strlen(value)) != 0) {
-            ppdb_log_error("Value mismatch");
+            PPDB_LOG_ERROR("Value mismatch");
             args->success = false;
             free(read_value);
             return NULL;
@@ -188,7 +188,8 @@ static int test_concurrent_ops(void) {
 }
 
 int main(void) {
-    TEST_INIT("Memtable Tests");
+    TEST_INIT();
+    PPDB_LOG_INFO("Running Memtable Tests...");
     
     RUN_TEST(test_basic_ops);
     RUN_TEST(test_sharding);
