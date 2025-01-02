@@ -262,8 +262,9 @@ rem ===== 辅助函数 =====
     set "PPDB_SYNC_MODE=locked"
     "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\test_skiplist.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_locked_test.exe.dbg"
@@ -278,8 +279,9 @@ rem ===== 辅助函数 =====
     set "PPDB_SYNC_MODE=lockfree"
     "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\test_skiplist.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_lockfree_test.exe.dbg"
@@ -294,8 +296,9 @@ rem ===== 辅助函数 =====
     "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\kvstore\memtable.c" ^
         "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_test.exe.dbg"
@@ -311,7 +314,7 @@ rem ===== 辅助函数 =====
     "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\kvstore\memtable.c" ^
         "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
@@ -328,7 +331,7 @@ rem ===== 辅助函数 =====
     "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\kvstore\memtable.c" ^
         "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
@@ -345,8 +348,9 @@ rem ===== 辅助函数 =====
         "%PPDB_DIR%\src\kvstore\sharded_memtable.c" ^
         "%PPDB_DIR%\src\kvstore\memtable.c" ^
         "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\storage\test_sharded_memtable.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sharded_test.exe.dbg"

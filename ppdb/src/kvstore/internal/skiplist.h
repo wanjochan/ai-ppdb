@@ -4,7 +4,7 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
 #include "ppdb/ppdb_types.h"
-#include "kvstore/internal/sync.h"
+#include "ppdb/sync.h"
 
 // 跳表操作函数声明
 

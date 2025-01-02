@@ -136,27 +136,16 @@ typedef struct ppdb_sync ppdb_sync_t;
 // 同步原语接口
 ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config);
 ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync);
-
-/**
- * @brief 尝试获取锁
- * 
- * 该函数实现了完整的重试机制，包括：
- * 1. 自旋等待（由spin_count控制）
- * 2. 退避睡眠（由backoff_us控制）
- * 3. 重试策略（由retry_count和retry_delay_us控制）
- * 
- * 使用者无需实现额外的重试逻辑。
- * 
- * @param sync 同步原语
- * @return ppdb_error_t 
- *         - PPDB_OK: 成功获取锁
- *         - PPDB_ERR_BUSY: 超过重试次数后仍未获取到锁
- *         - 其他错误码: 内部错误
- */
 ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync);
+
+// 共享锁操作
+ppdb_error_t ppdb_sync_read_lock_shared(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_read_unlock_shared(ppdb_sync_t* sync);
 
 // 哈希函数声明
 uint32_t ppdb_sync_hash(const void* data, size_t len);

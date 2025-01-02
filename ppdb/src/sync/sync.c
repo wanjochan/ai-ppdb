@@ -221,12 +221,9 @@ ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync) {
             return PPDB_OK;
 
         case PPDB_SYNC_RWLOCK:
-            // 检查是否有读者
-            if (atomic_load(&sync->rwlock.readers) > 0) {
-                return PPDB_ERR_BUSY;
-            }
-            // 尝试获取写锁
-            if (atomic_flag_test_and_set(&sync->rwlock.writer)) {
+            // 检查是否有读者或写者
+            if (atomic_load(&sync->rwlock.readers) > 0 || 
+                atomic_flag_test_and_set(&sync->rwlock.writer)) {
                 return PPDB_ERR_BUSY;
             }
             return PPDB_OK;
@@ -279,6 +276,7 @@ ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
     // 等待直到没有写者
     uint32_t spin_count = 0;
     while (atomic_flag_test_and_set(&sync->rwlock.writer)) {
+        atomic_flag_clear(&sync->rwlock.writer);  // 立即释放，因为我们只是在测试
         if (spin_count++ > sync->spin_count) {
             usleep(sync->backoff_us);
             spin_count = 0;
@@ -286,12 +284,10 @@ ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
             __asm__ volatile("pause");
         }
     }
+    atomic_flag_clear(&sync->rwlock.writer);  // 释放标志，因为我们只是在测试
 
     // 增加读者计数
     atomic_fetch_add(&sync->rwlock.readers, 1);
-
-    // 释放写者标志
-    atomic_flag_clear(&sync->rwlock.writer);
 
     return PPDB_OK;
 }
@@ -307,6 +303,110 @@ ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
 
     // 减少读者计数
     atomic_fetch_sub(&sync->rwlock.readers, 1);
+
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
+    if (!sync) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+
+    if (sync->type != PPDB_SYNC_RWLOCK) {
+        return PPDB_ERR_INVALID_TYPE;
+    }
+
+    // 首先获取写者标志
+    uint32_t spin_count = 0;
+    while (atomic_flag_test_and_set(&sync->rwlock.writer)) {
+        if (spin_count++ > sync->spin_count) {
+            usleep(sync->backoff_us);
+            spin_count = 0;
+        } else {
+            __asm__ volatile("pause");
+        }
+    }
+
+    // 等待所有读者完成
+    spin_count = 0;
+    while (atomic_load(&sync->rwlock.readers) > 0) {
+        if (spin_count++ > sync->spin_count) {
+            usleep(sync->backoff_us);
+            spin_count = 0;
+        } else {
+            __asm__ volatile("pause");
+        }
+    }
+
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync) {
+    if (!sync) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+
+    if (sync->type != PPDB_SYNC_RWLOCK) {
+        return PPDB_ERR_INVALID_TYPE;
+    }
+
+    // 释放写者标志
+    atomic_flag_clear(&sync->rwlock.writer);
+
+    return PPDB_OK;
+}
+
+// 共享读锁
+ppdb_error_t ppdb_sync_read_lock_shared(ppdb_sync_t* sync) {
+    if (!sync) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+
+    if (sync->type != PPDB_SYNC_RWLOCK) {
+        return PPDB_ERR_INVALID_TYPE;
+    }
+
+    if (!sync->enable_ref_count) {
+        return ppdb_sync_read_lock(sync);
+    }
+
+    // 等待直到没有写者
+    uint32_t spin_count = 0;
+    while (atomic_flag_test_and_set(&sync->rwlock.writer)) {
+        atomic_flag_clear(&sync->rwlock.writer);  // 立即释放，因为我们只是在测试
+        if (spin_count++ > sync->spin_count) {
+            usleep(sync->backoff_us);
+            spin_count = 0;
+        } else {
+            __asm__ volatile("pause");
+        }
+    }
+    atomic_flag_clear(&sync->rwlock.writer);  // 释放标志，因为我们只是在测试
+
+    // 增加读者计数和引用计数
+    atomic_fetch_add(&sync->rwlock.readers, 1);
+    atomic_fetch_add(&sync->ref_count, 1);
+
+    return PPDB_OK;
+}
+
+// 共享读锁释放
+ppdb_error_t ppdb_sync_read_unlock_shared(ppdb_sync_t* sync) {
+    if (!sync) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+
+    if (sync->type != PPDB_SYNC_RWLOCK) {
+        return PPDB_ERR_INVALID_TYPE;
+    }
+
+    if (!sync->enable_ref_count) {
+        return ppdb_sync_read_unlock(sync);
+    }
+
+    // 减少读者计数和引用计数
+    atomic_fetch_sub(&sync->rwlock.readers, 1);
+    atomic_fetch_sub(&sync->ref_count, 1);
 
     return PPDB_OK;
 } 

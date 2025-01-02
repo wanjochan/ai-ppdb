@@ -15,10 +15,19 @@ typedef struct {
 static void* mutex_thread_func(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
-        ppdb_error_t err = ppdb_sync_try_lock(data->sync);
-        if (err == PPDB_OK) {
-            atomic_fetch_add(data->counter, 1);
-            ppdb_sync_unlock(data->sync);
+        while (true) {
+            ppdb_error_t err = ppdb_sync_try_lock(data->sync);
+            if (err == PPDB_OK) {
+                atomic_fetch_add(data->counter, 1);
+                ppdb_sync_unlock(data->sync);
+                break;
+            } else if (err == PPDB_ERR_BUSY) {
+                // 添加退避机制
+                usleep(1);  // 1微秒的退避时间
+            } else {
+                // 其他错误直接返回
+                return NULL;
+            }
         }
     }
     return NULL;
@@ -103,11 +112,9 @@ static void* rwlock_read_thread(void* arg) {
 static void* rwlock_write_thread(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
-        ppdb_error_t err = ppdb_sync_try_lock(data->sync);
-        if (err == PPDB_OK) {
-            atomic_fetch_add(data->counter, 1);
-            ppdb_sync_unlock(data->sync);
-        }
+        ppdb_sync_write_lock(data->sync);
+        atomic_fetch_add(data->counter, 1);
+        ppdb_sync_write_unlock(data->sync);
     }
     return NULL;
 }
