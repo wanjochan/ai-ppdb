@@ -18,21 +18,51 @@ if not "%PROXY%"=="" (
 
 :: Set paths
 set "SCRIPT_DIR=%~dp0"
+echo Initial dir: %CD%
+echo Script dir: %SCRIPT_DIR%
 cd /d "%SCRIPT_DIR%\..\..\"
 set "ROOT_DIR=%CD%"
+echo Root dir: %ROOT_DIR%
 
 echo === PPDB 环境初始化脚本 ===
 echo.
 
 rem 创建必要的目录
 if not exist "repos" mkdir repos
-if not exist "repos\cosmopolitan" mkdir repos\cosmopolitan
 if not exist "ppdb\tools" mkdir ppdb\tools
 if not exist "ppdb\build" mkdir ppdb\build
 
-rem 下载并安装工具链
+rem 下载并安装工具链和运行时
 echo.
-echo 下载工具链...
+echo 下载工具链和运行时...
+
+rem 检查 cosmopolitan 是否完整
+set "COSMO_COMPLETE=1"
+if not exist "repos\cosmopolitan\cosmopolitan.h" set "COSMO_COMPLETE=0"
+if not exist "repos\cosmopolitan\ape.lds" set "COSMO_COMPLETE=0"
+if not exist "repos\cosmopolitan\crt.o" set "COSMO_COMPLETE=0"
+if not exist "repos\cosmopolitan\ape.o" set "COSMO_COMPLETE=0"
+if not exist "repos\cosmopolitan\cosmopolitan.a" set "COSMO_COMPLETE=0"
+
+rem 下载并安装 cosmopolitan
+if "%COSMO_COMPLETE%"=="0" (
+    echo cosmopolitan 不存在或不完整，开始下载...
+    if exist "repos\cosmopolitan" rd /s /q "repos\cosmopolitan"
+    mkdir "repos\cosmopolitan"
+    if exist "repos\cosmopolitan.zip" del /f /q "repos\cosmopolitan.zip"
+    echo 下载 cosmopolitan...
+    if not "%PROXY%"=="" (
+        curl --retry 10 --retry-delay 5 --retry-max-time 0 --retry-all-errors --connect-timeout 30 --max-time 600 -C - -x "%PROXY%" -L "https://justine.lol/cosmopolitan/cosmopolitan.zip" -o "repos\cosmopolitan.zip"
+    ) else (
+        curl --retry 10 --retry-delay 5 --retry-max-time 0 --retry-all-errors --connect-timeout 30 --max-time 600 -C - -L "https://justine.lol/cosmopolitan/cosmopolitan.zip" -o "repos\cosmopolitan.zip"
+    )
+    echo 解压 cosmopolitan...
+    cd "repos"
+    powershell -Command "Expand-Archive -Path 'cosmopolitan.zip' -DestinationPath 'cosmopolitan' -Force"
+    cd /d "%ROOT_DIR%"
+) else (
+    echo cosmopolitan 已存在且完整，跳过
+)
 
 rem 下载并安装 cross9
 if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
@@ -49,41 +79,51 @@ if not exist "repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe" (
         echo 使用已下载的 cross9.zip
     )
     echo 解压 cross9...
-    powershell -Command "Expand-Archive -Path 'repos\cross9.zip' -DestinationPath 'repos\cross9' -Force"
+    cd repos
+    powershell -Command "Expand-Archive -Path 'cross9.zip' -DestinationPath '.' -Force"
+    cd /d "%ROOT_DIR%"
 ) else (
     echo cross9 已存在且完整，跳过
 )
 
-rem 克隆参考代码
+rem 检查 cosmopolitan 目录内容
 echo.
-echo 克隆参考代码...
-cd repos
+echo 检查 cosmopolitan 目录内容：
+dir "repos\cosmopolitan"
 
-if not exist "leveldb" (
-    echo 克隆 leveldb...
-    if not "%PROXY%"=="" (
-        git -c http.proxy="%PROXY%" clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
-    ) else (
-        git clone --depth 1 --single-branch --no-tags https://github.com/google/leveldb.git
-    )
-) else (
-    echo leveldb 已存在，跳过
+rem 检查必要文件是否存在（核心文件必须检查）
+if not exist "repos\cosmopolitan\cosmopolitan.h" (
+    echo 错误：cosmopolitan.h 未找到
+    exit /b 1
 )
-
-cd ..
+if not exist "repos\cosmopolitan\ape.lds" (
+    echo 错误：ape.lds 未找到
+    exit /b 1
+)
+if not exist "repos\cosmopolitan\crt.o" (
+    echo 错误：crt.o 未找到
+    exit /b 1
+)
+if not exist "repos\cosmopolitan\ape.o" (
+    echo 错误：ape.o 未找到
+    exit /b 1
+)
+if not exist "repos\cosmopolitan\cosmopolitan.a" (
+    echo 错误：cosmopolitan.a 未找到
+    exit /b 1
+)
 
 rem 复制运行时文件到构建目录
 echo.
 echo 准备构建目录...
-if not exist "repos\cross9\x86_64-pc-linux-gnu\lib\ape.lds" (
-    echo 错误：cross9 运行时文件未找到
-    exit /b 1
-)
+echo 复制运行时文件到构建目录...
+copy /Y "repos\cosmopolitan\ape.lds" "ppdb\build\"
+copy /Y "repos\cosmopolitan\crt.o" "ppdb\build\"
+copy /Y "repos\cosmopolitan\ape.o" "ppdb\build\"
+copy /Y "repos\cosmopolitan\cosmopolitan.a" "ppdb\build\"
 
-copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\ape.lds" "ppdb\build\"
-copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\crt.o" "ppdb\build\"
-copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\ape.o" "ppdb\build\"
-copy /Y "repos\cross9\x86_64-pc-linux-gnu\lib\cosmopolitan.a" "ppdb\build\"
+echo 检查构建目录内容：
+dir "ppdb\build"
 
 rem 验证环境
 echo.
@@ -101,19 +141,32 @@ if not exist "ppdb\build\ape.lds" (
     exit /b 1
 )
 
+if not exist "repos\cosmopolitan\cosmopolitan.h" (
+    echo 错误：cosmopolitan.h 未找到
+    exit /b 1
+)
+
 rem 运行测试
 echo.
 echo 运行测试...
-cd ppdb
+echo Before pushd: %CD%
+pushd ppdb
+echo After pushd: %CD%
 call scripts\build.bat test42
+popd
+echo After popd: %CD%
+
 if errorlevel 1 (
     echo 错误：测试失败
     exit /b 1
 )
 
 echo.
-echo === 环境初始化完成 ===
-echo 你现在可以开始构建 PPDB 了
-echo 运行 'scripts\build.bat help' 查看构建选项
+echo ===================================
+echo     all set
+echo ===================================
+
+cd /d "%SCRIPT_DIR%"
+echo Final dir: %CD%
 
 exit /b 0 

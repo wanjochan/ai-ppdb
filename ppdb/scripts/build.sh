@@ -98,8 +98,7 @@ if [ "$TEST_TYPE" = "help" ]; then
     echo "  wal_core  Run WAL core test"
     echo "  wal_func  Run WAL functionality test"
     echo "  wal_advanced Run WAL advanced test"
-    echo "  unit      Run unit tests"
-    echo "  all       Run all tests"
+    echo "  ppdb_memkv Build memkv program"
     echo "  ppdb      Build main program"
     echo "  help      Show this help message"
     echo

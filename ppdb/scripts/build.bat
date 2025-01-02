@@ -66,8 +66,7 @@ if "%TEST_TYPE%"=="help" (
     echo "  wal_core  运行WAL核心测试"
     echo "  wal_func  运行WAL功能测试"
     echo "  wal_advanced 运行WAL高级测试"
-    echo "  unit      运行单元测试"
-    echo "  all       运行所有测试"
+    echo "  ppdb_memkv 构建纯内存KV版本"
     echo "  ppdb      构建主程序"
     echo "  help      显示此帮助信息"
     echo.
@@ -97,7 +96,7 @@ if /i "%BUILD_MODE%"=="release" (
 )
 
 rem Set include paths
-set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%PPDB_DIR%\src\common -I%COSMO% -I%TEST_DIR%\white"
+set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%PPDB_DIR%\src\common -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
 
 rem Set final CFLAGS
 set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
@@ -114,6 +113,8 @@ rem Main logic
 if "%TEST_TYPE%"=="test42" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test 42 "" "%PPDB_DIR%\test\white\test_42.c"
     if exist "%BUILD_DIR%\42_test.exe" "%BUILD_DIR%\42_test.exe"
+    echo Cleaning up...
+    exit /b %ERRORLEVEL%
 ) else if "%TEST_TYPE%"=="sync" (
     if "%NEED_REBUILD%"=="1" call :build_simple_test sync "%PPDB_DIR%\src\kvstore\sync.c %PPDB_DIR%\src\common\logger.c %PPDB_DIR%\src\common\error.c %PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\infra\test_sync.c"
     if exist "%BUILD_DIR%\sync_test.exe" "%BUILD_DIR%\sync_test.exe"
@@ -151,13 +152,13 @@ if "%TEST_TYPE%"=="test42" (
     echo OBJCOPY: %OBJCOPY%
 
     rem Set include paths
-    set "INCLUDE_PATHS=-nostdinc -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR% -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white"
+    set "INCLUDE_PATHS=-nostdinc -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR% -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
 
     rem Set compiler flags for ppdb
     set "PPDB_CFLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
     set "PPDB_CFLAGS=%PPDB_CFLAGS% %INCLUDE_PATHS% -include %COSMO%\cosmopolitan.h"
-    set "PPDB_LDFLAGS=-static -nostdlib -Wl,-T,%COSMO%\ape.lds -Wl,--gc-sections -fuse-ld=bfd -Wl,-z,max-page-size=0x1000"
-    set "PPDB_LIBS=%COSMO%\crt.o %COSMO%\ape.o %COSMO%\cosmopolitan.a"
+    set "PPDB_LDFLAGS=-static -nostdlib -Wl,-T,%BUILD_DIR%\ape.lds -Wl,--gc-sections -fuse-ld=bfd -Wl,-z,max-page-size=0x1000"
+    set "PPDB_LIBS=%BUILD_DIR%\crt.o %BUILD_DIR%\ape.o %BUILD_DIR%\cosmopolitan.a"
     
     rem Compile common modules
     echo Compiling common modules...
@@ -196,6 +197,78 @@ if "%TEST_TYPE%"=="test42" (
     if errorlevel 1 exit /b 1
 
     echo PPDB build completed successfully
+) else if "%TEST_TYPE%"=="ppdb_memkv" (
+    echo Building PPDB MemKV program...
+    
+    rem Check paths
+    echo Checking paths:
+    set "WORKSPACE_ROOT=%ROOT_DIR%"
+    set "COSMO=%WORKSPACE_ROOT%\repos\cosmopolitan"
+    set "CROSS9=%WORKSPACE_ROOT%\repos\cross9\bin"
+    set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
+    set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
+    set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
+
+    echo WORKSPACE_ROOT: %WORKSPACE_ROOT%
+    echo COSMO: %COSMO%
+    echo GCC: %GCC%
+    echo AR: %AR%
+    echo OBJCOPY: %OBJCOPY%
+
+    rem Set include paths
+    set "INCLUDE_PATHS=-nostdinc -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR% -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\kvstore\internal -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
+
+    rem Set compiler flags for memkv
+    set "MEMKV_CFLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
+    set "MEMKV_CFLAGS=%MEMKV_CFLAGS% %INCLUDE_PATHS% -include %COSMO%\cosmopolitan.h"
+    set "MEMKV_LDFLAGS=-static -nostdlib -Wl,-T,%BUILD_DIR%\ape.lds -Wl,--gc-sections -fuse-ld=bfd -Wl,-z,max-page-size=0x1000"
+    set "MEMKV_LIBS=%BUILD_DIR%\crt.o %BUILD_DIR%\ape.o %BUILD_DIR%\cosmopolitan.a"
+    
+    rem Compile common modules
+    echo Compiling common modules...
+    for %%F in (error fs logger) do (
+        echo   Compiling src\common\%%F.c...
+        "%GCC%" %MEMKV_CFLAGS% -c "%PPDB_DIR%\src\common\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        if errorlevel 1 exit /b 1
+    )
+
+    rem Compile KVStore modules (memkv subset)
+    echo Compiling KVStore modules...
+    for %%F in (kvstore memtable memtable_iterator metrics monitor sharded_memtable skiplist sync) do (
+        echo   Compiling src\kvstore\%%F.c...
+        "%GCC%" %MEMKV_CFLAGS% -c "%PPDB_DIR%\src\kvstore\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        if errorlevel 1 exit /b 1
+    )
+
+    rem Compile memcached protocol modules
+    echo Compiling memcached protocol modules...
+    for %%F in (protocol_memcached protocol_binary) do (
+        echo   Compiling src\protocol\%%F.c...
+        "%GCC%" %MEMKV_CFLAGS% -c "%PPDB_DIR%\src\protocol\%%F.c" -o "%BUILD_DIR%\%%F.o"
+        if errorlevel 1 exit /b 1
+    )
+
+    rem Compile main program
+    echo Compiling main program...
+    "%GCC%" %MEMKV_CFLAGS% -c "%PPDB_DIR%\src\memkv_main.c" -o "%BUILD_DIR%\memkv_main.o"
+    if errorlevel 1 exit /b 1
+
+    rem Create static library
+    echo Creating static library...
+    "%AR%" rcs "%BUILD_DIR%\libmemkv.a" "%BUILD_DIR%\error.o" "%BUILD_DIR%\fs.o" "%BUILD_DIR%\logger.o" "%BUILD_DIR%\kvstore.o" "%BUILD_DIR%\memtable.o" "%BUILD_DIR%\memtable_iterator.o" "%BUILD_DIR%\metrics.o" "%BUILD_DIR%\monitor.o" "%BUILD_DIR%\sharded_memtable.o" "%BUILD_DIR%\skiplist.o" "%BUILD_DIR%\sync.o" "%BUILD_DIR%\protocol_memcached.o" "%BUILD_DIR%\protocol_binary.o"
+    if errorlevel 1 exit /b 1
+
+    rem Link executable
+    echo Linking executable...
+    "%GCC%" %MEMKV_LDFLAGS% -o "%BUILD_DIR%\ppdb_memkv.exe.dbg" "%BUILD_DIR%\memkv_main.o" "%BUILD_DIR%\libmemkv.a" %MEMKV_LIBS%
+    if errorlevel 1 exit /b 1
+
+    rem Process with objcopy for cosmopolitan format
+    echo Processing for cosmopolitan format...
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\ppdb_memkv.exe.dbg" "%BUILD_DIR%\ppdb_memkv.exe"
+    if errorlevel 1 exit /b 1
+
+    echo PPDB MemKV build completed successfully
 ) else if "%TEST_TYPE%"=="unit" (
     if "%NEED_REBUILD%"=="1" (
         echo Building unit tests...
