@@ -1,109 +1,75 @@
 # PPDB 文档索引
 
-## 概述
-PPDB (Peer-to-Peer Distributed Database) 是一个跨平台、自组织的分布式去中心化数据库系统。本文档提供了项目的完整索引。
+> 欢迎来到 PPDB 文档中心。本文档提供了 PPDB 项目的完整文档索引，帮助你快速找到所需信息。
 
-## 重要说明
-智能助理必须遵循以下工作流程：
-1. 每次会话开始时，必须先阅读 [开发计划](PLAN.md) 了解当前进展
-2. 在工作过程中，实时更新相关文档
-3. 每次会话结束时，确保所有更改都已记录在文档中
-4. 清晰知道我们目前使用的cosmopolitan的作用
-5. 新建文件和函数前应该就近查阅文档和代码以确认可能已经存在导致做重复的工作
-6. 写代码前应该多思考代码重用、分层设计、减少代码量和代码行数
-7. 遇到问题后应该先调整更新详细计划，而不是盲目开工
+## 1. 核心文档
 
-## 文档结构
+### 1.1 概览文档
+- [系统概览](overview/OVERVIEW.md)
+  * 项目愿景和核心特性
+  * 系统架构概述
+  * 文档导航
+  * 开发路线
 
-### 1. 项目概览
-- [开发计划](PLAN.md) - 项目整体规划和任务管理 **(主要工作文档)**
-- [全局认知](overview/OVERVIEW.md) - 项目整体认知和关键信息
-- [设计概览](overview/DESIGN.md) - 系统整体设计和架构
-- [开发指南](overview/DEVELOPMENT.md) - 开发环境配置、编码规范和错误处理指南
-- [构建指南](overview/BUILD.md) - 详细的构建环境、步骤和选项说明
-- [重构计划](overview/REFACTOR.md) - 代码重构和改进计划
-- [开发经验](overview/EXPERIENCE.md) - 项目开发过程中的经验总结
-- [性能报告](overview/PERFORMANCE.md) - 性能测试基准和优化指南
+### 1.2 开发文档
+- [开发者指南](overview/DEVELOPER_GUIDE.md)
+  * 环境配置和构建步骤
+  * 编码规范
+  * 错误处理
+  * 测试指南
+  * 调试技巧
 
-### 2. 详细设计
-- [分布式系统设计](design/distributed.md) - 分布式架构设计
-- [共识协议实现](design/consensus.md) - Raft 共识协议实现
-- [成员管理设计](design/membership.md) - 节点发现和成员管理
-- [MemTable 设计](design/memtable.md) - 内存表实现
-- [WAL 设计](design/wal.md) - Write-Ahead Log 实现
-- [SSTable 设计](design/sstable.md) - 持久化存储格式
-- [无锁实现设计](design/lockfree.md) - 无锁数据结构和并发控制实现
+### 1.3 技术文档
+- [系统架构](overview/ARCHITECTURE.md)
+  * 架构设计
+  * 核心组件
+  * 技术选型
+  * 数据流设计
+  * 可靠性保证
 
-### 3. API 文档
-- [命令行接口](api/CLI.md) - 命令行工具使用指南
-- [HTTP API](api/HTTP.md) - HTTP 接口文档
-- [存储引擎 API](api/STORAGE.md) - 存储引擎接口文档
+### 1.4 性能文档
+- [性能优化指南](overview/PERFORMANCE_GUIDE.md)
+  * 性能基准
+  * 优化策略
+  * 监控指标
+  * 调优指南
+  * 问题诊断
 
-### 4. 测试文档
-- [测试计划](test/PLAN.md) - 整体测试策略和计划
-- [测试框架](test/FRAMEWORK.md) - 测试框架设计和规范
-- [测试用例](test/CASES.md) - 详细测试用例集
-- [性能测试](test/PERFORMANCE.md) - 性能测试计划和指标
+## 2. 快速入门
 
-### 5. 运维文档
-- [部署指南](ops/DEPLOY.md) - 部署和配置指南
-- [监控方案](ops/MONITOR.md) - 监控和告警方案
-- [运维手册](ops/MAINTAIN.md) - 日常运维手册
-- [故障恢复](ops/RECOVERY.md) - 故障处理和恢复流程
+### 2.1 新手上路
+1. 阅读 [系统概览](overview/OVERVIEW.md) 了解项目
+2. 按照 [开发者指南](overview/DEVELOPER_GUIDE.md) 搭建环境
+3. 参考 [系统架构](overview/ARCHITECTURE.md) 理解设计
+4. 查看 [性能优化指南](overview/PERFORMANCE_GUIDE.md) 了解性能特性
 
-### 6. 学习资料
-- [分布式模式](learn/distributed_patterns.md) - 分布式系统通用设计模式研究
-- [分布式数据库研究](learn/distributed_db_study.md) - HBase和Cassandra等系统研究
-- [存储引擎研究](learn/storage_engine_study.md) - 存储引擎技术研究
-- [设计决策](learn/design_decisions.md) - 重要设计决策记录
-- [学习流程](learn/intelligent_learning_process.md) - 智能化学习方法论
-- [迭代计划](learn/current_iteration_plan.md) - 当前学习迭代计划
+### 2.2 常见问题
+- 环境配置问题：参考 [开发者指南 - 环境配置](overview/DEVELOPER_GUIDE.md#2-环境配置)
+- 构建问题：参考 [开发者指南 - 构建指南](overview/DEVELOPER_GUIDE.md#3-构建指南)
+- 性能问题：参考 [性能优化指南 - 问题诊断](overview/PERFORMANCE_GUIDE.md#5-性能问题诊断)
 
-## 文档关系说明
+## 3. 文档更新记录
 
-### 入门路径
-1. 新人先阅读：
-   - `overview/DESIGN.md` - 了解系统整体架构
-   - `overview/DEVELOPMENT.md` - 掌握开发环境和规范
-   - `overview/BUILD.md` - 学习如何构建项目
+### 3.1 最近更新
+- 2024-01-02: 重组文档结构，整合为四个核心文档
+- 2024-01-01: 完善性能优化指南
+- 2023-12-31: 更新系统架构文档
 
-2. 开发者重点关注：
-   - `PLAN.md` - 了解当前任务和计划
-   - `design/` 目录 - 深入理解技术实现
-   - `api/` 目录 - 掌握接口使用
+### 3.2 计划更新
+- API 文档完善
+- 运维手册编写
+- 示例代码补充
 
-3. 运维人员重点关注：
-   - `ops/` 目录 - 运维相关文档
-   - `test/PERFORMANCE.md` - 性能测试指标
+## 4. 文档约定
 
-### 文档依赖关系
-1. 设计文档关系：
-   - `overview/DESIGN.md` 是整体设计，其他 `design/` 目录下文档是各个模块的详细设计
-   - `design/distributed.md` 是分布式架构的总体设计，`consensus.md` 和 `membership.md` 是其中的具体实现
-   - `design/memtable.md`、`wal.md` 和 `sstable.md` 构成存储引擎的三个核心组件
+### 4.1 文档规范
+- 所有文档使用 Markdown 格式
+- 代码示例需要包含完整注释
+- 技术名词保持一致性
+- 版本号遵循语义化版本规范
 
-2. 开发文档关系：
-   - `overview/DEVELOPMENT.md` 和 `BUILD.md` 互补，前者关注开发规范，后者关注构建过程
-   - `overview/REFACTOR.md` 指导代码改进，与 `DEVELOPMENT.md` 配合使用
-
-3. 学习文档关系：
-   - `learn/distributed_patterns.md` 提供理论基础，`distributed_db_study.md` 提供实践参考
-   - `learn/intelligent_learning_process.md` 指导整体学习方法，`current_iteration_plan.md` 是具体实施计划
-
-## 文档更新指南
-
-1. 新增文档
-   - 在对应目录创建文档
-   - 更新本索引文件
-   - 确保文档间的链接正确
-
-2. 文档规范
-   - 使用 Markdown 格式
-   - 文件名使用大写
-   - 包含适当的目录结构
-   - 保持文档的一致性
-
-3. 文档审查
-   - 技术准确性
-   - 文档完整性
-   - 链接有效性
+### 4.2 文档维护
+- 定期审查和更新
+- 保持与代码的同步
+- 及时响应反馈
+- 记录重要变更
