@@ -8,7 +8,8 @@ as warm-up, read *.md in docs/;
 按顺序执行 ppdb/scripts/ 中的（一个测试没有任何问题才进入下一个）
 每个测试后就把问题按严重程度列出来，先做一个完整的修改计划，然后再进行修复。
 修复后执行的顺序还是从test42那个开始从头来，直到没有问题才停下:
-
+# windows:
+cd ppdb\scripts\
 .\build.bat test42
 .\build.bat sync_locked
 .\build.bat sync_lockfree

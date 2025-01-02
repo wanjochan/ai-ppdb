@@ -137,22 +137,42 @@ ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config)
         return PPDB_ERR_INVALID_PARAM;
     }
     
+    // 初始化基本字段
     sync->type = config->type;
     sync->use_lockfree = config->use_lockfree;
+    sync->spin_count = config->spin_count;
+    sync->backoff_us = config->backoff_us;
+    sync->enable_ref_count = config->enable_ref_count;
+    atomic_init(&sync->ref_count, 0);
     
-    if (!sync->use_lockfree) {
-        // 初始化互斥锁
-        pthread_mutexattr_t attr;
-        pthread_mutexattr_init(&attr);
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);
-        if (pthread_mutex_init(&sync->mutex, &attr) != 0) {
-            pthread_mutexattr_destroy(&attr);
-            return PPDB_ERR_INIT_FAILED;
-        }
-        pthread_mutexattr_destroy(&attr);
-    } else {
-        // 初始化自旋锁
-        atomic_flag_clear(&sync->spinlock);
+    // 根据类型初始化同步原语
+    switch (sync->type) {
+        case PPDB_SYNC_MUTEX:
+            if (!sync->use_lockfree) {
+                pthread_mutexattr_t attr;
+                pthread_mutexattr_init(&attr);
+                pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);
+                if (pthread_mutex_init(&sync->mutex, &attr) != 0) {
+                    pthread_mutexattr_destroy(&attr);
+                    return PPDB_ERR_INIT_FAILED;
+                }
+                pthread_mutexattr_destroy(&attr);
+            } else {
+                atomic_flag_clear(&sync->spinlock);
+            }
+            break;
+            
+        case PPDB_SYNC_SPINLOCK:
+            atomic_flag_clear(&sync->spinlock);
+            break;
+            
+        case PPDB_SYNC_RWLOCK:
+            atomic_init(&sync->rwlock.readers, 0);
+            atomic_flag_clear(&sync->rwlock.writer);
+            break;
+            
+        default:
+            return PPDB_ERR_INVALID_TYPE;
     }
     
     return PPDB_OK;
@@ -172,61 +192,78 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
     return PPDB_OK;
 }
 
-bool ppdb_sync_try_lock(ppdb_sync_t* sync) {
-    if (!sync) {
-        return false;
-    }
-    
-    if (!sync->use_lockfree) {
-        return (pthread_mutex_trylock(&sync->mutex) == 0);
-    } else {
-        // 无锁版本尝试获取自旋锁
-        return !atomic_flag_test_and_set(&sync->spinlock);
-    }
-}
-
-ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
+ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync) {
     if (!sync) {
         return PPDB_ERR_INVALID_PARAM;
     }
-    
-    if (!sync->use_lockfree) {
-        if (pthread_mutex_lock(&sync->mutex) != 0) {
-            return PPDB_ERR_LOCK_FAILED;
-        }
-        return PPDB_OK;
+
+    switch (sync->type) {
+        case PPDB_SYNC_MUTEX:
+            if (!sync->use_lockfree) {
+                int ret = pthread_mutex_trylock(&sync->mutex);
+                if (ret == 0) {
+                    return PPDB_OK;
+                } else if (ret == EBUSY) {
+                    return PPDB_ERR_BUSY;
+                } else {
+                    return PPDB_ERR_LOCK_FAILED;
+                }
+            } else {
+                bool was_locked = atomic_flag_test_and_set(&sync->spinlock);
+                return was_locked ? PPDB_ERR_BUSY : PPDB_OK;
+            }
+            break;
+
+        case PPDB_SYNC_SPINLOCK:
+            if (atomic_flag_test_and_set(&sync->spinlock)) {
+                return PPDB_ERR_BUSY;
+            }
+            return PPDB_OK;
+
+        case PPDB_SYNC_RWLOCK:
+            // 检查是否有读者
+            if (atomic_load(&sync->rwlock.readers) > 0) {
+                return PPDB_ERR_BUSY;
+            }
+            // 尝试获取写锁
+            if (atomic_flag_test_and_set(&sync->rwlock.writer)) {
+                return PPDB_ERR_BUSY;
+            }
+            return PPDB_OK;
+
+        default:
+            return PPDB_ERR_INVALID_TYPE;
     }
-    
-    // 无锁版本使用自旋锁
-    uint32_t spin_count = 0;
-    while (!ppdb_sync_try_lock(sync)) {
-        // 自旋等待
-        if (spin_count++ > 1000) {
-            // 超过一定次数后进行短暂休眠，避免CPU过度消耗
-            usleep(1);
-            spin_count = 0;
-        } else {
-            __asm__ volatile("pause");
-        }
-    }
-    
-    return PPDB_OK;
 }
 
 ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
     if (!sync) {
         return PPDB_ERR_INVALID_PARAM;
     }
-    
-    if (!sync->use_lockfree) {
-        if (pthread_mutex_unlock(&sync->mutex) != 0) {
-            return PPDB_ERR_UNLOCK_FAILED;
-        }
-    } else {
-        // 无锁版本释放自旋锁
-        atomic_flag_clear(&sync->spinlock);
+
+    switch (sync->type) {
+        case PPDB_SYNC_MUTEX:
+            if (!sync->use_lockfree) {
+                if (pthread_mutex_unlock(&sync->mutex) != 0) {
+                    return PPDB_ERR_UNLOCK_FAILED;
+                }
+            } else {
+                atomic_flag_clear(&sync->spinlock);
+            }
+            break;
+
+        case PPDB_SYNC_SPINLOCK:
+            atomic_flag_clear(&sync->spinlock);
+            break;
+
+        case PPDB_SYNC_RWLOCK:
+            atomic_flag_clear(&sync->rwlock.writer);
+            break;
+
+        default:
+            return PPDB_ERR_INVALID_TYPE;
     }
-    
+
     return PPDB_OK;
 }
 
@@ -234,7 +271,28 @@ ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
     if (!sync) {
         return PPDB_ERR_INVALID_PARAM;
     }
-    // TODO: 实现读锁加锁操作
+
+    if (sync->type != PPDB_SYNC_RWLOCK) {
+        return PPDB_ERR_INVALID_TYPE;
+    }
+
+    // 等待直到没有写者
+    uint32_t spin_count = 0;
+    while (atomic_flag_test_and_set(&sync->rwlock.writer)) {
+        if (spin_count++ > sync->spin_count) {
+            usleep(sync->backoff_us);
+            spin_count = 0;
+        } else {
+            __asm__ volatile("pause");
+        }
+    }
+
+    // 增加读者计数
+    atomic_fetch_add(&sync->rwlock.readers, 1);
+
+    // 释放写者标志
+    atomic_flag_clear(&sync->rwlock.writer);
+
     return PPDB_OK;
 }
 
@@ -242,6 +300,13 @@ ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
     if (!sync) {
         return PPDB_ERR_INVALID_PARAM;
     }
-    // TODO: 实现读锁解锁操作
+
+    if (sync->type != PPDB_SYNC_RWLOCK) {
+        return PPDB_ERR_INVALID_TYPE;
+    }
+
+    // 减少读者计数
+    atomic_fetch_sub(&sync->rwlock.readers, 1);
+
     return PPDB_OK;
 } 

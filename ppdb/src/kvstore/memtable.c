@@ -27,17 +27,44 @@ void ppdb_memtable_destroy(ppdb_memtable_t* table) {
 ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
                               const void* key, size_t key_len,
                               const void* value, size_t value_len) {
+    if (!table || !key || !value) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&table->basic->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     return ppdb_memtable_put_basic(table, key, key_len, value, value_len);
 }
 
 ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
                               const void* key, size_t key_len,
                               void** value, size_t* value_len) {
+    if (!table || !key || !value || !value_len) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&table->basic->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     return ppdb_memtable_get_basic(table, key, key_len, value, value_len);
 }
 
 ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
                                  const void* key, size_t key_len) {
+    if (!table || !key) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&table->basic->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     return ppdb_memtable_delete_basic(table, key, key_len);
 }
 

@@ -194,7 +194,15 @@ static ppdb_error_t check_and_switch_memtable(ppdb_kvstore_t* store) {
 ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
                              const void* key, size_t key_len,
                              const void* value, size_t value_len) {
-    if (!store || !key || !value) return PPDB_ERR_NULL_POINTER;
+    if (!store || !key || !value) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&store->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     if (key_len == 0 || value_len == 0) return PPDB_ERR_INVALID_ARG;
 
     ppdb_error_t err;
@@ -240,7 +248,15 @@ ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
 ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
                              const void* key, size_t key_len,
                              void** value, size_t* value_len) {
-    if (!store || !key || !value || !value_len) return PPDB_ERR_NULL_POINTER;
+    if (!store || !key || !value || !value_len) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&store->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     ppdb_error_t err;
@@ -264,7 +280,15 @@ ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
 // 删除键值对
 ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
                                 const void* key, size_t key_len) {
-    if (!store || !key) return PPDB_ERR_NULL_POINTER;
+    if (!store || !key) {
+        return PPDB_ERR_INVALID_PARAM;
+    }
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&store->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     if (key_len == 0) return PPDB_ERR_INVALID_ARG;
 
     ppdb_error_t err;

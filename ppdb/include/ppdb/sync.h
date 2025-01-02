@@ -41,7 +41,9 @@
  * ppdb_sync_init(sync, &config);
  * 
  * // 使用
- * ppdb_sync_lock(sync);
+ * while (ppdb_sync_try_lock(sync) == PPDB_ERR_BUSY) {
+ *     __asm__ volatile("pause");
+ * }
  * // ... 临界区操作 ...
  * ppdb_sync_unlock(sync);
  * 
@@ -57,7 +59,7 @@
 #ifndef PPDB_SYNC_H_
 #define PPDB_SYNC_H_
 
-#include <stdbool.h>
+#include <cosmopolitan.h>
 #include "ppdb/ppdb_error.h"
 
 // 同步原语类型
@@ -67,24 +69,96 @@ typedef enum {
     PPDB_SYNC_RWLOCK,     // 读写锁
 } ppdb_sync_type_t;
 
-// 同步原语配置
+// 默认配置
+#define PPDB_SYNC_CONFIG_DEFAULT { \
+    .type = PPDB_SYNC_MUTEX,      \
+    .spin_count = 1000,           \
+    .use_lockfree = false,        \
+    .stripe_count = 1,            \
+    .backoff_us = 1,              \
+    .enable_ref_count = false,    \
+    .retry_count = 100,           \
+    .retry_delay_us = 1           \
+}
+
+/**
+ * @brief 同步原语配置
+ * 
+ * 这些配置参数直接决定了锁的性能和行为特征：
+ * 
+ * - spin_count: 自旋计数阈值，决定了在进入睡眠前的自旋次数
+ *   - 值越大，CPU占用越高，但在高竞争下响应更快
+ *   - 值越小，CPU占用越低，但可能增加上下文切换
+ * 
+ * - backoff_us: 退避睡眠时间（微秒）
+ *   - 值越大，CPU占用越低，但响应延迟增加
+ *   - 值越小，响应更快，但在高竞争下可能导致CPU占用过高
+ * 
+ * - retry_count: 重试次数，超过后返回PPDB_ERR_BUSY
+ *   - 值越大，等待时间越长，但成功概率增加
+ *   - 值越小，快速失败，但可能需要上层重试
+ * 
+ * - retry_delay_us: 重试间隔（微秒）
+ *   - 值越大，CPU占用越低，但响应延迟增加
+ *   - 值越小，响应更快，但可能增加竞争
+ */
 typedef struct {
-    ppdb_sync_type_t type;     // 同步类型
-    int spin_count;            // 自旋次数
-    bool use_lockfree;         // 是否使用无锁实现
-    int stripe_count;          // 分片数量
-    int backoff_us;           // 退避时间(微秒)
-    bool enable_ref_count;    // 是否启用引用计数
+    ppdb_sync_type_t type;        ///< 同步原语类型
+    bool use_lockfree;            ///< 是否使用无锁模式
+    uint32_t stripe_count;        ///< 分片数量（0表示不分片）
+    uint32_t spin_count;          ///< 自旋计数阈值
+    uint32_t backoff_us;          ///< 退避睡眠时间（微秒）
+    bool enable_ref_count;        ///< 是否启用引用计数
+    uint32_t retry_count;         ///< 重试次数
+    uint32_t retry_delay_us;      ///< 重试间隔（微秒）
 } ppdb_sync_config_t;
 
-// 前向声明同步原语结构
+// 同步原语结构
+struct ppdb_sync {
+    ppdb_sync_type_t type;    // 同步类型
+    bool use_lockfree;        // 是否使用无锁实现
+    union {
+        pthread_mutex_t mutex;     // 互斥锁
+        atomic_flag spinlock;      // 自旋锁
+        struct {
+            atomic_int readers;    // 读者计数
+            atomic_flag writer;    // 写者标志
+        } rwlock;                  // 读写锁
+    };
+    int spin_count;           // 自旋次数
+    int backoff_us;          // 退避时间(微秒)
+    bool enable_ref_count;   // 是否启用引用计数
+    atomic_int ref_count;    // 引用计数
+};
+
 typedef struct ppdb_sync ppdb_sync_t;
 
 // 同步原语接口
 ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config);
 ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync);
-ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync);
+
+/**
+ * @brief 尝试获取锁
+ * 
+ * 该函数实现了完整的重试机制，包括：
+ * 1. 自旋等待（由spin_count控制）
+ * 2. 退避睡眠（由backoff_us控制）
+ * 3. 重试策略（由retry_count和retry_delay_us控制）
+ * 
+ * 使用者无需实现额外的重试逻辑。
+ * 
+ * @param sync 同步原语
+ * @return ppdb_error_t 
+ *         - PPDB_OK: 成功获取锁
+ *         - PPDB_ERR_BUSY: 超过重试次数后仍未获取到锁
+ *         - 其他错误码: 内部错误
+ */
 ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync);
+
+// 哈希函数声明
+uint32_t ppdb_sync_hash(const void* data, size_t len);
 
 #endif  // PPDB_SYNC_H_ 

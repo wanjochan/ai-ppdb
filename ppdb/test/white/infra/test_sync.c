@@ -15,9 +15,11 @@ typedef struct {
 static void* mutex_thread_func(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
-        ppdb_sync_lock(data->sync);
-        atomic_fetch_add(data->counter, 1);
-        ppdb_sync_unlock(data->sync);
+        ppdb_error_t err = ppdb_sync_try_lock(data->sync);
+        if (err == PPDB_OK) {
+            atomic_fetch_add(data->counter, 1);
+            ppdb_sync_unlock(data->sync);
+        }
     }
     return NULL;
 }
@@ -32,7 +34,9 @@ static int test_sync_basic(bool use_lockfree) {
         .use_lockfree = use_lockfree,
         .stripe_count = 1,
         .backoff_us = use_lockfree ? 1 : 100,
-        .enable_ref_count = false
+        .enable_ref_count = false,
+        .retry_count = 100,
+        .retry_delay_us = 1
     };
     
     // 基本操作测试
@@ -40,17 +44,17 @@ static int test_sync_basic(bool use_lockfree) {
     TEST_ASSERT(err == PPDB_OK, "Failed to initialize mutex");
     
     // 加锁解锁测试
-    err = ppdb_sync_lock(&sync);
+    err = ppdb_sync_try_lock(&sync);
     TEST_ASSERT(err == PPDB_OK, "Failed to lock mutex");
     
     err = ppdb_sync_unlock(&sync);
     TEST_ASSERT(err == PPDB_OK, "Failed to unlock mutex");
     
     // try_lock测试
-    bool locked = ppdb_sync_try_lock(&sync);
-    TEST_ASSERT(locked, "Failed to try_lock mutex");
+    err = ppdb_sync_try_lock(&sync);
+    TEST_ASSERT(err == PPDB_OK, "Failed to try_lock mutex");
     
-    if (locked) {
+    if (err == PPDB_OK) {
         err = ppdb_sync_unlock(&sync);
         TEST_ASSERT(err == PPDB_OK, "Failed to unlock mutex after try_lock");
     }
@@ -99,9 +103,11 @@ static void* rwlock_read_thread(void* arg) {
 static void* rwlock_write_thread(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
-        ppdb_sync_lock(data->sync);
-        atomic_fetch_add(data->counter, 1);
-        ppdb_sync_unlock(data->sync);
+        ppdb_error_t err = ppdb_sync_try_lock(data->sync);
+        if (err == PPDB_OK) {
+            atomic_fetch_add(data->counter, 1);
+            ppdb_sync_unlock(data->sync);
+        }
     }
     return NULL;
 }

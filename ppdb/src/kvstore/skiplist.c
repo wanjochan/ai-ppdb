@@ -175,12 +175,14 @@ ppdb_error_t ppdb_skiplist_put(ppdb_skiplist_t* list,
                              const void* key, size_t key_len,
                              const void* value, size_t value_len) {
     if (!list || !key || !value) {
-        return PPDB_ERR_INVALID_ARG;
+        return PPDB_ERR_INVALID_PARAM;
     }
-
-    ppdb_error_t err = PPDB_OK;
-    ppdb_sync_lock(&list->sync);
-
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&list->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     ppdb_skiplist_node_t* update[PPDB_SKIPLIST_MAX_LEVEL];
     ppdb_skiplist_node_t* current = list->head;
 
@@ -241,13 +243,15 @@ unlock:
 ppdb_error_t ppdb_skiplist_get(ppdb_skiplist_t* list,
                              const void* key, size_t key_len,
                              void** value, size_t* value_len) {
-    if (!list || !key || !value_len) {
-        return PPDB_ERR_INVALID_ARG;
+    if (!list || !key || !value || !value_len) {
+        return PPDB_ERR_INVALID_PARAM;
     }
-
-    ppdb_error_t err = PPDB_OK;
-    ppdb_sync_lock(&list->sync);
-
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&list->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     ppdb_skiplist_node_t* current = list->head;
 
     // 查找节点
@@ -294,12 +298,14 @@ unlock:
 ppdb_error_t ppdb_skiplist_delete(ppdb_skiplist_t* list,
                                 const void* key, size_t key_len) {
     if (!list || !key) {
-        return PPDB_ERR_INVALID_ARG;
+        return PPDB_ERR_INVALID_PARAM;
     }
-
-    ppdb_error_t err = PPDB_OK;
-    ppdb_sync_lock(&list->sync);
-
+    
+    ppdb_error_t err = ppdb_sync_try_lock(&list->sync);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    
     ppdb_skiplist_node_t* update[PPDB_SKIPLIST_MAX_LEVEL];
     ppdb_skiplist_node_t* current = list->head;
 
