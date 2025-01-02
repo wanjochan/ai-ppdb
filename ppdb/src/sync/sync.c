@@ -1,23 +1,150 @@
-/**
- * @file sync.c
- * @brief PPDB 同步原语实现
- * 
- * 本文件实现了三种基本同步模式：
- * 1. 互斥锁模式：使用 pthread_mutex，适用于需要严格互斥的场景
- * 2. 自旋锁模式：使用原子操作，适用于锁竞争不激烈的场景
- * 3. 读写锁模式：使用 pthread_rwlock，适用于读多写少的场景
- * 
- * 性能优化说明：
- * - 自旋锁使用原子操作，避免线程切换开销
- * - 读写锁区分读写操作，提高并发度
- * - 提供哈希函数用于分片锁实现
- */
-
 #include <cosmopolitan.h>
-#include "kvstore/internal/sync.h"
+#include "ppdb/sync.h"
 #include "ppdb/ppdb_logger.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_error.h"
+
+// 无锁操作的参数结构
+struct put_args {
+    void* key;
+    size_t key_len;
+    void* value;
+    size_t value_len;
+};
+
+struct get_args {
+    void* key;
+    size_t key_len;
+    void** value;
+    size_t* value_len;
+};
+
+struct delete_args {
+    void* key;
+    size_t key_len;
+};
+
+// 无锁操作的重试逻辑
+static ppdb_error_t ppdb_sync_retry(ppdb_sync_t* sync, ppdb_sync_config_t* config,
+                                   ppdb_error_t (*op)(ppdb_sync_t*, void*),
+                                   void* arg) {
+    if (!config->use_lockfree) {
+        return op(sync, arg);
+    }
+
+    uint32_t retries = 0;
+    ppdb_error_t err;
+    do {
+        err = op(sync, arg);
+        if (err == PPDB_OK) {
+            return PPDB_OK;
+        }
+        if (err != PPDB_ERR_RETRY) {
+            return err;
+        }
+        usleep(config->retry_delay_us);
+        retries++;
+    } while (retries < config->retry_count);
+
+    return PPDB_ERR_TIMEOUT;
+}
+
+// 无锁操作的单次尝试函数
+static ppdb_error_t ppdb_sync_lockfree_put_once(ppdb_sync_t* sync, void* arg) {
+    struct put_args* args = (struct put_args*)arg;
+    
+    // 使用CAS操作尝试更新值
+    if (!sync || !args->key || !args->value) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // TODO(分片优化): 目前计算了哈希值但未使用，后续实现分片锁时会用于选择具体的锁
+    uint32_t hash = ppdb_sync_hash(args->key, args->key_len);
+    
+    // 尝试获取对应分片的锁
+    if (!ppdb_sync_try_lock(sync)) {
+        return PPDB_ERR_RETRY;
+    }
+
+    // TODO: 在这里实现实际的数据更新逻辑
+    // 目前先返回成功，后续实现具体的数据结构操作
+    ppdb_sync_unlock(sync);
+    return PPDB_OK;
+}
+
+static ppdb_error_t ppdb_sync_lockfree_get_once(ppdb_sync_t* sync, void* arg) {
+    struct get_args* args = (struct get_args*)arg;
+    
+    if (!sync || !args->key || !args->value || !args->value_len) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // TODO(分片优化): 目前计算了哈希值但未使用，后续实现分片锁时会用于选择具体的锁
+    uint32_t hash = ppdb_sync_hash(args->key, args->key_len);
+    
+    // 尝试获取对应分片的读锁
+    if (!ppdb_sync_try_lock(sync)) {
+        return PPDB_ERR_RETRY;
+    }
+
+    // TODO: 在这里实现实际的数据读取逻辑
+    // 目前先返回成功，后续实现具体的数据结构操作
+    ppdb_sync_unlock(sync);
+    return PPDB_OK;
+}
+
+static ppdb_error_t ppdb_sync_lockfree_delete_once(ppdb_sync_t* sync, void* arg) {
+    struct delete_args* args = (struct delete_args*)arg;
+    
+    if (!sync || !args->key) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // TODO(分片优化): 目前计算了哈希值但未使用，后续实现分片锁时会用于选择具体的锁
+    uint32_t hash = ppdb_sync_hash(args->key, args->key_len);
+    
+    // 尝试获取对应分片的锁
+    if (!ppdb_sync_try_lock(sync)) {
+        return PPDB_ERR_RETRY;
+    }
+
+    // TODO: 在这里实现实际的数据删除逻辑
+    // 目前先返回成功，后续实现具体的数据结构操作
+    ppdb_sync_unlock(sync);
+    return PPDB_OK;
+}
+
+// 无锁操作的接口函数
+ppdb_error_t ppdb_sync_lockfree_put(ppdb_sync_t* sync, void* key, size_t key_len,
+                                   void* value, size_t value_len,
+                                   ppdb_sync_config_t* config) {
+    struct put_args args = {
+        .key = key,
+        .key_len = key_len,
+        .value = value,
+        .value_len = value_len
+    };
+    return ppdb_sync_retry(sync, config, ppdb_sync_lockfree_put_once, &args);
+}
+
+ppdb_error_t ppdb_sync_lockfree_get(ppdb_sync_t* sync, void* key, size_t key_len,
+                                   void** value, size_t* value_len,
+                                   ppdb_sync_config_t* config) {
+    struct get_args args = {
+        .key = key,
+        .key_len = key_len,
+        .value = value,
+        .value_len = value_len
+    };
+    return ppdb_sync_retry(sync, config, ppdb_sync_lockfree_get_once, &args);
+}
+
+ppdb_error_t ppdb_sync_lockfree_delete(ppdb_sync_t* sync, void* key, size_t key_len,
+                                      ppdb_sync_config_t* config) {
+    struct delete_args args = {
+        .key = key,
+        .key_len = key_len
+    };
+    return ppdb_sync_retry(sync, config, ppdb_sync_lockfree_delete_once, &args);
+}
 
 // FNV-1a哈希函数实现
 uint32_t ppdb_sync_hash(const void* data, size_t len) {
@@ -30,9 +157,7 @@ uint32_t ppdb_sync_hash(const void* data, size_t len) {
     return hash;
 }
 
-/**
- * @brief 初始化同步原语
- */
+// 基本同步原语操作实现
 ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config) {
     if (!sync || !config) {
         return PPDB_ERR_INVALID_ARG;
@@ -65,7 +190,6 @@ ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config)
     return PPDB_OK;
 }
 
-// 销毁同步原语
 ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
     if (!sync) {
         return PPDB_ERR_INVALID_ARG;
@@ -76,7 +200,6 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
     return PPDB_OK;
 }
 
-// 尝试加锁
 bool ppdb_sync_try_lock(ppdb_sync_t* sync) {
     if (!sync) {
         return false;
@@ -104,7 +227,6 @@ bool ppdb_sync_try_lock(ppdb_sync_t* sync) {
     }
 }
 
-// 加锁
 ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
     if (!sync) {
         return PPDB_ERR_INVALID_ARG;
@@ -153,7 +275,6 @@ ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
     return PPDB_OK;
 }
 
-// 解锁
 ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
@@ -199,20 +320,17 @@ ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
     return PPDB_OK;
 }
 
-// 文件同步函数
 ppdb_error_t ppdb_sync_file(const char* filename) {
     if (!filename) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    // 使用 Cosmopolitan 的 POSIX 兼容层
     int fd = open(filename, O_RDWR | O_CLOEXEC);
     if (fd < 0) {
         PPDB_LOG_ERROR("Failed to open file for sync: %s (errno: %d)", filename, errno);
         return PPDB_ERR_IO;
     }
 
-    // fsync 在 Cosmopolitan 中是跨平台的
     int ret = fsync(fd);
     close(fd);
 
@@ -224,13 +342,11 @@ ppdb_error_t ppdb_sync_file(const char* filename) {
     return PPDB_OK;
 }
 
-// 文件描述符同步函数
 ppdb_error_t ppdb_sync_fd(int fd) {
     if (fd < 0) {
         return PPDB_ERR_INVALID_ARG;
     }
 
-    // fsync 在 Cosmopolitan 中是跨平台的
     int ret = fsync(fd);
     if (ret != 0) {
         PPDB_LOG_ERROR("Failed to sync file descriptor: %d (errno: %d)", fd, errno);
@@ -240,17 +356,12 @@ ppdb_error_t ppdb_sync_fd(int fd) {
     return PPDB_OK;
 }
 
-// 创建同步原语对象
 ppdb_sync_t* ppdb_sync_create(void) {
     ppdb_sync_t* sync = malloc(sizeof(ppdb_sync_t));
     if (!sync) return NULL;
 
-    // 初始化为默认的互斥锁模式
-    ppdb_sync_config_t config = {
-        .type = PPDB_SYNC_MUTEX,
-        .spin_count = 1000,
-        .timeout_ms = 0
-    };
+    // 初始化为默认配置
+    ppdb_sync_config_t config = PPDB_SYNC_CONFIG_DEFAULT;
 
     if (ppdb_sync_init(sync, &config) != PPDB_OK) {
         free(sync);
@@ -258,4 +369,4 @@ ppdb_sync_t* ppdb_sync_create(void) {
     }
 
     return sync;
-}
+} 

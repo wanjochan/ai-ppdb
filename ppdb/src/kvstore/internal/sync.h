@@ -112,4 +112,45 @@ ppdb_error_t ppdb_sync_fd(int fd);
  */
 uint32_t ppdb_sync_hash(const void* data, size_t len);
 
+/**
+ * @brief 无锁操作的接口函数
+ * 
+ * 这些函数提供了无锁操作的接口，支持重试机制。
+ * 当操作失败时，会根据配置进行重试，直到成功或超时。
+ */
+ppdb_error_t ppdb_sync_lockfree_put(ppdb_sync_t* sync, void* key, size_t key_len,
+                                   void* value, size_t value_len,
+                                   ppdb_sync_config_t* config);
+
+ppdb_error_t ppdb_sync_lockfree_get(ppdb_sync_t* sync, void* key, size_t key_len,
+                                   void** value, size_t* value_len,
+                                   ppdb_sync_config_t* config);
+
+ppdb_error_t ppdb_sync_lockfree_delete(ppdb_sync_t* sync, void* key, size_t key_len,
+                                      ppdb_sync_config_t* config);
+
+// 同步配置
+typedef struct ppdb_sync_config {
+    ppdb_sync_type_t type;      // 同步类型
+    bool use_lockfree;          // 是否使用无锁模式
+    size_t stripe_count;        // 分片数量
+    uint32_t spin_count;        // 自旋次数
+    uint32_t backoff_us;        // 退避时间
+    bool enable_ref_count;      // 是否启用引用计数
+    uint32_t retry_count;       // 最大重试次数
+    uint32_t retry_delay_us;    // 重试间隔
+} ppdb_sync_config_t;
+
+// 默认配置
+#define PPDB_SYNC_CONFIG_DEFAULT {      \
+    .type = PPDB_SYNC_MUTEX,           \
+    .use_lockfree = false,             \
+    .stripe_count = 16,                \
+    .spin_count = 10000,               \
+    .backoff_us = 100,                 \
+    .enable_ref_count = true,          \
+    .retry_count = 100,                \
+    .retry_delay_us = 1                \
+}
+
 #endif // PPDB_SYNC_H

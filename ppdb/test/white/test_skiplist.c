@@ -162,7 +162,9 @@ static int test_concurrent_operations(void) {
         .use_lockfree = use_lockfree,
         .stripe_count = 16,
         .backoff_us = use_lockfree ? 1 : 100,
-        .enable_ref_count = true
+        .enable_ref_count = true,
+        .retry_count = 100,
+        .retry_delay_us = 1
     };
 
     // 创建跳表

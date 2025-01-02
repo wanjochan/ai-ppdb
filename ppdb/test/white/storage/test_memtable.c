@@ -11,6 +11,9 @@
 #define NUM_THREADS 4
 #define TABLE_SIZE (1024 * 1024)
 
+// 全局配置
+static ppdb_memtable_config_t g_memtable_config;
+
 // 线程参数结构
 typedef struct {
     ppdb_memtable_t* table;
@@ -74,7 +77,7 @@ static void* concurrent_worker(void* arg) {
 // 基本操作测试
 static int test_basic_ops(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
+    ppdb_error_t err = ppdb_memtable_create_with_config(&table, &g_memtable_config);
     TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
     TEST_ASSERT(table != NULL, "Memtable is NULL");
 
@@ -119,7 +122,7 @@ static int test_basic_ops(void) {
 // 分片测试
 static int test_sharding(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
+    ppdb_error_t err = ppdb_memtable_create_with_config(&table, &g_memtable_config);
     TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
     TEST_ASSERT(table != NULL, "Memtable is NULL");
 
@@ -163,7 +166,7 @@ static int test_sharding(void) {
 // 并发操作测试
 static int test_concurrent_ops(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(TABLE_SIZE, &table);
+    ppdb_error_t err = ppdb_memtable_create_with_config(&table, &g_memtable_config);
     TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
 
     pthread_t threads[NUM_THREADS];
@@ -189,7 +192,29 @@ static int test_concurrent_ops(void) {
 
 int main(void) {
     TEST_INIT();
-    PPDB_LOG_INFO("Running Memtable Tests...");
+    const char* test_mode = getenv("PPDB_SYNC_MODE");
+    bool use_lockfree = (test_mode && strcmp(test_mode, "lockfree") == 0);
+    PPDB_LOG_INFO("Running Memtable Tests (%s mode)...", use_lockfree ? "lockfree" : "locked");
+    
+    // 设置同步配置
+    ppdb_sync_config_t config = {
+        .type = PPDB_SYNC_MUTEX,
+        .spin_count = 10000,
+        .use_lockfree = use_lockfree,
+        .stripe_count = 16,
+        .backoff_us = use_lockfree ? 1 : 100,
+        .enable_ref_count = true,
+        .retry_count = 100,
+        .retry_delay_us = 1
+    };
+    
+    // 创建内存表时传入配置
+    g_memtable_config = (ppdb_memtable_config_t){
+        .type = use_lockfree ? PPDB_MEMTABLE_LOCKFREE : PPDB_MEMTABLE_BASIC,
+        .size_limit = 1024 * 1024,  // 1MB
+        .shard_count = 16,
+        .sync = config
+    };
     
     RUN_TEST(test_basic_ops);
     RUN_TEST(test_sharding);

@@ -45,7 +45,15 @@ PPDB采用分层架构设计，从底层到上层包括：
   - [x] 节点内存对齐
   - [x] 原子操作优化
   - [x] 迭代器实现
-  - 测试：`build.bat skiplist` - 跳表实现测试
+  - [x] 并发控制
+    - [x] 有锁版本实现
+    - [x] 无锁版本实现
+  - [x] 测试框架
+    - [x] 基本操作测试
+    - [x] 迭代器测试
+    - [x] 并发操作测试
+    - [x] 有锁版本测试 (`build.bat skiplist_locked`)
+    - [x] 无锁版本测试 (`build.bat skiplist_lockfree`)
 
 - [ ] 内存表 (memtable)
   - [x] 分片策略完善
@@ -53,9 +61,15 @@ PPDB采用分层架构设计，从底层到上层包括：
   - [ ] 缓存共享机制
   - [x] 无锁操作接口
   - [x] 内存表满处理机制
-  - 测试：
-    * `build.bat memtable` - 内存表测试
-    * `build.bat sharded` - 分片内存表测试
+  - [x] 并发控制
+    - [x] 有锁版本实现
+    - [x] 无锁版本实现
+  - [x] 测试框架
+    - [x] 基本操作测试
+    - [x] 分片测试
+    - [x] 并发操作测试
+    - [x] 有锁版本测试 (`build.bat memtable_locked`)
+    - [x] 无锁版本测试 (`build.bat memtable_lockfree`)
 
 - [ ] 预写日志 (WAL)
   - [x] 基础写入功能

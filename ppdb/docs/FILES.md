@@ -203,13 +203,24 @@
   * `sync_lockfree` - 测试无锁版本的同步原语
 - `test_skiplist.c` - 无锁跳表测试
   * 跳表数据结构的测试，包括基本操作、并发操作和迭代器测试。支持有锁和无锁两种模式，通过环境变量 PPDB_SYNC_MODE 控制。
-    - `skiplist_locked`: 使用互斥锁的跳表测试
-    - `skiplist_lockfree`: 使用无锁算法的跳表测试
+    - `skiplist_locked`: 使用互斥锁的跳表测试，通过设置 PPDB_SYNC_MODE=locked 运行
+    - `skiplist_lockfree`: 使用无锁算法的跳表测试，通过设置 PPDB_SYNC_MODE=lockfree 运行
+  * 测试内容：
+    - 基本操作：插入、查找、删除
+    - 迭代器：正向遍历、验证顺序
+    - 并发操作：多线程并发读写测试
 - `test_metrics.c` - 性能指标测试
 
 ### 存储引擎测试 (test/white/storage/)
 - `test_fs.c` - 文件系统测试
 - `test_memtable.c` - 内存表测试
+  * 内存表的功能测试，包括基本操作、分片和并发操作测试。支持有锁和无锁两种模式，通过环境变量 PPDB_SYNC_MODE 控制。
+    - `memtable_locked`: 使用互斥锁的内存表测试，通过设置 PPDB_SYNC_MODE=locked 运行
+    - `memtable_lockfree`: 使用无锁算法的内存表测试，通过设置 PPDB_SYNC_MODE=lockfree 运行
+  * 测试内容：
+    - 基本操作：插入、查找、删除
+    - 分片测试：多分片并发写入和读取
+    - 并发操作：多线程并发读写测试
 - `test_wal.c` - WAL测试
 
 ### WAL专项测试 (test/white/wal/)

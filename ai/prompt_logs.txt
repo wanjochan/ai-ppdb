@@ -14,9 +14,8 @@ as warm-up, read *.md in docs/;
 .\build.bat sync_lockfree
 .\build.bat skiplist_locked
 .\build.bat skiplist_lockfree
-.\build.bat memtable
-.\build.bat sharded 
-.\build.bat ppdb_memkv 
+.\build.bat memtable_locked
+.\build.bat memtable_lockfree
 
 
 .\build.bat wal_core

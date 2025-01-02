@@ -98,32 +98,39 @@ rem ===== 辅助函数 =====
     echo 用法: build.bat [模块] [构建模式]
     echo.
     echo 可用模块:
-    echo "  test42    运行基础测试"
+    echo "  test42           运行基础测试"
     echo "  sync_locked      运行有锁同步原语测试"
     echo "  sync_lockfree    运行无锁同步原语测试"
-    echo "  skiplist  运行跳表测试"
-    echo "  memtable  运行内存表测试"
-    echo "  sharded   运行分片内存表测试"
-    echo "  ppdb_memkv 构建纯内存KV版本"
+    echo "  skiplist_locked  运行有锁跳表测试"
+    echo "  skiplist_lockfree 运行无锁跳表测试"
+    echo "  memtable_locked  运行有锁内存表测试"
+    echo "  memtable_lockfree 运行无锁内存表测试"
+    echo "  sharded          运行分片内存表测试"
+    echo "  ppdb_memkv       构建纯内存KV版本"
     echo.
-    echo "  kvstore   运行KVStore测试"
-    echo "  wal_core  运行WAL核心测试"
-    echo "  wal_func  运行WAL功能测试"
-    echo "  wal_advanced 运行WAL高级测试"
-    echo "  clean     清理构建目录"
-    echo "  rebuild   强制重新构建"
+    echo "  kvstore          运行KVStore测试"
+    echo "  wal_core         运行WAL核心测试"
+    echo "  wal_func         运行WAL功能测试"
+    echo "  wal_advanced     运行WAL高级测试"
+    echo "  clean            清理构建目录"
+    echo "  rebuild          强制重新构建"
     echo.
     echo 构建模式:
     echo "  debug     调试模式 ^(默认^)"
     echo "  release   发布模式"
     echo.
     echo 示例:
-    echo "  build.bat help              显示帮助信息"
-    echo "  build.bat clean             清理构建目录"
-    echo "  build.bat rebuild           强制重新构建"
-    echo "  build.bat test42            运行基础测试"
-    echo "  build.bat sync debug        以调试模式运行同步测试"
-    echo "  build.bat memtable release  以发布模式运行内存表测试"
+    echo "  build.bat help                显示帮助信息"
+    echo "  build.bat clean               清理构建目录"
+    echo "  build.bat rebuild             强制重新构建"
+    echo "  build.bat test42              运行基础测试"
+    echo "  build.bat sync_locked         运行有锁同步测试"
+    echo "  build.bat sync_lockfree       运行无锁同步测试"
+    echo "  build.bat skiplist_locked     运行有锁跳表测试"
+    echo "  build.bat skiplist_lockfree   运行无锁跳表测试"
+    echo "  build.bat memtable_locked     运行有锁内存表测试"
+    echo "  build.bat memtable_lockfree   运行无锁内存表测试"
+    echo "  build.bat memtable release    以发布模式运行内存表测试"
     exit /b 0
 
 :clean_build
@@ -298,6 +305,40 @@ rem ===== 辅助函数 =====
     "%BUILD_DIR%\memtable_test.exe"
     exit /b 0
 
+:build_memtable_locked
+    echo Building memtable locked test...
+    set "PPDB_SYNC_MODE=locked"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\kvstore\memtable.c" ^
+        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
+        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_locked_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\memtable_locked_test.exe.dbg" "%BUILD_DIR%\memtable_locked_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\memtable_locked_test.exe"
+    exit /b 0
+
+:build_memtable_lockfree
+    echo Building memtable lockfree test...
+    set "PPDB_SYNC_MODE=lockfree"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\kvstore\memtable.c" ^
+        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
+        "%PPDB_DIR%\src\kvstore\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_lockfree_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\memtable_lockfree_test.exe.dbg" "%BUILD_DIR%\memtable_lockfree_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\memtable_lockfree_test.exe"
+    exit /b 0
+
 :build_sharded
     echo Building sharded test...
     "%GCC%" %CFLAGS% ^
@@ -417,14 +458,22 @@ goto :eof
 
 :main
 if "%1"=="" goto help
+if "%1"=="help" goto show_help
 if "%1"=="clean" goto clean_build
 if "%1"=="rebuild" goto build_rebuild
 if "%1"=="test42" goto build_test42
 if "%1"=="sync_locked" goto build_sync_locked
 if "%1"=="sync_lockfree" goto build_sync_lockfree
+if "%1"=="skiplist" goto build_skiplist
 if "%1"=="skiplist_locked" goto build_skiplist_locked
 if "%1"=="skiplist_lockfree" goto build_skiplist_lockfree
 if "%1"=="memtable" goto build_memtable
+if "%1"=="memtable_locked" goto build_memtable_locked
+if "%1"=="memtable_lockfree" goto build_memtable_lockfree
 if "%1"=="sharded" goto build_sharded
 if "%1"=="ppdb" goto build_ppdb
-goto help 
+if "%1"=="kvstore" goto build_kvstore
+if "%1"=="wal_core" goto build_wal_core
+if "%1"=="wal_func" goto build_wal_func
+if "%1"=="wal_advanced" goto build_wal_advanced
+goto show_help 
