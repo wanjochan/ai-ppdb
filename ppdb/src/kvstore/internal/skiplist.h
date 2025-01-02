@@ -30,6 +30,11 @@ ppdb_error_t ppdb_skiplist_get(ppdb_skiplist_t* list,
                               const void* key, size_t key_len,
                               void** value, size_t* value_len);
 
+// 内部获取函数（无锁版本）
+ppdb_error_t skiplist_get_internal(ppdb_skiplist_t* list,
+                                 const void* key, size_t key_len,
+                                 void** value, size_t* value_len);
+
 // 删除键值对
 ppdb_error_t ppdb_skiplist_delete(ppdb_skiplist_t* list,
                                  const void* key, size_t key_len);

@@ -50,9 +50,9 @@ static int random_level(int max_level);
 static ppdb_error_t skiplist_put_internal(ppdb_skiplist_t* list,
                                         const void* key, size_t key_len,
                                         const void* value, size_t value_len);
-static ppdb_error_t skiplist_get_internal(ppdb_skiplist_t* list,
-                                        const void* key, size_t key_len,
-                                        void** value, size_t* value_len);
+ppdb_error_t skiplist_get_internal(ppdb_skiplist_t* list,
+                                 const void* key, size_t key_len,
+                                 void** value, size_t* value_len);
 static ppdb_error_t skiplist_delete_internal(ppdb_skiplist_t* list,
                                            const void* key, size_t key_len);
 
@@ -73,25 +73,31 @@ static int random_level(int max_level) {
 ppdb_error_t ppdb_skiplist_create(ppdb_skiplist_t** list, int max_level,
                                  ppdb_compare_func_t compare,
                                  const ppdb_sync_config_t* sync_config) {
+    printf("ppdb_skiplist_create: Starting with max_level=%d\n", max_level);
+    
     if (!list || !compare || !sync_config || max_level <= 0 || max_level > PPDB_SKIPLIST_MAX_LEVEL) {
+        printf("ppdb_skiplist_create: Invalid parameters\n");
         return PPDB_ERR_INVALID_PARAM;
     }
 
     // 分配并初始化跳表结构
     ppdb_skiplist_t* new_list = calloc(1, sizeof(ppdb_skiplist_t));
     if (!new_list) {
+        printf("ppdb_skiplist_create: Failed to allocate skiplist\n");
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     // 初始化头节点
     ppdb_skiplist_node_t* head = calloc(1, sizeof(ppdb_skiplist_node_t));
     if (!head) {
+        printf("ppdb_skiplist_create: Failed to allocate head node\n");
         free(new_list);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     head->next = calloc(max_level, sizeof(ppdb_skiplist_node_t*));
     if (!head->next) {
+        printf("ppdb_skiplist_create: Failed to allocate next array\n");
         free(head);
         free(new_list);
         return PPDB_ERR_OUT_OF_MEMORY;
@@ -109,14 +115,17 @@ ppdb_error_t ppdb_skiplist_create(ppdb_skiplist_t** list, int max_level,
     // 初始化同步原语
     new_list->sync = malloc(sizeof(ppdb_sync_t));
     if (!new_list->sync) {
+        printf("ppdb_skiplist_create: Failed to allocate sync\n");
         free(head->next);
         free(head);
         free(new_list);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
+    printf("ppdb_skiplist_create: Initializing sync\n");
     ppdb_error_t err = ppdb_sync_init(new_list->sync, sync_config);
     if (err != PPDB_OK) {
+        printf("ppdb_skiplist_create: Failed to init sync: %d\n", err);
         free(new_list->sync);
         free(head->next);
         free(head);
@@ -125,6 +134,7 @@ ppdb_error_t ppdb_skiplist_create(ppdb_skiplist_t** list, int max_level,
     }
 
     *list = new_list;
+    printf("ppdb_skiplist_create: Successfully created skiplist\n");
     return PPDB_OK;
 }
 
@@ -179,10 +189,12 @@ static ppdb_error_t skiplist_put_internal(ppdb_skiplist_t* list,
     printf("skiplist_put_internal: Starting search from level %d\n", list->level - 1);
     // 从最高层开始查找
     for (int i = list->level - 1; i >= 0; i--) {
+        printf("skiplist_put_internal: Searching at level %d\n", i);
         while (current->next[i] && list->compare(current->next[i]->key,
                                                current->next[i]->key_len,
                                                key, key_len) < 0) {
             current = current->next[i];
+            printf("skiplist_put_internal: Moving to next node at level %d\n", i);
         }
         update[i] = current;
     }
@@ -232,24 +244,22 @@ static ppdb_error_t skiplist_put_internal(ppdb_skiplist_t* list,
     printf("skiplist_put_internal: Inserting new node at level %d\n", level);
     // 插入节点
     for (int i = 0; i < level; i++) {
+        printf("skiplist_put_internal: Inserting at level %d\n", i);
         if (i >= list->level) {
             // 如果新节点的层数超过当前最大层数，将头节点作为前驱
+            printf("skiplist_put_internal: Extending level from %d to %d\n", list->level, i + 1);
             update[i] = list->head;
+            list->level = i + 1;
         }
         new_node->next[i] = update[i]->next[i];
         update[i]->next[i] = new_node;
+        printf("skiplist_put_internal: Successfully inserted at level %d\n", i);
     }
 
     // 更新统计信息
     list->size++;
     list->memory_usage += sizeof(ppdb_skiplist_node_t) + key_len + value_len +
                          level * sizeof(ppdb_skiplist_node_t*);
-    
-    // 更新当前最大层数
-    if (level > list->level) {
-        printf("skiplist_put_internal: Updating max level from %d to %d\n", list->level, level);
-        list->level = level;
-    }
 
     printf("skiplist_put_internal: Successfully inserted new key\n");
     return PPDB_OK;
@@ -289,6 +299,9 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
                                       const void* value, size_t value_len,
                                       int level) {
     printf("create_node: level=%d, key_len=%zu, value_len=%zu\n", level, key_len, value_len);
+    printf("create_node: key='%.*s', value='%.*s'\n", 
+           (int)key_len, (const char*)key,
+           (int)value_len, (const char*)value);
     
     if (level <= 0 || level > PPDB_SKIPLIST_MAX_LEVEL) {
         printf("create_node: Invalid level\n");
@@ -321,6 +334,7 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
         }
         memcpy(node->key, key, key_len);
         node->key_len = key_len;
+        printf("create_node: Successfully allocated and copied key\n");
     } else {
         printf("create_node: Invalid key parameters\n");
         free(node->next);
@@ -340,6 +354,7 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
         }
         memcpy(node->value, value, value_len);
         node->value_len = value_len;
+        printf("create_node: Successfully allocated and copied value\n");
     } else {
         printf("create_node: Invalid value parameters\n");
         free(node->key);
@@ -349,7 +364,9 @@ static ppdb_skiplist_node_t* create_node(const void* key, size_t key_len,
     }
 
     node->level = level;
-    printf("create_node: Successfully created node\n");
+    printf("create_node: Successfully created node with key='%.*s', value='%.*s'\n",
+           (int)node->key_len, (const char*)node->key,
+           (int)node->value_len, (const char*)node->value);
     return node;
 }
 
@@ -377,67 +394,102 @@ static void destroy_node(ppdb_skiplist_node_t* node) {
 ppdb_error_t ppdb_skiplist_get(ppdb_skiplist_t* list,
                              const void* key, size_t key_len,
                              void** value, size_t* value_len) {
-    if (!list || !key || !value || !value_len) {
+    printf("ppdb_skiplist_get: Starting with key='%.*s' (len=%zu), value=%p, value_len=%p\n",
+           (int)key_len, (const char*)key, key_len, (void*)value, (void*)value_len);
+    
+    if (!list || !key || !value_len) {
+        printf("ppdb_skiplist_get: Invalid parameters - list=%p, key=%p, value_len=%p\n",
+               (void*)list, key, (void*)value_len);
         return PPDB_ERR_INVALID_PARAM;
     }
 
     // 获取读锁
     ppdb_error_t err = ppdb_sync_read_lock(list->sync);
     if (err != PPDB_OK) {
+        printf("ppdb_skiplist_get: Failed to acquire read lock: %d\n", err);
         return err;
     }
 
     // 执行查找
     err = skiplist_get_internal(list, key, key_len, value, value_len);
+    printf("ppdb_skiplist_get: skiplist_get_internal returned %d, value_len=%zu\n",
+           err, *value_len);
 
     // 释放读锁
     ppdb_sync_read_unlock(list->sync);
+    printf("ppdb_skiplist_get: Returning %d\n", err);
     return err;
 }
 
 // 内部查找实现
-static ppdb_error_t skiplist_get_internal(ppdb_skiplist_t* list,
-                                       const void* key, size_t key_len,
-                                       void** value, size_t* value_len) {
+ppdb_error_t skiplist_get_internal(ppdb_skiplist_t* list,
+                                 const void* key, size_t key_len,
+                                 void** value, size_t* value_len) {
+    printf("skiplist_get_internal: Starting with key='%.*s' (len=%zu), value=%p, value_len=%p\n",
+           (int)key_len, (const char*)key, key_len, (void*)value, (void*)value_len);
+    
     if (!list || !key || !value_len) {
+        printf("skiplist_get_internal: Invalid parameters - list=%p, key=%p, value_len=%p\n",
+               (void*)list, key, (void*)value_len);
         return PPDB_ERR_INVALID_PARAM;
     }
 
     ppdb_skiplist_node_t* current = list->head;
+    printf("skiplist_get_internal: Starting search from head node\n");
 
     // 从最高层开始查找
     for (int i = list->level - 1; i >= 0; i--) {
+        printf("skiplist_get_internal: Searching at level %d\n", i);
         while (current->next[i] && list->compare(current->next[i]->key,
                                                current->next[i]->key_len,
                                                key, key_len) < 0) {
             current = current->next[i];
+            printf("skiplist_get_internal: Moving to next node at level %d\n", i);
         }
     }
 
+    // 移动到下一个节点
     current = current->next[0];
 
     // 检查是否找到
-    if (!current || list->compare(current->key, current->key_len,
-                                key, key_len) != 0) {
+    if (!current) {
+        printf("skiplist_get_internal: Node not found (current is NULL)\n");
+        *value_len = 0;
         return PPDB_ERR_NOT_FOUND;
     }
 
+    // 比较键
+    int cmp = list->compare(current->key, current->key_len, key, key_len);
+    printf("skiplist_get_internal: Compare result=%d (current_key='%.*s', key='%.*s')\n", 
+           cmp, (int)current->key_len, (const char*)current->key,
+           (int)key_len, (const char*)key);
+
+    if (cmp != 0) {
+        printf("skiplist_get_internal: Key mismatch\n");
+        *value_len = 0;
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    printf("skiplist_get_internal: Found key, value_len=%zu\n", current->value_len);
+    *value_len = current->value_len;
+
     // 如果只需要获取大小
     if (!value) {
-        *value_len = current->value_len;
+        printf("skiplist_get_internal: Only size requested, returning OK\n");
         return PPDB_OK;
     }
 
     // 分配并复制值
     void* new_value = malloc(current->value_len);
     if (!new_value) {
+        printf("skiplist_get_internal: Failed to allocate memory for value\n");
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     memcpy(new_value, current->value, current->value_len);
     *value = new_value;
-    *value_len = current->value_len;
 
+    printf("skiplist_get_internal: Successfully copied value\n");
     return PPDB_OK;
 }
 
@@ -860,16 +912,26 @@ bool ppdb_skiplist_iterator_valid(const ppdb_skiplist_iterator_t* iter) {
 // 默认的比较函数
 int ppdb_skiplist_default_compare(const void* key1, size_t key1_len,
                                 const void* key2, size_t key2_len) {
+    printf("ppdb_skiplist_default_compare: key1='%.*s' (len=%zu), key2='%.*s' (len=%zu)\n",
+           (int)key1_len, (const char*)key1, key1_len,
+           (int)key2_len, (const char*)key2, key2_len);
+    
     if (!key1 || !key2) {
+        printf("ppdb_skiplist_default_compare: NULL key detected - key1=%p, key2=%p\n",
+               key1, key2);
         return key1 ? 1 : (key2 ? -1 : 0);
     }
     if (key1_len == 0 || key2_len == 0) {
+        printf("ppdb_skiplist_default_compare: Zero length key detected - key1_len=%zu, key2_len=%zu\n",
+               key1_len, key2_len);
         return key1_len ? 1 : (key2_len ? -1 : 0);
     }
     size_t min_len = key1_len < key2_len ? key1_len : key2_len;
     int result = memcmp(key1, key2, min_len);
+    printf("ppdb_skiplist_default_compare: memcmp result=%d\n", result);
     if (result != 0) {
         return result;
     }
+    printf("ppdb_skiplist_default_compare: memcmp equal, comparing lengths\n");
     return (key1_len < key2_len) ? -1 : (key1_len > key2_len ? 1 : 0);
 }

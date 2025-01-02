@@ -13,9 +13,9 @@ int test_memkv_create(void) {
     };
 
     ppdb_base_t* base = NULL;
-    ppdb_status_t status = ppdb_memkv_create(&base, &config);
+    ppdb_error_t err = ppdb_memkv_create(&base, &config);
     
-    ASSERT_TRUE(status == PPDB_OK);
+    ASSERT_TRUE(err == PPDB_OK);
     ASSERT_TRUE(base != NULL);
 
     ppdb_destroy(base);
@@ -30,8 +30,8 @@ int test_memkv_basic_ops(void) {
     };
 
     ppdb_base_t* base = NULL;
-    ppdb_status_t status = ppdb_memkv_create(&base, &config);
-    ASSERT_TRUE(status == PPDB_OK);
+    ppdb_error_t err = ppdb_memkv_create(&base, &config);
+    ASSERT_TRUE(err == PPDB_OK);
 
     // 测试基本操作
     const char* key_str = "test_key";
@@ -48,23 +48,38 @@ int test_memkv_basic_ops(void) {
     };
 
     // Put
-    status = ppdb_put(base, &key, &value);
-    ASSERT_TRUE(status == PPDB_OK);
+    err = ppdb_put(base, &key, &value);
+    ASSERT_TRUE(err == PPDB_OK);
 
     // Get
     ppdb_value_t get_value = {0};
-    status = ppdb_get(base, &key, &get_value);
-    ASSERT_TRUE(status == PPDB_OK);
+    err = ppdb_get(base, &key, &get_value);
+    ASSERT_TRUE(err == PPDB_OK);
     ASSERT_TRUE(get_value.size == value.size);
     ASSERT_TRUE(memcmp(get_value.data, value.data, value.size) == 0);
 
     // Remove
-    status = ppdb_remove(base, &key);
-    ASSERT_TRUE(status == PPDB_OK);
+    err = ppdb_remove(base, &key);
+    ASSERT_TRUE(err == PPDB_OK);
 
     // Get again (should fail)
-    status = ppdb_get(base, &key, &get_value);
-    ASSERT_TRUE(status == PPDB_NOT_FOUND);
+    err = ppdb_get(base, &key, &get_value);
+    ASSERT_TRUE(err == PPDB_ERR_NOT_FOUND);
+
+    // 测试状态信息
+    ppdb_memkv_status_t status;
+    err = ppdb_memkv_get_status(base, &status);
+    ASSERT_TRUE(err == PPDB_OK);
+    ASSERT_TRUE(status.item_count == 0);
+    
+    // 验证统计信息
+    ASSERT_TRUE(status.stats.get_count == 2);      // 一次成功，一次失败
+    ASSERT_TRUE(status.stats.get_hits == 1);       // 一次成功
+    ASSERT_TRUE(status.stats.get_miss_count == 1); // 一次失败
+    ASSERT_TRUE(status.stats.put_count == 1);      // 一次 put
+    ASSERT_TRUE(status.stats.delete_count == 1);   // 一次 delete
+    ASSERT_TRUE(status.stats.total_keys == 0);     // 已删除
+    ASSERT_TRUE(status.stats.total_bytes == 0);    // 已删除
 
     ppdb_destroy(base);
     return 0;

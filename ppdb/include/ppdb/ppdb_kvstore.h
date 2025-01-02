@@ -24,26 +24,28 @@ typedef struct ppdb_kvstore_config {
 // KVStore句柄
 typedef struct ppdb_kvstore ppdb_kvstore_t;
 
+// 基础类型
+typedef struct ppdb_base ppdb_base_t;
+
 // 创建KVStore
-ppdb_error_t ppdb_kvstore_create(const ppdb_kvstore_config_t* config, ppdb_kvstore_t** store);
+ppdb_error_t ppdb_kvstore_create(ppdb_base_t* base, const ppdb_kvstore_config_t* config, ppdb_kvstore_t** store);
 
 // 基本操作
-ppdb_error_t ppdb_kvstore_put(ppdb_kvstore_t* store,
+ppdb_error_t ppdb_kvstore_put(ppdb_base_t* base,
                              const void* key, size_t key_len,
                              const void* value, size_t value_len);
 
-ppdb_error_t ppdb_kvstore_get(ppdb_kvstore_t* store,
+ppdb_error_t ppdb_kvstore_get(ppdb_base_t* base,
                              const void* key, size_t key_len,
                              void** value, size_t* value_len);
 
-ppdb_error_t ppdb_kvstore_delete(ppdb_kvstore_t* store,
+ppdb_error_t ppdb_kvstore_delete(ppdb_base_t* base,
                                 const void* key, size_t key_len);
 
 // 生命周期管理
-void ppdb_kvstore_close(ppdb_kvstore_t* store);
-void ppdb_kvstore_destroy(ppdb_kvstore_t* store);
+ppdb_error_t ppdb_kvstore_destroy(ppdb_base_t* base);
 
 // 迭代器操作
 void ppdb_iterator_destroy(ppdb_iterator_t* iter);
 
-#endif // PPDB_KVSTORE_H 
+#endif // PPDB_KVSTORE_H

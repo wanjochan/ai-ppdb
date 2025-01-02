@@ -13,7 +13,7 @@
 
 // 全局配置
 static ppdb_memtable_config_t g_memtable_config = {
-    .type = PPDB_MEMTABLE_BASIC,
+    .type = PPDB_MEMTABLE_BASIC,  // 类型会在运行时根据测试类型设置
     .size_limit = TABLE_SIZE,
     .shard_count = 8,
     .sync = {
@@ -32,6 +32,12 @@ typedef struct {
     int thread_id;
     bool success;
 } thread_args_t;
+
+// 设置内存表配置
+static void set_memtable_config(bool use_lockfree) {
+    g_memtable_config.type = use_lockfree ? PPDB_MEMTABLE_LOCKFREE : PPDB_MEMTABLE_BASIC;
+    g_memtable_config.sync.use_lockfree = use_lockfree;
+}
 
 // 线程工作函数
 static void* concurrent_worker(void* arg) {
@@ -97,6 +103,10 @@ static int test_basic_ops(void) {
     // 测试插入和获取
     const char* test_key = "test_key";
     const char* test_value = "test_value";
+    PPDB_LOG_INFO("Inserting key='%s' (len=%zu), value='%s' (len=%zu)",
+                  test_key, strlen(test_key) + 1,
+                  test_value, strlen(test_value) + 1);
+    
     err = ppdb_memtable_put(table, (const void*)test_key, strlen(test_key) + 1,
                            (const void*)test_value, strlen(test_value) + 1);
     PPDB_LOG_INFO("Put operation result: %d", err);
@@ -104,6 +114,9 @@ static int test_basic_ops(void) {
 
     // 先获取值的大小
     size_t value_size = 0;
+    PPDB_LOG_INFO("Getting value size for key='%s' (len=%zu)",
+                  test_key, strlen(test_key) + 1);
+    
     err = ppdb_memtable_get(table, (const void*)test_key, strlen(test_key) + 1,
                            NULL, &value_size);
     PPDB_LOG_INFO("Get size result: %d, value_size: %zu", err, value_size);
@@ -113,6 +126,9 @@ static int test_basic_ops(void) {
     // 获取值
     void* value_buf = NULL;
     size_t actual_size = 0;
+    PPDB_LOG_INFO("Getting value for key='%s' (len=%zu)",
+                  test_key, strlen(test_key) + 1);
+    
     err = ppdb_memtable_get(table, (const void*)test_key, strlen(test_key) + 1,
                            &value_buf, &actual_size);
     PPDB_LOG_INFO("Get value result: %d, actual_size: %zu", err, actual_size);
@@ -122,12 +138,18 @@ static int test_basic_ops(void) {
     free(value_buf);
 
     // 测试删除
+    PPDB_LOG_INFO("Deleting key='%s' (len=%zu)",
+                  test_key, strlen(test_key) + 1);
+    
     err = ppdb_memtable_delete(table, (const void*)test_key, strlen(test_key) + 1);
+    PPDB_LOG_INFO("Delete result: %d", err);
     TEST_ASSERT(err == PPDB_OK, "Delete operation failed");
 
     // 验证删除后无法获取
+    PPDB_LOG_INFO("Verifying key is deleted");
     err = ppdb_memtable_get(table, (const void*)test_key, strlen(test_key) + 1,
                            NULL, &value_size);
+    PPDB_LOG_INFO("Get after delete result: %d", err);
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after delete");
 
     ppdb_memtable_destroy(table);

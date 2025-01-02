@@ -18,34 +18,34 @@ typedef struct {
 
 // 存储统计
 typedef struct {
-    ppdb_stats_t base_stats;
-    uint64_t bytes_read;
-    uint64_t bytes_written;
-    uint64_t cache_hits;
-    uint64_t cache_misses;
+    ppdb_metrics_t base_metrics;  // 基础统计信息
+    atomic_size_t bytes_read;     // 读取字节数
+    atomic_size_t bytes_written;  // 写入字节数
+    atomic_size_t cache_hits;     // 缓存命中次数
+    atomic_size_t cache_misses;   // 缓存未命中次数
 } ppdb_storage_stats_t;
 
 // Skiplist特化
-ppdb_status_t ppdb_skiplist_create(ppdb_base_t* base, const ppdb_storage_config_t* config);
-ppdb_status_t ppdb_skiplist_destroy(ppdb_base_t* base);
+ppdb_error_t ppdb_skiplist_create(ppdb_base_t* base, const ppdb_storage_config_t* config);
+ppdb_error_t ppdb_skiplist_destroy(ppdb_base_t* base);
 
 // Memtable特化
-ppdb_status_t ppdb_memtable_create(ppdb_base_t* base, const ppdb_storage_config_t* config);
-ppdb_status_t ppdb_memtable_destroy(ppdb_base_t* base);
+ppdb_error_t ppdb_memtable_create(ppdb_base_t* base, const ppdb_storage_config_t* config);
+ppdb_error_t ppdb_memtable_destroy(ppdb_base_t* base);
 
 // Sharded特化
-ppdb_status_t ppdb_sharded_create(ppdb_base_t* base, const ppdb_storage_config_t* config);
-ppdb_status_t ppdb_sharded_destroy(ppdb_base_t* base);
+ppdb_error_t ppdb_sharded_create(ppdb_base_t* base, const ppdb_storage_config_t* config);
+ppdb_error_t ppdb_sharded_destroy(ppdb_base_t* base);
 
 // KVStore特化
-ppdb_status_t ppdb_kvstore_create(ppdb_base_t* base, const ppdb_storage_config_t* config);
-ppdb_status_t ppdb_kvstore_destroy(ppdb_base_t* base);
+ppdb_error_t ppdb_kvstore_create(ppdb_base_t* base, const ppdb_storage_config_t* config);
+ppdb_error_t ppdb_kvstore_destroy(ppdb_base_t* base);
 
 // 通用操作
-ppdb_status_t ppdb_storage_sync(ppdb_base_t* base);
-ppdb_status_t ppdb_storage_flush(ppdb_base_t* base);
-ppdb_status_t ppdb_storage_compact(ppdb_base_t* base);
-ppdb_status_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_storage_stats_t* stats);
+ppdb_error_t ppdb_storage_sync(ppdb_base_t* base);
+ppdb_error_t ppdb_storage_flush(ppdb_base_t* base);
+ppdb_error_t ppdb_storage_compact(ppdb_base_t* base);
+ppdb_error_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_storage_stats_t* stats);
 
 #ifdef __cplusplus
 }

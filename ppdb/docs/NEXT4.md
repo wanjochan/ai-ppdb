@@ -5,10 +5,51 @@
 2. 高效的内存使用
 3. 灵活的扩展性
 4. 优秀的性能表现
+5. 一致的错误处理
+6. 完善的统计信息
 
 ## 2. 基础类型设计
 
-### 2.1 类型标记
+### 2.1 错误处理
+```c
+// 统一的错误类型
+typedef enum {
+    PPDB_OK = 0,                    // 成功
+    PPDB_ERR_INVALID_ARG = -1,      // 无效参数
+    PPDB_ERR_OUT_OF_MEMORY = -2,    // 内存不足
+    PPDB_ERR_NOT_FOUND = -3,        // 未找到
+    PPDB_ERR_ALREADY_EXISTS = -4,   // 已存在
+    PPDB_ERR_NOT_SUPPORTED = -5,    // 不支持
+    PPDB_ERR_IO = -6,              // IO错误
+    PPDB_ERR_CORRUPTED = -7,       // 数据损坏
+    PPDB_ERR_INTERNAL = -8,        // 内部错误
+} ppdb_error_t;
+```
+
+### 2.2 统计信息
+```c
+// 基础统计信息
+typedef struct {
+    atomic_uint64_t get_count;      // Get操作总数
+    atomic_uint64_t get_hits;       // Get命中次数
+    atomic_uint64_t put_count;      // Put操作次数
+    atomic_uint64_t remove_count;   // Remove操作次数
+    atomic_uint64_t total_keys;     // 总键数
+    atomic_uint64_t total_bytes;    // 总字节数
+    atomic_uint64_t cache_hits;     // 缓存命中
+    atomic_uint64_t cache_misses;   // 缓存未命中
+} ppdb_metrics_t;
+
+// 存储统计信息
+typedef struct {
+    ppdb_metrics_t base_metrics;    // 基础统计
+    size_t memory_used;            // 内存使用
+    size_t memory_allocated;       // 内存分配
+    size_t block_count;           // 块数量
+} ppdb_storage_stats_t;
+```
+
+### 2.3 类型标记
 ```c
 typedef enum {
     PPDB_TYPE_SKIPLIST = 1,    // 基础跳表
@@ -19,7 +60,7 @@ typedef enum {
 } ppdb_type_t;
 ```
 
-### 2.2 紧凑的基础结构
+### 2.4 基础结构
 ```c
 // 头部信息（4字节）
 typedef struct {
@@ -71,25 +112,28 @@ typedef struct {
 ```c
 // 存储层接口
 typedef struct {
-    int (*write)(void* impl, const void* data, size_t size);
-    int (*read)(void* impl, void* buf, size_t size);
-    int (*sync)(void* impl);
+    ppdb_error_t (*write)(void* impl, const void* data, size_t size);
+    ppdb_error_t (*read)(void* impl, void* buf, size_t size);
+    ppdb_error_t (*sync)(void* impl);
+    ppdb_error_t (*get_stats)(void* impl, ppdb_storage_stats_t* stats);
 } ppdb_storage_ops_t;
 
 // 存储层实现
 typedef struct {
     ppdb_base_t base;         // 24字节
     ppdb_storage_ops_t* ops;  // 8字节
-} ppdb_storage_t;            // 总大小：32字节
+    ppdb_metrics_t metrics;   // 统计信息
+} ppdb_storage_t;            // 总大小：32字节 + metrics
 ```
 
 ### 3.2 容器层
 ```c
 // 容器层接口
 typedef struct {
-    int (*get)(void* impl, const ppdb_key_t* key, ppdb_value_t* value);
-    int (*put)(void* impl, const ppdb_key_t* key, const ppdb_value_t* value);
-    int (*flush)(void* impl, ppdb_storage_t* dest);
+    ppdb_error_t (*get)(void* impl, const ppdb_key_t* key, ppdb_value_t* value);
+    ppdb_error_t (*put)(void* impl, const ppdb_key_t* key, const ppdb_value_t* value);
+    ppdb_error_t (*remove)(void* impl, const ppdb_key_t* key);
+    ppdb_error_t (*flush)(void* impl, ppdb_storage_t* dest);
 } ppdb_container_ops_t;
 
 // 容器层实现
@@ -97,17 +141,19 @@ typedef struct {
     ppdb_base_t base;          // 24字节
     ppdb_container_ops_t* ops; // 8字节
     ppdb_storage_t* storage;   // 8字节
-} ppdb_container_t;           // 总大小：40字节
+    ppdb_metrics_t metrics;    // 统计信息
+} ppdb_container_t;           // 总大小：40字节 + metrics
 ```
 
 ### 3.3 KV存储层
 ```c
 // KV存储层接口
 typedef struct {
-    int (*begin_tx)(void* impl);
-    int (*commit_tx)(void* impl);
-    int (*snapshot)(void* impl, void** snap);
-    int (*compact)(void* impl);
+    ppdb_error_t (*begin_tx)(void* impl);
+    ppdb_error_t (*commit_tx)(void* impl);
+    ppdb_error_t (*snapshot)(void* impl, void** snap);
+    ppdb_error_t (*compact)(void* impl);
+    ppdb_error_t (*get_stats)(void* impl, ppdb_storage_stats_t* stats);
 } ppdb_kvstore_ops_t;
 
 // KV存储层实现
@@ -118,61 +164,52 @@ typedef struct {
     ppdb_container_t* imm;     // 8字节
     ppdb_storage_t* wal;       // 8字节
     ppdb_storage_t** sst;      // 8字节
-} ppdb_kvstore_t;             // 总大小：64字节
+    ppdb_metrics_t metrics;    // 统计信息
+} ppdb_kvstore_t;             // 总大小：64字节 + metrics
 ```
 
 ## 4. 优化实现
 
-### 4.1 类型分发优化
+### 4.1 错误处理优化
 ```c
-// 常用类型快速路径
-static inline ppdb_status_t ppdb_get(void* impl, const ppdb_key_t* key, ppdb_value_t* value) {
-    ppdb_base_t* base = impl;
-    
-    // 常用类型用switch
-    switch (base->header.type) {
-    case PPDB_TYPE_SKIPLIST:
-    case PPDB_TYPE_MEMTABLE:
-        return fast_get_impl(impl, key, value);
-    }
-    
-    // 不常用类型用函数表
-    ppdb_get_fn get_fn = g_get_table[base->header.type];
-    return get_fn ? get_fn(impl, key, value) : PPDB_INVALID_TYPE;
-}
+// 错误处理宏
+#define PPDB_TRY(expr) do { \
+    ppdb_error_t err = (expr); \
+    if (err != PPDB_OK) return err; \
+} while (0)
+
+// 错误信息获取
+const char* ppdb_error_string(ppdb_error_t err);
+
+// 错误转换
+ppdb_error_t ppdb_system_error(void);
 ```
 
-### 4.2 内存优化
-1. 内联关键字段：
-   - 类型信息（4字节）
-   - 通用指针（8字节）
-   - 额外数据（8字节）
+### 4.2 统计信息优化
+```c
+// 原子更新宏
+#define PPDB_METRIC_INC(metric) \
+    atomic_fetch_add(&(metric), 1)
 
-2. 延迟分配：
-   - 统计信息
-   - 缓存数据
-   - 扩展字段
+#define PPDB_METRIC_ADD(metric, val) \
+    atomic_fetch_add(&(metric), (val))
 
-3. 字段复用：
-   - 使用union合并相似字段
-   - 复用指针和整数字段
-   - 对齐优化
+// 统计信息合并
+void ppdb_metrics_merge(ppdb_metrics_t* dst, const ppdb_metrics_t* src);
 
-### 4.3 性能优化
-1. 快速路径：
-   - 常用操作内联
-   - 类型特定优化
-   - 缓存友好设计
+// 统计信息快照
+void ppdb_metrics_snapshot(const ppdb_metrics_t* metrics, ppdb_metrics_t* snapshot);
+```
 
-2. 并发优化：
-   - 原子操作
-   - 细粒度锁
-   - 无锁数据结构
+### 4.3 内存优化
+1. 内联关键字段
+2. 延迟分配
+3. 字段复用
 
-3. IO优化：
-   - 批量操作
-   - 异步IO
-   - 预读/预写
+### 4.4 性能优化
+1. 快速路径优化
+2. 并发优化
+3. IO优化
 
 ## 5. 扩展性设计
 
@@ -189,136 +226,33 @@ typedef struct {
 ```
 
 ### 5.2 监控和分析
-```c
-typedef struct {
-    uint64_t ops_count;
-    uint64_t bytes_written;
-    uint64_t bytes_read;
-    uint64_t cache_hits;
-    uint64_t cache_misses;
-} ppdb_metrics_t;
-```
+- 完整的统计信息
+- 性能分析支持
+- 监控接口
 
-## 6. 内存使用总结
+## 6. 最新设计决策
 
-基础结构：
-- ppdb_node_t: 24字节
-- ppdb_base_t: 24字节
-- ppdb_storage_t: 32字节
-- ppdb_container_t: 40字节
-- ppdb_kvstore_t: 64字节
+1. 错误处理统一
+   - 使用 ppdb_error_t 替代 ppdb_status_t
+   - 统一错误码命名规范
+   - 添加错误信息转换功能
 
-优化效果：
-1. 紧凑的基础结构（24字节）
-2. 合理的内存对齐
-3. 高效的字段复用
-4. 按需的内存分配
+2. 统计信息增强
+   - 使用原子操作保证并发安全
+   - 分层统计信息收集
+   - 支持统计信息快照
 
-## 7. 后续优化方向
+3. 接口简化
+   - 移除冗余接口
+   - 统一接口命名
+   - 简化参数传递
 
-1. 编译期优化：
-   - 模板元编程
-   - 内联优化
-   - 常量折叠
+4. 性能优化
+   - 批量操作支持
+   - 异步操作接口
+   - 缓存优化
 
-2. 运行时优化：
-   - JIT编译
-   - 自适应优化
-   - 动态特化
-
-3. 内存优化：
-   - 内存池
-   - 对象缓存
-   - 零拷贝
-
-4. IO优化：
-   - 多级缓存
-   - 智能预取
-   - 压缩优化
-
-## 8. 文件变更计划
-
-### 8.1 文件结构
-```
-新增文件：
-include/ppdb/
-  ├─ base.h          // 核心定义：类型系统、接口、数据结构 (~400行)
-  └─ storage.h       // 存储接口：skiplist/memtable/sharded/kvstore (~300行)
-
-src/
-  ├─ base.c          // 基础功能实现 (~500行)
-  └─ storage.c       // 所有存储实现 (~800行)
-
-删除文件：
-include/ppdb/
-  ├─ skiplist.h      // 合并到 base.h 和 storage.h
-  ├─ memtable.h      // 合并到 base.h 和 storage.h
-  ├─ sharded.h       // 合并到 base.h 和 storage.h
-  └─ kvstore.h       // 合并到 base.h 和 storage.h
-
-src/
-  ├─ skiplist.c      // 合并到 storage.c
-  ├─ memtable.c      // 合并到 storage.c
-  ├─ sharded.c       // 合并到 storage.c
-  └─ kvstore.c       // 合并到 storage.c
-```
-
-### 8.2 代码分布
-
-1. base.h (~400行):
-   - 类型系统定义（type_t, header_t, node_t, base_t）
-   - 统一接口定义（ops_t, stats_t）
-   - 核心功能声明（init, get, put等）
-   - 工具函数声明
-
-2. storage.h (~300行):
-   - 存储配置定义
-   - 存储统计定义
-   - 各类型特化接口
-   - 工具函数声明
-
-3. base.c (~500行):
-   - 核心功能实现
-   - 内存管理实现
-   - 统计功能实现
-   - 工具函数实现
-
-4. storage.c (~800行):
-   - skiplist 实现
-   - memtable 实现
-   - sharded 实现
-   - kvstore 实现
-
-### 8.3 优化机会
-
-1. 代码重用：
-   - 统一的类型系统减少重复定义
-   - 共享的内存管理减少冗余代码
-   - 统一的错误处理简化代码
-
-2. 内联优化：
-   - 关键路径函数内联
-   - 小函数合并
-   - 分支优化
-
-3. 编译优化：
-   - 减少头文件依赖
-   - 优化包含关系
-   - 减少编译时间
-
-### 8.4 预期效果
-
-1. 代码量变化：
-   - 当前代码：~4000行
-   - 优化后：~2000行
-   - 减少约50%代码量
-
-2. 维护性提升：
-   - 文件数量从10个减少到4个
-   - 接口更统一清晰
-   - 实现更内聚
-
-3. 性能提升：
-   - 减少函数调用开销
-   - 提高缓存命中率
-   - 优化内存使用
+5. 可维护性提升
+   - 完善文档
+   - 统一代码风格
+   - 增加测试覆盖

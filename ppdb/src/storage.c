@@ -2,15 +2,15 @@
 #include "cosmopolitan.h"
 
 // Skiplist 实现
-static ppdb_status_t skiplist_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+static ppdb_error_t skiplist_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
     if (!base || !config) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
 
     // 分配头节点
     base->storage.head = calloc(1, sizeof(ppdb_node_t));
     if (!base->storage.head) {
-        return PPDB_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     // 初始化内存池
@@ -19,15 +19,18 @@ static ppdb_status_t skiplist_init(ppdb_base_t* base, const ppdb_storage_config_
     if (!base->storage.pool) {
         free(base->storage.head);
         base->storage.head = NULL;
-        return PPDB_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
+
+    // 初始化统计信息
+    memset(&base->storage.metrics, 0, sizeof(ppdb_metrics_t));
 
     return PPDB_OK;
 }
 
-static ppdb_status_t skiplist_destroy(ppdb_base_t* base) {
+static ppdb_error_t skiplist_destroy(ppdb_base_t* base) {
     if (!base) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
 
     // 释放头节点和内存池
@@ -43,9 +46,9 @@ static ppdb_status_t skiplist_destroy(ppdb_base_t* base) {
     return PPDB_OK;
 }
 
-static ppdb_status_t skiplist_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value) {
+static ppdb_error_t skiplist_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value) {
     if (!base || !key || !value || !base->storage.head) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
 
     ppdb_node_t* current = base->storage.head;
@@ -64,15 +67,17 @@ static ppdb_status_t skiplist_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb
     next = (ppdb_node_t*)((uintptr_t)current->ptr & ~0ULL);
     if (next && memcmp(&next->data, key, sizeof(ppdb_key_t)) == 0) {
         *value = *(ppdb_value_t*)next->extra;
+        atomic_fetch_add(&base->storage.metrics.get_hits, 1);
         return PPDB_OK;
     }
 
-    return PPDB_NOT_FOUND;
+    atomic_fetch_add(&base->storage.metrics.get_miss_count, 1);
+    return PPDB_ERR_NOT_FOUND;
 }
 
-static ppdb_status_t skiplist_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value) {
+static ppdb_error_t skiplist_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value) {
     if (!base || !key || !value || !base->storage.head || !base->storage.pool) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
 
     // 分配新节点
@@ -107,26 +112,28 @@ static ppdb_status_t skiplist_put(ppdb_base_t* base, const ppdb_key_t* key, cons
         }
     }
 
-    base->storage.stats.num_items++;
-    base->storage.stats.num_puts++;
-    base->storage.stats.num_bytes += key->size + value->size;
+    // 更新统计信息
+    atomic_fetch_add(&base->storage.metrics.put_count, 1);
+    atomic_fetch_add(&base->storage.metrics.total_bytes, key->size + value->size);
+    atomic_fetch_add(&base->storage.metrics.total_keys, 1);
+    atomic_fetch_add(&base->storage.metrics.total_values, 1);
 
     return PPDB_OK;
 }
 
 // Memtable 实现
-static ppdb_status_t memtable_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+static ppdb_error_t memtable_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
     if (!base || !config) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
     // 使用 skiplist 作为底层存储
     return skiplist_init(base, config);
 }
 
 // Sharded 实现
-static ppdb_status_t sharded_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+static ppdb_error_t sharded_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
     if (!base || !config) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
 
     // 创建分片数组
@@ -134,7 +141,7 @@ static ppdb_status_t sharded_init(ppdb_base_t* base, const ppdb_storage_config_t
     base->array.count = shard_count;
     base->array.ptrs = calloc(shard_count, sizeof(void*));
     if (!base->array.ptrs) {
-        return PPDB_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     // 初始化每个分片
@@ -149,7 +156,7 @@ static ppdb_status_t sharded_init(ppdb_base_t* base, const ppdb_storage_config_t
                 free(base->array.ptrs[j]);
             }
             free(base->array.ptrs);
-            return PPDB_NO_MEMORY;
+            return PPDB_ERR_OUT_OF_MEMORY;
         }
         if (skiplist_init(shard, &shard_config) != PPDB_OK) {
             free(shard);
@@ -158,7 +165,7 @@ static ppdb_status_t sharded_init(ppdb_base_t* base, const ppdb_storage_config_t
                 free(base->array.ptrs[j]);
             }
             free(base->array.ptrs);
-            return PPDB_ERROR;
+            return PPDB_ERR_INTERNAL;
         }
         base->array.ptrs[i] = shard;
     }
@@ -167,76 +174,80 @@ static ppdb_status_t sharded_init(ppdb_base_t* base, const ppdb_storage_config_t
 }
 
 // KVStore 实现
-static ppdb_status_t kvstore_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+static ppdb_error_t kvstore_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
     if (!base || !config) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
     // 使用 sharded memtable 作为存储引擎
     return sharded_init(base, config);
 }
 
 // 通用操作实现
-ppdb_status_t ppdb_storage_sync(ppdb_base_t* base) {
+ppdb_error_t ppdb_storage_sync(ppdb_base_t* base) {
     if (!base) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
     // TODO: 实现存储同步
     return PPDB_OK;
 }
 
-ppdb_status_t ppdb_storage_flush(ppdb_base_t* base) {
+ppdb_error_t ppdb_storage_flush(ppdb_base_t* base) {
     if (!base) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
     // TODO: 实现存储刷新
     return PPDB_OK;
 }
 
-ppdb_status_t ppdb_storage_compact(ppdb_base_t* base) {
+ppdb_error_t ppdb_storage_compact(ppdb_base_t* base) {
     if (!base) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
     // TODO: 实现存储压缩
     return PPDB_OK;
 }
 
-ppdb_status_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_storage_stats_t* stats) {
+ppdb_error_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_storage_stats_t* stats) {
     if (!base || !stats) {
-        return PPDB_INVALID_ARGUMENT;
+        return PPDB_ERR_INVALID_ARG;
     }
-    // TODO: 实现统计信息获取
+
+    // 复制基础统计信息
+    stats->base_metrics = base->storage.metrics;
+    
+    // TODO: 计算其他统计信息
     return PPDB_OK;
 }
 
 // 导出的创建函数
-ppdb_status_t ppdb_skiplist_create(ppdb_base_t* base, const ppdb_storage_config_t* config) {
-    ppdb_status_t status = ppdb_init(base, PPDB_TYPE_SKIPLIST);
-    if (status != PPDB_OK) {
-        return status;
+ppdb_error_t ppdb_skiplist_create(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+    if (!base) {
+        return PPDB_ERR_INVALID_ARG;
     }
+    base->header.type = PPDB_TYPE_SKIPLIST;
     return skiplist_init(base, config);
 }
 
-ppdb_status_t ppdb_memtable_create(ppdb_base_t* base, const ppdb_storage_config_t* config) {
-    ppdb_status_t status = ppdb_init(base, PPDB_TYPE_MEMTABLE);
-    if (status != PPDB_OK) {
-        return status;
+ppdb_error_t ppdb_memtable_create(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+    if (!base) {
+        return PPDB_ERR_INVALID_ARG;
     }
+    base->header.type = PPDB_TYPE_MEMTABLE;
     return memtable_init(base, config);
 }
 
-ppdb_status_t ppdb_sharded_create(ppdb_base_t* base, const ppdb_storage_config_t* config) {
-    ppdb_status_t status = ppdb_init(base, PPDB_TYPE_SHARDED);
-    if (status != PPDB_OK) {
-        return status;
+ppdb_error_t ppdb_sharded_create(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+    if (!base) {
+        return PPDB_ERR_INVALID_ARG;
     }
+    base->header.type = PPDB_TYPE_SHARDED;
     return sharded_init(base, config);
 }
 
-ppdb_status_t ppdb_kvstore_create(ppdb_base_t* base, const ppdb_storage_config_t* config) {
-    ppdb_status_t status = ppdb_init(base, PPDB_TYPE_KVSTORE);
-    if (status != PPDB_OK) {
-        return status;
+ppdb_error_t ppdb_kvstore_create(ppdb_base_t* base, const ppdb_storage_config_t* config) {
+    if (!base) {
+        return PPDB_ERR_INVALID_ARG;
     }
+    base->header.type = PPDB_TYPE_KVSTORE;
     return kvstore_init(base, config);
 }

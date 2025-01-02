@@ -52,7 +52,8 @@ typedef enum ppdb_error {
     PPDB_ERR_UNKNOWN,              // 未知错误
     PPDB_ERR_RETRY,                // 需要重试操作
     PPDB_ERR_SYNC_RETRY_FAILED,    // 同步重试失败
-    PPDB_ERR_INVALID_PARAM         // 无效的参数
+    PPDB_ERR_INVALID_PARAM,        // 无效的参数
+    PPDB_ERR_NOT_SUPPORTED         // 不支持的操作
 } ppdb_error_t;
 
 // 错误码转字符串
