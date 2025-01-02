@@ -30,6 +30,12 @@ if "%TEST_TYPE%"=="rebuild" (
     exit /b 0
 )
 
+rem ===== 构建基础设施 =====
+if "%TEST_TYPE%"=="base" (
+    call :build_base_storage
+    exit /b 0
+)
+
 rem ===== 检查环境 =====
 call :check_runtime_files
 if errorlevel 1 exit /b 1
@@ -445,6 +451,16 @@ rem ===== 辅助函数 =====
     echo.
     exit /b 0 
 
+:build_base_storage
+    echo Building base and storage...
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        -I"%PPDB_DIR%\include" ^
+        -o "%BUILD_DIR%\base_test.exe"
+    if errorlevel 1 exit /b 1
+    goto :eof
+
 :help
 @echo Usage: build.bat [target]
 @echo Available targets:
@@ -480,4 +496,5 @@ if "%1"=="kvstore" goto build_kvstore
 if "%1"=="wal_core" goto build_wal_core
 if "%1"=="wal_func" goto build_wal_func
 if "%1"=="wal_advanced" goto build_wal_advanced
+if "%1"=="base" goto build_base_storage
 goto show_help 
