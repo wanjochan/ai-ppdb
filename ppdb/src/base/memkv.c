@@ -6,7 +6,7 @@
 typedef struct {
     ppdb_memkv_config_t config;
     ppdb_memkv_status_t status;
-    ppdb_base_t* base;
+    ppdb_base_t base;  // 改为直接存储而不是指针
 } ppdb_memkv_t;
 
 // 创建实例
@@ -38,7 +38,7 @@ ppdb_status_t ppdb_memkv_create(ppdb_base_t** base, const ppdb_memkv_config_t* c
         return status;
     }
 
-    *base = kv->base;
+    *base = &kv->base;
     return PPDB_OK;
 }
 

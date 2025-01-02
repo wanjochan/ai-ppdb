@@ -7,6 +7,7 @@
  *    - 互斥锁 (PPDB_SYNC_MUTEX)：基于原子操作，适用于普通的互斥场景
  *    - 自旋锁 (PPDB_SYNC_SPINLOCK)：基于自旋，适用于短期锁定场景
  *    - 读写锁 (PPDB_SYNC_RWLOCK)：支持读写分离，适用于读多写少场景
+ *    - 共享锁 (PPDB_SYNC_SHARED)：新增的共享锁模式
  * 
  * 2. 高级特性：
  *    - 无锁操作：支持 CAS 和原子操作
@@ -17,6 +18,8 @@
  *    - 同步模式选择
  *    - 重试参数设置
  *    - 性能参数优化
+ *    - 最大读者数量限制
+ *    - 公平调度标志
  * 
  * 4. 计划中的特性：
  *    - 分片优化：通过哈希分片减少锁竞争（开发中）
@@ -67,6 +70,7 @@ typedef enum {
     PPDB_SYNC_MUTEX = 0,  // 互斥锁
     PPDB_SYNC_SPINLOCK,   // 自旋锁
     PPDB_SYNC_RWLOCK,     // 读写锁
+    PPDB_SYNC_SHARED      // 新增：共享锁模式
 } ppdb_sync_type_t;
 
 // 默认配置
@@ -78,7 +82,9 @@ typedef enum {
     .backoff_us = 1,              \
     .enable_ref_count = false,    \
     .retry_count = 100,           \
-    .retry_delay_us = 1           \
+    .retry_delay_us = 1,          \
+    .max_readers = 32,            \
+    .enable_fairness = true       \
 }
 
 /**
@@ -111,6 +117,8 @@ typedef struct {
     bool enable_ref_count;        ///< 是否启用引用计数
     uint32_t retry_count;         ///< 重试次数
     uint32_t retry_delay_us;      ///< 重试间隔（微秒）
+    uint32_t max_readers;         ///< 新增：最大读者数量限制
+    bool enable_fairness;         ///< 新增：是否启用公平调度
 } ppdb_sync_config_t;
 
 // 同步原语结构
@@ -123,19 +131,31 @@ struct ppdb_sync {
         struct {
             atomic_int readers;    // 读者计数
             atomic_flag writer;    // 写者标志
+            atomic_int waiting_writers; // 等待的写者数量
+            atomic_int waiting_readers; // 等待的读者数量
+            atomic_uint atomic_lock;   // 无锁模式的原子锁
         } rwlock;                  // 读写锁
     };
-    int spin_count;           // 自旋次数
-    int backoff_us;          // 退避时间(微秒)
-    bool enable_ref_count;   // 是否启用引用计数
-    atomic_int ref_count;    // 引用计数
+    atomic_int ref_count;      // 引用计数
+    
+    // 配置参数
+    uint32_t spin_count;      // 自旋次数
+    uint32_t backoff_us;      // 退避时间(微秒)
+    bool enable_ref_count;    // 是否启用引用计数
+    uint32_t max_readers;     // 最大读者数量限制
+    bool enable_fairness;     // 公平调度标志
+    atomic_int total_waiters; // 总等待者计数
+    atomic_flag is_contended; // 竞争状态标志
 };
 
 typedef struct ppdb_sync ppdb_sync_t;
 
-// 同步原语接口
+// 基本同步操作
+ppdb_sync_t* ppdb_sync_create(void);
 ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, const ppdb_sync_config_t* config);
 ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync);
+
+// 锁操作
 ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync);
@@ -147,7 +167,27 @@ ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_read_lock_shared(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_read_unlock_shared(ppdb_sync_t* sync);
 
-// 哈希函数声明
+// 无锁操作
+ppdb_error_t ppdb_sync_lockfree_put(ppdb_sync_t* sync,
+                                   void* key,
+                                   size_t key_len,
+                                   void* value,
+                                   size_t value_len,
+                                   ppdb_sync_config_t* config);
+
+ppdb_error_t ppdb_sync_lockfree_get(ppdb_sync_t* sync,
+                                   void* key,
+                                   size_t key_len,
+                                   void** value,
+                                   size_t* value_len,
+                                   ppdb_sync_config_t* config);
+
+ppdb_error_t ppdb_sync_lockfree_delete(ppdb_sync_t* sync,
+                                      void* key,
+                                      size_t key_len,
+                                      ppdb_sync_config_t* config);
+
+// 工具函数
 uint32_t ppdb_sync_hash(const void* data, size_t len);
 
 #endif  // PPDB_SYNC_H_ 

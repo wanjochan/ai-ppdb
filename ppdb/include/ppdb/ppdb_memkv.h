@@ -1,7 +1,7 @@
 #ifndef PPDB_MEMKV_H_
 #define PPDB_MEMKV_H_
 
-#include <cosmopolitan.h>
+#include "cosmopolitan.h"
 #include "ppdb/base.h"
 #include "ppdb/storage.h"
 

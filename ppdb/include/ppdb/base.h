@@ -1,21 +1,71 @@
 #ifndef PPDB_BASE_H_
 #define PPDB_BASE_H_
 
-#include <cosmopolitan.h>
-//#include "ppdb/common.h"
+#include "cosmopolitan.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+// 基础类型定义
+typedef struct {
+    uint8_t* data;
+    size_t size;
+} ppdb_key_t;
+
+typedef struct {
+    uint8_t* data;
+    size_t size;
+} ppdb_value_t;
+
+typedef enum {
+    PPDB_OK = 0,
+    PPDB_ERROR = 1,
+    PPDB_NOT_FOUND = 2,
+    PPDB_INVALID_ARGUMENT = 3,
+    PPDB_NOT_SUPPORTED = 4,
+    PPDB_NO_MEMORY = 5
+} ppdb_status_t;
+
 // 类型标记
 typedef enum {
     PPDB_TYPE_SKIPLIST = 1,    // 基础跳表
     PPDB_TYPE_MEMTABLE = 2,    // 内存表
-    PPDB_TYPE_SHARDED = 4,     // 分片表
-    PPDB_TYPE_WAL = 8,         // 预写日志
-    PPDB_TYPE_SSTABLE = 16     // 有序表
+    PPDB_TYPE_SHARDED = 3,     // 分片存储
+    PPDB_TYPE_SSTABLE = 4,     // SSTable
+    PPDB_TYPE_KVSTORE = 5      // KV存储
 } ppdb_type_t;
+
+// 节点类型定义
+typedef struct ppdb_node {
+    uint64_t data;         // 键
+    void* extra;           // 值
+    void* ptr;            // 指向下一个节点
+} ppdb_node_t;
+
+// 存储统计
+typedef struct {
+    uint64_t num_items;
+    uint64_t num_bytes;
+    uint64_t num_gets;
+    uint64_t num_puts;
+    uint64_t num_deletes;
+} ppdb_stats_t;
+
+// 存储结构
+typedef struct {
+    ppdb_node_t* head;    // 头节点
+    void* pool;          // 内存池
+    size_t pool_size;    // 内存池大小
+    ppdb_stats_t stats;  // 统计信息
+} ppdb_storage_t;
+
+// 基础结构
+typedef struct {
+    ppdb_type_t type;
+    ppdb_storage_t storage;
+    void* user_data;
+} ppdb_base_t;
 
 // 头部信息（4字节）
 typedef struct {
@@ -80,19 +130,14 @@ typedef struct {
     uint64_t total_size;
 } ppdb_stats_t;
 
-// 初始化函数
+// 初始化和销毁
 ppdb_status_t ppdb_init(ppdb_base_t* base, ppdb_type_t type);
+void ppdb_destroy(ppdb_base_t* base);
 
-// 核心操作函数
-ppdb_status_t ppdb_get(void* impl, const ppdb_key_t* key, ppdb_value_t* value);
-ppdb_status_t ppdb_put(void* impl, const ppdb_key_t* key, const ppdb_value_t* value);
-ppdb_status_t ppdb_remove(void* impl, const ppdb_key_t* key);
-ppdb_status_t ppdb_clear(void* impl);
-
-// 工具函数
-void* ppdb_get_extra(ppdb_node_t* node);
-uint32_t ppdb_get_type(const ppdb_base_t* base);
-void ppdb_stats_update(ppdb_stats_t* stats, ppdb_status_t status);
+// 基本操作
+ppdb_status_t ppdb_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value);
+ppdb_status_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value);
+ppdb_status_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key);
 
 #ifdef __cplusplus
 }

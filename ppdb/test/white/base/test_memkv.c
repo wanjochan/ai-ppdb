@@ -1,7 +1,10 @@
-#include "test/white/base/test_memkv.h"
+#include "../base/test_memkv.h"
+
+// 全局变量
+bool test_failed = false;
 
 // 基本测试用例
-void test_memkv_create(void) {
+int test_memkv_create(void) {
     ppdb_memkv_config_t config = {
         .memory_limit = 1024 * 1024,  // 1MB
         .shard_count = 16,
@@ -15,10 +18,11 @@ void test_memkv_create(void) {
     ASSERT_TRUE(status == PPDB_OK);
     ASSERT_TRUE(base != NULL);
 
-    ppdb_memkv_destroy(base);
+    ppdb_destroy(base);
+    return 0;
 }
 
-void test_memkv_basic_ops(void) {
+int test_memkv_basic_ops(void) {
     ppdb_memkv_config_t config = {
         .memory_limit = 1024 * 1024,
         .shard_count = 16,
@@ -44,30 +48,31 @@ void test_memkv_basic_ops(void) {
     };
 
     // Put
-    status = ppdb_memkv_put(base, &key, &value);
+    status = ppdb_put(base, &key, &value);
     ASSERT_TRUE(status == PPDB_OK);
 
     // Get
     ppdb_value_t get_value = {0};
-    status = ppdb_memkv_get(base, &key, &get_value);
+    status = ppdb_get(base, &key, &get_value);
     ASSERT_TRUE(status == PPDB_OK);
     ASSERT_TRUE(get_value.size == value.size);
     ASSERT_TRUE(memcmp(get_value.data, value.data, value.size) == 0);
 
-    // Delete
-    status = ppdb_memkv_delete(base, &key);
+    // Remove
+    status = ppdb_remove(base, &key);
     ASSERT_TRUE(status == PPDB_OK);
 
-    // Get after delete
-    status = ppdb_memkv_get(base, &key, &get_value);
+    // Get again (should fail)
+    status = ppdb_get(base, &key, &get_value);
     ASSERT_TRUE(status == PPDB_NOT_FOUND);
 
-    ppdb_memkv_destroy(base);
+    ppdb_destroy(base);
+    return 0;
 }
 
 // 运行所有测试
-void run_memkv_tests(void) {
+int run_memkv_tests(void) {
     RUN_TEST(test_memkv_create);
     RUN_TEST(test_memkv_basic_ops);
-    // TODO: 添加更多测试用例
+    return 0;
 }

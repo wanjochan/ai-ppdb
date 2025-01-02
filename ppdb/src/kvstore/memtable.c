@@ -50,14 +50,17 @@ ppdb_error_t ppdb_memtable_put(ppdb_memtable_t* table,
         return PPDB_ERR_INVALID_PARAM;
     }
     
-    ppdb_error_t err = ppdb_sync_write_lock(&table->basic->sync);
-    if (err != PPDB_OK) {
-        return err;
+    // 根据表类型选择不同的实现
+    switch (table->type) {
+        case PPDB_MEMTABLE_BASIC:
+            return ppdb_memtable_put_basic(table, key, key_len, value, value_len);
+        case PPDB_MEMTABLE_SHARDED:
+            return ppdb_memtable_put_sharded_basic(table, key, key_len, value, value_len);
+        case PPDB_MEMTABLE_LOCKFREE:
+            return ppdb_memtable_put_lockfree(table, key, key_len, value, value_len);
+        default:
+            return PPDB_ERR_INVALID_TYPE;
     }
-    
-    err = ppdb_memtable_put_basic(table, key, key_len, value, value_len);
-    ppdb_sync_write_unlock(&table->basic->sync);
-    return err;
 }
 
 ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
@@ -67,14 +70,17 @@ ppdb_error_t ppdb_memtable_get(ppdb_memtable_t* table,
         return PPDB_ERR_INVALID_PARAM;
     }
     
-    ppdb_error_t err = ppdb_sync_write_lock(&table->basic->sync);
-    if (err != PPDB_OK) {
-        return err;
+    // 根据表类型选择不同的实现
+    switch (table->type) {
+        case PPDB_MEMTABLE_BASIC:
+            return ppdb_memtable_get_basic(table, key, key_len, value, value_len);
+        case PPDB_MEMTABLE_SHARDED:
+            return ppdb_memtable_get_sharded_basic(table, key, key_len, value, value_len);
+        case PPDB_MEMTABLE_LOCKFREE:
+            return ppdb_memtable_get_lockfree(table, key, key_len, value, value_len);
+        default:
+            return PPDB_ERR_INVALID_TYPE;
     }
-    
-    err = ppdb_memtable_get_basic(table, key, key_len, value, value_len);
-    ppdb_sync_write_unlock(&table->basic->sync);
-    return err;
 }
 
 ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
@@ -83,14 +89,17 @@ ppdb_error_t ppdb_memtable_delete(ppdb_memtable_t* table,
         return PPDB_ERR_INVALID_PARAM;
     }
     
-    ppdb_error_t err = ppdb_sync_write_lock(&table->basic->sync);
-    if (err != PPDB_OK) {
-        return err;
+    // 根据表类型选择不同的实现
+    switch (table->type) {
+        case PPDB_MEMTABLE_BASIC:
+            return ppdb_memtable_delete_basic(table, key, key_len);
+        case PPDB_MEMTABLE_SHARDED:
+            return ppdb_memtable_delete_sharded_basic(table, key, key_len);
+        case PPDB_MEMTABLE_LOCKFREE:
+            return ppdb_memtable_delete_lockfree(table, key, key_len);
+        default:
+            return PPDB_ERR_INVALID_TYPE;
     }
-    
-    err = ppdb_memtable_delete_basic(table, key, key_len);
-    ppdb_sync_write_unlock(&table->basic->sync);
-    return err;
 }
 
 size_t ppdb_memtable_size(ppdb_memtable_t* table) {
@@ -711,36 +720,170 @@ ppdb_error_t ppdb_memtable_create_lockfree(size_t size_limit, ppdb_memtable_t** 
         return PPDB_ERR_INVALID_PARAM;
     }
 
-    ppdb_memtable_t* new_table = (ppdb_memtable_t*)malloc(sizeof(ppdb_memtable_t));
+    // 如果没有指定大小限制，使用默认值
+    if (size_limit == 0) {
+        size_limit = 1024 * 1024 * 1024; // 1GB
+    }
+
+    // 分配内存表结构
+    ppdb_memtable_t* new_table = calloc(1, sizeof(ppdb_memtable_t));
     if (!new_table) {
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
-    // 初始化基本内存表
-    ppdb_error_t err = ppdb_memtable_create_basic(size_limit, table);
-    if (err != PPDB_OK) {
+    // 分配基础内存表结构
+    new_table->basic = calloc(1, sizeof(ppdb_memtable_basic_t));
+    if (!new_table->basic) {
         free(new_table);
-        return err;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
 
-    // 配置无锁模式
+    // 初始化基础结构
+    new_table->type = PPDB_MEMTABLE_LOCKFREE;
+    new_table->size_limit = size_limit;
+    atomic_init(&new_table->current_size, 0);
+    new_table->shard_count = 1;
+    new_table->is_immutable = false;
+
+    // 初始化基础内存表
+    new_table->basic->skiplist = NULL;
+    new_table->basic->used = 0;
+    new_table->basic->size = size_limit;
+
+    // 初始化性能指标
+    atomic_init(&new_table->metrics.put_count, 0);
+    atomic_init(&new_table->metrics.get_count, 0);
+    atomic_init(&new_table->metrics.delete_count, 0);
+    atomic_init(&new_table->metrics.total_ops, 0);
+    atomic_init(&new_table->metrics.total_latency, 0);
+    atomic_init(&new_table->metrics.total_latency_us, 0);
+    atomic_init(&new_table->metrics.max_latency_us, 0);
+    atomic_init(&new_table->metrics.min_latency_us, UINT64_MAX);
+    atomic_init(&new_table->metrics.total_bytes, 0);
+    atomic_init(&new_table->metrics.total_keys, 0);
+    atomic_init(&new_table->metrics.total_values, 0);
+    atomic_init(&new_table->metrics.bytes_written, 0);
+    atomic_init(&new_table->metrics.bytes_read, 0);
+    atomic_init(&new_table->metrics.get_miss_count, 0);
+
+    // 配置无锁同步原语
     ppdb_sync_config_t sync_config = {
         .type = PPDB_SYNC_MUTEX,
         .use_lockfree = true,
         .stripe_count = 0,
-        .spin_count = 1000,
-        .backoff_us = 100,
+        .spin_count = 10000,  // 增加自旋次数
+        .backoff_us = 10,     // 减少回退时间
         .enable_ref_count = false,
-        .retry_count = 3,
-        .retry_delay_us = 1000
+        .retry_count = 10,    // 增加重试次数
+        .retry_delay_us = 100 // 减少重试延迟
     };
 
     // 初始化同步原语
-    err = ppdb_sync_init(&(*table)->basic->sync, &sync_config);
+    ppdb_error_t err = ppdb_sync_init(&new_table->basic->sync, &sync_config);
     if (err != PPDB_OK) {
-        ppdb_memtable_destroy_basic(*table);
+        free(new_table->basic);
+        free(new_table);
         return err;
     }
 
+    // 创建跳表
+    ppdb_skiplist_t* skiplist = NULL;
+    if ((err = ppdb_skiplist_create(&skiplist,
+                             PPDB_SKIPLIST_MAX_LEVEL,
+                             ppdb_skiplist_default_compare,
+                             &sync_config)) != PPDB_OK) {
+        ppdb_sync_destroy(&new_table->basic->sync);
+        free(new_table->basic);
+        free(new_table);
+        return err;
+    }
+    new_table->basic->skiplist = skiplist;
+
+    *table = new_table;
     return PPDB_OK;
+}
+
+// 无锁内存表操作实现
+ppdb_error_t ppdb_memtable_put_lockfree(ppdb_memtable_t* table,
+                                       const void* key, size_t key_len,
+                                       const void* value, size_t value_len) {
+    if (!table || !table->basic || !key || !value) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0 || value_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+    if (table->is_immutable) {
+        return PPDB_ERR_IMMUTABLE;
+    }
+
+    // 计算所需总空间
+    size_t total_size = key_len + value_len + PPDB_SKIPLIST_NODE_SIZE;
+    
+    // 检查是否超过大小限制
+    size_t current = atomic_load(&table->current_size);
+    if (current + total_size > table->size_limit) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 写入键值对
+    ppdb_error_t err = ppdb_skiplist_put(table->basic->skiplist,
+                                        key, key_len,
+                                        value, value_len);
+    if (err == PPDB_OK) {
+        atomic_fetch_add(&table->current_size, total_size);
+        atomic_fetch_add(&table->metrics.put_count, 1);
+        atomic_fetch_add(&table->metrics.bytes_written, total_size);
+    }
+
+    return err;
+}
+
+ppdb_error_t ppdb_memtable_get_lockfree(ppdb_memtable_t* table,
+                                       const void* key, size_t key_len,
+                                       void** value, size_t* value_len) {
+    if (!table || !table->basic || !key || !value || !value_len) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+
+    // 读取键值对
+    ppdb_error_t err = ppdb_skiplist_get(table->basic->skiplist,
+                                        key, key_len,
+                                        value, value_len);
+    
+    if (err == PPDB_OK) {
+        atomic_fetch_add(&table->metrics.get_count, 1);
+        atomic_fetch_add(&table->metrics.bytes_read, *value_len);
+    } else if (err == PPDB_ERR_NOT_FOUND) {
+        atomic_fetch_add(&table->metrics.get_miss_count, 1);
+    }
+
+    return err;
+}
+
+ppdb_error_t ppdb_memtable_delete_lockfree(ppdb_memtable_t* table,
+                                          const void* key, size_t key_len) {
+    if (!table || !table->basic || !key) {
+        return PPDB_ERR_NULL_POINTER;
+    }
+    if (key_len == 0) {
+        return PPDB_ERR_INVALID_ARG;
+    }
+    if (table->is_immutable) {
+        return PPDB_ERR_IMMUTABLE;
+    }
+
+    // 删除键值对
+    ppdb_error_t err = ppdb_skiplist_delete(table->basic->skiplist,
+                                           key, key_len);
+    if (err == PPDB_OK) {
+        size_t node_size = key_len + PPDB_SKIPLIST_NODE_SIZE;
+        atomic_fetch_sub(&table->current_size, node_size);
+        atomic_fetch_add(&table->metrics.delete_count, 1);
+    }
+
+    return err;
 }

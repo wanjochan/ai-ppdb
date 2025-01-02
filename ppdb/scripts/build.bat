@@ -340,6 +340,7 @@ rem ===== 辅助函数 =====
         "%PPDB_DIR%\src\kvstore\skiplist.c" ^
         "%PPDB_DIR%\src\sync\sync.c" ^
         "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_lockfree_test.exe.dbg"
@@ -455,12 +456,27 @@ rem ===== 辅助函数 =====
 :build_base_storage
     echo Building base and storage...
     "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\base.c" ^
-        "%PPDB_DIR%\src\storage.c" ^
+        -I"%PPDB_DIR%" ^
         -I"%PPDB_DIR%\include" ^
-        -o "%BUILD_DIR%\base_test.exe"
+        -I"%PPDB_DIR%\src" ^
+        -I"%COSMO%" ^
+        -include "%COSMO%\cosmopolitan.h" ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\base\memkv.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\src\kvstore\memtable.c" ^
+        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
+        "%PPDB_DIR%\src\sync\sync.c" ^
+        "%PPDB_DIR%\src\common\logger.c" ^
+        "%PPDB_DIR%\src\common\error.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\base\test_memkv.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\base_test.exe.dbg"
     if errorlevel 1 exit /b 1
-    goto :eof
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\base_test.exe.dbg" "%BUILD_DIR%\base_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\base_test.exe"
+    exit /b 0
 
 :help
 @echo Usage: build.bat [target]

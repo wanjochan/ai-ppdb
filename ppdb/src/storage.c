@@ -1,6 +1,5 @@
 #include "ppdb/storage.h"
-#include <stdlib.h>
-#include <string.h>
+#include "cosmopolitan.h"
 
 // Skiplist 实现
 static ppdb_status_t skiplist_init(ppdb_base_t* base, const ppdb_storage_config_t* config) {
@@ -81,7 +80,7 @@ static ppdb_status_t skiplist_put(ppdb_base_t* base, const ppdb_key_t* key, cons
     base->storage.pool = (char*)base->storage.pool + sizeof(ppdb_node_t);
 
     // 初始化节点
-    new_node->data = *key;
+    memcpy(&new_node->data, key->data, sizeof(uint64_t));  // 假设键是 8 字节
     new_node->extra = base->storage.pool;
     base->storage.pool = (char*)base->storage.pool + sizeof(ppdb_value_t);
     *(ppdb_value_t*)new_node->extra = *value;
@@ -91,22 +90,26 @@ static ppdb_status_t skiplist_put(ppdb_base_t* base, const ppdb_key_t* key, cons
     uint32_t random = 0;
     while ((random & 1) == 0 && level < 31) {
         level++;
-        random = random >> 1 | (uint32_t)__builtin_ia32_rdrand32_step(&random);
+        random = (random >> 1) | (random << 31);  // 简单的随机数生成
     }
 
     // 从最高层开始插入
     ppdb_node_t* current = base->storage.head;
     for (int i = 31; i >= 0; i--) {
         ppdb_node_t* next = (ppdb_node_t*)((uintptr_t)current->ptr & ~((1ULL << i) - 1));
-        while (next && memcmp(&next->data, key, sizeof(ppdb_key_t)) < 0) {
+        while (next && memcmp(&next->data, key->data, sizeof(uint64_t)) < 0) {
             current = next;
-            next = (ppdb_node_t*)((uintptr_t)current->ptr & ~((1ULL << i) - 1));
+            next = (ppdb_node_t*)((uintptr_t)next->ptr & ~((1ULL << i) - 1));
         }
         if (i <= level) {
             new_node->ptr = (void*)((uintptr_t)next | ((1ULL << i) - 1));
             current->ptr = (void*)((uintptr_t)new_node | ((1ULL << i) - 1));
         }
     }
+
+    base->storage.stats.num_items++;
+    base->storage.stats.num_puts++;
+    base->storage.stats.num_bytes += key->size + value->size;
 
     return PPDB_OK;
 }
