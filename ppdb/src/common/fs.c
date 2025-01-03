@@ -1,8 +1,5 @@
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_fs.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_logger.h"
+#include "ppdb/ppdb.h"
 
 // 目录操作
 bool ppdb_fs_dir_exists(const char* path) {

@@ -1,3 +1,4 @@
+#include "cosmopolitan.h"
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -5,8 +6,8 @@
 #include <sys/resource.h>
 #include "test_framework.h"
 #include "test_plan.h"
-#include "ppdb/kvstore.h"
-#include "ppdb/logger.h"
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_sync.h"
 
 #define TEST_DIR "./tmp_test_resource"
 #define NUM_THREADS 4

@@ -1,7 +1,6 @@
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_kvstore.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_sync.h"
 #include "kvstore/internal/kvstore_wal.h"
 #include "kvstore/internal/kvstore_wal_types.h"
 #include "test/white/test_framework.h"

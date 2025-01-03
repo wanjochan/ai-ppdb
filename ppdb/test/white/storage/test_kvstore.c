@@ -7,14 +7,11 @@
 
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
+#include "ppdb/ppdb.h"
 #include "kvstore/internal/kvstore_internal.h"
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_sharded_memtable.h"
 #include "kvstore/internal/kvstore_wal.h"
-#include "ppdb/ppdb_logger.h"
 
 // 测试配置
 #define NUM_SHARDS 8

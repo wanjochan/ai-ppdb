@@ -1,5 +1,5 @@
 #include "ppdb/storage.h"
-#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb.h"
 #include "ppdb/ppdb_types.h"
 #include "ppdb/sync.h"
 #include <cosmopolitan.h>

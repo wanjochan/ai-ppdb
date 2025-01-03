@@ -1,27 +1,24 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
-#include "kvstore/internal/kvstore_memtable.h"
+#include "ppdb/ppdb.h"
 
 // 测试空键
 static void test_empty_key(void) {
     printf("Testing Empty Key...\n");
     
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(1024, &table);
-    printf("  Create MemTable: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    memtable_t* table = NULL;
+    error_t err = memtable_create(1024, &table);
+    printf("  Create MemTable: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 尝试插入空键
     const uint8_t key[] = "";
     const uint8_t value[] = "test_value";
-    err = ppdb_memtable_put(table, key, 0, value, sizeof(value));
-    printf("  Put empty key: %s\n", err == PPDB_ERR_INVALID_ARGUMENT ? "Correctly rejected" : "Incorrectly accepted");
-    assert(err == PPDB_ERR_INVALID_ARGUMENT);
+    err = memtable_put(table, key, 0, value, sizeof(value));
+    printf("  Put empty key: %s\n", err == INVALID_ARGUMENT ? "Correctly rejected" : "Incorrectly accepted");
+    assert(err == INVALID_ARGUMENT);
 
-    ppdb_memtable_destroy(table);
+    memtable_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -30,26 +27,26 @@ static void test_empty_key(void) {
 static void test_empty_value(void) {
     printf("Testing Empty Value...\n");
     
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(1024, &table);
-    printf("  Create MemTable: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    memtable_t* table = NULL;
+    error_t err = memtable_create(1024, &table);
+    printf("  Create MemTable: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 插入空值
     const uint8_t key[] = "test_key";
-    err = ppdb_memtable_put(table, key, sizeof(key), NULL, 0);
-    printf("  Put empty value: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    err = memtable_put(table, key, sizeof(key), NULL, 0);
+    printf("  Put empty value: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 验证空值
     uint8_t buf[256];
     size_t buf_len = sizeof(buf);
-    err = ppdb_memtable_get(table, key, sizeof(key), buf, &buf_len);
-    printf("  Get empty value: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    err = memtable_get(table, key, sizeof(key), buf, &buf_len);
+    printf("  Get empty value: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
     assert(buf_len == 0);
 
-    ppdb_memtable_destroy(table);
+    memtable_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -58,10 +55,10 @@ static void test_empty_value(void) {
 static void test_max_key_length(void) {
     printf("Testing Maximum Key Length...\n");
     
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(1024 * 1024, &table);  // 1MB
-    printf("  Create MemTable: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    memtable_t* table = NULL;
+    error_t err = memtable_create(1024 * 1024, &table);  // 1MB
+    printf("  Create MemTable: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 创建一个大键
     size_t key_size = 1024;  // 1KB 键
@@ -72,21 +69,21 @@ static void test_max_key_length(void) {
 
     // 尝试插入大键
     const uint8_t value[] = "test_value";
-    err = ppdb_memtable_put(table, key, key_size, value, sizeof(value));
-    printf("  Put large key (size=%zu): %s\n", key_size, err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    err = memtable_put(table, key, key_size, value, sizeof(value));
+    printf("  Put large key (size=%zu): %s\n", key_size, err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 验证大键
     uint8_t buf[1024];
     size_t buf_len = sizeof(buf);
-    err = ppdb_memtable_get(table, key, key_size, buf, &buf_len);
-    printf("  Get large key: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    err = memtable_get(table, key, key_size, buf, &buf_len);
+    printf("  Get large key: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
     assert(buf_len == sizeof(value));
     assert(memcmp(buf, value, buf_len) == 0);
 
     free(key);
-    ppdb_memtable_destroy(table);
+    memtable_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -95,10 +92,10 @@ static void test_max_key_length(void) {
 static void test_max_value_length(void) {
     printf("Testing Maximum Value Length...\n");
     
-    ppdb_memtable_t* table = NULL;
-    ppdb_error_t err = ppdb_memtable_create(1024 * 1024, &table);  // 1MB
-    printf("  Create MemTable: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    memtable_t* table = NULL;
+    error_t err = memtable_create(1024 * 1024, &table);  // 1MB
+    printf("  Create MemTable: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 创建一个大值
     size_t value_size = 100 * 1024;  // 100KB 值
@@ -109,29 +106,29 @@ static void test_max_value_length(void) {
 
     // 尝试插入大值
     const uint8_t key[] = "test_key";
-    err = ppdb_memtable_put(table, key, sizeof(key), value, value_size);
-    printf("  Put large value (size=%zu): %s\n", value_size, err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    err = memtable_put(table, key, sizeof(key), value, value_size);
+    printf("  Put large value (size=%zu): %s\n", value_size, err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 验证大值
     uint8_t* buf = malloc(value_size);
     assert(buf != NULL);
     size_t buf_len = value_size;
-    err = ppdb_memtable_get(table, key, sizeof(key), buf, &buf_len);
-    printf("  Get large value: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    err = memtable_get(table, key, sizeof(key), buf, &buf_len);
+    printf("  Get large value: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
     assert(buf_len == value_size);
     assert(memcmp(buf, value, buf_len) == 0);
 
     free(value);
     free(buf);
-    ppdb_memtable_destroy(table);
+    memtable_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
 
 #include "test_framework.h"
-#include "ppdb/ppdb_kvstore.h"
+#include "ppdb/ppdb.h"
 #include "kvstore/internal/kvstore_internal.h"
 
 #define LARGE_KEY_SIZE (16 * 1024)    // 16KB key
@@ -140,16 +137,16 @@ static void test_max_value_length(void) {
 
 // 内存满测试
 static int test_edge_memory_full(void) {
-    ppdb_kvstore_t* store = NULL;
+    kvstore_t* store = NULL;
     int err;
 
     // 创建一个内存限制较小的 KVStore
-    ppdb_config_t config = {
+    config_t config = {
         .memtable_size = 1024 * 1024,  // 1MB
         .enable_wal = false            // 禁用WAL以便测试纯内存表行为
     };
 
-    err = ppdb_kvstore_create(&store, &config);
+    err = kvstore_create(&store, &config);
     TEST_ASSERT_OK(err, "Failed to create kvstore");
     TEST_ASSERT_NOT_NULL(store, "KVStore is null");
 
@@ -164,13 +161,13 @@ static int test_edge_memory_full(void) {
     int i = 0;
     while (1) {
         snprintf(key, sizeof(key), "large_key_%d", i++);
-        err = ppdb_kvstore_put(store, key, strlen(key), large_value, LARGE_VALUE_SIZE);
+        err = kvstore_put(store, key, strlen(key), large_value, LARGE_VALUE_SIZE);
         
-        if (err == PPDB_MEMTABLE_FULL) {
+        if (err == MEMTABLE_FULL) {
             // 预期的错误，测试通过
             break;
-        } else if (err != PPDB_OK) {
-            TEST_ASSERT(0, "Unexpected error: %s", ppdb_error_string(err));
+        } else if (err != OK) {
+            TEST_ASSERT(0, "Unexpected error: %s", error_string(err));
             break;
         }
 
@@ -184,21 +181,21 @@ static int test_edge_memory_full(void) {
     // 验证读取仍然工作
     char value[LARGE_VALUE_SIZE];
     snprintf(key, sizeof(key), "large_key_0");
-    err = ppdb_kvstore_get(store, key, strlen(key), value, sizeof(value));
+    err = kvstore_get(store, key, strlen(key), value, sizeof(value));
     TEST_ASSERT_OK(err, "Failed to read after memtable full");
     TEST_ASSERT(strcmp(value, large_value) == 0, "Data corruption detected");
 
     free(large_value);
-    ppdb_kvstore_destroy(store);
+    kvstore_destroy(store);
     return 0;
 }
 
 // 大键值测试
 static int test_edge_large_keys(void) {
-    ppdb_kvstore_t* store = NULL;
+    kvstore_t* store = NULL;
     int err;
 
-    err = ppdb_kvstore_create(&store, NULL);
+    err = kvstore_create(&store, NULL);
     TEST_ASSERT_OK(err, "Failed to create kvstore");
     TEST_ASSERT_NOT_NULL(store, "KVStore is null");
 
@@ -214,63 +211,63 @@ static int test_edge_large_keys(void) {
     large_value[LARGE_VALUE_SIZE - 1] = '\0';
 
     // 测试大key和value的写入
-    err = ppdb_kvstore_put(store, large_key, LARGE_KEY_SIZE, large_value, LARGE_VALUE_SIZE);
+    err = kvstore_put(store, large_key, LARGE_KEY_SIZE, large_value, LARGE_VALUE_SIZE);
     TEST_ASSERT_OK(err, "Failed to write large key-value");
 
     // 测试读取
     char* read_value = malloc(LARGE_VALUE_SIZE);
     TEST_ASSERT_NOT_NULL(read_value, "Failed to allocate read buffer");
 
-    err = ppdb_kvstore_get(store, large_key, LARGE_KEY_SIZE, read_value, LARGE_VALUE_SIZE);
+    err = kvstore_get(store, large_key, LARGE_KEY_SIZE, read_value, LARGE_VALUE_SIZE);
     TEST_ASSERT_OK(err, "Failed to read large key-value");
     TEST_ASSERT(memcmp(large_value, read_value, LARGE_VALUE_SIZE) == 0, "Data corruption in large value");
 
     // 测试小缓冲区读取（应该返回缓冲区太小错误）
     char small_buffer[SMALL_BUFFER_SIZE];
-    err = ppdb_kvstore_get(store, large_key, LARGE_KEY_SIZE, small_buffer, SMALL_BUFFER_SIZE);
-    TEST_ASSERT(err == PPDB_BUFFER_TOO_SMALL, "Expected buffer too small error");
+    err = kvstore_get(store, large_key, LARGE_KEY_SIZE, small_buffer, SMALL_BUFFER_SIZE);
+    TEST_ASSERT(err == BUFFER_TOO_SMALL, "Expected buffer too small error");
 
     free(large_key);
     free(large_value);
     free(read_value);
-    ppdb_kvstore_destroy(store);
+    kvstore_destroy(store);
     return 0;
 }
 
 // 空键值测试
 static int test_edge_empty_keys(void) {
-    ppdb_kvstore_t* store = NULL;
+    kvstore_t* store = NULL;
     int err;
 
-    err = ppdb_kvstore_create(&store, NULL);
+    err = kvstore_create(&store, NULL);
     TEST_ASSERT_OK(err, "Failed to create kvstore");
     TEST_ASSERT_NOT_NULL(store, "KVStore is null");
 
     // 测试空key
     char value[] = "test_value";
-    err = ppdb_kvstore_put(store, "", 0, value, strlen(value));
-    TEST_ASSERT(err == PPDB_INVALID_KEY, "Expected invalid key error for empty key");
+    err = kvstore_put(store, "", 0, value, strlen(value));
+    TEST_ASSERT(err == INVALID_KEY, "Expected invalid key error for empty key");
 
     // 测试空value
     char key[] = "test_key";
-    err = ppdb_kvstore_put(store, key, strlen(key), "", 0);
+    err = kvstore_put(store, key, strlen(key), "", 0);
     TEST_ASSERT_OK(err, "Failed to write empty value");
 
     // 测试NULL key
-    err = ppdb_kvstore_put(store, NULL, 0, value, strlen(value));
-    TEST_ASSERT(err == PPDB_INVALID_KEY, "Expected invalid key error for NULL key");
+    err = kvstore_put(store, NULL, 0, value, strlen(value));
+    TEST_ASSERT(err == INVALID_KEY, "Expected invalid key error for NULL key");
 
     // 测试NULL value
-    err = ppdb_kvstore_put(store, key, strlen(key), NULL, 0);
-    TEST_ASSERT(err == PPDB_INVALID_VALUE, "Expected invalid value error for NULL value");
+    err = kvstore_put(store, key, strlen(key), NULL, 0);
+    TEST_ASSERT(err == INVALID_VALUE, "Expected invalid value error for NULL value");
 
     // 测试读取空value
     char read_value[16];
-    err = ppdb_kvstore_get(store, key, strlen(key), read_value, sizeof(read_value));
+    err = kvstore_get(store, key, strlen(key), read_value, sizeof(read_value));
     TEST_ASSERT_OK(err, "Failed to read empty value");
     TEST_ASSERT(strlen(read_value) == 0, "Empty value corrupted");
 
-    ppdb_kvstore_destroy(store);
+    kvstore_destroy(store);
     return 0;
 }
 

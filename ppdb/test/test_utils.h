@@ -2,9 +2,7 @@
 #define PPDB_TEST_UTILS_H
 
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_logger.h"
+#include "ppdb/ppdb.h"
 
 // 测试工具函数
 void test_init_logger(void);
@@ -34,4 +32,4 @@ bool test_is_directory(const char* path);
 uint64_t test_get_current_time_us(void);
 void test_sleep_us(uint64_t microseconds);
 
-#endif // PPDB_TEST_UTILS_H 
+#endif // PPDB_TEST_UTILS_H

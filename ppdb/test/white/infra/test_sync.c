@@ -16,15 +16,15 @@ static void* mutex_thread_func(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
         while (true) {
-            error_code_t err = ppdb_sync_try_lock(data->sync);
-            if (err == ERROR_OK) {
+            ppdb_error_t err = ppdb_sync_try_lock(data->sync);
+            if (err == PPDB_OK) {
                 atomic_fetch_add(data->counter, 1);
                 ppdb_sync_unlock(data->sync);
                 if (i % 100 == 0) {
                     printf("Thread completed %d iterations\n", i);
                 }
                 break;
-            } else if (err == ERROR_RESOURCE_BUSY) {
+            } else if (err == PPDB_ERR_BUSY) {
                 usleep(1);
             } else {
                 printf("Thread error: %d\n", err);
@@ -65,16 +65,21 @@ static void* rwlock_read_thread(void* arg) {
 static void* rwlock_write_thread(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
-        ppdb_error_t err = ppdb_sync_write_lock(data->sync);
-        if (err == PPDB_OK) {
-            atomic_fetch_add(data->counter, 1);
-            ppdb_sync_write_unlock(data->sync);
-            if (i % 50 == 0) {
-                printf("Write thread completed %d iterations\n", i);
+        while (true) {
+            ppdb_error_t err = ppdb_sync_write_lock(data->sync);
+            if (err == PPDB_OK) {
+                atomic_fetch_add(data->counter, 1);
+                ppdb_sync_write_unlock(data->sync);
+                if (i % 50 == 0) {
+                    printf("Write thread completed %d iterations\n", i);
+                }
+                break;
+            } else if (err == PPDB_ERR_BUSY) {
+                usleep(1);  // 短暂休眠后重试
+            } else {
+                printf("Write thread error: %d\n", err);
+                return NULL;
             }
-        } else {
-            printf("Write thread error: %d\n", err);
-            return NULL;
         }
         // 添加一个小的延迟，避免过度竞争
         if (i % 5 == 0) {
@@ -99,7 +104,7 @@ void test_sync_lockfree(void) {
     };
 
     // 创建同步原语
-    assert(ppdb_sync_create(&sync, &config) == ERROR_OK);
+    assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
 
     // 测试基本锁操作
     test_sync_basic(sync);
@@ -111,7 +116,7 @@ void test_sync_lockfree(void) {
     test_rwlock_concurrent(sync);
 
     // 销毁同步原语
-    assert(ppdb_sync_destroy(sync) == ERROR_OK);
+    assert(ppdb_sync_destroy(sync) == PPDB_OK);
     free(sync);
 }
 
@@ -129,7 +134,7 @@ void test_sync_locked(void) {
     };
 
     // 创建同步原语
-    assert(ppdb_sync_create(&sync, &config) == ERROR_OK);
+    assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
 
     // 测试基本锁操作
     test_sync_basic(sync);
@@ -141,20 +146,20 @@ void test_sync_locked(void) {
     test_rwlock_concurrent(sync);
 
     // 销毁同步原语
-    assert(ppdb_sync_destroy(sync) == ERROR_OK);
+    assert(ppdb_sync_destroy(sync) == PPDB_OK);
     free(sync);
 }
 
 // 测试基本锁操作
 void test_sync_basic(ppdb_sync_t* sync) {
     // 测试锁定和解锁
-    assert(ppdb_sync_try_lock(sync) == ERROR_OK);
-    assert(ppdb_sync_unlock(sync) == ERROR_OK);
+    assert(ppdb_sync_try_lock(sync) == PPDB_OK);
+    assert(ppdb_sync_unlock(sync) == PPDB_OK);
 
     // 测试重复锁定
-    assert(ppdb_sync_try_lock(sync) == ERROR_OK);
-    assert(ppdb_sync_try_lock(sync) == ERROR_RESOURCE_BUSY);
-    assert(ppdb_sync_unlock(sync) == ERROR_OK);
+    assert(ppdb_sync_try_lock(sync) == PPDB_OK);
+    assert(ppdb_sync_try_lock(sync) == PPDB_ERR_BUSY);
+    assert(ppdb_sync_unlock(sync) == PPDB_OK);
 }
 
 // 测试读写锁基本操作

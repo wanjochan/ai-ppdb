@@ -1,24 +1,22 @@
 #include <cosmopolitan.h>
-#include "test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
-#include "kvstore/internal/kvstore_memtable.h"
 #include <pthread.h>
+#include "test_framework.h"
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_sync.h"
 
 #define NUM_THREADS 4
 #define NUM_OPERATIONS 1000
 
 // 线程参数结构
 typedef struct {
-    ppdb_memtable_t* table;
+    ppdb_handle_t* table;
     int thread_id;
 } thread_args_t;
 
 // 线程函数
 static void* worker_thread(void* arg) {
     thread_args_t* args = (thread_args_t*)arg;
-    ppdb_memtable_t* table = args->table;
+    ppdb_handle_t* table = args->table;
     int thread_id = args->thread_id;
     
     char key_buf[32];

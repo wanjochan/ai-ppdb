@@ -1,3 +1,6 @@
+#include "cosmopolitan.h"
+#include "ppdb.h"
+#include "ppdb_sync.h"
 #include "../base/test_memkv.h"
 
 // 全局变量

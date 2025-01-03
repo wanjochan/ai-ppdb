@@ -1,8 +1,7 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_sync.h"
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/skiplist.h"
 
@@ -13,8 +12,8 @@ static void test_basic_iteration(void) {
     // 创建 MemTable
     ppdb_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_memtable_create(1024, &table);
-    printf("  Create MemTable: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    printf("  Create MemTable: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 插入一些数据
     const char* keys[] = {"key1", "key2", "key3", "key4", "key5"};
@@ -25,15 +24,15 @@ static void test_basic_iteration(void) {
         err = ppdb_memtable_put(table, (uint8_t*)keys[i], strlen(keys[i]) + 1,
                                (uint8_t*)values[i], strlen(values[i]) + 1);
         printf("  Put [key='%s', value='%s']: %s\n", keys[i], values[i], 
-               err == PPDB_OK ? "OK" : "Failed");
-        assert(err == PPDB_OK);
+               err == OK ? "OK" : "Failed");
+        assert(err == OK);
     }
 
     // 创建迭代器
     ppdb_skiplist_iterator_t* iter = NULL;
     err = ppdb_memtable_iterator_create(table, &iter);
-    printf("  Create Iterator: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    printf("  Create Iterator: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 遍历所有键值对
     printf("  Iterating through all key-value pairs:\n");
@@ -45,9 +44,9 @@ static void test_basic_iteration(void) {
         size_t value_len;
 
         err = ppdb_skiplist_iterator_key(iter, &key, &key_len);
-        assert(err == PPDB_OK);
+        assert(err == OK);
         err = ppdb_skiplist_iterator_value(iter, &value, &value_len);
-        assert(err == PPDB_OK);
+        assert(err == OK);
 
         printf("    [%d] key='%s', value='%s'\n", i++, key, value);
         ppdb_skiplist_iterator_next(iter);
@@ -66,8 +65,8 @@ static void test_seek_iteration(void) {
     // 创建 MemTable
     ppdb_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_memtable_create(1024, &table);
-    printf("  Create MemTable: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    printf("  Create MemTable: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 插入一些数据
     const char* keys[] = {"key10", "key20", "key30", "key40", "key50"};
@@ -78,15 +77,15 @@ static void test_seek_iteration(void) {
         err = ppdb_memtable_put(table, (uint8_t*)keys[i], strlen(keys[i]) + 1,
                                (uint8_t*)values[i], strlen(values[i]) + 1);
         printf("  Put [key='%s', value='%s']: %s\n", keys[i], values[i], 
-               err == PPDB_OK ? "OK" : "Failed");
-        assert(err == PPDB_OK);
+               err == OK ? "OK" : "Failed");
+        assert(err == OK);
     }
 
     // 创建迭代器
     ppdb_skiplist_iterator_t* iter = NULL;
     err = ppdb_memtable_iterator_create(table, &iter);
-    printf("  Create Iterator: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    printf("  Create Iterator: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 测试 Seek
     const char* seek_key = "key25";
@@ -101,9 +100,9 @@ static void test_seek_iteration(void) {
         size_t value_len;
 
         err = ppdb_skiplist_iterator_key(iter, &key, &key_len);
-        assert(err == PPDB_OK);
+        assert(err == OK);
         err = ppdb_skiplist_iterator_value(iter, &value, &value_len);
-        assert(err == PPDB_OK);
+        assert(err == OK);
 
         printf("    Found position: key='%s', value='%s'\n", key, value);
     } else {
@@ -123,14 +122,14 @@ static void test_empty_iteration(void) {
     // 创建 MemTable
     ppdb_memtable_t* table = NULL;
     ppdb_error_t err = ppdb_memtable_create(1024, &table);
-    printf("  Create MemTable: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    printf("  Create MemTable: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 创建迭代器
     ppdb_skiplist_iterator_t* iter = NULL;
     err = ppdb_memtable_iterator_create(table, &iter);
-    printf("  Create Iterator: %s\n", err == PPDB_OK ? "OK" : "Failed");
-    assert(err == PPDB_OK);
+    printf("  Create Iterator: %s\n", err == OK ? "OK" : "Failed");
+    assert(err == OK);
 
     // 验证迭代器无效
     printf("  Checking iterator validity: %s\n", 

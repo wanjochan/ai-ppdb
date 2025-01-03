@@ -63,7 +63,7 @@
 #define PPDB_SYNC_H
 
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb.h"
 
 // 同步原语类型
 typedef enum ppdb_sync_type {

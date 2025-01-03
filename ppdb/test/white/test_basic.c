@@ -1,20 +1,17 @@
-// Need to ensure ppdb_logger.h is included
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
-#include "kvstore/internal/kvstore_memtable.h"
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_sync.h"
 
 // 测试创建和销毁
 static int test_create_destroy(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err;
+    ppdb_status_t err;
     
     // 创建内存表
     err = ppdb_memtable_create(1024, &table);
-    if (err != PPDB_OK) {
-        PPDB_LOG_ERROR("Failed to create memtable: %s", ppdb_error_string(err));
+    if (err != PPDB_STATUS_OK) {
+        PPDB_LOG_ERROR("Failed to create memtable: %s", ppdb_status_string(err));
         return 1;
     }
     
@@ -66,7 +63,7 @@ static int test_create_destroy(void) {
 // 测试基本的Put/Get操作
 static int test_put_get(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err;
+    ppdb_status_t err;
     
     // 创建内存表
     err = ppdb_memtable_create(1024, &table);
@@ -111,7 +108,7 @@ static int test_put_get(void) {
 // 测试删除操作
 static int test_delete(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err;
+    ppdb_status_t err;
     
     // 创建内存表
     err = ppdb_memtable_create(1024, &table);
@@ -152,7 +149,7 @@ static int test_delete(void) {
 // 测试大小限制
 static int test_size_limit(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err;
+    ppdb_status_t err;
     
     // 创建内存表（较小的大小限制）
     size_t max_size = 32;
@@ -183,7 +180,7 @@ static int test_size_limit(void) {
 // 测试更新操作
 static int test_update(void) {
     ppdb_memtable_t* table = NULL;
-    ppdb_error_t err;
+    ppdb_status_t err;
     
     // 创建内存表
     err = ppdb_memtable_create(1024, &table);

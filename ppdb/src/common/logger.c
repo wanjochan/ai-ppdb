@@ -1,8 +1,7 @@
 #include <cosmopolitan.h>
 
 // 公共头文件
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_logger.h"
+#include "ppdb/ppdb.h"
 
 static ppdb_log_level_t current_level = PPDB_LOG_INFO;
 static bool is_enabled = true;
@@ -78,7 +77,7 @@ DEFINE_LOG_TYPE_FUNC(info, INFO)
 DEFINE_LOG_TYPE_FUNC(warn, WARN)
 DEFINE_LOG_TYPE_FUNC(error, ERROR)
 
-void ppdb_log(ppdb_log_level_t level, const char* file, int line, const char* fmt, ...) {
+void ppdb_log(ppdb_log_level_t level, const char* fmt, ...) {
     if (!is_enabled || level < current_level) return;
     
     char buffer[1024];
@@ -97,7 +96,7 @@ void ppdb_log(ppdb_log_level_t level, const char* file, int line, const char* fm
     }
     
     char final_buffer[2048];
-    snprintf(final_buffer, sizeof(final_buffer), "[%s] %s:%d - %s", level_str, file, line, buffer);
+    snprintf(final_buffer, sizeof(final_buffer), "[%s] %s", level_str, buffer);
     
     if (current_outputs & PPDB_LOG_CONSOLE) {
         printf("%s\n", final_buffer);

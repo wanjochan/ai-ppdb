@@ -3,8 +3,47 @@
 
 #include <cosmopolitan.h>
 
+// 原子类型定义
+#ifndef atomic_uint64_t
+#define atomic_uint64_t _Atomic(uint64_t)
+#endif
+
 // 前向声明
 typedef struct ppdb_sync ppdb_sync_t;
+
+// 日志级别
+typedef enum {
+    PPDB_LOG_DEBUG = 0,
+    PPDB_LOG_INFO = 1,
+    PPDB_LOG_WARN = 2,
+    PPDB_LOG_ERROR = 3,
+    PPDB_LOG_FATAL = 4
+} ppdb_log_level_t;
+
+// 日志输出类型
+typedef enum {
+    PPDB_LOG_CONSOLE = 1,
+    PPDB_LOG_FILE = 2
+} ppdb_log_output_t;
+
+// 日志类型
+typedef enum {
+    PPDB_LOG_TYPE_SYSTEM = 1,
+    PPDB_LOG_TYPE_STORAGE = 2,
+    PPDB_LOG_TYPE_SYNC = 4,
+    PPDB_LOG_TYPE_ALL = 0xFF
+} ppdb_log_type_t;
+
+// 日志配置
+typedef struct {
+    bool enabled;
+    ppdb_log_output_t outputs;
+    ppdb_log_type_t types;
+    bool async_mode;
+    size_t buffer_size;
+    const char* log_file;
+    ppdb_log_level_t level;
+} ppdb_log_config_t;
 
 // 错误码定义
 typedef enum {
@@ -17,6 +56,19 @@ typedef enum {
     PPDB_ERR_IO = -6,               // IO错误
     PPDB_ERR_CORRUPTED = -7,        // 数据损坏
     PPDB_ERR_INTERNAL = -8,         // 内部错误
+    PPDB_ERR_BUSY = -9,            // 资源忙
+    PPDB_ERR_NULL_POINTER = -10,    // 空指针
+    PPDB_ERR_INVALID_STATE = -11,   // 无效状态
+    PPDB_ERR_RETRY = -12,          // 需要重试
+    PPDB_ERR_SYNC_RETRY_FAILED = -13, // 同步重试失败
+    PPDB_ERR_UNLOCK_FAILED = -14,   // 解锁失败
+    PPDB_ERR_TOO_MANY_READERS = -15, // 读者过多
+    PPDB_ERR_UNKNOWN = -16,         // 未知错误
+    PPDB_ERR_WAL_INVALID = -17,     // WAL无效
+    PPDB_ERR_LOCK_FAILED = -18,     // 加锁失败
+    PPDB_ERR_INVALID_PARAM = -19,   // 无效参数
+    PPDB_ERR_NOT_IMPLEMENTED = -20, // 未实现
+    PPDB_ERR_FULL = -21            // 存储已满
 } ppdb_error_t;
 
 // 统计信息
@@ -167,5 +219,15 @@ ppdb_error_t ppdb_get_stats(ppdb_kvstore_t* db, ppdb_storage_stats_t* stats);
 // 错误处理函数
 const char* ppdb_error_string(ppdb_error_t err);
 ppdb_error_t ppdb_system_error(void);
+
+// 日志函数声明
+void ppdb_log_init(const ppdb_log_config_t* config);
+void ppdb_log_shutdown(void);
+void ppdb_log(ppdb_log_level_t level, const char* fmt, ...);
+void ppdb_log_debug(const char* fmt, ...);
+void ppdb_log_info(const char* fmt, ...);
+void ppdb_log_warn(const char* fmt, ...);
+void ppdb_log_error(const char* fmt, ...);
+void ppdb_log_fatal(const char* fmt, ...);
 
 #endif // PPDB_H 

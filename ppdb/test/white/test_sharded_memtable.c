@@ -1,8 +1,6 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
 #include "test_plan.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
 #include "kvstore/internal/kvstore_memtable.h"
 
 #define NUM_THREADS 4

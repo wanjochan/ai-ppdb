@@ -1,10 +1,8 @@
 #include <cosmopolitan.h>
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_sync.h"
 #include "test_framework.h"
 #include "test_plan.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
-#include "ppdb/ppdb_logger.h"
 
 // 压力测试配置
 #define STRESS_TEST_DIR "./tmp_test_stress"

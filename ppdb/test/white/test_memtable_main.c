@@ -1,10 +1,6 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
-#include "kvstore/internal/kvstore_memtable.h"
-#include "ppdb/ppdb_logger.h"
+#include "ppdb/ppdb.h"
 
 // Declare MemTable test suite
 extern test_suite_t memtable_suite;

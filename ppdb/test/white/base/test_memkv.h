@@ -1,7 +1,7 @@
 #ifndef TEST_MEMKV_H_
 #define TEST_MEMKV_H_
 
-#include "../../../include/ppdb/ppdb_memkv.h"
+#include "cosmopolitan.h"
 #include "../test_framework.h"
 
 // 测试用例声明

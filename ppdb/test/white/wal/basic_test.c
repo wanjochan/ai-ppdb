@@ -1,8 +1,7 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_sync.h"
 #include "kvstore/internal/kvstore_wal.h"
 #include "kvstore/internal/kvstore_memtable.h"
 
@@ -17,35 +16,35 @@ static void test_basic_write_recover() {
         .sync_write = true
     };
     ppdb_wal_t* wal = NULL;
-    assert(ppdb_wal_create(&config, &wal) == PPDB_OK);
+    assert(ppdb_wal_create(&config, &wal) == PP_OK);
 
     // 写入一些数据
     const char* key1 = "key1";
     const char* value1 = "value1";
     assert(ppdb_wal_write(wal, PPDB_WAL_PUT, 
         (uint8_t*)key1, strlen(key1),
-        (uint8_t*)value1, strlen(value1)) == PPDB_OK);
+        (uint8_t*)value1, strlen(value1)) == PP_OK);
 
     const char* key2 = "key2";
     const char* value2 = "value2";
     assert(ppdb_wal_write(wal, PPDB_WAL_PUT,
         (uint8_t*)key2, strlen(key2),
-        (uint8_t*)value2, strlen(value2)) == PPDB_OK);
+        (uint8_t*)value2, strlen(value2)) == PP_OK);
 
     // 创建 MemTable 并恢复数据
     ppdb_memtable_t* table = NULL;
-    assert(ppdb_memtable_create(4096, &table) == PPDB_OK);
-    assert(ppdb_wal_recover(wal, table) == PPDB_OK);
+    assert(ppdb_memtable_create(4096, &table) == PP_OK);
+    assert(ppdb_wal_recover(wal, table) == PP_OK);
 
     // 验证恢复的数据
     uint8_t buf[256];
     size_t len = sizeof(buf);
-    assert(ppdb_memtable_get(table, (uint8_t*)key1, strlen(key1), buf, &len) == PPDB_OK);
+    assert(ppdb_memtable_get(table, (uint8_t*)key1, strlen(key1), buf, &len) == PP_OK);
     assert(len == strlen(value1));
     assert(memcmp(buf, value1, len) == 0);
 
     len = sizeof(buf);
-    assert(ppdb_memtable_get(table, (uint8_t*)key2, strlen(key2), buf, &len) == PPDB_OK);
+    assert(ppdb_memtable_get(table, (uint8_t*)key2, strlen(key2), buf, &len) == PP_OK);
     assert(len == strlen(value2));
     assert(memcmp(buf, value2, len) == 0);
 
@@ -65,7 +64,7 @@ static void test_segment_switch() {
         .sync_write = true
     };
     ppdb_wal_t* wal = NULL;
-    assert(ppdb_wal_create(&config, &wal) == PPDB_OK);
+    assert(ppdb_wal_create(&config, &wal) == PP_OK);
 
     // 写入足够多的数据触发分段
     char key[32], value[32];
@@ -76,13 +75,13 @@ static void test_segment_switch() {
         strlcat(value, tostring(i), sizeof(value));
         assert(ppdb_wal_write(wal, PPDB_WAL_PUT,
             (uint8_t*)key, strlen(key),
-            (uint8_t*)value, strlen(value)) == PPDB_OK);
+            (uint8_t*)value, strlen(value)) == PP_OK);
     }
 
     // 创建 MemTable 并恢复数据
     ppdb_memtable_t* table = NULL;
-    assert(ppdb_memtable_create(4096, &table) == PPDB_OK);
-    assert(ppdb_wal_recover(wal, table) == PPDB_OK);
+    assert(ppdb_memtable_create(4096, &table) == PP_OK);
+    assert(ppdb_wal_recover(wal, table) == PP_OK);
 
     // 验证所有数据都正确恢复
     uint8_t buf[256];
@@ -92,7 +91,7 @@ static void test_segment_switch() {
         strlcpy(value, "value", sizeof(value));
         strlcat(value, tostring(i), sizeof(value));
         size_t len = sizeof(buf);
-        assert(ppdb_memtable_get(table, (uint8_t*)key, strlen(key), buf, &len) == PPDB_OK);
+        assert(ppdb_memtable_get(table, (uint8_t*)key, strlen(key), buf, &len) == PP_OK);
         assert(len == strlen(value));
         assert(memcmp(buf, value, len) == 0);
     }
@@ -114,13 +113,13 @@ static void test_crash_recovery() {
             .sync_write = true
         };
         ppdb_wal_t* wal = NULL;
-        assert(ppdb_wal_create(&config, &wal) == PPDB_OK);
+        assert(ppdb_wal_create(&config, &wal) == PP_OK);
 
         const char* key = "crash_key";
         const char* value = "crash_value";
         assert(ppdb_wal_write(wal, PPDB_WAL_PUT,
             (uint8_t*)key, strlen(key),
-            (uint8_t*)value, strlen(value)) == PPDB_OK);
+            (uint8_t*)value, strlen(value)) == PP_OK);
 
         ppdb_wal_destroy(wal);
     }
@@ -133,18 +132,18 @@ static void test_crash_recovery() {
             .sync_write = true
         };
         ppdb_wal_t* wal = NULL;
-        assert(ppdb_wal_create(&config, &wal) == PPDB_OK);
+        assert(ppdb_wal_create(&config, &wal) == PP_OK);
 
         ppdb_memtable_t* table = NULL;
-        assert(ppdb_memtable_create(4096, &table) == PPDB_OK);
-        assert(ppdb_wal_recover(wal, table) == PPDB_OK);
+        assert(ppdb_memtable_create(4096, &table) == PP_OK);
+        assert(ppdb_wal_recover(wal, table) == PP_OK);
 
         // 验证数据
         const char* key = "crash_key";
         const char* value = "crash_value";
         uint8_t buf[256];
         size_t len = sizeof(buf);
-        assert(ppdb_memtable_get(table, (uint8_t*)key, strlen(key), buf, &len) == PPDB_OK);
+        assert(ppdb_memtable_get(table, (uint8_t*)key, strlen(key), buf, &len) == PP_OK);
         assert(len == strlen(value));
         assert(memcmp(buf, value, len) == 0);
 
@@ -165,7 +164,7 @@ static void test_archive() {
         .sync_write = true
     };
     ppdb_wal_t* wal = NULL;
-    assert(ppdb_wal_create(&config, &wal) == PPDB_OK);
+    assert(ppdb_wal_create(&config, &wal) == PP_OK);
 
     // 写入数据产生多个段文件
     char key[32], value[32];
@@ -174,16 +173,16 @@ static void test_archive() {
         snprintf(value, sizeof(value), "archive_value%d", i);
         assert(ppdb_wal_write(wal, PPDB_WAL_PUT,
             (uint8_t*)key, strlen(key),
-            (uint8_t*)value, strlen(value)) == PPDB_OK);
+            (uint8_t*)value, strlen(value)) == PP_OK);
     }
 
     // 执行归档
-    assert(ppdb_wal_archive(wal) == PPDB_OK);
+    assert(ppdb_wal_archive(wal) == PP_OK);
 
     // 验证归档后的恢复
     ppdb_memtable_t* table = NULL;
-    assert(ppdb_memtable_create(4096, &table) == PPDB_OK);
-    assert(ppdb_wal_recover(wal, table) == PPDB_OK);
+    assert(ppdb_memtable_create(4096, &table) == PP_OK);
+    assert(ppdb_wal_recover(wal, table) == PP_OK);
 
     // 验证数据完整性
     uint8_t buf[256];
@@ -191,7 +190,7 @@ static void test_archive() {
         snprintf(key, sizeof(key), "archive_key%d", i);
         snprintf(value, sizeof(value), "archive_value%d", i);
         size_t len = sizeof(buf);
-        assert(ppdb_memtable_get(table, (uint8_t*)key, strlen(key), buf, &len) == PPDB_OK);
+        assert(ppdb_memtable_get(table, (uint8_t*)key, strlen(key), buf, &len) == PP_OK);
         assert(len == strlen(value));
         assert(memcmp(buf, value, len) == 0);
     }

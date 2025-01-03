@@ -1,3 +1,4 @@
+#include "cosmopolitan.h"
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
@@ -5,8 +6,6 @@
 #include <unistd.h>
 #include "test_framework.h"
 #include "test_plan.h"
-#include "ppdb/kvstore.h"
-#include "ppdb/logger.h"
 
 #define TEST_DIR "./tmp_test_recovery"
 #define NUM_ENTRIES 1000

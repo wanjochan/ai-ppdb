@@ -1,5 +1,5 @@
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_error.h"
+#include "ppdb/ppdb.h"
 #include "ppdb/ppdb_kvstore.h"
 
 int main(int argc, char* argv[]) {

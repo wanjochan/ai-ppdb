@@ -1,10 +1,8 @@
 #include <cosmopolitan.h>
 #include "../test_framework.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
-#include "ppdb/ppdb_kvstore.h"
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_sync.h"
 #include "kvstore/internal/kvstore_memtable.h"
-#include "ppdb/ppdb_logger.h"
 
 // 测试配置
 #define OPS_PER_THREAD 100
