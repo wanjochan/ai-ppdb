@@ -221,8 +221,7 @@ rem ===== 辅助函数 =====
     set "PPDB_SYNC_MODE=locked"
     "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
+        "%PPDB_DIR%\src\common.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\infra\test_sync.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sync_locked_test.exe.dbg"
@@ -237,8 +236,7 @@ rem ===== 辅助函数 =====
     set "PPDB_SYNC_MODE=lockfree"
     "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
+        "%PPDB_DIR%\src\common.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\infra\test_sync.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sync_lockfree_test.exe.dbg"

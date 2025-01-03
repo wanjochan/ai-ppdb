@@ -572,3 +572,116 @@ void ppdb_kvstore_destroy(ppdb_kvstore_t* store) {
     // Free structure
     free(store);
 }
+
+//-----------------------------------------------------------------------------
+// 内存KV存储实现
+//-----------------------------------------------------------------------------
+
+static ppdb_error_t memkv_init(ppdb_base_t* base) {
+    if (!base) return PPDB_ERR_NULL_POINTER;
+    
+    // 初始化分片存储
+    base->array.count = DEFAULT_SHARD_COUNT;
+    base->array.ptrs = calloc(DEFAULT_SHARD_COUNT, sizeof(void*));
+    if (!base->array.ptrs) {
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+    
+    // 初始化每个分片为跳表
+    for (uint32_t i = 0; i < base->array.count; i++) {
+        ppdb_base_t* shard;
+        ppdb_error_t err = ppdb_create(PPDB_TYPE_SKIPLIST, &shard);
+        if (err != PPDB_OK) {
+            // 清理已创建的分片
+            for (uint32_t j = 0; j < i; j++) {
+                ppdb_destroy(base->array.ptrs[j]);
+            }
+            free(base->array.ptrs);
+            return err;
+        }
+        base->array.ptrs[i] = shard;
+    }
+    
+    // 初始化统计信息
+    atomic_init(&base->metrics.get_count, 0);
+    atomic_init(&base->metrics.get_hits, 0);
+    atomic_init(&base->metrics.put_count, 0);
+    atomic_init(&base->metrics.remove_count, 0);
+    
+    return PPDB_OK;
+}
+
+static ppdb_error_t memkv_destroy(ppdb_base_t* base) {
+    if (!base) return PPDB_ERR_NULL_POINTER;
+    
+    // 清理所有分片
+    if (base->array.ptrs) {
+        for (uint32_t i = 0; i < base->array.count; i++) {
+            if (base->array.ptrs[i]) {
+                ppdb_destroy(base->array.ptrs[i]);
+            }
+        }
+        free(base->array.ptrs);
+    }
+    
+    return PPDB_OK;
+}
+
+static uint32_t memkv_get_shard(const ppdb_key_t* key, uint32_t shard_count) {
+    // 简单的哈希函数，用于分片选择
+    uint32_t hash = 0;
+    const uint8_t* data = key->data;
+    for (size_t i = 0; i < key->size; i++) {
+        hash = hash * 31 + data[i];
+    }
+    return hash % shard_count;
+}
+
+static ppdb_error_t memkv_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value) {
+    if (!base || !key || !value) return PPDB_ERR_NULL_POINTER;
+    
+    // 获取分片索引
+    uint32_t shard = memkv_get_shard(key, base->array.count);
+    ppdb_base_t* shard_base = base->array.ptrs[shard];
+    
+    // 在分片中查找
+    ppdb_error_t err = ppdb_get(shard_base, key, value);
+    if (err == PPDB_OK) {
+        atomic_fetch_add(&base->metrics.get_hits, 1);
+    }
+    atomic_fetch_add(&base->metrics.get_count, 1);
+    
+    return err;
+}
+
+static ppdb_error_t memkv_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value) {
+    if (!base || !key || !value) return PPDB_ERR_NULL_POINTER;
+    
+    // 获取分片索引
+    uint32_t shard = memkv_get_shard(key, base->array.count);
+    ppdb_base_t* shard_base = base->array.ptrs[shard];
+    
+    // 在分片中写入
+    ppdb_error_t err = ppdb_put(shard_base, key, value);
+    if (err == PPDB_OK) {
+        atomic_fetch_add(&base->metrics.put_count, 1);
+    }
+    
+    return err;
+}
+
+static ppdb_error_t memkv_remove(ppdb_base_t* base, const ppdb_key_t* key) {
+    if (!base || !key) return PPDB_ERR_NULL_POINTER;
+    
+    // 获取分片索引
+    uint32_t shard = memkv_get_shard(key, base->array.count);
+    ppdb_base_t* shard_base = base->array.ptrs[shard];
+    
+    // 在分片中删除
+    ppdb_error_t err = ppdb_remove(shard_base, key);
+    if (err == PPDB_OK) {
+        atomic_fetch_add(&base->metrics.remove_count, 1);
+    }
+    
+    return err;
+}

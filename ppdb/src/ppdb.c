@@ -1,6 +1,15 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb.h"
 
+/**
+ppdb 的可执行程序入口。未来要实现的功能包括：
+启动 memkv server，并自带stdin互动
+启动 memkv client，测礼品卡和memkv进行互动
+启动 diskv server，并自带stdin互动
+启动 diskv client，测礼品卡和diskv进行互动
+启动 diskv get/put/del/stats/help 等管理命令
+ */
+
 static void print_usage(void) {
     printf("Usage: ppdb <command> [options]\n");
     printf("\nCommands:\n");
