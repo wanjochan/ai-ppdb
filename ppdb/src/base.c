@@ -349,41 +349,38 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
 ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
-    // 在有锁模式下，如果有读者，立即返回BUSY
-    if (!sync->use_lockfree && atomic_load(&sync->reader_count) > 0) {
-        atomic_fetch_add(&sync->stats.write_timeouts, 1);
-        return PPDB_ERR_BUSY;
-    }
-    
     uint32_t attempts = 0;
     
     // 1. 设置写意图标志
     atomic_store(&sync->write_intent, 1);
     
-    // 2. 等待所有读者退出
+    // 2. 等待读者退出
     while (atomic_load(&sync->reader_count) > 0) {
-        if (!sync->use_lockfree) {
-            atomic_store(&sync->write_intent, 0);
-            atomic_fetch_add(&sync->stats.write_timeouts, 1);
-            return PPDB_ERR_BUSY;
-        }
         ppdb_sync_backoff(attempts++);
         if (attempts >= sync->max_retries) {
             atomic_store(&sync->write_intent, 0);
             atomic_fetch_add(&sync->stats.write_timeouts, 1);
-            return PPDB_ERR_SYNC_RETRY_FAILED;
+            return !sync->use_lockfree ? PPDB_ERR_BUSY : PPDB_ERR_SYNC_RETRY_FAILED;
         }
     }
     
-    // 3. 获取写锁
+    // 3. 尝试获取写锁
     attempts = 0;
     while (atomic_exchange(&sync->write_locked, 1) != 0) {
         ppdb_sync_backoff(attempts++);
         if (attempts >= sync->max_retries) {
             atomic_store(&sync->write_intent, 0);
             atomic_fetch_add(&sync->stats.write_timeouts, 1);
-            return PPDB_ERR_SYNC_RETRY_FAILED;
+            return !sync->use_lockfree ? PPDB_ERR_BUSY : PPDB_ERR_SYNC_RETRY_FAILED;
         }
+    }
+    
+    // 4. 最后一次检查读者（防止读者在获取写锁期间进入）
+    if (atomic_load(&sync->reader_count) > 0) {
+        atomic_store(&sync->write_locked, 0);
+        atomic_store(&sync->write_intent, 0);
+        atomic_fetch_add(&sync->stats.write_timeouts, 1);
+        return !sync->use_lockfree ? PPDB_ERR_BUSY : PPDB_ERR_SYNC_RETRY_FAILED;
     }
     
     atomic_fetch_add(&sync->stats.write_locks, 1);
