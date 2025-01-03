@@ -505,25 +505,40 @@ ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
     }
     
     if (sync->config.use_lockfree) {
-        // 无锁模式下使用自旋等待
-        uint32_t retries = 0;
-        while (true) {
-            if (pthread_rwlock_trywrlock(&sync->rwlock) == 0) {
-                ppdb_sync_counter_add(&sync->stats.write_locks, 1);
-                return PPDB_OK;
-            }
-            
-            if (++retries >= sync->config.max_retries) {
-                ppdb_sync_counter_add(&sync->stats.write_timeouts, 1);
-                return PPDB_ERR_TIMEOUT;
-            }
-            
-            if (sync->config.backoff_us > 0) {
-                usleep(sync->config.backoff_us);
-            }
-            
-            ppdb_sync_counter_add(&sync->stats.retries, 1);
-        }
+//        // 无锁模式下使用自旋等待
+//        uint32_t retries = 0;
+//        while (true) {
+//            if (pthread_rwlock_trywrlock(&sync->rwlock) == 0) {
+//                ppdb_sync_counter_add(&sync->stats.write_locks, 1);
+//                return PPDB_OK;
+//            }
+//            
+//            if (++retries >= sync->config.max_retries) {
+//                ppdb_sync_counter_add(&sync->stats.write_timeouts, 1);
+//                return PPDB_ERR_TIMEOUT;
+//            }
+//            
+//            if (sync->config.backoff_us > 0) {
+//                usleep(sync->config.backoff_us);
+//            }
+//            
+//            ppdb_sync_counter_add(&sync->stats.retries, 1);
+//        }
+	// 无锁模式下使用自旋等待
+	uint32_t retries = 0;
+	while (retries < sync->config.max_retries) {
+		if (pthread_rwlock_tryrdlock(&sync->rwlock) == 0) {
+			ppdb_sync_counter_add(&sync->stats.read_locks, 1);
+			return PPDB_OK;
+		}
+
+		if (sync->config.backoff_us > 0) {
+			usleep(sync->config.backoff_us);
+		}
+		retries++;
+	}
+	ppdb_sync_counter_add(&sync->stats.read_timeouts, 1);
+	return PPDB_ERR_TIMEOUT;
     } else {
         // 有锁模式下直接阻塞等待
         if (pthread_rwlock_wrlock(&sync->rwlock) != 0) {

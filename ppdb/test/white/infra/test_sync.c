@@ -227,8 +227,8 @@ void test_sync(bool use_lockfree) {
     config.use_lockfree = use_lockfree;  // 使用传入的lockfree参数
     config.enable_ref_count = false;
     config.max_readers = NUM_READERS * 2;  // 预留足够的读者数量
-    config.backoff_us = 8;//windsurf
-    config.max_retries = 75;//windsurf
+    config.backoff_us = 1;
+    config.max_retries = 100;//windsurf
     //config.min_retries = 20;//by windsurf
     //config.adjust_interval_ms = 1000;
     //config.timeout_thrreshold = 0.1f;
