@@ -16,6 +16,22 @@
 #define PPDB_ALIGNED __attribute__((aligned(PPDB_ALIGNMENT)))
 
 //-----------------------------------------------------------------------------
+// 内部同步原语实现
+//-----------------------------------------------------------------------------
+
+#ifdef PPDB_SYNC_MODE_LOCKFREE
+#define PPDB_SYNC_USE_LOCKFREE 1
+#else
+#define PPDB_SYNC_USE_LOCKFREE 0
+#endif
+
+// 内部常量定义
+#define PPDB_MAX_RETRY_COUNT 100
+#define PPDB_RETRY_DELAY_US 1
+#define PPDB_MAX_READERS 1024
+#define PPDB_SPIN_COUNT 1000
+
+//-----------------------------------------------------------------------------
 // 常量定义
 //-----------------------------------------------------------------------------
 
@@ -122,6 +138,19 @@ typedef struct ppdb_sync_config {
     uint32_t backoff_us;
     uint32_t max_retries;
 } PPDB_ALIGNED ppdb_sync_config_t;
+
+typedef struct ppdb_sync_internal {
+    ppdb_sync_config_t config;
+    ppdb_sync_stats_t stats;
+    union {
+        pthread_rwlock_t lock;
+        atomic_flag spinlock;
+        struct {
+            atomic_int readers;
+            atomic_flag write_lock;
+        } rwlock;
+    };
+} PPDB_ALIGNED ppdb_sync_internal_t;
 
 typedef struct ppdb_sync ppdb_sync_t;
 
@@ -236,5 +265,28 @@ ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key);
 void ppdb_ref(ppdb_base_t* base);
 void ppdb_unref(ppdb_base_t* base);
 ppdb_error_t ppdb_check_type(ppdb_base_t* base, ppdb_type_t type);
+
+// 内部函数声明
+static inline void ppdb_sync_pause(void) {
+    __asm__ volatile("pause");
+}
+
+static inline void ppdb_sync_yield(void) {
+    sched_yield();
+}
+
+static inline void ppdb_sync_backoff(uint32_t attempts) {
+    if (attempts < 10) {
+        ppdb_sync_pause();
+    } else if (attempts < 20) {
+        for (int i = 0; i < attempts; i++) {
+            ppdb_sync_pause();
+        }
+    } else if (attempts < 30) {
+        ppdb_sync_yield();
+    } else {
+        usleep(1);
+    }
+}
 
 #endif // PPDB_H

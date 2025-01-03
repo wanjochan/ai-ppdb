@@ -1,5 +1,5 @@
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_internal.h"
+#include "ppdb/ppdb.h"
 #include "test/white/test_framework.h"
 #include "test/white/test_macros.h"
 #include "test/white/infra/test_sync.h"

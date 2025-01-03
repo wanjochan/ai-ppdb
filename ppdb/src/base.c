@@ -1,5 +1,4 @@
 #include "ppdb/ppdb.h"
-#include "ppdb/ppdb_internal.h"
 #include <cosmopolitan.h>
 
 //-----------------------------------------------------------------------------
@@ -400,28 +399,15 @@ ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync) {
 ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
-    // 在有锁模式下，如果检测到写锁或写意图，立即返回BUSY
-    if (!sync->use_lockfree && 
-        (atomic_load(&sync->write_intent) || 
-         atomic_load(&sync->write_locked))) {
-        atomic_fetch_add(&sync->stats.read_timeouts, 1);
-        return PPDB_ERR_BUSY;
-    }
-    
     uint32_t attempts = 0;
     
     while (true) {
-        // 1. 检查是否有写意图或写锁
-        if (atomic_load(&sync->write_intent) || 
-            atomic_load(&sync->write_locked)) {
-            if (!sync->use_lockfree) {
-                atomic_fetch_add(&sync->stats.read_timeouts, 1);
-                return PPDB_ERR_BUSY;
-            }
+        // 1. 检查是否有写锁（不检查写意图）
+        if (atomic_load(&sync->write_locked)) {
             ppdb_sync_backoff(attempts++);
             if (attempts >= sync->max_retries) {
                 atomic_fetch_add(&sync->stats.read_timeouts, 1);
-                return PPDB_ERR_SYNC_RETRY_FAILED;
+                return !sync->use_lockfree ? PPDB_ERR_BUSY : PPDB_ERR_SYNC_RETRY_FAILED;
             }
             continue;
         }
@@ -433,18 +419,13 @@ ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
             return PPDB_ERR_TOO_MANY_READERS;
         }
         
-        // 3. 再次检查写状态，如果有写操作则回退
-        if (atomic_load(&sync->write_intent) || 
-            atomic_load(&sync->write_locked)) {
+        // 3. 再次检查写锁，如果有写锁则回退
+        if (atomic_load(&sync->write_locked)) {
             atomic_fetch_sub(&sync->reader_count, 1);
-            if (!sync->use_lockfree) {
-                atomic_fetch_add(&sync->stats.read_timeouts, 1);
-                return PPDB_ERR_BUSY;
-            }
             ppdb_sync_backoff(attempts++);
             if (attempts >= sync->max_retries) {
                 atomic_fetch_add(&sync->stats.read_timeouts, 1);
-                return PPDB_ERR_SYNC_RETRY_FAILED;
+                return !sync->use_lockfree ? PPDB_ERR_BUSY : PPDB_ERR_SYNC_RETRY_FAILED;
             }
             continue;
         }
