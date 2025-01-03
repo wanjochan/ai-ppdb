@@ -1,6 +1,6 @@
 # ai-ppdb
 
-[AI编写的分布式数据库](ppdb/docs/overview/TODO.md)
+[AI编写的分布式数据库](ppdb/docs/INDEX.md)
 
 # 许可证
 
