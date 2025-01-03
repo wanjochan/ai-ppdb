@@ -304,82 +304,98 @@ void ppdb_log(ppdb_log_level_t level, const char* fmt, ...) {
 // 同步原语实现
 //-----------------------------------------------------------------------------
 
+// 同步原语结构定义
+struct ppdb_sync {
+    ppdb_sync_type_t type;
+    bool use_lockfree;
+    bool enable_ref_count;
+    uint32_t max_readers;
+    uint32_t backoff_us;
+    uint32_t max_retries;
+    atomic_int reader_count;
+    atomic_int write_locked;
+    atomic_int write_intent;
+    ppdb_sync_stats_t stats;
+};
+
 ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, ppdb_sync_config_t* config) {
     if (!sync || !config) return PPDB_ERR_NULL_POINTER;
     
-    ppdb_sync_internal_t* internal = malloc(sizeof(ppdb_sync_internal_t));
-    if (!internal) return PPDB_ERR_OUT_OF_MEMORY;
+    *sync = calloc(1, sizeof(struct ppdb_sync));
+    if (!*sync) return PPDB_ERR_OUT_OF_MEMORY;
     
-    internal->config = *config;
-    memset(&internal->stats, 0, sizeof(ppdb_sync_stats_t));
+    (*sync)->type = config->type;
+    (*sync)->use_lockfree = config->use_lockfree;
+    (*sync)->enable_ref_count = config->enable_ref_count;
+    (*sync)->max_readers = config->max_readers;
+    (*sync)->backoff_us = config->backoff_us;
+    (*sync)->max_retries = config->max_retries;
     
-    if (config->use_lockfree) {
-        atomic_flag_clear(&internal->spinlock);
-    } else {
-        pthread_rwlock_init(&internal->lock, NULL);
-    }
+    atomic_init(&(*sync)->reader_count, 0);
+    atomic_init(&(*sync)->write_locked, 0);
+    atomic_init(&(*sync)->write_intent, 0);
     
-    *sync = (ppdb_sync_t*)internal;
+    memset(&(*sync)->stats, 0, sizeof(ppdb_sync_stats_t));
+    
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
-    
-    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
-    if (!internal->config.use_lockfree) {
-        pthread_rwlock_destroy(&internal->lock);
-    }
-    
-    free(internal);
+    free(sync);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
+ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
-    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
-    if (internal->config.use_lockfree) {
-        while (atomic_flag_test_and_set(&internal->spinlock)) {
-            ppdb_sync_pause();
-        }
-    } else {
-        if (pthread_rwlock_wrlock(&internal->lock) != 0) {
-            return PPDB_ERR_INTERNAL;
-        }
+    // 在有锁模式下，如果有读者，立即返回BUSY
+    if (!sync->use_lockfree && atomic_load(&sync->reader_count) > 0) {
+        atomic_fetch_add(&sync->stats.write_timeouts, 1);
+        return PPDB_ERR_BUSY;
     }
     
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERR_NULL_POINTER;
+    uint32_t attempts = 0;
     
-    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
-    if (internal->config.use_lockfree) {
-        atomic_flag_clear(&internal->spinlock);
-    } else {
-        if (pthread_rwlock_unlock(&internal->lock) != 0) {
-            return PPDB_ERR_INTERNAL;
-        }
-    }
+    // 1. 设置写意图标志
+    atomic_store(&sync->write_intent, 1);
     
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERR_NULL_POINTER;
-    
-    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
-    if (internal->config.use_lockfree) {
-        if (atomic_flag_test_and_set(&internal->spinlock)) {
+    // 2. 等待所有读者退出
+    while (atomic_load(&sync->reader_count) > 0) {
+        if (!sync->use_lockfree) {
+            atomic_store(&sync->write_intent, 0);
+            atomic_fetch_add(&sync->stats.write_timeouts, 1);
             return PPDB_ERR_BUSY;
         }
-    } else {
-        if (pthread_rwlock_trywrlock(&internal->lock) != 0) {
-            return PPDB_ERR_BUSY;
+        ppdb_sync_backoff(attempts++);
+        if (attempts >= sync->max_retries) {
+            atomic_store(&sync->write_intent, 0);
+            atomic_fetch_add(&sync->stats.write_timeouts, 1);
+            return PPDB_ERR_SYNC_RETRY_FAILED;
         }
     }
+    
+    // 3. 获取写锁
+    attempts = 0;
+    while (atomic_exchange(&sync->write_locked, 1) != 0) {
+        ppdb_sync_backoff(attempts++);
+        if (attempts >= sync->max_retries) {
+            atomic_store(&sync->write_intent, 0);
+            atomic_fetch_add(&sync->stats.write_timeouts, 1);
+            return PPDB_ERR_SYNC_RETRY_FAILED;
+        }
+    }
+    
+    atomic_fetch_add(&sync->stats.write_locks, 1);
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    // 清除写锁和写意图
+    atomic_store(&sync->write_locked, 0);
+    atomic_store(&sync->write_intent, 0);
     
     return PPDB_OK;
 }
@@ -387,97 +403,89 @@ ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync) {
 ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
-    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
-    if (internal->config.use_lockfree) {
-        int retry_count = 0;
-        while (retry_count < internal->config.max_retries) {
-            // 检查是否有写锁
-            if (atomic_flag_test_and_set(&internal->rwlock.write_lock)) {
-                ppdb_sync_backoff(retry_count++);
-                continue;
-            }
-            atomic_flag_clear(&internal->rwlock.write_lock);
-
-            // 尝试增加读者计数
-            int readers;
-            do {
-                readers = atomic_load(&internal->rwlock.readers);
-                if (readers >= internal->config.max_readers) {
-                    return PPDB_ERR_TOO_MANY_READERS;
-                }
-            } while (!atomic_compare_exchange_weak(&internal->rwlock.readers, &readers, readers + 1));
-            
-            return PPDB_OK;
-        }
-        return PPDB_ERR_SYNC_RETRY_FAILED;
-    } else {
-        if (pthread_rwlock_rdlock(&internal->lock) != 0) {
-            return PPDB_ERR_INTERNAL;
-        }
-        return PPDB_OK;
+    // 在有锁模式下，如果检测到写锁或写意图，立即返回BUSY
+    if (!sync->use_lockfree && 
+        (atomic_load(&sync->write_intent) || 
+         atomic_load(&sync->write_locked))) {
+        atomic_fetch_add(&sync->stats.read_timeouts, 1);
+        return PPDB_ERR_BUSY;
     }
-}
-
-ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERR_NULL_POINTER;
     
-    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
-    if (internal->config.use_lockfree) {
-        atomic_fetch_sub(&internal->rwlock.readers, 1);
-    } else {
-        if (pthread_rwlock_unlock(&internal->lock) != 0) {
-            return PPDB_ERR_INTERNAL;
+    uint32_t attempts = 0;
+    
+    while (true) {
+        // 1. 检查是否有写意图或写锁
+        if (atomic_load(&sync->write_intent) || 
+            atomic_load(&sync->write_locked)) {
+            if (!sync->use_lockfree) {
+                atomic_fetch_add(&sync->stats.read_timeouts, 1);
+                return PPDB_ERR_BUSY;
+            }
+            ppdb_sync_backoff(attempts++);
+            if (attempts >= sync->max_retries) {
+                atomic_fetch_add(&sync->stats.read_timeouts, 1);
+                return PPDB_ERR_SYNC_RETRY_FAILED;
+            }
+            continue;
         }
+        
+        // 2. 增加读者计数
+        int readers = atomic_fetch_add(&sync->reader_count, 1);
+        if (readers >= sync->max_readers) {
+            atomic_fetch_sub(&sync->reader_count, 1);
+            return PPDB_ERR_TOO_MANY_READERS;
+        }
+        
+        // 3. 再次检查写状态，如果有写操作则回退
+        if (atomic_load(&sync->write_intent) || 
+            atomic_load(&sync->write_locked)) {
+            atomic_fetch_sub(&sync->reader_count, 1);
+            if (!sync->use_lockfree) {
+                atomic_fetch_add(&sync->stats.read_timeouts, 1);
+                return PPDB_ERR_BUSY;
+            }
+            ppdb_sync_backoff(attempts++);
+            if (attempts >= sync->max_retries) {
+                atomic_fetch_add(&sync->stats.read_timeouts, 1);
+                return PPDB_ERR_SYNC_RETRY_FAILED;
+            }
+            continue;
+        }
+        
+        atomic_fetch_add(&sync->stats.read_locks, 1);
+        break;
     }
     
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
+ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
-    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
-    if (internal->config.use_lockfree) {
-        int retry_count = 0;
-        while (retry_count < internal->config.max_retries) {
-            // 尝试获取写锁
-            if (atomic_flag_test_and_set(&internal->rwlock.write_lock)) {
-                ppdb_sync_backoff(retry_count++);
-                continue;
-            }
-
-            // 等待所有读者完成
-            while (atomic_load(&internal->rwlock.readers) > 0) {
-                if (retry_count >= internal->config.max_retries) {
-                    atomic_flag_clear(&internal->rwlock.write_lock);
-                    return PPDB_ERR_SYNC_RETRY_FAILED;
-                }
-                ppdb_sync_backoff(retry_count++);
-            }
-            
-            return PPDB_OK;
-        }
-        return PPDB_ERR_SYNC_RETRY_FAILED;
-    } else {
-        if (pthread_rwlock_wrlock(&internal->lock) != 0) {
-            return PPDB_ERR_INTERNAL;
-        }
-        return PPDB_OK;
-    }
+    // 减少读者计数
+    atomic_fetch_sub(&sync->reader_count, 1);
+    
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync) {
+// 实现其他同步原语函数
+ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
+    return ppdb_sync_write_lock(sync);
+}
+
+ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
+    return ppdb_sync_write_unlock(sync);
+}
+
+ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
-    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
-    if (internal->config.use_lockfree) {
-        atomic_flag_clear(&internal->rwlock.write_lock);
-    } else {
-        if (pthread_rwlock_unlock(&internal->lock) != 0) {
-            return PPDB_ERR_INTERNAL;
-        }
+    // 尝试获取写锁
+    if (atomic_exchange(&sync->write_locked, 1) != 0) {
+        return PPDB_ERR_BUSY;
     }
     
+    atomic_fetch_add(&sync->stats.write_locks, 1);
     return PPDB_OK;
 }
 

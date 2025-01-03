@@ -1,64 +1,65 @@
 @echo off
+rem ===== Note: This batch file uses English only to avoid Windows encoding issues =====
 chcp 65001 > nul
 setlocal EnableDelayedExpansion
 
-rem ===== 设置环境变量 =====
+rem ===== Set Environment Variables =====
 call :set_environment
 if errorlevel 1 exit /b 1
 
-rem ===== 获取命令行参数 =====
+rem ===== Get Command Line Parameters =====
 set "TEST_TYPE=%1"
 set "BUILD_MODE=%2"
 if "%TEST_TYPE%"=="" set "TEST_TYPE=help"
 if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
 
-rem ===== 验证构建模式 =====
+rem ===== Validate Build Mode =====
 if /i not "%BUILD_MODE%"=="debug" if /i not "%BUILD_MODE%"=="release" (
     echo Invalid build mode: %BUILD_MODE%
     echo Valid modes are: debug, release
     exit /b 1
 )
 
-rem ===== 显示帮助信息 =====
+rem ===== Display Help Information =====
 if "%TEST_TYPE%"=="help" (
     call :show_help
     exit /b 0
 )
 
-rem ===== 清理命令 =====
+rem ===== Clean Command =====
 if "%TEST_TYPE%"=="clean" (
     call :clean_build
     exit /b 0
 )
 
-rem ===== 强制重新构建 =====
+rem ===== Force Rebuild =====
 if "%TEST_TYPE%"=="rebuild" (
     call :build_rebuild
     exit /b 0
 )
 
-rem ===== 构建基础设施 =====
+rem ===== Build Base Storage =====
 if "%TEST_TYPE%"=="base" (
     call :build_base_storage
     exit /b 0
 )
 
-rem ===== 检查环境 =====
+rem ===== Check Environment =====
 call :check_runtime_files
 if errorlevel 1 exit /b 1
 
 call :check_header_changes
 if errorlevel 1 exit /b 1
 
-rem ===== 设置编译标志 =====
+rem ===== Set Compile Flags =====
 call :set_build_flags
 if errorlevel 1 exit /b 1
 
-rem ===== 执行构建 =====
+rem ===== Execute Build =====
 call :build_%TEST_TYPE%
 exit /b %ERRORLEVEL%
 
-rem ===== 辅助函数 =====
+rem ===== Helper Functions =====
 :set_environment
     rem Set proxy if provided
     set "PROXY="
@@ -72,7 +73,7 @@ rem ===== 辅助函数 =====
         echo Using proxy: %PROXY%
     )
 
-    rem Set paths (使用绝对路径)
+    rem Set paths (using absolute paths)
     set "SCRIPT_DIR=%~dp0"
     set "ROOT_DIR=%SCRIPT_DIR%\.."
     pushd "%ROOT_DIR%"
@@ -106,39 +107,39 @@ rem ===== 辅助函数 =====
     exit /b 0
 
 :show_help
-    echo PPDB 构建和测试工具
+    echo PPDB Build and Test Tool
     echo.
-    echo 用法: build.bat [模块] [构建模式]
+    echo Usage: build.bat [module] [build mode]
     echo.
-    echo 可用模块:
-    echo   test42           运行基础测试
-    echo   sync_locked      运行有锁同步原语测试
-    echo   sync_lockfree    运行无锁同步原语测试
-    echo   skiplist_locked  运行有锁跳表测试
-    echo   skiplist_lockfree 运行无锁跳表测试
-    echo   memtable_locked  运行有锁内存表测试
-    echo   memtable_lockfree 运行无锁内存表测试
-    echo   sharded          运行分片内存表测试
+    echo Available modules:
+    echo   test42           Run basic tests
+    echo   sync_locked      Run locked synchronization tests
+    echo   sync_lockfree    Run lock-free synchronization tests
+    echo   skiplist_locked  Run locked skiplist tests
+    echo   skiplist_lockfree Run lock-free skiplist tests
+    echo   memtable_locked  Run locked memtable tests
+    echo   memtable_lockfree Run lock-free memtable tests
+    echo   sharded          Run sharded memtable tests
     echo.
-    echo   kvstore          运行KVStore测试
-    echo   wal_core         运行WAL核心测试
-    echo   wal_func         运行WAL功能测试
-    echo   wal_advanced     运行WAL高级测试
-    echo   clean            清理构建目录
-    echo   rebuild          强制重新构建
-    echo   ppdb             构建ppdb
+    echo   kvstore          Run KVStore tests
+    echo   wal_core         Run WAL core tests
+    echo   wal_func         Run WAL function tests
+    echo   wal_advanced     Run WAL advanced tests
+    echo   clean            Clean build directory
+    echo   rebuild          Force rebuild
+    echo   ppdb             Build PPDB
     echo.
-    echo 构建模式:
-    echo   debug     调试模式
-    echo   release   发布模式 (默认)
+    echo Build modes:
+    echo   debug     Debug mode
+    echo   release   Release mode (default)
     echo.
-    echo 示例:
-    echo   build.bat help                显示帮助信息
-    echo   build.bat clean               清理构建目录
-    echo   build.bat rebuild             强制重新构建
-    echo   build.bat test42              运行基础测试
-    echo   build.bat sync_locked debug   以调试模式运行有锁同步测试
-    echo   build.bat sync_lockfree       以默认模式运行无锁同步测试
+    echo Examples:
+    echo   build.bat help                Display help information
+    echo   build.bat clean               Clean build directory
+    echo   build.bat rebuild             Force rebuild
+    echo   build.bat test42              Run basic tests
+    echo   build.bat sync_locked debug   Run locked synchronization tests in debug mode
+    echo   build.bat sync_lockfree       Run lock-free synchronization tests in release mode
     exit /b 0
 
 :clean_build
@@ -155,23 +156,23 @@ rem ===== 辅助函数 =====
 
 :check_runtime_files
     if not exist "%BUILD_DIR%\crt.o" (
-        echo 错误：缺少运行时文件，请先运行 setup.bat 进行环境设置
-        echo 用法：.\setup.bat
+        echo Error: Missing runtime files. Please run setup.bat first to set up the environment
+        echo Usage: .\setup.bat
         exit /b 1
     )
     if not exist "%BUILD_DIR%\ape.o" (
-        echo 错误：缺少运行时文件，请先运行 setup.bat 进行环境设置
-        echo 用法：.\setup.bat
+        echo Error: Missing runtime files. Please run setup.bat first to set up the environment
+        echo Usage: .\setup.bat
         exit /b 1
     )
     if not exist "%BUILD_DIR%\cosmopolitan.a" (
-        echo 错误：缺少运行时文件，请先运行 setup.bat 进行环境设置
-        echo 用法：.\setup.bat
+        echo Error: Missing runtime files. Please run setup.bat first to set up the environment
+        echo Usage: .\setup.bat
         exit /b 1
     )
     if not exist "%BUILD_DIR%\ape.lds" (
-        echo 错误：缺少运行时文件，请先运行 setup.bat 进行环境设置
-        echo 用法：.\setup.bat
+        echo Error: Missing runtime files. Please run setup.bat first to set up the environment
+        echo Usage: .\setup.bat
         exit /b 1
     )
     exit /b 0
@@ -340,21 +341,21 @@ rem ===== 辅助函数 =====
 
 :build_rebuild
     echo.
-    echo ===== 强制重新构建 =====
-    echo 检查运行时文件...
+    echo ===== Force Rebuild =====
+    echo Checking runtime files...
     call :check_runtime_files
     if errorlevel 1 exit /b 1
-    echo 清理编译文件...
+    echo Cleaning compile files...
     del /F /Q "%BUILD_DIR%\*.o"
-    echo 恢复运行时文件...
+    echo Restoring runtime files...
     copy /Y "%COSMO%\crt.o" "%BUILD_DIR%\" > nul
     copy /Y "%COSMO%\ape.o" "%BUILD_DIR%\" > nul
     copy /Y "%COSMO%\ape.lds" "%BUILD_DIR%\" > nul
     copy /Y "%COSMO%\cosmopolitan.a" "%BUILD_DIR%\" > nul
-    echo 清理可执行文件...
+    echo Cleaning executable files...
     del /F /Q "%BUILD_DIR%\*.exe"
     del /F /Q "%BUILD_DIR%\*.exe.dbg"
-    echo 重新构建完成
+    echo Rebuild complete
     echo.
     exit /b 0 
 :help
