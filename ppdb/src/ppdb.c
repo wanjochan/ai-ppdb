@@ -1,6 +1,5 @@
+#include <cosmopolitan.h>
 #include "ppdb/ppdb.h"
-#include <stdio.h>
-#include <string.h>
 
 static void print_usage(void) {
     printf("Usage: ppdb <command> [options]\n");

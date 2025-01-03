@@ -2,7 +2,9 @@
 #define PPDB_H
 
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_sync.h"
+
+// 前向声明
+typedef struct ppdb_sync ppdb_sync_t;
 
 // 错误码定义
 typedef enum {

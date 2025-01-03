@@ -1,7 +1,6 @@
+#include <cosmopolitan.h>
 #include "ppdb/ppdb.h"
 #include "ppdb/ppdb_sync.h"
-#include <stdlib.h>
-#include <string.h>
 
 // 内部函数声明
 static ppdb_error_t init_storage(ppdb_storage_t** storage);

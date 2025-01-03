@@ -1,8 +1,7 @@
 #include <cosmopolitan.h>
-#include "ppdb/sync.h"
-#include "ppdb/ppdb_error.h"
-#include "ppdb/ppdb_types.h"
+#include "ppdb/ppdb_sync.h"
 #include "test/white/test_framework.h"
+#include "test/white/test_macros.h"
 #include "test/white/infra/test_sync.h"
 
 // 测试线程数据结构
@@ -17,23 +16,23 @@ static void* mutex_thread_func(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
     for (int i = 0; i < data->num_iterations; i++) {
         while (true) {
-            ppdb_error_t err = ppdb_sync_try_lock(data->sync);
-            if (err == PPDB_OK) {
+            error_code_t err = ppdb_sync_try_lock(data->sync);
+            if (err == ERROR_OK) {
                 atomic_fetch_add(data->counter, 1);
                 ppdb_sync_unlock(data->sync);
-                if (i % 100 == 0) {  // 每100次迭代输出一次日志
-                    PPDB_LOG_INFO("Thread completed %d iterations", i);
+                if (i % 100 == 0) {
+                    printf("Thread completed %d iterations\n", i);
                 }
                 break;
-            } else if (err == PPDB_ERR_BUSY) {
+            } else if (err == ERROR_RESOURCE_BUSY) {
                 usleep(1);
             } else {
-                PPDB_LOG_ERROR("Thread error: %d", err);
+                printf("Thread error: %d\n", err);
                 return NULL;
             }
         }
     }
-    PPDB_LOG_INFO("Thread completed all %d iterations", data->num_iterations);
+    printf("Thread completed all %d iterations\n", data->num_iterations);
     return NULL;
 }
 
@@ -47,10 +46,10 @@ static void* rwlock_read_thread(void* arg) {
             (void)value;
             ppdb_sync_read_unlock(data->sync);
             if (i % 100 == 0) {
-                PPDB_LOG_INFO("Read thread completed %d iterations", i);
+                printf("Read thread completed %d iterations\n", i);
             }
         } else {
-            PPDB_LOG_ERROR("Read thread error: %d", err);
+            printf("Read thread error: %d\n", err);
             return NULL;
         }
         // 添加一个小的延迟，避免过度竞争
@@ -58,7 +57,7 @@ static void* rwlock_read_thread(void* arg) {
             usleep(1);
         }
     }
-    PPDB_LOG_INFO("Read thread completed all %d iterations", data->num_iterations);
+    printf("Read thread completed all %d iterations\n", data->num_iterations);
     return NULL;
 }
 
@@ -71,10 +70,10 @@ static void* rwlock_write_thread(void* arg) {
             atomic_fetch_add(data->counter, 1);
             ppdb_sync_write_unlock(data->sync);
             if (i % 50 == 0) {
-                PPDB_LOG_INFO("Write thread completed %d iterations", i);
+                printf("Write thread completed %d iterations\n", i);
             }
         } else {
-            PPDB_LOG_ERROR("Write thread error: %d", err);
+            printf("Write thread error: %d\n", err);
             return NULL;
         }
         // 添加一个小的延迟，避免过度竞争
@@ -82,7 +81,7 @@ static void* rwlock_write_thread(void* arg) {
             usleep(1);
         }
     }
-    PPDB_LOG_INFO("Write thread completed all %d iterations", data->num_iterations);
+    printf("Write thread completed all %d iterations\n", data->num_iterations);
     return NULL;
 }
 
@@ -100,7 +99,7 @@ void test_sync_lockfree(void) {
     };
 
     // 创建同步原语
-    assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
+    assert(ppdb_sync_create(&sync, &config) == ERROR_OK);
 
     // 测试基本锁操作
     test_sync_basic(sync);
@@ -112,7 +111,7 @@ void test_sync_lockfree(void) {
     test_rwlock_concurrent(sync);
 
     // 销毁同步原语
-    assert(ppdb_sync_destroy(sync) == PPDB_OK);
+    assert(ppdb_sync_destroy(sync) == ERROR_OK);
     free(sync);
 }
 
@@ -130,7 +129,7 @@ void test_sync_locked(void) {
     };
 
     // 创建同步原语
-    assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
+    assert(ppdb_sync_create(&sync, &config) == ERROR_OK);
 
     // 测试基本锁操作
     test_sync_basic(sync);
@@ -142,20 +141,20 @@ void test_sync_locked(void) {
     test_rwlock_concurrent(sync);
 
     // 销毁同步原语
-    assert(ppdb_sync_destroy(sync) == PPDB_OK);
+    assert(ppdb_sync_destroy(sync) == ERROR_OK);
     free(sync);
 }
 
 // 测试基本锁操作
 void test_sync_basic(ppdb_sync_t* sync) {
     // 测试锁定和解锁
-    assert(ppdb_sync_try_lock(sync) == PPDB_OK);
-    assert(ppdb_sync_unlock(sync) == PPDB_OK);
+    assert(ppdb_sync_try_lock(sync) == ERROR_OK);
+    assert(ppdb_sync_unlock(sync) == ERROR_OK);
 
     // 测试重复锁定
-    assert(ppdb_sync_try_lock(sync) == PPDB_OK);
-    assert(ppdb_sync_try_lock(sync) == PPDB_ERR_BUSY);
-    assert(ppdb_sync_unlock(sync) == PPDB_OK);
+    assert(ppdb_sync_try_lock(sync) == ERROR_OK);
+    assert(ppdb_sync_try_lock(sync) == ERROR_RESOURCE_BUSY);
+    assert(ppdb_sync_unlock(sync) == ERROR_OK);
 }
 
 // 测试读写锁基本操作
@@ -179,7 +178,7 @@ void test_rwlock(ppdb_sync_t* sync) {
 
 // 测试并发读写锁操作
 void test_rwlock_concurrent(ppdb_sync_t* sync) {
-    PPDB_LOG_INFO("Testing concurrent rwlock...");
+    printf("Testing concurrent rwlock...\n");
     
     #define NUM_READERS 8
     #define NUM_WRITERS 2
@@ -222,7 +221,7 @@ void test_rwlock_concurrent(ppdb_sync_t* sync) {
     }
     
     assert(atomic_load(&counter) == NUM_WRITERS * WRITE_ITERATIONS);
-    PPDB_LOG_INFO("Concurrent rwlock test passed");
+    printf("Concurrent rwlock test passed\n");
 }
 
 // 主测试函数
@@ -230,21 +229,21 @@ int main(void) {
     // 从环境变量获取测试模式
     const char* test_mode = getenv("PPDB_SYNC_MODE");
     if (!test_mode) {
-        PPDB_LOG_ERROR("PPDB_SYNC_MODE environment variable not set");
+        printf("PPDB_SYNC_MODE environment variable not set\n");
         return 1;
     }
 
     if (strcmp(test_mode, "lockfree") == 0) {
-        PPDB_LOG_INFO("Testing lockfree version...");
+        printf("Testing lockfree version...\n");
         test_sync_lockfree();
     } else if (strcmp(test_mode, "locked") == 0) {
-        PPDB_LOG_INFO("Testing locked version...");
+        printf("Testing locked version...\n");
         test_sync_locked();
     } else {
-        PPDB_LOG_ERROR("Invalid PPDB_SYNC_MODE: %s", test_mode);
+        printf("Invalid PPDB_SYNC_MODE: %s\n", test_mode);
         return 1;
     }
     
-    PPDB_LOG_INFO("All tests passed!");
+    printf("All tests passed!\n");
     return 0;
 }
