@@ -3,6 +3,59 @@
 #include "ppdb/ppdb_sync.h"
 #include "ppdb/kvstore/skiplist.h"
 #include "test/white/test_framework.h"
+#include "test/white/test_macros.h"
+
+// 测试配置
+#define TEST_NUM_THREADS 32
+#define TEST_NUM_ITERATIONS 10000
+#define TEST_MAX_KEY_SIZE 100
+#define TEST_MAX_VALUE_SIZE 1000
+
+// 自定义内存比较断言宏
+#define TEST_ASSERT_MEM_EQ(actual, expected, size) do { \
+    if (memcmp((actual), (expected), (size)) != 0) { \
+        printf("Memory comparison failed\n"); \
+        printf("  at %s:%d\n", __FILE__, __LINE__); \
+        exit(1); \
+    } \
+} while (0)
+
+// 测试函数声明
+static void test_skiplist_basic(bool use_lockfree);
+static void test_skiplist_concurrent(bool use_lockfree);
+static void test_skiplist_iterator(bool use_lockfree);
+
+// 线程局部存储的随机数生成器状态
+static pthread_key_t rand_key;
+static pthread_once_t rand_key_once = PTHREAD_ONCE_INIT;
+
+// 初始化线程局部存储键
+static void init_rand_key(void) {
+    pthread_key_create(&rand_key, free);
+}
+
+// 初始化线程局部随机数生成器
+static void init_rand_state(void) {
+    uint32_t* state = pthread_getspecific(rand_key);
+    if (state == NULL) {
+        state = malloc(sizeof(uint32_t));
+        *state = (uint32_t)time(NULL) ^ (uint32_t)pthread_self();
+        pthread_setspecific(rand_key, state);
+    }
+}
+
+// 线程安全的随机数生成
+static uint32_t thread_safe_rand(void) {
+    pthread_once(&rand_key_once, init_rand_key);
+    init_rand_state();
+    uint32_t* state = pthread_getspecific(rand_key);
+    uint32_t x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    return x;
+}
 
 // 测试基本操作
 static int test_basic_operations(void) {

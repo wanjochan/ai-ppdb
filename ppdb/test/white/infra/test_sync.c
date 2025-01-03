@@ -227,8 +227,11 @@ void test_sync(bool use_lockfree) {
     config.use_lockfree = use_lockfree;  // 使用传入的lockfree参数
     config.enable_ref_count = false;
     config.max_readers = NUM_READERS * 2;  // 预留足够的读者数量
-    config.backoff_us = 1;
-    config.max_retries = 100;
+    config.backoff_us = 8;//windsurf
+    config.max_retries = 75;//windsurf
+    //config.min_retries = 20;//by windsurf
+    //config.adjust_interval_ms = 1000;
+    //config.timeout_thrreshold = 0.1f;
     
     assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
 
@@ -285,7 +288,9 @@ void test_rwlock(ppdb_sync_t* sync, bool use_lockfree) {
     // 测试写锁时的读锁互斥
     DEBUG_PRINT("[DEBUG] Testing write-read exclusion...\n");
     assert(ppdb_sync_write_lock(sync) == PPDB_OK);
-    ppdb_error_t err = ppdb_sync_read_lock(sync);
+    
+    // 使用try_read_lock而不是read_lock，避免无限等待
+    ppdb_error_t err = ppdb_sync_try_read_lock(sync);
     if (!use_lockfree) {
         // 有锁模式下，应该返回BUSY
         assert(err == PPDB_ERR_BUSY);
@@ -298,7 +303,9 @@ void test_rwlock(ppdb_sync_t* sync, bool use_lockfree) {
     // 测试读锁时的写锁互斥
     DEBUG_PRINT("[DEBUG] Testing read-write exclusion...\n");
     assert(ppdb_sync_read_lock(sync) == PPDB_OK);
-    err = ppdb_sync_write_lock(sync);
+    
+    // 使用try_write_lock而不是write_lock，避免无限等待
+    err = ppdb_sync_try_write_lock(sync);
     if (!use_lockfree) {
         // 有锁模式下，应该返回BUSY
         assert(err == PPDB_ERR_BUSY);

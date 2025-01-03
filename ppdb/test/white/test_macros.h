@@ -25,7 +25,7 @@
     if (!(condition)) { \
         printf("Assertion failed: %s\n", message); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -33,7 +33,7 @@
     if (!(condition)) { \
         printf("Assertion failed: %s should be true\n", #condition); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -41,7 +41,7 @@
     if (condition) { \
         printf("Assertion failed: %s should be false\n", #condition); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -50,7 +50,7 @@
         printf("Assertion failed: %s == %s\n", #actual, #expected); \
         printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -59,7 +59,7 @@
         printf("Assertion failed: %s != %s\n", #actual, #expected); \
         printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -68,7 +68,7 @@
         printf("Assertion failed: %s > %s\n", #actual, #expected); \
         printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -77,7 +77,7 @@
         printf("Assertion failed: %s >= %s\n", #actual, #expected); \
         printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -86,7 +86,7 @@
         printf("Assertion failed: %s < %s\n", #actual, #expected); \
         printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -95,7 +95,7 @@
         printf("Assertion failed: %s <= %s\n", #actual, #expected); \
         printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -103,7 +103,7 @@
     if ((ptr) != NULL) { \
         printf("Assertion failed: %s is not NULL\n", #ptr); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -111,7 +111,7 @@
     if ((ptr) == NULL) { \
         printf("Assertion failed: %s is NULL\n", #ptr); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -120,7 +120,7 @@
         printf("Assertion failed: strcmp(%s, %s) == 0\n", #actual, #expected); \
         printf("  actual: \"%s\"\n  expected: \"%s\"\n", (actual), (expected)); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -129,7 +129,7 @@
         printf("Assertion failed: strcmp(%s, %s) != 0\n", #actual, #expected); \
         printf("  actual: \"%s\"\n  expected: \"%s\"\n", (actual), (expected)); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 
@@ -137,7 +137,7 @@
     if (memcmp((actual), (expected), (size)) != 0) { \
         printf("Assertion failed: memcmp(%s, %s, %s) == 0\n", #actual, #expected, #size); \
         printf("  at %s:%d\n", __FILE__, __LINE__); \
-        return -1; \
+        exit(1); \
     } \
 } while(0)
 

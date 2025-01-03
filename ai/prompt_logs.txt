@@ -1,3 +1,8 @@
+【严禁新增文件】
+根据测试的问题进行分析、针对严重问题或非常容易解决问题制定可并行处理的修复计划然后平行处理修复，然后再次执行测试，如果还有问题就重复这个过程
+build skiplist_locked debug
+
+
 as warm-up, read *.md in docs/;
 
 特别注意：项目ai-ppdb用的是cosmopolitan跨平台底层!，构建工具已经在的，遇到不在时先停下来问；
