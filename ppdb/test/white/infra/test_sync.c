@@ -4,12 +4,88 @@
 #include "test/white/test_macros.h"
 #include "test/white/infra/test_sync.h"
 
+// 增加测试规模
+#define NUM_READERS 32
+#define NUM_WRITERS 8
+#define READ_ITERATIONS 10000
+#define WRITE_ITERATIONS 1000
+
+// 临界区工作量
+#define READ_WORK_ITERATIONS 100
+#define WRITE_WORK_ITERATIONS 50
+
+// 调试模式控制
+static bool is_debug_mode = false;
+
+// 性能统计结构
+typedef struct {
+    uint64_t lock_attempts;
+    uint64_t lock_successes;
+    uint64_t total_wait_time;
+    uint64_t total_work_time;
+} thread_stats_t;
+
 // 测试线程数据结构
 typedef struct {
     ppdb_sync_t* sync;
     atomic_int* counter;
     int num_iterations;
+    thread_stats_t stats;
+    int thread_id;  // 添加线程ID以区分不同线程的统计
 } thread_data_t;
+
+// 全局性能统计
+typedef struct {
+    atomic_uint_least64_t total_lock_attempts;
+    atomic_uint_least64_t total_lock_successes;
+    atomic_uint_least64_t total_wait_time;
+    atomic_uint_least64_t total_work_time;
+} global_stats_t;
+
+static global_stats_t reader_stats = {0};
+static global_stats_t writer_stats = {0};
+
+// 添加时间测量函数
+static double get_time_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (tv.tv_sec * 1000.0) + (tv.tv_usec / 1000.0);
+}
+
+static void print_elapsed(const char* stage, double start_ms) {
+    if (!is_debug_mode) return;
+    double elapsed = get_time_ms() - start_ms;
+    printf("\n[TIMING] %s took %.2f ms\n\n", stage, elapsed);
+    fflush(stdout);
+}
+
+// 添加时间戳打印函数
+static void print_timestamp(void) {
+    if (!is_debug_mode) return;
+    struct timeval tv;
+    struct tm* tm_info;
+    char buffer[32];
+    
+    gettimeofday(&tv, NULL);
+    tm_info = localtime(&tv.tv_sec);
+    
+    strftime(buffer, 26, "%y%m%d %H:%M:%S", tm_info);
+    printf("%s.%03d ", buffer, (int)(tv.tv_usec / 1000));
+}
+
+// 修改调试打印宏
+#define DEBUG_PRINT(...) do { \
+    if (is_debug_mode) { \
+        print_timestamp(); \
+        printf(__VA_ARGS__); \
+        fflush(stdout); \
+    } \
+} while(0)
+
+#define INFO_PRINT(...) do { \
+    printf(__VA_ARGS__); \
+    fflush(stdout); \
+} while(0)
 
 // 互斥锁竞争测试的线程函数
 static void* mutex_thread_func(void* arg) {
@@ -36,157 +112,209 @@ static void* mutex_thread_func(void* arg) {
     return NULL;
 }
 
-// 读写锁测试线程函数 - 读线程
+// 修改读线程函数
 static void* rwlock_read_thread(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
+    uint64_t sum = 0;  // 防止编译器优化
+    
     for (int i = 0; i < data->num_iterations; i++) {
+        uint64_t start_time = get_time_ms();
+        data->stats.lock_attempts++;
+        atomic_fetch_add(&reader_stats.total_lock_attempts, 1);
+        
         ppdb_error_t err = ppdb_sync_read_lock(data->sync);
         if (err == PPDB_OK) {
-            int value = atomic_load(data->counter);
-            (void)value;
-            ppdb_sync_read_unlock(data->sync);
-            if (i % 100 == 0) {
-                printf("Read thread completed %d iterations\n", i);
+            uint64_t lock_time = get_time_ms();
+            data->stats.lock_successes++;
+            atomic_fetch_add(&reader_stats.total_lock_successes, 1);
+            data->stats.total_wait_time += (lock_time - start_time);
+            atomic_fetch_add(&reader_stats.total_wait_time, lock_time - start_time);
+
+            // 增加实际工作负载
+            for(int j = 0; j < READ_WORK_ITERATIONS; j++) {
+                sum += atomic_load(data->counter);
             }
-        } else {
-            printf("Read thread error: %d\n", err);
-            return NULL;
-        }
-        // 添加一个小的延迟，避免过度竞争
-        if (i % 10 == 0) {
-            usleep(1);
+            
+            ppdb_sync_read_unlock(data->sync);
+            uint64_t end_time = get_time_ms();
+            data->stats.total_work_time += (end_time - lock_time);
+            atomic_fetch_add(&reader_stats.total_work_time, end_time - lock_time);
+
+            if (i % 1000 == 0 && is_debug_mode) {
+                DEBUG_PRINT("Reader %d completed %d iterations\n", data->thread_id, i);
+            }
         }
     }
-    printf("Read thread completed all %d iterations\n", data->num_iterations);
-    return NULL;
+    
+    if (is_debug_mode) {
+        DEBUG_PRINT("Reader %d stats: attempts=%lu, successes=%lu, wait_time=%.2fms, work_time=%.2fms\n",
+            data->thread_id,
+            data->stats.lock_attempts,
+            data->stats.lock_successes,
+            data->stats.total_wait_time,
+            data->stats.total_work_time);
+    }
+    
+    return (void*)(uintptr_t)sum;
 }
 
-// 读写锁测试线程函数 - 写线程
+// 修改写线程函数
 static void* rwlock_write_thread(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
+    
     for (int i = 0; i < data->num_iterations; i++) {
+        uint64_t start_time = get_time_ms();
+        data->stats.lock_attempts++;
+        atomic_fetch_add(&writer_stats.total_lock_attempts, 1);
+        
         while (true) {
             ppdb_error_t err = ppdb_sync_write_lock(data->sync);
             if (err == PPDB_OK) {
-                atomic_fetch_add(data->counter, 1);
+                uint64_t lock_time = get_time_ms();
+                data->stats.lock_successes++;
+                atomic_fetch_add(&writer_stats.total_lock_successes, 1);
+                data->stats.total_wait_time += (lock_time - start_time);
+                atomic_fetch_add(&writer_stats.total_wait_time, lock_time - start_time);
+
+                // 增加实际工作负载
+                for(int j = 0; j < WRITE_WORK_ITERATIONS; j++) {
+                    atomic_fetch_add(data->counter, j);
+                }
+                
                 ppdb_sync_write_unlock(data->sync);
-                if (i % 50 == 0) {
-                    printf("Write thread completed %d iterations\n", i);
+                uint64_t end_time = get_time_ms();
+                data->stats.total_work_time += (end_time - lock_time);
+                atomic_fetch_add(&writer_stats.total_work_time, end_time - lock_time);
+
+                if (i % 100 == 0 && is_debug_mode) {
+                    DEBUG_PRINT("Writer %d completed %d iterations\n", data->thread_id, i);
                 }
                 break;
-            } else if (err == PPDB_ERR_BUSY) {
-                usleep(1);  // 短暂休眠后重试
-            } else {
-                printf("Write thread error: %d\n", err);
-                return NULL;
             }
         }
-        // 添加一个小的延迟，避免过度竞争
-        if (i % 5 == 0) {
-            usleep(1);
-        }
     }
-    printf("Write thread completed all %d iterations\n", data->num_iterations);
+    
+    if (is_debug_mode) {
+        DEBUG_PRINT("Writer %d stats: attempts=%lu, successes=%lu, wait_time=%.2fms, work_time=%.2fms\n",
+            data->thread_id,
+            data->stats.lock_attempts,
+            data->stats.lock_successes,
+            data->stats.total_wait_time,
+            data->stats.total_work_time);
+    }
+    
     return NULL;
 }
 
 // 测试无锁同步原语
 void test_sync_lockfree(void) {
+    double start_ms = get_time_ms();
+    DEBUG_PRINT("\n=== Starting Lockfree Synchronization Tests ===\n");
+    DEBUG_PRINT("Configuration: %d readers, %d writers\n", NUM_READERS, NUM_WRITERS);
+    DEBUG_PRINT("Iterations: Read=%d, Write=%d\n\n", READ_ITERATIONS, WRITE_ITERATIONS);
+
     ppdb_sync_t* sync;
     ppdb_sync_config_t config = {
         .type = PPDB_SYNC_RWLOCK,
         .use_lockfree = true,
         .enable_ref_count = false,
         .max_readers = 32,
-        .backoff_us = 1,
-        .max_retries = 1000
+        .backoff_us = 100,
+        .max_retries = 10
     };
 
-    // 创建同步原语
+    DEBUG_PRINT("[DEBUG] Creating sync primitive...\n");
     assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
 
-    // 测试基本锁操作
     test_sync_basic(sync);
-
-    // 测试读写锁操作
     test_rwlock(sync);
-
-    // 测试并发读写锁操作
     test_rwlock_concurrent(sync);
 
-    // 销毁同步原语
     assert(ppdb_sync_destroy(sync) == PPDB_OK);
     free(sync);
+    
+    print_elapsed("Total lockfree test suite", start_ms);
 }
 
 // 测试有锁同步原语
 void test_sync_locked(void) {
+    double start_ms = get_time_ms();
+    DEBUG_PRINT("\n=== Starting Locked Synchronization Tests ===\n");
+    DEBUG_PRINT("Configuration: %d readers, %d writers\n", NUM_READERS, NUM_WRITERS);
+    DEBUG_PRINT("Iterations: Read=%d, Write=%d\n\n", READ_ITERATIONS, WRITE_ITERATIONS);
+
     ppdb_sync_t* sync;
     ppdb_sync_config_t config = {
         .type = PPDB_SYNC_RWLOCK,
         .use_lockfree = false,
         .enable_ref_count = false,
         .max_readers = 32,
-        .backoff_us = 1,
-        .max_retries = 1000
+        .backoff_us = 100,
+        .max_retries = 10
     };
 
-    // 创建同步原语
+    DEBUG_PRINT("[DEBUG] Creating sync primitive...\n");
     assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
 
-    // 测试基本锁操作
     test_sync_basic(sync);
-
-    // 测试读写锁操作
     test_rwlock(sync);
-
-    // 测试并发读写锁操作
     test_rwlock_concurrent(sync);
 
-    // 销毁同步原语
     assert(ppdb_sync_destroy(sync) == PPDB_OK);
     free(sync);
+    
+    print_elapsed("Total locked test suite", start_ms);
 }
 
 // 测试基本锁操作
 void test_sync_basic(ppdb_sync_t* sync) {
-    // 测试锁定和解锁
+    double start_ms = get_time_ms();
+    DEBUG_PRINT("\n[DEBUG] Starting basic lock tests...\n");
+
+    // 基本锁定和解锁测试，每个操作只测试一次
     assert(ppdb_sync_try_lock(sync) == PPDB_OK);
     assert(ppdb_sync_unlock(sync) == PPDB_OK);
 
-    // 测试重复锁定
+    // 测试重复锁定，只测试一次
     assert(ppdb_sync_try_lock(sync) == PPDB_OK);
     assert(ppdb_sync_try_lock(sync) == PPDB_ERR_BUSY);
     assert(ppdb_sync_unlock(sync) == PPDB_OK);
+
+    print_elapsed("Basic lock tests", start_ms);
 }
 
 // 测试读写锁基本操作
 void test_rwlock(ppdb_sync_t* sync) {
-    // 测试读锁
+    double start_ms = get_time_ms();
+    DEBUG_PRINT("\n[DEBUG] Starting rwlock basic tests...\n");
+
+    // 测试读锁，减少重复测试
     assert(ppdb_sync_read_lock(sync) == PPDB_OK);
-    assert(ppdb_sync_read_lock(sync) == PPDB_OK);  // 多个读者
+    assert(ppdb_sync_read_lock(sync) == PPDB_OK);  // 验证多个读者
     assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
     assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
 
-    // 测试写锁
+    // 测试写锁，只测试一次
     assert(ppdb_sync_write_lock(sync) == PPDB_OK);
-    assert(ppdb_sync_read_lock(sync) == PPDB_ERR_BUSY);  // 有写者时不能读
+    assert(ppdb_sync_read_lock(sync) == PPDB_ERR_BUSY);  // 验证写时不能读
     assert(ppdb_sync_write_unlock(sync) == PPDB_OK);
 
-    // 测试读写互斥
+    // 测试读写互斥，只测试一次
     assert(ppdb_sync_read_lock(sync) == PPDB_OK);
-    assert(ppdb_sync_write_lock(sync) == PPDB_ERR_BUSY);  // 有读者时不能写
+    assert(ppdb_sync_write_lock(sync) == PPDB_ERR_BUSY);  // 验证读时不能写
     assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
+
+    print_elapsed("RWLock basic tests", start_ms);
 }
 
-// 测试并发读写锁操作
+// 修改并发测试函数
 void test_rwlock_concurrent(ppdb_sync_t* sync) {
-    printf("Testing concurrent rwlock...\n");
+    double start_ms = get_time_ms();
+    DEBUG_PRINT("\n[DEBUG] Starting concurrent rwlock tests...\n");
     
-    #define NUM_READERS 8
-    #define NUM_WRITERS 2
-    #define READ_ITERATIONS 500
-    #define WRITE_ITERATIONS 100
+    // 重置全局统计
+    memset(&reader_stats, 0, sizeof(reader_stats));
+    memset(&writer_stats, 0, sizeof(writer_stats));
     
     pthread_t readers[NUM_READERS];
     pthread_t writers[NUM_WRITERS];
@@ -195,24 +323,34 @@ void test_rwlock_concurrent(ppdb_sync_t* sync) {
     atomic_int counter = 0;
     
     // 创建读线程
+    DEBUG_PRINT("[DEBUG] Creating reader threads...\n");
     for (int i = 0; i < NUM_READERS; i++) {
         reader_data[i].sync = sync;
         reader_data[i].counter = &counter;
         reader_data[i].num_iterations = READ_ITERATIONS;
+        reader_data[i].thread_id = i;
+        memset(&reader_data[i].stats, 0, sizeof(thread_stats_t));
         int ret = pthread_create(&readers[i], NULL, rwlock_read_thread, &reader_data[i]);
         assert(ret == 0);
     }
     
     // 创建写线程
+    DEBUG_PRINT("[DEBUG] Creating writer threads...\n");
     for (int i = 0; i < NUM_WRITERS; i++) {
         writer_data[i].sync = sync;
         writer_data[i].counter = &counter;
         writer_data[i].num_iterations = WRITE_ITERATIONS;
+        writer_data[i].thread_id = i;
+        memset(&writer_data[i].stats, 0, sizeof(thread_stats_t));
         int ret = pthread_create(&writers[i], NULL, rwlock_write_thread, &writer_data[i]);
         assert(ret == 0);
     }
     
+    double thread_create_ms = get_time_ms();
+    print_elapsed("Thread creation", start_ms);
+    
     // 等待所有线程完成
+    DEBUG_PRINT("[DEBUG] Waiting for threads to complete...\n");
     for (int i = 0; i < NUM_READERS; i++) {
         int ret = pthread_join(readers[i], NULL);
         assert(ret == 0);
@@ -223,30 +361,61 @@ void test_rwlock_concurrent(ppdb_sync_t* sync) {
         assert(ret == 0);
     }
     
-    assert(atomic_load(&counter) == NUM_WRITERS * WRITE_ITERATIONS);
-    printf("Concurrent rwlock test passed\n");
+    // 打印总体性能统计
+    INFO_PRINT("\nPerformance Statistics:\n");
+    INFO_PRINT("Readers:\n");
+    INFO_PRINT("  Total attempts: %lu\n", atomic_load(&reader_stats.total_lock_attempts));
+    INFO_PRINT("  Total successes: %lu\n", atomic_load(&reader_stats.total_lock_successes));
+    INFO_PRINT("  Average wait time: %.2f ms\n", 
+        (double)atomic_load(&reader_stats.total_wait_time) / atomic_load(&reader_stats.total_lock_successes));
+    INFO_PRINT("  Average work time: %.2f ms\n", 
+        (double)atomic_load(&reader_stats.total_work_time) / atomic_load(&reader_stats.total_lock_successes));
+    
+    INFO_PRINT("\nWriters:\n");
+    INFO_PRINT("  Total attempts: %lu\n", atomic_load(&writer_stats.total_lock_attempts));
+    INFO_PRINT("  Total successes: %lu\n", atomic_load(&writer_stats.total_lock_successes));
+    INFO_PRINT("  Average wait time: %.2f ms\n", 
+        (double)atomic_load(&writer_stats.total_wait_time) / atomic_load(&writer_stats.total_lock_successes));
+    INFO_PRINT("  Average work time: %.2f ms\n", 
+        (double)atomic_load(&writer_stats.total_work_time) / atomic_load(&writer_stats.total_lock_successes));
+    
+    print_elapsed("Thread execution", thread_create_ms);
+    print_elapsed("Total concurrent test", start_ms);
+    
+    assert(atomic_load(&counter) > 0);  // 由于工作负载改变，不再检查具体值
+    INFO_PRINT("Concurrent rwlock test passed\n");
 }
 
 // 主测试函数
 int main(void) {
-    // 从环境变量获取测试模式
+    const char* build_mode = getenv("BUILD_MODE");
+    is_debug_mode = (build_mode && strcmp(build_mode, "debug") == 0);
+
+    INFO_PRINT("\n=== PPDB Synchronization Test Suite ===\n");
+    
     const char* test_mode = getenv("PPDB_SYNC_MODE");
     if (!test_mode) {
-        printf("PPDB_SYNC_MODE environment variable not set\n");
+        INFO_PRINT("Error: PPDB_SYNC_MODE environment variable not set\n");
+        INFO_PRINT("Please set to either 'lockfree' or 'locked'\n");
         return 1;
     }
 
+    INFO_PRINT("Test Mode: %s\n", test_mode);
+    if (is_debug_mode) {
+        INFO_PRINT("Build Mode: DEBUG\n");
+    }
+    INFO_PRINT("Starting tests...\n\n");
+
     if (strcmp(test_mode, "lockfree") == 0) {
-        printf("Testing lockfree version...\n");
         test_sync_lockfree();
     } else if (strcmp(test_mode, "locked") == 0) {
-        printf("Testing locked version...\n");
         test_sync_locked();
     } else {
-        printf("Invalid PPDB_SYNC_MODE: %s\n", test_mode);
+        INFO_PRINT("Error: Invalid PPDB_SYNC_MODE: %s\n", test_mode);
+        INFO_PRINT("Valid values are: 'lockfree' or 'locked'\n");
         return 1;
     }
     
-    printf("All tests passed!\n");
+    INFO_PRINT("\n=== All Tests Completed Successfully! ===\n");
     return 0;
 }

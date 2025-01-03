@@ -13,9 +13,11 @@ static inline int ppdb_rwlock_reader_count(int state) {
     return state & PPDB_READER_MASK;
 }
 
-static void ppdb_sync_backoff(uint32_t us) {
-    if (us > 0) {
-        usleep(us);
+static void ppdb_sync_backoff(uint32_t base_us, uint32_t retry_count) {
+    if (base_us > 0 && retry_count > 0) {
+        uint32_t shift = retry_count > 5 ? 5 : retry_count;
+        uint32_t delay = base_us * (1U << shift);
+        usleep(delay);
     }
 }
 
@@ -24,7 +26,7 @@ ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
     if (sync->config.type != PPDB_SYNC_RWLOCK) return PPDB_ERR_INVALID_STATE;
 
     uint32_t retries = 0;
-    while (retries++ < sync->config.max_retries) {
+    while (retries < sync->config.max_retries) {
         int state = atomic_load(&sync->rwlock.state);
         
         if (!ppdb_rwlock_has_writer(state) && 
@@ -34,12 +36,13 @@ ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
                                           &state, 
                                           state + PPDB_READER_INC)) {
                 atomic_fetch_add(&sync->stats.read_locks, 1);
-        return PPDB_OK;
-    }
+                return PPDB_OK;
+            }
             atomic_fetch_add(&sync->stats.contentions, 1);
         }
         
-        ppdb_sync_backoff(sync->config.backoff_us);
+        ppdb_sync_backoff(sync->config.backoff_us, retries);
+        retries++;
     }
     
     atomic_fetch_add(&sync->stats.read_timeouts, 1);
@@ -51,7 +54,7 @@ ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
     if (sync->config.type != PPDB_SYNC_RWLOCK) return PPDB_ERR_INVALID_STATE;
 
     uint32_t retries = 0;
-    while (retries++ < sync->config.max_retries) {
+    while (retries < sync->config.max_retries) {
         int state = atomic_load(&sync->rwlock.state);
         
         if (state == 0) {
@@ -64,7 +67,8 @@ ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
             atomic_fetch_add(&sync->stats.contentions, 1);
         }
         
-        ppdb_sync_backoff(sync->config.backoff_us);
+        ppdb_sync_backoff(sync->config.backoff_us, retries);
+        retries++;
     }
     
     atomic_fetch_add(&sync->stats.write_timeouts, 1);

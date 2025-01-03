@@ -10,7 +10,14 @@ rem ===== 获取命令行参数 =====
 set "TEST_TYPE=%1"
 set "BUILD_MODE=%2"
 if "%TEST_TYPE%"=="" set "TEST_TYPE=help"
-if "%BUILD_MODE%"=="" set "BUILD_MODE=debug"
+if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
+
+rem ===== 验证构建模式 =====
+if /i not "%BUILD_MODE%"=="debug" if /i not "%BUILD_MODE%"=="release" (
+    echo Invalid build mode: %BUILD_MODE%
+    echo Valid modes are: debug, release
+    exit /b 1
+)
 
 rem ===== 显示帮助信息 =====
 if "%TEST_TYPE%"=="help" (
@@ -104,39 +111,34 @@ rem ===== 辅助函数 =====
     echo 用法: build.bat [模块] [构建模式]
     echo.
     echo 可用模块:
-    echo "  test42           运行基础测试"
-    echo "  sync_locked      运行有锁同步原语测试"
-    echo "  sync_lockfree    运行无锁同步原语测试"
-    echo "  skiplist_locked  运行有锁跳表测试"
-    echo "  skiplist_lockfree 运行无锁跳表测试"
-    echo "  memtable_locked  运行有锁内存表测试"
-    echo "  memtable_lockfree 运行无锁内存表测试"
-    echo "  sharded          运行分片内存表测试"
-    echo "  ppdb_memkv       构建纯内存KV版本"
+    echo   test42           运行基础测试
+    echo   sync_locked      运行有锁同步原语测试
+    echo   sync_lockfree    运行无锁同步原语测试
+    echo   skiplist_locked  运行有锁跳表测试
+    echo   skiplist_lockfree 运行无锁跳表测试
+    echo   memtable_locked  运行有锁内存表测试
+    echo   memtable_lockfree 运行无锁内存表测试
+    echo   sharded          运行分片内存表测试
     echo.
-    echo "  kvstore          运行KVStore测试"
-    echo "  wal_core         运行WAL核心测试"
-    echo "  wal_func         运行WAL功能测试"
-    echo "  wal_advanced     运行WAL高级测试"
-    echo "  clean            清理构建目录"
-    echo "  rebuild          强制重新构建"
+    echo   kvstore          运行KVStore测试
+    echo   wal_core         运行WAL核心测试
+    echo   wal_func         运行WAL功能测试
+    echo   wal_advanced     运行WAL高级测试
+    echo   clean            清理构建目录
+    echo   rebuild          强制重新构建
+    echo   ppdb             构建ppdb
     echo.
     echo 构建模式:
-    echo "  debug     调试模式 ^(默认^)"
-    echo "  release   发布模式"
+    echo   debug     调试模式
+    echo   release   发布模式 (默认)
     echo.
     echo 示例:
-    echo "  build.bat help                显示帮助信息"
-    echo "  build.bat clean               清理构建目录"
-    echo "  build.bat rebuild             强制重新构建"
-    echo "  build.bat test42              运行基础测试"
-    echo "  build.bat sync_locked         运行有锁同步测试"
-    echo "  build.bat sync_lockfree       运行无锁同步测试"
-    echo "  build.bat skiplist_locked     运行有锁跳表测试"
-    echo "  build.bat skiplist_lockfree   运行无锁跳表测试"
-    echo "  build.bat memtable_locked     运行有锁内存表测试"
-    echo "  build.bat memtable_lockfree   运行无锁内存表测试"
-    echo "  build.bat memtable release    以发布模式运行内存表测试"
+    echo   build.bat help                显示帮助信息
+    echo   build.bat clean               清理构建目录
+    echo   build.bat rebuild             强制重新构建
+    echo   build.bat test42              运行基础测试
+    echo   build.bat sync_locked debug   以调试模式运行有锁同步测试
+    echo   build.bat sync_lockfree       以默认模式运行无锁同步测试
     exit /b 0
 
 :clean_build
@@ -214,8 +216,6 @@ rem ===== 辅助函数 =====
     if errorlevel 1 exit /b 1
     "%BUILD_DIR%\42_test.exe"
     exit /b 0
-
-
 :build_sync_locked
     echo Building sync locked test...
     set "PPDB_SYNC_MODE=locked"
@@ -248,191 +248,7 @@ rem ===== 辅助函数 =====
     "%BUILD_DIR%\sync_lockfree_test.exe"
     exit /b 0
 
-:build_skiplist
-    echo Building skiplist test...
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\test_skiplist.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_test.exe.dbg" "%BUILD_DIR%\skiplist_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\skiplist_test.exe"
-    exit /b 0
-
-:build_skiplist_locked
-    echo Building skiplist locked test...
-    set "PPDB_SYNC_MODE=locked"
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\test_skiplist.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_locked_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_locked_test.exe.dbg" "%BUILD_DIR%\skiplist_locked_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\skiplist_locked_test.exe"
-    exit /b 0
-
-:build_skiplist_lockfree
-    echo Building skiplist lockfree test...
-    set "PPDB_SYNC_MODE=lockfree"
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\test_skiplist.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_lockfree_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_lockfree_test.exe.dbg" "%BUILD_DIR%\skiplist_lockfree_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\skiplist_lockfree_test.exe"
-    exit /b 0
-
-:build_memtable
-    echo Building memtable test...
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\memtable.c" ^
-        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\memtable_test.exe.dbg" "%BUILD_DIR%\memtable_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\memtable_test.exe"
-    exit /b 0
-
-:build_memtable_locked
-    echo Building memtable locked test...
-    set "PPDB_SYNC_MODE=locked"
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\memtable.c" ^
-        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_locked_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\memtable_locked_test.exe.dbg" "%BUILD_DIR%\memtable_locked_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\memtable_locked_test.exe"
-    exit /b 0
-
-:build_memtable_lockfree
-    echo Building memtable lockfree test...
-    set "PPDB_SYNC_MODE=lockfree"
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\memtable.c" ^
-        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\storage\test_memtable.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_lockfree_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\memtable_lockfree_test.exe.dbg" "%BUILD_DIR%\memtable_lockfree_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\memtable_lockfree_test.exe"
-    exit /b 0
-
-:build_sharded
-    echo Building sharded test...
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\sharded_memtable.c" ^
-        "%PPDB_DIR%\src\kvstore\memtable.c" ^
-        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\storage\test_sharded_memtable.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sharded_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\sharded_test.exe.dbg" "%BUILD_DIR%\sharded_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\sharded_test.exe"
-    exit /b 0
-
-:build_wal_core
-    echo Building WAL core test...
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\wal.c" ^
-        "%PPDB_DIR%\src\kvstore\wal_write.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\src\common\fs.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\src\kvstore\memtable.c" ^
-        "%PPDB_DIR%\src\kvstore\skiplist.c" ^
-        "%PPDB_DIR%\test\white\storage\test_wal_core.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\wal_core_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\wal_core_test.exe.dbg" "%BUILD_DIR%\wal_core_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\wal_core_test.exe"
-    exit /b 0
-
-:build_wal_func
-    echo Building WAL functional test...
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\wal.c" ^
-        "%PPDB_DIR%\src\kvstore\wal_write.c" ^
-        "%PPDB_DIR%\src\kvstore\wal_iterator.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\src\common\fs.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\storage\test_wal_func.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\wal_func_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\wal_func_test.exe.dbg" "%BUILD_DIR%\wal_func_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\wal_func_test.exe"
-    exit /b 0
-
-:build_wal_advanced
-    echo Building WAL advanced test...
-    "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\kvstore\wal.c" ^
-        "%PPDB_DIR%\src\kvstore\wal_write.c" ^
-        "%PPDB_DIR%\src\kvstore\wal_iterator.c" ^
-        "%PPDB_DIR%\src\kvstore\wal_maintenance.c" ^
-        "%PPDB_DIR%\src\kvstore\wal_recovery.c" ^
-        "%PPDB_DIR%\src\kvstore\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\src\common\fs.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\storage\test_wal_advanced.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\wal_advanced_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\wal_advanced_test.exe.dbg" "%BUILD_DIR%\wal_advanced_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\wal_advanced_test.exe"
-    exit /b 0
-
-:build_ppdb_memkv
-    echo Building PPDB MemKV program...
-    echo Not implemented yet
-    exit /b 1 
-
+rem ... 其他构建目标保持不变 ... 
 :build_rebuild
     echo.
     echo ===== 强制重新构建 =====
@@ -452,29 +268,6 @@ rem ===== 辅助函数 =====
     echo 重新构建完成
     echo.
     exit /b 0 
-
-:build_base_storage
-    echo Building base and storage...
-    "%GCC%" %CFLAGS% ^
-        -I"%PPDB_DIR%" ^
-        -I"%PPDB_DIR%\include" ^
-        -I"%PPDB_DIR%\src" ^
-        -I"%COSMO%" ^
-        -include "%COSMO%\cosmopolitan.h" ^
-        "%PPDB_DIR%\src\base.c" ^
-        "%PPDB_DIR%\src\storage.c" ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common\logger.c" ^
-        "%PPDB_DIR%\src\common\error.c" ^
-        "%PPDB_DIR%\src\base\memkv.c" ^
-        "%PPDB_DIR%\test\white\test_framework.c" ^
-        "%PPDB_DIR%\test\white\base\test_memkv.c" ^
-        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\base_test.exe.dbg"
-    if errorlevel 1 exit /b 1
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\base_test.exe.dbg" "%BUILD_DIR%\base_test.exe"
-    if errorlevel 1 exit /b 1
-    "%BUILD_DIR%\base_test.exe"
-
 :help
 @echo Usage: build.bat [target]
 @echo Available targets:

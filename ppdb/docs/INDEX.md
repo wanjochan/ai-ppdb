@@ -36,6 +36,11 @@
   * 问题诊断
 
 ### 1.5 设计文档
+- [同步原语设计](design/sync.md)
+  * 基础同步原语
+  * 数据库同步层
+  * 无锁算法实现
+  * 性能优化策略
 - [无锁数据结构](design/lockfree.md)
 - [预写日志(WAL)](design/wal.md)
 - [存储引擎](design/storage.md)
