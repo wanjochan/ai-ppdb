@@ -1,5 +1,5 @@
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_sync.h"
+#include "ppdb/sync.h"
 #include "test/white/test_framework.h"
 #include "test/white/test_macros.h"
 #include "test/white/infra/test_sync.h"
@@ -96,11 +96,10 @@ void test_sync_lockfree(void) {
     ppdb_sync_config_t config = {
         .type = PPDB_SYNC_RWLOCK,
         .use_lockfree = true,
-        .enable_fairness = true,
         .enable_ref_count = false,
-        .spin_count = 1000,
+        .max_readers = 32,
         .backoff_us = 1,
-        .max_readers = 32
+        .max_retries = 1000
     };
 
     // 创建同步原语
@@ -126,11 +125,10 @@ void test_sync_locked(void) {
     ppdb_sync_config_t config = {
         .type = PPDB_SYNC_RWLOCK,
         .use_lockfree = false,
-        .enable_fairness = true,
         .enable_ref_count = false,
-        .spin_count = 1000,
+        .max_readers = 32,
         .backoff_us = 1,
-        .max_readers = 32
+        .max_retries = 1000
     };
 
     // 创建同步原语
