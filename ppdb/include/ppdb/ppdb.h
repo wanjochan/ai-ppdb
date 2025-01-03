@@ -4,47 +4,6 @@
 #include <cosmopolitan.h>
 
 //-----------------------------------------------------------------------------
-// 基础类型定义
-//-----------------------------------------------------------------------------
-
-// 前向声明
-typedef struct ppdb_advance_ops ppdb_advance_ops_t;
-
-// 键值对定义
-typedef struct ppdb_key {
-    void* data;
-    size_t size;
-} ppdb_key_t;
-
-typedef struct ppdb_value {
-    void* data;
-    size_t size;
-} ppdb_value_t;
-
-// 存储节点结构
-typedef struct ppdb_node {
-    ppdb_key_t* key;
-    ppdb_value_t* value;
-    struct ppdb_node** next;
-    int height;
-    ppdb_rwlock_t lock;
-} ppdb_node_t;
-
-// 存储结构
-typedef struct ppdb_storage {
-    ppdb_node_t* head;
-    ppdb_rwlock_t lock;
-} ppdb_storage_t;
-
-// 基础结构
-typedef struct ppdb_base {
-    char* path;
-    ppdb_storage_t storage;
-    ppdb_metrics_counters_t metrics;
-    ppdb_advance_ops_t* advance;  // 高级功能接口
-} ppdb_base_t;
-
-//-----------------------------------------------------------------------------
 // 原子类型定义
 //-----------------------------------------------------------------------------
 
@@ -97,6 +56,13 @@ typedef enum {
 } ppdb_error_t;
 
 //-----------------------------------------------------------------------------
+// 前向声明
+//-----------------------------------------------------------------------------
+
+typedef struct ppdb_sync ppdb_sync_t;
+typedef struct ppdb_advance_ops ppdb_advance_ops_t;
+
+//-----------------------------------------------------------------------------
 // 同步原语定义
 //-----------------------------------------------------------------------------
 
@@ -123,7 +89,51 @@ typedef struct ppdb_sync_stats {
     atomic_uint_least64_t contentions;
 } ppdb_sync_stats_t;
 
-typedef struct ppdb_sync ppdb_sync_t;
+//-----------------------------------------------------------------------------
+// 基础类型定义
+//-----------------------------------------------------------------------------
+
+// 键值对定义
+typedef struct ppdb_key {
+    void* data;
+    size_t size;
+} ppdb_key_t;
+
+typedef struct ppdb_value {
+    void* data;
+    size_t size;
+} ppdb_value_t;
+
+// 存储节点结构
+typedef struct ppdb_node {
+    ppdb_sync_t* lock;       // 节点锁
+    ppdb_key_t* key;         // 键
+    ppdb_value_t* value;     // 值
+    struct ppdb_node* next[MAX_SKIPLIST_LEVEL];  // 后继指针数组
+    uint32_t height;         // 节点高度
+} ppdb_node_t;
+
+// 存储结构
+typedef struct ppdb_storage {
+    ppdb_node_t* head;
+    ppdb_sync_t* lock;
+} ppdb_storage_t;
+
+// 统计计数器
+typedef struct ppdb_metrics_counters {
+    atomic_uint64_t get_count;      // Get操作总数
+    atomic_uint64_t get_hits;       // Get命中次数
+    atomic_uint64_t put_count;      // Put操作次数
+    atomic_uint64_t remove_count;   // Remove操作次数
+} ppdb_metrics_counters_t;
+
+// 基础结构
+typedef struct ppdb_base {
+    char* path;
+    ppdb_storage_t storage;
+    ppdb_metrics_counters_t metrics;
+    ppdb_advance_ops_t* advance;  // 高级功能接口
+} ppdb_base_t;
 
 //-----------------------------------------------------------------------------
 // 存储类型定义
@@ -148,56 +158,6 @@ typedef enum {
     PPDB_TYPE_SHARDED = 0x30,     // 分片存储
     PPDB_TYPE_KVSTORE = 0x31      // KV存储（可以是内存或磁盘）
 } ppdb_type_t;
-
-typedef struct {
-    unsigned type : 4;        // 类型（16种）
-    unsigned flags : 12;      // 状态标记
-    atomic_uint_least16_t refs;  // 引用计数
-} ppdb_header_t;
-
-typedef struct {
-    atomic_uint64_t get_count;      // Get操作总数
-    atomic_uint64_t get_hits;       // Get命中次数
-    atomic_uint64_t put_count;      // Put操作次数
-    atomic_uint64_t remove_count;   // Remove操作次数
-} ppdb_metrics_t;
-
-typedef struct {
-    void* data;
-    size_t size;
-} ppdb_key_t;
-
-typedef struct {
-    void* data;
-    size_t size;
-} ppdb_value_t;
-
-typedef struct ppdb_node {
-    ppdb_sync_t* lock;       // 节点锁
-    ppdb_key_t* key;         // 键
-    ppdb_value_t* value;     // 值
-    struct ppdb_node* next[MAX_SKIPLIST_LEVEL];  // 后继指针数组
-    uint32_t height;         // 节点高度
-} ppdb_node_t;
-
-typedef struct {
-    ppdb_header_t header;     // 4字节
-    ppdb_metrics_t metrics;   // 统计信息
-    union {
-        struct {
-            ppdb_sync_t* lock;  // 存储锁
-            ppdb_node_t* head;   // 头节点
-        } storage;
-        struct {
-            size_t limit;        // 内存限制
-            atomic_size_t used;  // 已用内存
-        } mem;
-        struct {
-            uint32_t count;      // 分片数量
-            void** ptrs;         // 分片指针数组
-        } array;
-    };
-} ppdb_base_t;
 
 //-----------------------------------------------------------------------------
 // 错误处理函数
