@@ -1,95 +1,41 @@
 # PPDB 文档索引
 
-> 欢迎来到 PPDB 文档中心。本文档提供了 PPDB 项目的完整文档索引，帮助你快速找到所需信息。
+## 1. 概述文档
+- [架构设计](overview/ARCHITECTURE.md) - 系统整体架构设计和关键决策
+- [文件列表](FILES.md) - 项目文件结构说明
 
-## 1. 核心文档
+## 2. 计划文档
+- [总体计划](PLAN.md) - 项目总体规划
+- [执行计划](plan/execution.md) - 项目整体执行计划和时间安排
+- [同步原语计划](plan/sync.md) - 同步原语实现计划
+- [统一存储层计划](plan/unified.md) - 存储层实现计划
 
-### 1.1 概览文档
-- [系统概览](overview/OVERVIEW.md)
-  * 项目愿景和核心特性
-  * 系统架构概述
-  * 文档导航
-  * 开发路线
+## 3. 设计文档
+- [设计文档](design/) - 详细设计文档目录
 
-### 1.2 开发文档
-- [开发者指南](overview/DEVELOPER_GUIDE.md)
-  * 环境配置和构建步骤
-  * 编码规范
-  * 错误处理
-  * 测试指南
-  * 调试技巧
+## 4. 学习文档
+- [智能学习过程](learn/intelligent_learning_process.md) - 智能系统学习过程
+- [当前迭代计划](learn/current_iteration_plan.md) - 当前迭代目标和执行计划
 
-### 1.3 技术文档
-- [系统架构](overview/ARCHITECTURE.md)
-  * 架构设计
-  * 核心组件
-  * 技术选型
-  * 数据流设计
-  * 可靠性保证
+## 5. 测试文档
+- [测试用例](test/CASES.md) - 测试用例集合
+- [测试计划](test/PLAN.md) - 测试执行计划
 
-### 1.4 性能文档
-- [性能优化指南](overview/PERFORMANCE_GUIDE.md)
-  * 性能基准
-  * 优化策略
-  * 监控指标
-  * 调优指南
-  * 问题诊断
+## 6. 运维文档
+- [运维文档](ops/) - 运维相关文档目录
 
-### 1.5 设计文档
-- [同步原语设计](design/sync.md)
-  * 基础同步原语
-  * 数据库同步层
-  * 无锁算法实现
-  * 性能优化策略
-- [无锁数据结构](design/lockfree.md)
-- [预写日志(WAL)](design/wal.md)
-- [存储引擎](design/storage.md)
-- [SSTable 实现](design/sstable.md)
-- [内存表设计](design/memtable.md)
-- [成员管理](design/membership.md)
+## 7. API文档
+- [API文档](api/) - API接口文档目录
 
-### 1.6 API 文档
-- [存储接口](api/STORAGE.md)
-- [监控接口](api/MONITOR.md)
-- [命令行工具](api/CLI.md)
+## 8. 文档更新记录
 
-### 1.7 测试文档
-- [测试计划](test/PLAN.md)
-- [性能测试](test/PERFORMANCE.md)
-- [测试框架](test/FRAMEWORK.md)
-- [测试用例](test/CASES.md)
+### 2024-01
+- 简化系统架构，以skiplist为核心
+- 规划memkv和diskv两条产品线
+- 更新相关计划文档
+- 整理文档结构，更新索引
 
-## 2. 快速入门
-
-### 2.1 新手上路
-1. 阅读 [系统概览](overview/OVERVIEW.md) 了解项目
-2. 按照 [开发者指南](overview/DEVELOPER_GUIDE.md) 搭建环境
-3. 参考 [系统架构](overview/ARCHITECTURE.md) 理解设计
-4. 查看 [性能优化指南](overview/PERFORMANCE_GUIDE.md) 了解性能特性
-
-### 2.2 常见问题
-- 环境配置问题：参考 [开发者指南 - 环境配置](overview/DEVELOPER_GUIDE.md#2-环境配置)
-- 构建问题：参考 [开发者指南 - 构建指南](overview/DEVELOPER_GUIDE.md#3-构建指南)
-- 性能问题：参考 [性能优化指南 - 问题诊断](overview/PERFORMANCE_GUIDE.md#5-性能问题诊断)
-
-## 3. 学习资料
-- [共识算法](learn/consensus.md)
-- [分布式系统基础](learn/distributed.md)
-- [存储引擎学习](learn/storage_engine_study.md)
-- [分布式模式](learn/distributed_patterns.md)
-- [智能学习过程](learn/intelligent_learning_process.md)
-- [分布式数据库研究](learn/distributed_db_study.md)
-
-## 4. 文档约定
-
-### 4.1 文档规范
-- 所有文档使用 Markdown 格式
-- 代码示例需要包含完整注释
-- 技术名词保持一致性
-- 版本号遵循语义化版本规范
-
-### 4.2 文档维护
-- 定期审查和更新
-- 保持与代码的同步
-- 及时响应反馈
-- 记录重要变更
+### 2023-12
+- 初始化项目文档
+- 建立基本文档结构
+- 制定初步开发计划

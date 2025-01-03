@@ -1,231 +1,180 @@
-# PPDB统一存储层次结构计划
+# 统一存储层计划
 
-## 1. 架构概览
+## 1. 总体目标
 
-### 1.1 层次结构
-```
-KVStore层 (kvstore_t)
-    ↓
-容器层 (container_t)
-    ↓
-存储层 (storage_t)
-    ↓
-基础层 (base_t)
-```
+基于skiplist实现memkv和diskv两条产品线，提供高性能的内存KV存储和持久化KV存储功能。
 
-### 1.2 类型体系
+## 2. 架构设计
+
+### 2.1 核心组件
+
 ```c
-// 统一的类型标记
-typedef enum {
-    PPDB_TYPE_SKIPLIST = 1,    // 基础跳表
-    PPDB_TYPE_MEMTABLE = 2,    // 内存表
-    PPDB_TYPE_SHARDED = 4,     // 分片表
-    PPDB_TYPE_WAL = 8,         // 预写日志
-    PPDB_TYPE_SSTABLE = 16     // 有序表
-} ppdb_type_t;
+// 基础skiplist
+typedef struct ppdb_skiplist {
+    void* head;
+    uint32_t level;
+    size_t size;
+    ppdb_metrics_t metrics;
+} ppdb_skiplist_t;
+
+// memkv产品线
+typedef struct ppdb_memkv {
+    ppdb_skiplist_t* store;
+    ppdb_config_t config;
+    ppdb_metrics_t metrics;
+} ppdb_memkv_t;
+
+// diskv产品线
+typedef struct ppdb_diskv {
+    // 内存部分
+    ppdb_skiplist_t* active;
+    ppdb_skiplist_t* imm;
+    
+    // 持久化部分
+    ppdb_wal_t* wal;
+    ppdb_sstable_t** sst;
+    
+    // 配置和统计
+    ppdb_config_t config;
+    ppdb_metrics_t metrics;
+} ppdb_diskv_t;
 ```
 
-## 2. 实现计划
+### 2.2 组件关系
 
-### 2.1 基础层（base_t）实现
-```c
-typedef struct {
-    ppdb_header_t header;     // 4字节
-    union {
-        struct {
-            union {
-                void* head;    // skiplist
-                int fd;        // wal/sst
-            };
-            union {
-                void* pool;    // skiplist
-                void* buffer;  // wal/cache
-            };
-        } storage;
-        struct {
-            size_t limit;      // memtable
-            atomic_size_t used;
-        } mem;
-        struct {
-            uint32_t count;
-            void** ptrs;       // shards/sstables
-        } array;
-    };
-} ppdb_base_t;
-```
+1. skiplist作为基础组件
+   - 提供基本KV操作
+   - 支持并发访问
+   - 提供迭代器接口
 
-#### 实施步骤
-1. 基础结构实现（3天）
-   - 统一的头部管理
-   - 引用计数支持
-   - 类型分发机制
+2. memkv基于skiplist
+   - 纯内存KV存储
+   - 支持过期时间
+   - 高性能读写
 
-2. 内存管理（4天）
-   - 内存池实现
-   - 对齐优化
-   - 内存追踪
+3. diskv基于skiplist
+   - LSM树结构
+   - WAL日志
+   - SSTable持久化
 
-3. 性能优化（3天）
-   - 缓存友好设计
-   - 内联优化
-   - 内存屏障优化
+## 3. 实现计划
 
-### 2.2 存储层（storage_t）实现
-```c
-typedef struct {
-    ppdb_base_t base;         // 24字节
-    ppdb_storage_ops_t* ops;  // 8字节
-    ppdb_metrics_t metrics;   // 统计信息
-} ppdb_storage_t;
-```
+### 3.1 skiplist实现
 
-#### 实施步骤
-1. 基础接口实现（4天）
-   - 读写接口
-   - 同步接口
-   - 统计接口
+1. 基础结构
+   - 节点设计
+   - 层级管理
+   - 内存分配
 
-2. 具体实现（5天）
-   - WAL实现
-   - SSTable实现
-   - 缓存实现
+2. 基本操作
+   - 插入/删除
+   - 查找/更新
+   - 范围扫描
 
-3. 性能优化（3天）
-   - IO优化
+3. 并发控制
+   - 分片锁
+   - 无锁操作
+   - 引用计数
+
+### 3.2 memkv实现
+
+1. 基础功能
+   - KV接口
+   - 过期管理
+   - 统计信息
+
+2. 高级特性
    - 批量操作
-   - 异步支持
+   - 原子操作
+   - 事务支持
 
-### 2.3 容器层（container_t）实现
-```c
-typedef struct {
-    ppdb_base_t base;          // 24字节
-    ppdb_container_ops_t* ops; // 8字节
-    ppdb_storage_t* storage;   // 8字节
-    ppdb_metrics_t metrics;    // 统计信息
-} ppdb_container_t;
-```
-
-#### 实施步骤
-1. 基础容器实现（5天）
-   - Skiplist容器
-   - Memtable容器
-   - Sharded容器
-
-2. 高级特性（4天）
-   - 迭代器支持
-   - 范围查询
-   - 批量操作
-
-3. 性能优化（3天）
-   - 并发优化
+3. 性能优化
    - 内存管理
+   - 并发优化
    - 缓存优化
 
-### 2.4 KVStore层（kvstore_t）实现
-```c
-typedef struct {
-    ppdb_base_t base;          // 24字节
-    ppdb_kvstore_ops_t* ops;   // 8字节
-    ppdb_container_t* active;  // 8字节
-    ppdb_container_t* imm;     // 8字节
-    ppdb_storage_t* wal;       // 8字节
-    ppdb_storage_t** sst;      // 8字节
-    ppdb_metrics_t metrics;    // 统计信息
-} ppdb_kvstore_t;
-```
+### 3.3 diskv实现
 
-#### 实施步骤
-1. 基础功能实现（5天）
-   - 事务支持
-   - 快照实现
-   - Compaction
+1. 内存管理
+   - active/imm管理
+   - 内存限制
+   - flush策略
 
-2. 高级特性（4天）
-   - 多版本支持
-   - 增量压缩
-   - 恢复机制
+2. 持久化
+   - WAL实现
+   - SSTable格式
+   - 压缩编码
 
-3. 性能优化（3天）
-   - 写入优化
-   - 读取优化
-   - 资源管理
+3. 后台任务
+   - compaction
+   - 垃圾回收
+   - 检查点
 
-## 3. 测试计划
+## 4. 测试计划
 
-### 3.1 单元测试
-- 每层基本功能测试
-- 接口兼容性测试
-- 错误处理测试
+### 4.1 功能测试
+- 基本操作测试
+- 并发正确性
+- 错误处理
 
-### 3.2 集成测试
-- 层间交互测试
-- 端到端功能测试
-- 性能基准测试
+### 4.2 性能测试
+- 延迟指标
+- 吞吐量测试
+- 资源占用
 
-### 3.3 压力测试
-```c
-// 性能指标
-struct {
-    // 基础指标
-    uint64_t ops_per_sec;     // 操作数/秒
-    uint64_t latency_us;      // 延迟(微秒)
-    uint64_t throughput_mb;   // 吞吐量(MB/s)
-    
-    // 资源指标
-    uint64_t memory_used;     // 内存使用
-    uint64_t disk_used;       // 磁盘使用
-    uint64_t cpu_usage;       // CPU使用率
-} ppdb_perf_metrics_t;
-```
-
-## 4. 时间规划
-
-### 第一阶段（3周）
-- 基础层实现
-- 存储层实现
-- 基本测试框架
-
-### 第二阶段（3周）
-- 容器层实现
-- KVStore层实现
-- 集成测试
-
-### 第三阶段（2周）
-- 性能优化
+### 4.3 稳定性测试
 - 压力测试
+- 故障恢复
+- 长稳测试
+
+## 5. 时间规划
+
+### 5.1 第一阶段（4周）
+1. 第1-2周：skiplist基础功能
+2. 第3-4周：skiplist并发控制
+
+### 5.2 第二阶段（3周）
+1. 第5周：memkv基础功能
+2. 第6-7周：memkv高级特性
+
+### 5.3 第三阶段（3周）
+1. 第8周：diskv内存管理
+2. 第9-10周：diskv持久化
+
+## 6. 验收标准
+
+### 6.1 功能标准
+- 接口完整性
+- 并发正确性
+- 持久化可靠性
+
+### 6.2 性能标准
+- 读写延迟
+- 内存占用
+- 磁盘IO
+
+### 6.3 代码质量
+- 测试覆盖
 - 文档完善
+- 代码规范
 
-## 5. 验收标准
+## 7. 风险管理
 
-### 5.1 功能指标
-- 所有接口实现完整
-- 测试覆盖率>90%
-- 无内存泄漏
-- 无数据损坏
+### 7.1 技术风险
+1. 性能问题
+   - 跟踪：性能测试
+   - 应对：持续优化
 
-### 5.2 性能指标
-- 写入延迟<1ms (P99)
-- 读取延迟<100us (P99)
-- 单机吞吐>100K ops/s
-- 内存使用可控
+2. 并发问题
+   - 跟踪：压力测试
+   - 应对：完善测试
 
-### 5.3 代码质量
-- 接口文档完整
-- 代码注释规范
-- 错误处理完善
-- 日志记录完整
+### 7.2 进度风险
+1. 人力资源
+   - 跟踪：周进度
+   - 应对：调整优先级
 
-## 6. 风险管理
-
-### 6.1 技术风险
-1. 接口设计不合理
-2. 性能目标难达到
-3. 内存管理复杂
-4. 并发问题难调试
-
-### 6.2 应对措施
-1. 早期原型验证
-2. 持续性能测试
-3. 完善监控指标
-4. 全面的测试用例
+2. 技术障碍
+   - 跟踪：技术评审
+   - 应对：及时调整
 ``` 
