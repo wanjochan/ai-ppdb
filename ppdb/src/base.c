@@ -7,46 +7,37 @@
 //-----------------------------------------------------------------------------
 
 static const char* error_messages[] = {
-    [PPDB_OK] = "成功",
-    [PPDB_ERR_NULL_POINTER] = "空指针",
-    [PPDB_ERR_OUT_OF_MEMORY] = "内存不足",
-    [PPDB_ERR_NOT_FOUND] = "未找到",
-    [PPDB_ERR_ALREADY_EXISTS] = "已存在",
-    [PPDB_ERR_INVALID_STATE] = "无效状态",
-    [PPDB_ERR_BUSY] = "资源忙",
-    [PPDB_ERR_TIMEOUT] = "超时",
-    [PPDB_ERR_TOO_MANY_READERS] = "读者过多",
-    [PPDB_ERR_NOT_SUPPORTED] = "不支持",
-    [PPDB_ERR_INTERNAL] = "内部错误",
-    [PPDB_ERR_UNLOCK_FAILED] = "解锁失败",
-    [PPDB_ERR_RETRY] = "需要重试",
-    [PPDB_ERR_SYNC_RETRY_FAILED] = "重试失败"
+    "成功",                     // PPDB_OK
+    "空指针",                   // PPDB_ERR_NULL_POINTER
+    "内存不足",                 // PPDB_ERR_OUT_OF_MEMORY
+    "未找到",                   // PPDB_ERR_NOT_FOUND
+    "已存在",                   // PPDB_ERR_ALREADY_EXISTS
+    "无效类型",                 // PPDB_ERR_INVALID_TYPE
+    "无效状态",                 // PPDB_ERR_INVALID_STATE
+    "内部错误",                 // PPDB_ERR_INTERNAL
+    "不支持",                   // PPDB_ERR_NOT_SUPPORTED
+    "存储已满",                 // PPDB_ERR_FULL
+    "存储为空",                 // PPDB_ERR_EMPTY
+    "数据损坏",                 // PPDB_ERR_CORRUPTED
+    "IO错误",                   // PPDB_ERR_IO
+    "资源忙",                   // PPDB_ERR_BUSY
+    "超时",                     // PPDB_ERR_TIMEOUT
 };
 
 const char* ppdb_strerror(ppdb_error_t err) {
-    if (err < 0 || err >= PPDB_ERR_SYNC_RETRY_FAILED + 1) {
-        return "未知错误";
-    }
-    return error_messages[err];
+    if (err == 0) return error_messages[0];
+    if (err < -33 || err > 0) return "未知错误";
+    return error_messages[-err];
 }
 
 ppdb_error_t ppdb_system_error(int err) {
-    switch (err) {
-        case ENOMEM:
-            return PPDB_ERR_OUT_OF_MEMORY;
-        case EEXIST:
-            return PPDB_ERR_ALREADY_EXISTS;
-        case ENOENT:
-            return PPDB_ERR_NOT_FOUND;
-        case EBUSY:
-            return PPDB_ERR_BUSY;
-        case EIO:
-            return PPDB_ERR_INTERNAL;
-        case EAGAIN:
-            return PPDB_ERR_RETRY;
-        default:
-            return PPDB_ERR_INTERNAL;
-    }
+    if (err == ENOMEM) return PPDB_ERR_OUT_OF_MEMORY;
+    if (err == EEXIST) return PPDB_ERR_ALREADY_EXISTS;
+    if (err == ENOENT) return PPDB_ERR_NOT_FOUND;
+    if (err == EBUSY) return PPDB_ERR_BUSY;
+    if (err == EIO) return PPDB_ERR_IO;
+    if (err == EAGAIN) return PPDB_ERR_BUSY;
+    return PPDB_ERR_INTERNAL;
 }
 
 //-----------------------------------------------------------------------------
@@ -80,7 +71,7 @@ static ppdb_error_t ensure_directory(const char* path) {
     }
     
     if (mkdir(path, 0755) != 0) {
-        return ppdb_system_error();
+        return ppdb_system_error(errno);
     }
     return PPDB_OK;
 }
@@ -113,13 +104,13 @@ ppdb_error_t ppdb_fs_cleanup(const char* path) {
     for (size_t i = 0; i < sizeof(subdirs)/sizeof(subdirs[0]); i++) {
         snprintf(subdir, sizeof(subdir), "%s/%s", path, subdirs[i]);
         if (rmdir(subdir) != 0) {
-            return ppdb_system_error();
+            return ppdb_system_error(errno);
         }
     }
 
     // 删除主目录
     if (rmdir(path) != 0) {
-        return ppdb_system_error();
+        return ppdb_system_error(errno);
     }
 
     return PPDB_OK;
@@ -130,7 +121,7 @@ ppdb_error_t ppdb_fs_write(const char* path, const void* data, size_t size) {
     if (!path || !data) return PPDB_ERR_NULL_POINTER;
 
     FILE* fp = fopen(path, "wb");
-    if (!fp) return ppdb_system_error();
+    if (!fp) return ppdb_system_error(errno);
 
     size_t written = fwrite(data, 1, size, fp);
     if (written != size) {
@@ -156,7 +147,7 @@ ppdb_error_t ppdb_fs_read(const char* path, void* data, size_t size, size_t* byt
     if (!path || !data || !bytes_read) return PPDB_ERR_NULL_POINTER;
 
     FILE* fp = fopen(path, "rb");
-    if (!fp) return ppdb_system_error();
+    if (!fp) return ppdb_system_error(errno);
 
     *bytes_read = fread(data, 1, size, fp);
     if (*bytes_read == 0 && ferror(fp)) {
@@ -172,7 +163,7 @@ ppdb_error_t ppdb_fs_append(const char* path, const void* data, size_t size) {
     if (!path || !data) return PPDB_ERR_NULL_POINTER;
 
     FILE* fp = fopen(path, "ab");
-    if (!fp) return ppdb_system_error();
+    if (!fp) return ppdb_system_error(errno);
 
     size_t written = fwrite(data, 1, size, fp);
     if (written != size) {
@@ -307,6 +298,153 @@ void ppdb_log(ppdb_log_level_t level, const char* fmt, ...) {
 
     va_end(args);
     ppdb_sync_unlock(log_sync);
+}
+
+//-----------------------------------------------------------------------------
+// 同步原语实现
+//-----------------------------------------------------------------------------
+
+ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, ppdb_sync_config_t* config) {
+    if (!sync || !config) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = malloc(sizeof(ppdb_sync_internal_t));
+    if (!internal) return PPDB_ERR_OUT_OF_MEMORY;
+    
+    internal->config = *config;
+    memset(&internal->stats, 0, sizeof(ppdb_sync_stats_t));
+    
+    if (config->use_lockfree) {
+        atomic_flag_clear(&internal->spinlock);
+    } else {
+        pthread_mutex_init(&internal->mutex, NULL);
+    }
+    
+    *sync = (ppdb_sync_t*)internal;
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
+    if (!internal->config.use_lockfree) {
+        pthread_mutex_destroy(&internal->mutex);
+    }
+    
+    free(internal);
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
+    if (internal->config.use_lockfree) {
+        while (atomic_flag_test_and_set(&internal->spinlock)) {
+            ppdb_sync_pause();
+        }
+    } else {
+        if (pthread_mutex_lock(&internal->mutex) != 0) {
+            return PPDB_ERR_INTERNAL;
+        }
+    }
+    
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
+    if (internal->config.use_lockfree) {
+        atomic_flag_clear(&internal->spinlock);
+    } else {
+        if (pthread_mutex_unlock(&internal->mutex) != 0) {
+            return PPDB_ERR_INTERNAL;
+        }
+    }
+    
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
+    if (internal->config.use_lockfree) {
+        if (atomic_flag_test_and_set(&internal->spinlock)) {
+            return PPDB_ERR_BUSY;
+        }
+    } else {
+        if (pthread_mutex_trylock(&internal->mutex) != 0) {
+            return PPDB_ERR_BUSY;
+        }
+    }
+    
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
+    if (internal->config.use_lockfree) {
+        int readers;
+        do {
+            readers = atomic_load(&internal->rwlock.readers);
+            if (readers >= internal->config.max_readers) {
+                return PPDB_ERR_BUSY;
+            }
+        } while (!atomic_compare_exchange_weak(&internal->rwlock.readers, &readers, readers + 1));
+    } else {
+        return ppdb_sync_lock(sync);
+    }
+    
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
+    if (internal->config.use_lockfree) {
+        atomic_fetch_sub(&internal->rwlock.readers, 1);
+    } else {
+        return ppdb_sync_unlock(sync);
+    }
+    
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
+    if (internal->config.use_lockfree) {
+        while (atomic_flag_test_and_set(&internal->rwlock.write_lock)) {
+            ppdb_sync_pause();
+        }
+        while (atomic_load(&internal->rwlock.readers) > 0) {
+            ppdb_sync_pause();
+        }
+    } else {
+        return ppdb_sync_lock(sync);
+    }
+    
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync) {
+    if (!sync) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
+    if (internal->config.use_lockfree) {
+        atomic_flag_clear(&internal->rwlock.write_lock);
+    } else {
+        return ppdb_sync_unlock(sync);
+    }
+    
+    return PPDB_OK;
 }
 
 // ... existing code ...

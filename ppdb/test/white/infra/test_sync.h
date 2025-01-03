@@ -2,7 +2,8 @@
 #define TEST_SYNC_H
 
 #include <cosmopolitan.h>
-#include "ppdb/ppdb_sync.h"
+#include "ppdb/ppdb.h"
+#include "ppdb/ppdb_internal.h"
 
 // 测试函数声明
 void test_sync_lockfree(void);

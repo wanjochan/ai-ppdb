@@ -198,10 +198,15 @@ rem ===== 辅助函数 =====
     )
 
     rem Set include paths
-    set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\kvstore -I%PPDB_DIR%\src\sync -I%PPDB_DIR%\src\kvstore\internal -I%PPDB_DIR%\src\sync\internal -I%PPDB_DIR%\src\common -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
+    set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
 
     rem Set final CFLAGS
     set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
+    
+    rem Set sync mode if specified
+    if "%PPDB_SYNC_MODE%"=="lockfree" (
+        set "CFLAGS=%CFLAGS% -DPPDB_SYNC_MODE_LOCKFREE"
+    )
 
     rem Set linker flags
     set "LDFLAGS=-static -nostdlib -Wl,-T,%BUILD_DIR%\ape.lds -Wl,--gc-sections -B%CROSS9% -Wl,-z,max-page-size=0x1000 -no-pie"
@@ -220,8 +225,7 @@ rem ===== 辅助函数 =====
     echo Building sync locked test...
     set "PPDB_SYNC_MODE=locked"
     "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common.c" ^
+        "%PPDB_DIR%\src\base.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\infra\test_sync.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sync_locked_test.exe.dbg"
@@ -235,8 +239,7 @@ rem ===== 辅助函数 =====
     echo Building sync lockfree test...
     set "PPDB_SYNC_MODE=lockfree"
     "%GCC%" %CFLAGS% ^
-        "%PPDB_DIR%\src\sync\sync.c" ^
-        "%PPDB_DIR%\src\common.c" ^
+        "%PPDB_DIR%\src\base.c" ^
         "%PPDB_DIR%\test\white\test_framework.c" ^
         "%PPDB_DIR%\test\white\infra\test_sync.c" ^
         %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sync_lockfree_test.exe.dbg"
@@ -246,7 +249,95 @@ rem ===== 辅助函数 =====
     "%BUILD_DIR%\sync_lockfree_test.exe"
     exit /b 0
 
-rem ... 其他构建目标保持不变 ... 
+:build_skiplist_locked
+    echo Building skiplist locked test...
+    set "PPDB_SYNC_MODE=locked"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\infra\test_skiplist.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_locked_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_locked_test.exe.dbg" "%BUILD_DIR%\skiplist_locked_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\skiplist_locked_test.exe"
+    exit /b 0
+
+:build_skiplist_lockfree
+    echo Building skiplist lockfree test...
+    set "PPDB_SYNC_MODE=lockfree"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\infra\test_skiplist.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_lockfree_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_lockfree_test.exe.dbg" "%BUILD_DIR%\skiplist_lockfree_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\skiplist_lockfree_test.exe"
+    exit /b 0
+
+:build_memtable_locked
+    echo Building memtable locked test...
+    set "PPDB_SYNC_MODE=locked"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\infra\test_memtable.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_locked_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\memtable_locked_test.exe.dbg" "%BUILD_DIR%\memtable_locked_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\memtable_locked_test.exe"
+    exit /b 0
+
+:build_memtable_lockfree
+    echo Building memtable lockfree test...
+    set "PPDB_SYNC_MODE=lockfree"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\infra\test_memtable.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memtable_lockfree_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\memtable_lockfree_test.exe.dbg" "%BUILD_DIR%\memtable_lockfree_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\memtable_lockfree_test.exe"
+    exit /b 0
+
+:build_sharded
+    echo Building sharded test...
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\infra\test_sharded.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sharded_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\sharded_test.exe.dbg" "%BUILD_DIR%\sharded_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\sharded_test.exe"
+    exit /b 0
+
+:build_kvstore
+    echo Building kvstore test...
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\src\ppdb.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\infra\test_kvstore.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\kvstore_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\kvstore_test.exe.dbg" "%BUILD_DIR%\kvstore_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\kvstore_test.exe"
+    exit /b 0
+
 :build_rebuild
     echo.
     echo ===== 强制重新构建 =====

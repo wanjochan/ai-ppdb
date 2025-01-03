@@ -4,6 +4,47 @@
 #include <cosmopolitan.h>
 
 //-----------------------------------------------------------------------------
+// 基础类型定义
+//-----------------------------------------------------------------------------
+
+// 前向声明
+typedef struct ppdb_advance_ops ppdb_advance_ops_t;
+
+// 键值对定义
+typedef struct ppdb_key {
+    void* data;
+    size_t size;
+} ppdb_key_t;
+
+typedef struct ppdb_value {
+    void* data;
+    size_t size;
+} ppdb_value_t;
+
+// 存储节点结构
+typedef struct ppdb_node {
+    ppdb_key_t* key;
+    ppdb_value_t* value;
+    struct ppdb_node** next;
+    int height;
+    ppdb_rwlock_t lock;
+} ppdb_node_t;
+
+// 存储结构
+typedef struct ppdb_storage {
+    ppdb_node_t* head;
+    ppdb_rwlock_t lock;
+} ppdb_storage_t;
+
+// 基础结构
+typedef struct ppdb_base {
+    char* path;
+    ppdb_storage_t storage;
+    ppdb_metrics_counters_t metrics;
+    ppdb_advance_ops_t* advance;  // 高级功能接口
+} ppdb_base_t;
+
+//-----------------------------------------------------------------------------
 // 原子类型定义
 //-----------------------------------------------------------------------------
 
@@ -199,4 +240,4 @@ void ppdb_ref(ppdb_base_t* base);
 void ppdb_unref(ppdb_base_t* base);
 ppdb_error_t ppdb_check_type(ppdb_base_t* base, ppdb_type_t type);
 
-#endif // PPDB_H 
+#endif // PPDB_H
