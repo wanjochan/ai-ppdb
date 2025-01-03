@@ -204,6 +204,14 @@ typedef struct ppdb_advance_ops {
     void (*iterator_destroy)(void* iter);
 } ppdb_advance_ops_t;
 
+typedef struct ppdb_config {
+    ppdb_type_t type;                // 存储类型
+    const char* path;                // 存储路径
+    size_t memtable_size;           // 内存表大小
+    uint32_t shard_count;           // 分片数量
+    bool use_lockfree;              // 是否使用无锁模式
+} PPDB_ALIGNED ppdb_config_t;
+
 struct ppdb_base {
     ppdb_type_t type;            // 存储类型
     char* path;                  // 存储路径
@@ -212,15 +220,8 @@ struct ppdb_base {
     ppdb_array_t array;          // 分片数组
     ppdb_metrics_t metrics;      // 统计信息
     ppdb_advance_ops_t* advance; // 高级功能接口
+    ppdb_config_t config;        // 存储配置
 } PPDB_ALIGNED;
-
-typedef struct ppdb_config {
-    ppdb_type_t type;                // 存储类型
-    const char* path;                // 存储路径
-    size_t memtable_size;           // 内存表大小
-    uint32_t shard_count;           // 分片数量
-    ppdb_sync_config_t sync_config; // 同步配置
-} PPDB_ALIGNED ppdb_config_t;
 
 //-----------------------------------------------------------------------------
 // 函数声明

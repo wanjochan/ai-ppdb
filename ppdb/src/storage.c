@@ -31,7 +31,7 @@ static ppdb_error_t kvstore_restore(ppdb_base_t* base, const char* path);
 static ppdb_error_t kvstore_iterator(ppdb_base_t* base, void** iter);
 static ppdb_error_t kvstore_next(void* iter, ppdb_key_t* key, ppdb_value_t* value);
 static void kvstore_iterator_destroy(void* iter);
-static ppdb_node_t* node_create(const ppdb_key_t* key, const ppdb_value_t* value, uint32_t height);
+static ppdb_node_t* node_create(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value, uint32_t height);
 static void node_destroy(ppdb_node_t* node);
 static void node_ref(ppdb_node_t* node);
 static void node_unref(ppdb_node_t* node);
@@ -46,7 +46,7 @@ static void MurmurHash3_x86_32(const void* key, int len, uint32_t seed, void* ou
     const uint32_t c2 = 0x1b873593;
     const uint32_t* blocks = (const uint32_t*)(data + nblocks * 4);
     
-    for (int i = -nblocks; i; i++) {
+    for (int i = -nblocks; i; i--) {
         uint32_t k1 = blocks[i];
         k1 *= c1;
         k1 = (k1 << 15) | (k1 >> 17);
@@ -112,85 +112,62 @@ static uint64_t lemur64(void) {
 static ppdb_error_t skiplist_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value) {
     if (!base || !key || !value) return PPDB_ERR_NULL_POINTER;
 
+    ppdb_error_t err;
     // 生成随机层数
     uint32_t height = random_level();
-    ppdb_node_t* new_node = node_create(key, value, height);
+    ppdb_node_t* new_node = node_create(base, key, value, height);
     if (!new_node) return PPDB_ERR_OUT_OF_MEMORY;
 
-    uint32_t retry_count = 0;
-    const uint32_t MAX_RETRY_COUNT = 100;  // 最大重试次数
-
-    while (retry_count++ < MAX_RETRY_COUNT) {
-        ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
-        ppdb_node_t* current = base->storage.head;
-        
-        // 从最高层开始查找插入位置
-        for (int level = MAX_SKIPLIST_LEVEL - 1; level >= 0; level--) {
-            while (1) {
-                ppdb_node_t* next = current->next[level];
-                if (!next) break;
-                
-                int cmp = memcmp(next->key->data, key->data,
-                               MIN(next->key->size, key->size));
-                if (cmp > 0 || (cmp == 0 && next->key->size > key->size)) break;
-                
-                current = next;
-            }
-            update[level] = current;
-        }
-        
-        // 检查是否已存在相同的key
-        ppdb_node_t* next = current->next[0];
-        if (next && next->key->size == key->size &&
-            memcmp(next->key->data, key->data, key->size) == 0) {
-            node_destroy(new_node);
-            return PPDB_ERR_ALREADY_EXISTS;
-        }
-        
-        // 获取所有需要的写锁
-        bool locked[MAX_SKIPLIST_LEVEL] = {false};
-        bool success = true;
-        
-        for (uint32_t i = 0; i < height; i++) {
-            if (ppdb_sync_write_lock(update[i]->lock) != PPDB_OK) {
-                success = false;
-                break;
-            }
-            locked[i] = true;
-        }
-        
-        if (!success) {
-            // 解锁已锁定的节点
-            for (uint32_t i = 0; i < height; i++) {
-                if (locked[i]) {
-                    ppdb_sync_write_unlock(update[i]->lock);
-                }
-            }
-            if (retry_count < MAX_RETRY_COUNT) {
-                usleep(1 << (retry_count % 10));  // 指数退避
-                continue;  // 重试整个操作
-            }
-            node_destroy(new_node);
-            return PPDB_ERR_BUSY;
-        }
-        
-        // 更新指针
-        for (uint32_t i = 0; i < height; i++) {
-            new_node->next[i] = update[i]->next[i];
-            update[i]->next[i] = new_node;
-        }
-        
-        // 解锁所有节点
-        for (uint32_t i = 0; i < height; i++) {
-            ppdb_sync_write_unlock(update[i]->lock);
-        }
-        
-        ppdb_sync_counter_add(&base->metrics.put_count, 1);
-        return PPDB_OK;
+    // 获取全局写锁
+    if ((err = ppdb_sync_write_lock(base->storage.lock)) != PPDB_OK) {
+        node_destroy(new_node);
+        return err;
     }
 
-    node_destroy(new_node);
-    return PPDB_ERR_BUSY;  // 超过最大重试次数
+    ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
+    ppdb_node_t* current = base->storage.head;
+    
+    // 从最高层开始查找插入位置
+    for (int level = MAX_SKIPLIST_LEVEL - 1; level >= 0; level--) {
+        while (current->next[level]) {
+            ppdb_node_t* next = current->next[level];
+            
+            // 跳过已删除的节点
+            if (ppdb_sync_counter_load(&next->is_deleted) || 
+                ppdb_sync_counter_load(&next->is_garbage)) {
+                current = next;
+                continue;
+            }
+            
+            int cmp = memcmp(next->key->data, key->data,
+                           MIN(next->key->size, key->size));
+            if (cmp > 0 || (cmp == 0 && next->key->size > key->size)) break;
+            
+            current = next;
+        }
+        update[level] = current;
+    }
+    
+    // 检查是否已存在相同的key
+    ppdb_node_t* next = current->next[0];
+    if (next && next->key->size == key->size &&
+        memcmp(next->key->data, key->data, key->size) == 0) {
+        ppdb_sync_write_unlock(base->storage.lock);
+        node_destroy(new_node);
+        return PPDB_ERR_ALREADY_EXISTS;
+    }
+    
+    // 更新指针
+    for (uint32_t i = 0; i < height; i++) {
+        new_node->next[i] = update[i]->next[i];
+        update[i]->next[i] = new_node;
+    }
+    
+    // 释放全局锁
+    ppdb_sync_write_unlock(base->storage.lock);
+    
+    ppdb_sync_counter_add(&base->metrics.put_count, 1);
+    return PPDB_OK;
 }
 
 // 获取节点高度
@@ -199,8 +176,8 @@ static uint32_t node_get_height(ppdb_node_t* node) {
 }
 
 // 创建新节点
-static ppdb_node_t* node_create(const ppdb_key_t* key, const ppdb_value_t* value, uint32_t height) {
-    if (!key || !value) return NULL;
+static ppdb_node_t* node_create(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value, uint32_t height) {
+    if (!base || !key || !value) return NULL;
     
     size_t node_size = sizeof(ppdb_node_t) + height * sizeof(ppdb_node_t*);
     ppdb_node_t* node = PPDB_ALIGNED_ALLOC(node_size);
@@ -235,7 +212,7 @@ static ppdb_node_t* node_create(const ppdb_key_t* key, const ppdb_value_t* value
     // 初始化节点锁
     if (ppdb_sync_create(&node->lock, &(ppdb_sync_config_t){
         .type = PPDB_SYNC_RWLOCK,
-        .use_lockfree = true,
+        .use_lockfree = base->config.use_lockfree,  // 使用base配置中的锁模式
         .max_readers = 32,
         .backoff_us = 1,
         .max_retries = 100
@@ -311,13 +288,13 @@ static ppdb_error_t skiplist_init(ppdb_base_t* base) {
     // 创建头节点（使用最大层数）
     ppdb_key_t dummy_key = {NULL, 0};
     ppdb_value_t dummy_value = {NULL, 0};
-    base->storage.head = node_create(&dummy_key, &dummy_value, MAX_SKIPLIST_LEVEL);
+    base->storage.head = node_create(base, &dummy_key, &dummy_value, MAX_SKIPLIST_LEVEL);
     if (!base->storage.head) return PPDB_ERR_OUT_OF_MEMORY;
 
     // 初始化存储级别的锁
     if (ppdb_sync_create(&base->storage.lock, &(ppdb_sync_config_t){
         .type = PPDB_SYNC_RWLOCK,
-        .use_lockfree = false,
+        .use_lockfree = base->config.use_lockfree,  // 使用base配置中的锁模式
         .max_readers = 1024,
         .backoff_us = 1,
         .max_retries = 100
@@ -438,23 +415,29 @@ static ppdb_error_t skiplist_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_
     ppdb_sync_counter_add(&base->metrics.get_count, 1);
     ppdb_node_t* current = base->storage.head;
     
+    // 获取存储级别的读锁
+    if (ppdb_sync_read_lock(base->storage.lock) != PPDB_OK) {
+        return PPDB_ERR_BUSY;
+    }
+    
     // 从最高层开始查找
     for (int level = MAX_SKIPLIST_LEVEL - 1; level >= 0; level--) {
         while (1) {
             // 原子读取next指针
-            ppdb_node_t* next = current->next[level];  // 这里不需要原子操作，因为next指针本身是原子的
+            ppdb_node_t* next = current->next[level];
             if (!next) break;
-            
-            // 检查删除标记
-            if (ppdb_sync_counter_load(&next->is_deleted) || 
-                ppdb_sync_counter_load(&next->is_garbage)) {
-                current = next;
-                continue;
-            }
             
             // 获取读锁
             if (ppdb_sync_read_lock(next->lock) != PPDB_OK) {
                 break;
+            }
+            
+            // 检查删除标记
+            if (ppdb_sync_counter_load(&next->is_deleted) || 
+                ppdb_sync_counter_load(&next->is_garbage)) {
+                ppdb_sync_read_unlock(next->lock);
+                current = next;
+                continue;
             }
             
             // 比较key
@@ -466,138 +449,118 @@ static ppdb_error_t skiplist_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_
                 break;
             }
             
+            if (cmp == 0 && next->key->size == key->size) {
+                // 找到了匹配的key
+                // 增加引用计数
+                node_ref(next);
+                
+                // 分配value内存
+                value->data = PPDB_ALIGNED_ALLOC(next->value->size);
+                if (!value->data) {
+                    node_unref(next);
+                    ppdb_sync_read_unlock(next->lock);
+                    ppdb_sync_read_unlock(base->storage.lock);
+                    return PPDB_ERR_OUT_OF_MEMORY;
+                }
+
+                // 复制数据
+                memcpy(value->data, next->value->data, next->value->size);
+                value->size = next->value->size;
+                ppdb_sync_counter_init(&value->ref_count, 1);
+                
+                // 释放锁和引用
+                ppdb_sync_read_unlock(next->lock);
+                ppdb_sync_read_unlock(base->storage.lock);
+                node_unref(next);
+                
+                ppdb_sync_counter_add(&base->metrics.get_hits, 1);
+                return PPDB_OK;
+            }
+            
             current = next;
             ppdb_sync_read_unlock(next->lock);
         }
     }
     
-    // 检查是否找到
-    ppdb_node_t* found = current->next[0];  // 这里不需要原子操作
-    if (!found || 
-        ppdb_sync_counter_load(&found->is_deleted) || 
-        ppdb_sync_counter_load(&found->is_garbage) ||
-        found->key->size != key->size || 
-        memcmp(found->key->data, key->data, key->size) != 0) {
-        return PPDB_ERR_NOT_FOUND;
-    }
-
-    // 获取读锁
-    if (ppdb_sync_read_lock(found->lock) != PPDB_OK) {
-        return PPDB_ERR_BUSY;
-    }
-
-    // 增加引用计数
-    node_ref(found);
-
-    // 分配value内存
-    value->data = PPDB_ALIGNED_ALLOC(found->value->size);
-    if (!value->data) {
-        node_unref(found);
-        ppdb_sync_read_unlock(found->lock);
-        return PPDB_ERR_OUT_OF_MEMORY;
-    }
-
-    // 复制数据
-    memcpy(value->data, found->value->data, found->value->size);
-    value->size = found->value->size;
-    ppdb_sync_counter_init(&value->ref_count, 1);
-    
-    // 释放锁和引用
-    ppdb_sync_read_unlock(found->lock);
-    node_unref(found);
-    
-    ppdb_sync_counter_add(&base->metrics.get_hits, 1);
-    return PPDB_OK;
+    // 未找到
+    ppdb_sync_read_unlock(base->storage.lock);
+    return PPDB_ERR_NOT_FOUND;
 }
 
 static ppdb_error_t skiplist_remove(ppdb_base_t* base, const ppdb_key_t* key) {
     if (!base || !key) return PPDB_ERR_NULL_POINTER;
 
-    uint32_t retry_count = 0;
-    const uint32_t MAX_RETRY_COUNT = 100;  // 最大重试次数
+    ppdb_error_t err = PPDB_OK;
+    ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
+    ppdb_node_t* current;
 
-    while (retry_count++ < MAX_RETRY_COUNT) {
-        ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
-        ppdb_node_t* current = base->storage.head;
-        
-        // 从最高层开始查找删除位置
-        for (int level = MAX_SKIPLIST_LEVEL - 1; level >= 0; level--) {
-            while (1) {
-                ppdb_node_t* next = current->next[level];
-                if (!next) break;
-                
-                int cmp = memcmp(next->key->data, key->data,
-                               MIN(next->key->size, key->size));
-                if (cmp > 0 || (cmp == 0 && next->key->size > key->size)) break;
-                
-                current = next;
-            }
-            update[level] = current;
-        }
-        
-        // 检查key是否存在
-        ppdb_node_t* target = current->next[0];
-        if (!target || target->key->size != key->size ||
-            memcmp(target->key->data, key->data, key->size) != 0) {
-            return PPDB_ERR_NOT_FOUND;
-        }
-        
-        // 获取目标节点的写锁
-        if (ppdb_sync_write_lock(target->lock) != PPDB_OK) {
-            if (retry_count < MAX_RETRY_COUNT) {
-                usleep(1 << (retry_count % 10));  // 指数退避，最大1024微秒
-                continue;  // 重试整个操作
-            }
-            return PPDB_ERR_BUSY;
-        }
-        
-        // 获取前驱节点的写锁
-        bool locked[MAX_SKIPLIST_LEVEL] = {false};
-        bool success = true;
-        uint32_t target_height = ppdb_sync_counter_load(&target->height);
-        
-        for (uint32_t i = 0; i < target_height; i++) {
-            if (ppdb_sync_write_lock(update[i]->lock) != PPDB_OK) {
-                success = false;
-                break;
-            }
-            locked[i] = true;
-        }
-        
-        if (!success) {
-            // 解锁已锁定的节点
-            ppdb_sync_write_unlock(target->lock);
-            for (uint32_t i = 0; i < target_height; i++) {
-                if (locked[i]) {
-                    ppdb_sync_write_unlock(update[i]->lock);
-                }
-            }
-            if (retry_count < MAX_RETRY_COUNT) {
-                usleep(1 << (retry_count % 10));  // 指数退避
-                continue;  // 重试整个操作
-            }
-            return PPDB_ERR_BUSY;
-        }
-        
-        // 更新前驱节点的指针
-        for (uint32_t i = 0; i < target_height; i++) {
-            update[i]->next[i] = target->next[i];
-        }
-        
-        // 解锁所有节点
-        ppdb_sync_write_unlock(target->lock);
-        for (uint32_t i = 0; i < target_height; i++) {
-            ppdb_sync_write_unlock(update[i]->lock);
-        }
-        
-        // 减少引用计数，可能触发节点销毁
-        node_unref(target);
-        
-        ppdb_sync_counter_add(&base->metrics.remove_count, 1);
-        return PPDB_OK;
+    // 获取跳表的写锁
+    if ((err = ppdb_sync_write_lock(base->storage.lock)) != PPDB_OK) {
+        return err;
     }
 
-    return PPDB_ERR_BUSY;  // 超过最大重试次数
+    // 从最高层开始查找
+    current = base->storage.head;
+    for (int level = MAX_SKIPLIST_LEVEL - 1; level >= 0; level--) {
+        update[level] = current;
+        while (current->next[level]) {
+            ppdb_node_t* next = current->next[level];
+            
+            // 跳过已删除的节点
+            if (ppdb_sync_counter_load(&next->is_deleted) || 
+                ppdb_sync_counter_load(&next->is_garbage)) {
+                current = next;
+                continue;
+            }
+
+            // 比较键值
+            int cmp;
+            if (next->key->size == key->size) {
+                cmp = memcmp(next->key->data, key->data, key->size);
+            } else {
+                cmp = memcmp(next->key->data, key->data, 
+                            MIN(next->key->size, key->size));
+                if (cmp == 0) {
+                    cmp = (next->key->size < key->size) ? -1 : 1;
+                }
+            }
+
+            if (cmp > 0) break;
+            if (cmp == 0) {
+                // 找到目标节点
+                if (!ppdb_sync_counter_load(&next->is_deleted) && 
+                    !ppdb_sync_counter_load(&next->is_garbage)) {
+                    // 标记为已删除
+                    ppdb_sync_counter_add(&next->is_deleted, 1);
+                    
+                    // 更新所有层级的指针
+                    uint32_t next_height = ppdb_sync_counter_load(&next->height);
+                    for (int i = 0; i < next_height; i++) {
+                        if (update[i]->next[i] == next) {
+                            update[i]->next[i] = next->next[i];
+                        }
+                    }
+                    
+                    // 标记为垃圾回收
+                    ppdb_sync_counter_add(&next->is_garbage, 1);
+                    
+                    // 减少引用计数
+                    node_unref(next);
+                    
+                    ppdb_sync_counter_add(&base->metrics.remove_count, 1);
+                    ppdb_sync_write_unlock(base->storage.lock);
+                    return PPDB_OK;
+                }
+                break;
+            }
+            current = next;
+            update[level] = current;
+        }
+    }
+
+    // 未找到节点
+    ppdb_sync_write_unlock(base->storage.lock);
+    return PPDB_ERR_NOT_FOUND;
 }
 
 static ppdb_error_t memtable_remove(ppdb_base_t* base, const ppdb_key_t* key) {
@@ -1196,6 +1159,13 @@ ppdb_error_t ppdb_create(ppdb_type_t type, ppdb_base_t** base) {
     memset(*base, 0, sizeof(ppdb_base_t));
     (*base)->type = type;
     
+    // 初始化配置
+    const char* test_mode = getenv("PPDB_SYNC_MODE");
+    (*base)->config.type = type;
+    (*base)->config.use_lockfree = (test_mode && strcmp(test_mode, "lockfree") == 0);
+    (*base)->config.memtable_size = DEFAULT_MEMTABLE_SIZE;
+    (*base)->config.shard_count = DEFAULT_SHARD_COUNT;
+    
     ppdb_error_t err;
     switch (type) {
         case PPDB_TYPE_SKIPLIST:
@@ -1215,28 +1185,11 @@ ppdb_error_t ppdb_create(ppdb_type_t type, ppdb_base_t** base) {
     }
     
     if (err != PPDB_OK) {
-        aligned_free(*base);
+        PPDB_ALIGNED_FREE(*base);
         *base = NULL;
-        return err;
-    }
-
-    // 配置同步选项
-    ppdb_sync_config_t sync_config = {
-        .type = PPDB_SYNC_RWLOCK,
-        .use_lockfree = true,
-        .enable_ref_count = true,
-        .max_readers = 32,
-        .backoff_us = 1,
-        .max_retries = 100
-    };
-    err = ppdb_sync_init((*base)->storage.lock, &sync_config);
-    if (err != PPDB_OK) {
-        aligned_free(*base);
-        *base = NULL;
-        return err;
     }
     
-    return PPDB_OK;
+    return err;
 }
 
 void ppdb_destroy(ppdb_base_t* base) {

@@ -9,15 +9,6 @@
 #define TEST_MAX_KEY_SIZE 100
 #define TEST_MAX_VALUE_SIZE 1000
 
-// 自定义内存比较断言宏
-#define TEST_ASSERT_MEM_EQ(actual, expected, size) do { \
-    if (memcmp((actual), (expected), (size)) != 0) { \
-        printf("Memory comparison failed\n"); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while (0)
-
 // 测试函数声明
 static void test_skiplist_basic(bool use_lockfree);
 static void test_skiplist_concurrent(bool use_lockfree);
@@ -87,13 +78,18 @@ static void test_skiplist_basic(bool use_lockfree) {
     TEST_ASSERT(base != NULL, "Base pointer is NULL");
 
     // 测试插入
+    uint8_t* key_data = PPDB_ALIGNED_ALLOC(4);
+    memcpy(key_data, "key1", 4);
+    uint8_t* value_data = PPDB_ALIGNED_ALLOC(6);
+    memcpy(value_data, "value1", 6);
+    
     ppdb_key_t key1 = {
-        .data = (uint8_t*)"key1",
+        .data = key_data,
         .size = 4,
         .ref_count = {.value = 1}
     };
     ppdb_value_t value1 = {
-        .data = (uint8_t*)"value1",
+        .data = value_data,
         .size = 6,
         .ref_count = {.value = 1}
     };
@@ -113,7 +109,7 @@ static void test_skiplist_basic(bool use_lockfree) {
     printf("Comparing values...\n");
     printf("Expected size: %zu, Actual size: %zu\n", value1.size, result.size);
     TEST_ASSERT(result.size == value1.size, "Value size mismatch");
-    TEST_ASSERT_MEM_EQ(result.data, value1.data, value1.size);
+    ASSERT_MEM_EQ(result.data, value1.data, value1.size);
     PPDB_ALIGNED_FREE(result.data);
 
     // 测试删除
@@ -128,6 +124,10 @@ static void test_skiplist_basic(bool use_lockfree) {
     printf("Get after remove result: %d\n", err);
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after removal");
 
+    // 清理内存
+    PPDB_ALIGNED_FREE(key_data);
+    PPDB_ALIGNED_FREE(value_data);
+    
     printf("Destroying skiplist...\n");
     ppdb_destroy(base);
     printf("Basic test completed\n");
@@ -192,7 +192,7 @@ static void* concurrent_test_thread(void* arg) {
                 ppdb_error_t err = ppdb_get(data->base, &key, &result);
                 if (err == PPDB_OK) {
                     TEST_ASSERT(result.size == value.size, "Value size mismatch");
-                    TEST_ASSERT_MEM_EQ(result.data, value.data, value.size);
+                    ASSERT_MEM_EQ(result.data, value.data, value.size);
                     PPDB_ALIGNED_FREE(result.data);
                 }
                 break;
@@ -282,4 +282,4 @@ static void test_skiplist_iterator(bool use_lockfree) {
     // 当迭代器接口实现后，添加相应的测试代码
 
     ppdb_destroy(base);
-} 
+}
