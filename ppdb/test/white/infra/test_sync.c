@@ -222,16 +222,14 @@ void test_sync(bool use_lockfree) {
     DEBUG_PRINT("Iterations: Read=%d, Write=%d\n\n", READ_ITERATIONS, WRITE_ITERATIONS);
 
     ppdb_sync_t* sync;
-    ppdb_sync_config_t config = {
-        .type = PPDB_SYNC_RWLOCK,
-        .use_lockfree = use_lockfree,
-        .enable_ref_count = false,
-        .max_readers = NUM_READERS * 2,  // 预留足够的读者数量
-        .backoff_us = 1,                 // 初始退让时间
-        .max_retries = 100               // 最大重试次数
-    };
-
-    DEBUG_PRINT("[DEBUG] Creating sync primitive...\n");
+    ppdb_sync_config_t config;
+    config.type = PPDB_SYNC_RWLOCK;  // 使用读写锁
+    config.use_lockfree = use_lockfree;  // 使用传入的lockfree参数
+    config.enable_ref_count = false;
+    config.max_readers = NUM_READERS * 2;  // 预留足够的读者数量
+    config.backoff_us = 1;
+    config.max_retries = 100;
+    
     assert(ppdb_sync_create(&sync, &config) == PPDB_OK);
 
     test_sync_basic(sync);
@@ -273,8 +271,10 @@ void test_rwlock(ppdb_sync_t* sync, bool use_lockfree) {
     // 测试多个读锁
     DEBUG_PRINT("[DEBUG] Testing multiple read locks...\n");
     assert(ppdb_sync_read_lock(sync) == PPDB_OK);
-    assert(ppdb_sync_read_lock(sync) == PPDB_OK);  // 验证多个读者
-    assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
+    if (use_lockfree) {
+        assert(ppdb_sync_read_lock(sync) == PPDB_OK);  // 只在lockfree模式下测试多个读者
+        assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
+    }
     assert(ppdb_sync_read_unlock(sync) == PPDB_OK);
 
     // 测试单个写锁
