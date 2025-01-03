@@ -316,7 +316,7 @@ ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, ppdb_sync_config_t* config) {
     if (config->use_lockfree) {
         atomic_flag_clear(&internal->spinlock);
     } else {
-        pthread_mutex_init(&internal->mutex, NULL);
+        pthread_rwlock_init(&internal->lock, NULL);
     }
     
     *sync = (ppdb_sync_t*)internal;
@@ -328,7 +328,7 @@ ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
     
     ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
     if (!internal->config.use_lockfree) {
-        pthread_mutex_destroy(&internal->mutex);
+        pthread_rwlock_destroy(&internal->lock);
     }
     
     free(internal);
@@ -344,7 +344,7 @@ ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
             ppdb_sync_pause();
         }
     } else {
-        if (pthread_mutex_lock(&internal->mutex) != 0) {
+        if (pthread_rwlock_wrlock(&internal->lock) != 0) {
             return PPDB_ERR_INTERNAL;
         }
     }
@@ -359,7 +359,7 @@ ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
     if (internal->config.use_lockfree) {
         atomic_flag_clear(&internal->spinlock);
     } else {
-        if (pthread_mutex_unlock(&internal->mutex) != 0) {
+        if (pthread_rwlock_unlock(&internal->lock) != 0) {
             return PPDB_ERR_INTERNAL;
         }
     }
@@ -376,7 +376,7 @@ ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync) {
             return PPDB_ERR_BUSY;
         }
     } else {
-        if (pthread_mutex_trylock(&internal->mutex) != 0) {
+        if (pthread_rwlock_trywrlock(&internal->lock) != 0) {
             return PPDB_ERR_BUSY;
         }
     }
@@ -389,18 +389,33 @@ ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
     
     ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
     if (internal->config.use_lockfree) {
-        int readers;
-        do {
-            readers = atomic_load(&internal->rwlock.readers);
-            if (readers >= internal->config.max_readers) {
-                return PPDB_ERR_BUSY;
+        int retry_count = 0;
+        while (retry_count < internal->config.max_retries) {
+            // 检查是否有写锁
+            if (atomic_flag_test_and_set(&internal->rwlock.write_lock)) {
+                ppdb_sync_backoff(retry_count++);
+                continue;
             }
-        } while (!atomic_compare_exchange_weak(&internal->rwlock.readers, &readers, readers + 1));
+            atomic_flag_clear(&internal->rwlock.write_lock);
+
+            // 尝试增加读者计数
+            int readers;
+            do {
+                readers = atomic_load(&internal->rwlock.readers);
+                if (readers >= internal->config.max_readers) {
+                    return PPDB_ERR_TOO_MANY_READERS;
+                }
+            } while (!atomic_compare_exchange_weak(&internal->rwlock.readers, &readers, readers + 1));
+            
+            return PPDB_OK;
+        }
+        return PPDB_ERR_SYNC_RETRY_FAILED;
     } else {
-        return ppdb_sync_lock(sync);
+        if (pthread_rwlock_rdlock(&internal->lock) != 0) {
+            return PPDB_ERR_INTERNAL;
+        }
+        return PPDB_OK;
     }
-    
-    return PPDB_OK;
 }
 
 ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
@@ -410,7 +425,9 @@ ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
     if (internal->config.use_lockfree) {
         atomic_fetch_sub(&internal->rwlock.readers, 1);
     } else {
-        return ppdb_sync_unlock(sync);
+        if (pthread_rwlock_unlock(&internal->lock) != 0) {
+            return PPDB_ERR_INTERNAL;
+        }
     }
     
     return PPDB_OK;
@@ -421,17 +438,32 @@ ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
     
     ppdb_sync_internal_t* internal = (ppdb_sync_internal_t*)sync;
     if (internal->config.use_lockfree) {
-        while (atomic_flag_test_and_set(&internal->rwlock.write_lock)) {
-            ppdb_sync_pause();
+        int retry_count = 0;
+        while (retry_count < internal->config.max_retries) {
+            // 尝试获取写锁
+            if (atomic_flag_test_and_set(&internal->rwlock.write_lock)) {
+                ppdb_sync_backoff(retry_count++);
+                continue;
+            }
+
+            // 等待所有读者完成
+            while (atomic_load(&internal->rwlock.readers) > 0) {
+                if (retry_count >= internal->config.max_retries) {
+                    atomic_flag_clear(&internal->rwlock.write_lock);
+                    return PPDB_ERR_SYNC_RETRY_FAILED;
+                }
+                ppdb_sync_backoff(retry_count++);
+            }
+            
+            return PPDB_OK;
         }
-        while (atomic_load(&internal->rwlock.readers) > 0) {
-            ppdb_sync_pause();
-        }
+        return PPDB_ERR_SYNC_RETRY_FAILED;
     } else {
-        return ppdb_sync_lock(sync);
+        if (pthread_rwlock_wrlock(&internal->lock) != 0) {
+            return PPDB_ERR_INTERNAL;
+        }
+        return PPDB_OK;
     }
-    
-    return PPDB_OK;
 }
 
 ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync) {
@@ -441,7 +473,9 @@ ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync) {
     if (internal->config.use_lockfree) {
         atomic_flag_clear(&internal->rwlock.write_lock);
     } else {
-        return ppdb_sync_unlock(sync);
+        if (pthread_rwlock_unlock(&internal->lock) != 0) {
+            return PPDB_ERR_INTERNAL;
+        }
     }
     
     return PPDB_OK;

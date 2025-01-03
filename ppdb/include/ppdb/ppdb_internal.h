@@ -22,7 +22,7 @@ typedef struct ppdb_sync_internal {
     ppdb_sync_config_t config;
     ppdb_sync_stats_t stats;
     union {
-        pthread_mutex_t mutex;
+        pthread_rwlock_t lock;
         atomic_flag spinlock;
         struct {
             atomic_int readers;
