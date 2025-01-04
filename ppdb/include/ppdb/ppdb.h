@@ -281,6 +281,9 @@ ppdb_error_t ppdb_storage_flush(ppdb_base_t* base);
 ppdb_error_t ppdb_storage_compact(ppdb_base_t* base);
 ppdb_error_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_metrics_t* stats);
 
+// 迭代器操作
+ppdb_error_t ppdb_iterator_init(ppdb_base_t* base);
+
 // 存储创建和销毁
 ppdb_error_t ppdb_skiplist_create(ppdb_base_t* base, const ppdb_config_t* config);
 ppdb_error_t ppdb_memtable_create(ppdb_base_t* base, const ppdb_config_t* config);

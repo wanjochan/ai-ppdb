@@ -395,3 +395,28 @@ if "%1"=="wal_func" goto build_wal_func
 if "%1"=="wal_advanced" goto build_wal_advanced
 if "%1"=="base" goto build_base_storage
 goto show_help 
+
+:build_base_storage
+echo Building base storage...
+%CC% %CFLAGS% %INCLUDE_DIRS% ^
+    ../src/storage.c ^
+    ../src/iterator.c ^
+    ../src/sync.c ^
+    ../src/utils.c ^
+    -o ../bin/ppdb.dll
+if errorlevel 1 exit /b 1
+echo Base storage built successfully
+exit /b 0
+
+:build_skiplist_test
+echo Building skiplist test...
+%CC% %CFLAGS% %INCLUDE_DIRS% ^
+    ../test/white/infra/test_skiplist.c ^
+    ../src/storage.c ^
+    ../src/iterator.c ^
+    ../src/sync.c ^
+    ../src/utils.c ^
+    -o ../bin/test_skiplist.exe
+if errorlevel 1 exit /b 1
+echo Skiplist test built successfully
+exit /b 0 

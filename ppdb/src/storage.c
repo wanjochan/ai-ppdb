@@ -1148,6 +1148,163 @@ static ppdb_error_t memkv_remove(ppdb_base_t* base, const ppdb_key_t* key) {
     return err;
 }
 
+// 跳表迭代器结构体
+typedef struct skiplist_iterator {
+    ppdb_base_t* base;          // 数据库实例
+    ppdb_node_t* current;       // 当前节点
+    ppdb_sync_t* lock;          // 迭代器锁
+    bool is_valid;              // 迭代器是否有效
+    ppdb_sync_counter_t ref_count;  // 引用计数
+} skiplist_iterator_t;
+
+// 创建跳表迭代器
+static ppdb_error_t skiplist_iterator_create(ppdb_base_t* base, void** iter) {
+    if (!base || !iter) return PPDB_ERR_NULL_POINTER;
+
+    // 分配迭代器内存
+    skiplist_iterator_t* it = PPDB_ALIGNED_ALLOC(sizeof(skiplist_iterator_t));
+    if (!it) return PPDB_ERR_OUT_OF_MEMORY;
+
+    // 初始化迭代器
+    it->base = base;
+    it->current = base->storage.head;  // 从头节点开始
+    it->is_valid = true;
+    ppdb_sync_counter_init(&it->ref_count, 1);
+
+    // 创建迭代器锁
+    if (ppdb_sync_create(&it->lock, &(ppdb_sync_config_t){
+        .type = PPDB_SYNC_RWLOCK,
+        .use_lockfree = base->config.use_lockfree,
+        .max_readers = 1,
+        .backoff_us = 1,
+        .max_retries = 100
+    }) != PPDB_OK) {
+        PPDB_ALIGNED_FREE(it);
+        return PPDB_ERR_LOCK_FAILED;
+    }
+
+    *iter = it;
+    return PPDB_OK;
+}
+
+// 获取下一个有效节点
+static ppdb_error_t skiplist_iterator_next(void* iter, ppdb_key_t* key, ppdb_value_t* value) {
+    if (!iter || !key || !value) return PPDB_ERR_NULL_POINTER;
+    
+    skiplist_iterator_t* it = (skiplist_iterator_t*)iter;
+    if (!it->is_valid) return PPDB_ERR_NOT_FOUND;
+
+    // 获取迭代器写锁
+    ppdb_error_t err = ppdb_sync_write_lock(it->lock);
+    if (err != PPDB_OK) return err;
+
+    // 获取存储读锁
+    err = ppdb_sync_read_lock(it->base->storage.lock);
+    if (err != PPDB_OK) {
+        ppdb_sync_write_unlock(it->lock);
+        return err;
+    }
+
+    // 查找下一个有效节点
+    while (it->current) {
+        ppdb_node_t* next = it->current->next[0];
+        if (!next) {
+            it->is_valid = false;
+            ppdb_sync_read_unlock(it->base->storage.lock);
+            ppdb_sync_write_unlock(it->lock);
+            return PPDB_ERR_NOT_FOUND;
+        }
+
+        // 获取节点读锁
+        if (ppdb_sync_read_lock(next->lock) != PPDB_OK) {
+            it->current = next;
+            continue;
+        }
+
+        // 检查节点状态
+        if (ppdb_sync_counter_load(&next->is_deleted) || 
+            ppdb_sync_counter_load(&next->is_garbage)) {
+            ppdb_sync_read_unlock(next->lock);
+            it->current = next;
+            continue;
+        }
+
+        // 复制key
+        key->data = PPDB_ALIGNED_ALLOC(next->key->size);
+        if (!key->data) {
+            ppdb_sync_read_unlock(next->lock);
+            ppdb_sync_read_unlock(it->base->storage.lock);
+            ppdb_sync_write_unlock(it->lock);
+            return PPDB_ERR_OUT_OF_MEMORY;
+        }
+        memcpy(key->data, next->key->data, next->key->size);
+        key->size = next->key->size;
+        ppdb_sync_counter_init(&key->ref_count, 1);
+
+        // 复制value
+        value->data = PPDB_ALIGNED_ALLOC(next->value->size);
+        if (!value->data) {
+            PPDB_ALIGNED_FREE(key->data);
+            ppdb_sync_read_unlock(next->lock);
+            ppdb_sync_read_unlock(it->base->storage.lock);
+            ppdb_sync_write_unlock(it->lock);
+            return PPDB_ERR_OUT_OF_MEMORY;
+        }
+        memcpy(value->data, next->value->data, next->value->size);
+        value->size = next->value->size;
+        ppdb_sync_counter_init(&value->ref_count, 1);
+
+        // 更新当前节点
+        it->current = next;
+        ppdb_sync_read_unlock(next->lock);
+        ppdb_sync_read_unlock(it->base->storage.lock);
+        ppdb_sync_write_unlock(it->lock);
+        return PPDB_OK;
+    }
+
+    it->is_valid = false;
+    ppdb_sync_read_unlock(it->base->storage.lock);
+    ppdb_sync_write_unlock(it->lock);
+    return PPDB_ERR_NOT_FOUND;
+}
+
+// 销毁迭代器
+static void skiplist_iterator_destroy(void* iter) {
+    if (!iter) return;
+    
+    skiplist_iterator_t* it = (skiplist_iterator_t*)iter;
+    
+    // 获取写锁
+    if (ppdb_sync_write_lock(it->lock) == PPDB_OK) {
+        it->is_valid = false;
+        ppdb_sync_write_unlock(it->lock);
+    }
+    
+    // 减少引用计数
+    if (ppdb_sync_counter_sub(&it->ref_count, 1) == 1) {
+        ppdb_sync_destroy(it->lock);
+        PPDB_ALIGNED_FREE(it);
+    }
+}
+
+// 注册迭代器接口
+ppdb_error_t ppdb_iterator_init(ppdb_base_t* base) {
+    if (!base) return PPDB_ERR_NULL_POINTER;
+
+    // 分配高级操作接口
+    if (!base->advance) {
+        base->advance = PPDB_ALIGNED_ALLOC(sizeof(ppdb_advance_ops_t));
+        if (!base->advance) return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // 注册迭代器接口
+    base->advance->iterator = skiplist_iterator_create;
+    base->advance->next = skiplist_iterator_next;
+    base->advance->iterator_destroy = skiplist_iterator_destroy;
+
+    return PPDB_OK;
+}
+
 // 基本操作函数实现
 ppdb_error_t ppdb_create(ppdb_type_t type, ppdb_base_t** base) {
     if (!base) return PPDB_ERR_NULL_POINTER;
