@@ -4,6 +4,33 @@
 #include <cosmopolitan.h>
 
 //-----------------------------------------------------------------------------
+// 日志系统定义
+//-----------------------------------------------------------------------------
+
+// 日志级别
+typedef enum ppdb_log_level {
+    PPDB_LOG_DEBUG = 0,
+    PPDB_LOG_INFO,
+    PPDB_LOG_WARN,
+    PPDB_LOG_ERROR,
+    PPDB_LOG_FATAL
+} ppdb_log_level_t;
+
+// 日志配置
+typedef struct ppdb_log_config {
+    bool enabled;
+    ppdb_log_level_t level;
+    const char* log_file;
+    int outputs;
+} ppdb_log_config_t;
+
+// 日志函数
+void ppdb_log_init(const ppdb_log_config_t* config);
+void ppdb_log_cleanup(void);
+void ppdb_log(ppdb_log_level_t level, const char* fmt, ...);
+void ppdb_debug(const char* fmt, ...);
+
+//-----------------------------------------------------------------------------
 // 常量定义
 //-----------------------------------------------------------------------------
 
@@ -46,6 +73,7 @@ typedef enum ppdb_error {
     PPDB_ERR_IO,                 // IO错误
     PPDB_ERR_INTERNAL,           // 内部错误
     PPDB_ERR_INVALID_TYPE,       // 无效类型
+    PPDB_ERR_INVALID_STATE,      // 无效状态
     PPDB_ERR_LOCK_FAILED,        // 加锁失败
     PPDB_ERR_UNLOCK_FAILED,      // 解锁失败
     PPDB_ERR_NOT_INITIALIZED,    // 未初始化
@@ -219,6 +247,12 @@ typedef struct ppdb_array {
     uint32_t count;               // shard count
     struct ppdb_base** ptrs;      // shard pointers
 } PPDB_ALIGNED ppdb_array_t;
+
+//-----------------------------------------------------------------------------
+// 内部函数声明
+//-----------------------------------------------------------------------------
+
+uint32_t get_shard_index(const ppdb_key_t* key, uint32_t shard_count);
 
 //-----------------------------------------------------------------------------
 // 

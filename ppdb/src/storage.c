@@ -102,95 +102,246 @@ static uint32_t node_get_height(ppdb_node_t* node) {
 
 // Create a new skiplist node with the given key, value and height
 static ppdb_node_t* node_create(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value, uint32_t height) {
-    if (!base || !key || !value) return NULL;
+    // 参数验证
+    if (!base) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: null base pointer");
+        return NULL;
+    }
+    if (height > MAX_SKIPLIST_LEVEL) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: invalid height %u", height);
+        return NULL;
+    }
     
     // Allocate node with variable-length next pointers array
     size_t node_size = sizeof(ppdb_node_t) + height * sizeof(ppdb_node_t*);
     ppdb_node_t* node = PPDB_ALIGNED_ALLOC(node_size);
-    if (!node) return NULL;
+    if (!node) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to allocate node");
+        return NULL;
+    }
+    memset(node, 0, node_size);
 
     // Initialize atomic counters
-    ppdb_sync_counter_init(&node->height, height);
-    ppdb_sync_counter_init(&node->is_deleted, 0);  // false
-    ppdb_sync_counter_init(&node->is_garbage, 0);  // false
-    ppdb_sync_counter_init(&node->ref_count, 1);
-    
-    // Clear next pointers array
-    memset(node->next, 0, height * sizeof(ppdb_node_t*));
-
-    // Allocate and initialize key
-    node->key = PPDB_ALIGNED_ALLOC(sizeof(ppdb_key_t));
-    if (!node->key) goto fail_key;
-    node->key->data = PPDB_ALIGNED_ALLOC(key->size);
-    if (!node->key->data) goto fail_key_data;
-    node->key->size = key->size;
-    ppdb_sync_counter_init(&node->key->ref_count, 1);
-    memcpy(node->key->data, key->data, key->size);
-
-    // Allocate and initialize value
-    node->value = PPDB_ALIGNED_ALLOC(sizeof(ppdb_value_t));
-    if (!node->value) goto fail_value;
-    node->value->data = PPDB_ALIGNED_ALLOC(value->size);
-    if (!node->value->data) goto fail_value_data;
-    node->value->size = value->size;
-    ppdb_sync_counter_init(&node->value->ref_count, 1);
-    memcpy(node->value->data, value->data, value->size);
+    ppdb_error_t err = PPDB_OK;
+    err = ppdb_sync_counter_init(&node->height, height);
+    if (err != PPDB_OK) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to init height counter");
+        goto fail_init;
+    }
+    err = ppdb_sync_counter_init(&node->is_deleted, 0);
+    if (err != PPDB_OK) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to init delete flag");
+        goto fail_init;
+    }
+    err = ppdb_sync_counter_init(&node->is_garbage, 0);
+    if (err != PPDB_OK) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to init garbage flag");
+        goto fail_init;
+    }
+    err = ppdb_sync_counter_init(&node->ref_count, 1);
+    if (err != PPDB_OK) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to init ref counter");
+        goto fail_init;
+    }
 
     // Initialize node lock
-    if (ppdb_sync_create(&node->lock, &(ppdb_sync_config_t){
+    err = ppdb_sync_create(&node->lock, &(ppdb_sync_config_t){
         .type = PPDB_SYNC_RWLOCK,
         .use_lockfree = base->config.use_lockfree,
         .max_readers = 32,
         .backoff_us = 1,
         .max_retries = 100
-    }) != PPDB_OK) goto fail_lock;
+    });
+    if (err != PPDB_OK) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to create lock");
+        goto fail_init;
+    }
 
+    // 如果是空节点（头节点），直接返回
+    if (!key && !value) {
+        ppdb_log(PPDB_LOG_DEBUG, "node_create: created head node");
+        return node;
+    }
+
+    // 验证key/value
+    if (!key || !key->data || key->size == 0 || key->size > MAX_KEY_SIZE) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: invalid key");
+        goto fail_key;
+    }
+    if (!value || !value->data || value->size == 0 || value->size > MAX_VALUE_SIZE) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: invalid value");
+        goto fail_key;
+    }
+
+    // Allocate and initialize key
+    node->key = PPDB_ALIGNED_ALLOC(sizeof(ppdb_key_t));
+    if (!node->key) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to allocate key");
+        goto fail_key;
+    }
+    memset(node->key, 0, sizeof(ppdb_key_t));
+    node->key->data = PPDB_ALIGNED_ALLOC(key->size);
+    if (!node->key->data) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to allocate key data");
+        goto fail_key_data;
+    }
+    node->key->size = key->size;
+    err = ppdb_sync_counter_init(&node->key->ref_count, 1);
+    if (err != PPDB_OK) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to init key ref counter");
+        goto fail_key_data;
+    }
+    memcpy(node->key->data, key->data, key->size);
+
+    // Allocate and initialize value
+    node->value = PPDB_ALIGNED_ALLOC(sizeof(ppdb_value_t));
+    if (!node->value) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to allocate value");
+        goto fail_value;
+    }
+    memset(node->value, 0, sizeof(ppdb_value_t));
+    node->value->data = PPDB_ALIGNED_ALLOC(value->size);
+    if (!node->value->data) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to allocate value data");
+        goto fail_value_data;
+    }
+    node->value->size = value->size;
+    err = ppdb_sync_counter_init(&node->value->ref_count, 1);
+    if (err != PPDB_OK) {
+        ppdb_log(PPDB_LOG_ERROR, "node_create: failed to init value ref counter");
+        goto fail_value_data;
+    }
+    memcpy(node->value->data, value->data, value->size);
+
+    ppdb_log(PPDB_LOG_DEBUG, "node_create: created node with key size %zu and value size %zu", key->size, value->size);
     return node;
 
     // Error handling with cleanup
-fail_lock:
-    PPDB_ALIGNED_FREE(node->value->data);
 fail_value_data:
+    if (node->value->data) PPDB_ALIGNED_FREE(node->value->data);
     PPDB_ALIGNED_FREE(node->value);
 fail_value:
-    PPDB_ALIGNED_FREE(node->key->data);
+    if (node->key->data) PPDB_ALIGNED_FREE(node->key->data);
+    PPDB_ALIGNED_FREE(node->key);
 fail_key_data:
     PPDB_ALIGNED_FREE(node->key);
 fail_key:
+    ppdb_sync_destroy(node->lock);
+fail_init:
     PPDB_ALIGNED_FREE(node);
     return NULL;
 }
 
 // Fixed node destruction with proper lock handling
 static void node_destroy(ppdb_node_t* node) {
-    if (!node) return;
+    if (!node) {
+        ppdb_log(PPDB_LOG_DEBUG, "node_destroy: null node pointer");
+        return;
+    }
+
+    ppdb_log(PPDB_LOG_DEBUG, "node_destroy: destroying node %p", (void*)node);
     
-    // If write lock is held, destroy immediately
-    if (ppdb_sync_try_write_lock(node->lock) == PPDB_OK) {
-        ppdb_sync_destroy(node->lock);
-        if (node->value) {
-            PPDB_ALIGNED_FREE(node->value->data);
+    // 检查引用计数
+    size_t ref_count = ppdb_sync_counter_load(&node->ref_count);
+    if (ref_count > 1) {
+        ppdb_log(PPDB_LOG_WARN, "node_destroy: node still has %zu references", ref_count);
+        return;
+    }
+    
+    // 如果有锁，先尝试获取写锁
+    if (node->lock) {
+        ppdb_error_t err = ppdb_sync_try_write_lock(node->lock);
+        if (err != PPDB_OK) {
+            ppdb_log(PPDB_LOG_WARN, "node_destroy: failed to acquire lock, marking as garbage");
+            // 如果无法获取锁，标记为删除并等待GC
+            ppdb_sync_counter_store(&node->is_deleted, 1);
+            ppdb_sync_counter_store(&node->is_garbage, 1);
+            return;
+        }
+    }
+
+    // 清理值
+    if (node->value) {
+        if (node->value->data) {
+            size_t value_ref = ppdb_sync_counter_load(&node->value->ref_count);
+            if (value_ref > 1) {
+                ppdb_log(PPDB_LOG_WARN, "node_destroy: value still has %zu references", value_ref);
+                ppdb_sync_counter_sub(&node->value->ref_count, 1);
+            } else {
+                PPDB_ALIGNED_FREE(node->value->data);
+                ppdb_sync_counter_destroy(&node->value->ref_count);
+                PPDB_ALIGNED_FREE(node->value);
+            }
+        } else {
+            ppdb_log(PPDB_LOG_WARN, "node_destroy: value struct exists but data is null");
             PPDB_ALIGNED_FREE(node->value);
         }
-        if (node->key) {
-            PPDB_ALIGNED_FREE(node->key->data);
+    }
+
+    // 清理键
+    if (node->key) {
+        if (node->key->data) {
+            size_t key_ref = ppdb_sync_counter_load(&node->key->ref_count);
+            if (key_ref > 1) {
+                ppdb_log(PPDB_LOG_WARN, "node_destroy: key still has %zu references", key_ref);
+                ppdb_sync_counter_sub(&node->key->ref_count, 1);
+            } else {
+                PPDB_ALIGNED_FREE(node->key->data);
+                ppdb_sync_counter_destroy(&node->key->ref_count);
+                PPDB_ALIGNED_FREE(node->key);
+            }
+        } else {
+            ppdb_log(PPDB_LOG_WARN, "node_destroy: key struct exists but data is null");
             PPDB_ALIGNED_FREE(node->key);
         }
-        PPDB_ALIGNED_FREE(node);
     }
-    // Otherwise, mark as deleted and wait for GC
-    else {
-        ppdb_sync_counter_store(&node->is_deleted, 1);  // true
-        ppdb_sync_counter_store(&node->is_garbage, 1);  // true
+
+    // 清理计数器
+    ppdb_sync_counter_destroy(&node->height);
+    ppdb_sync_counter_destroy(&node->is_deleted);
+    ppdb_sync_counter_destroy(&node->is_garbage);
+    ppdb_sync_counter_destroy(&node->ref_count);
+
+    // 清理锁
+    if (node->lock) {
+        ppdb_sync_write_unlock(node->lock);
+        ppdb_sync_destroy(node->lock);
     }
+
+    // 释放节点内存
+    PPDB_ALIGNED_FREE(node);
+    ppdb_log(PPDB_LOG_DEBUG, "node_destroy: node destroyed successfully");
 }
 
 static void node_ref(ppdb_node_t* node) {
-    ppdb_sync_counter_add(&node->ref_count, 1);
+    if (!node) {
+        ppdb_log(PPDB_LOG_ERROR, "node_ref: null node pointer");
+        return;
+    }
+    
+    size_t old_count = ppdb_sync_counter_add(&node->ref_count, 1);
+    ppdb_log(PPDB_LOG_DEBUG, "node_ref: node %p ref count increased from %zu to %zu", 
+             (void*)node, old_count, old_count + 1);
 }
 
 static void node_unref(ppdb_node_t* node) {
-    if (ppdb_sync_counter_sub(&node->ref_count, 1) == 1) {
+    if (!node) {
+        ppdb_log(PPDB_LOG_ERROR, "node_unref: null node pointer");
+        return;
+    }
+    
+    size_t old_count = ppdb_sync_counter_load(&node->ref_count);
+    if (old_count == 0) {
+        ppdb_log(PPDB_LOG_ERROR, "node_unref: node %p ref count already 0", (void*)node);
+        return;
+    }
+    
+    size_t new_count = ppdb_sync_counter_sub(&node->ref_count, 1);
+    ppdb_log(PPDB_LOG_DEBUG, "node_unref: node %p ref count decreased from %zu to %zu", 
+             (void*)node, old_count, new_count);
+             
+    if (new_count == 0) {
+        ppdb_log(PPDB_LOG_DEBUG, "node_unref: destroying node %p", (void*)node);
         node_destroy(node);
     }
 }
@@ -259,18 +410,38 @@ static ppdb_error_t init_metrics(ppdb_metrics_t* metrics) {
 static ppdb_error_t validate_and_setup_config(ppdb_config_t* config) {
     if (!config) return PPDB_ERR_NULL_POINTER;
 
-    // Validate storage type
-    switch (config->type) {
+    // 验证存储类型
+    ppdb_type_t base_type = PPDB_TYPE_BASE(config->type);
+    ppdb_type_t layer_type = PPDB_TYPE_LAYER(config->type);
+    ppdb_type_t feature_type = PPDB_TYPE_FEATURE(config->type);
+
+    // 验证基础类型
+    switch (base_type) {
         case PPDB_TYPE_SKIPLIST:
-        case PPDB_TYPE_MEMTABLE:
-        case PPDB_TYPE_SHARDED:
-        case PPDB_TYPE_KVSTORE:
+        case PPDB_TYPE_BTREE:
+        case PPDB_TYPE_LSM:
+        case PPDB_TYPE_HASH:
             break;
         default:
             return PPDB_ERR_INVALID_TYPE;
     }
 
-    // Set default values
+    // 验证层次类型
+    switch (layer_type) {
+        case 0:  // 无层次
+        case PPDB_LAYER_MEMTABLE:
+        case PPDB_LAYER_KVSTORE:
+            break;
+        default:
+            return PPDB_ERR_INVALID_TYPE;
+    }
+
+    // 验证特性类型
+    if (feature_type != 0 && feature_type != PPDB_FEAT_SHARDED) {
+        return PPDB_ERR_INVALID_TYPE;
+    }
+
+    // 设置默认值
     if (config->memtable_size == 0) {
         config->memtable_size = DEFAULT_MEMTABLE_SIZE;
     }
@@ -278,7 +449,7 @@ static ppdb_error_t validate_and_setup_config(ppdb_config_t* config) {
         config->shard_count = DEFAULT_SHARD_COUNT;
     }
 
-    // Validate parameter range
+    // 验证参数范围
     if (config->memtable_size < 1024 || config->memtable_size > (1ULL << 31)) {
         return PPDB_ERR_INVALID_ARGUMENT;
     }
@@ -307,6 +478,7 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     (*base)->config = validated_config;
     (*base)->type = validated_config.type;
 
+    // Copy path if provided
     if (validated_config.path) {
         size_t path_len = strlen(validated_config.path);
         if (path_len >= MAX_PATH_LENGTH) {
@@ -322,16 +494,53 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     }
 
     // Initialize storage based on type
-    switch (validated_config.type & 0xFF) {  // 只检查基础类型
+    ppdb_type_t base_type = PPDB_TYPE_BASE(validated_config.type);
+    ppdb_type_t layer_type = PPDB_TYPE_LAYER(validated_config.type);
+    ppdb_type_t feature_type = PPDB_TYPE_FEATURE(validated_config.type);
+
+    // 处理分片特性
+    if (feature_type & PPDB_FEAT_SHARDED) {
+        // Initialize shard array
+        (*base)->array.count = validated_config.shard_count;
+        (*base)->array.ptrs = PPDB_ALIGNED_ALLOC((*base)->array.count * sizeof(ppdb_base_t*));
+        if (!(*base)->array.ptrs) {
+            err = PPDB_ERR_OUT_OF_MEMORY;
+            goto cleanup;
+        }
+        memset((*base)->array.ptrs, 0, (*base)->array.count * sizeof(ppdb_base_t*));
+
+        // Initialize each shard
+        for (uint32_t i = 0; i < (*base)->array.count; i++) {
+            err = ppdb_create(&(*base)->array.ptrs[i], &(ppdb_config_t){
+                .type = base_type | layer_type,  // 移除分片特性
+                .use_lockfree = validated_config.use_lockfree,
+                .memtable_size = validated_config.memtable_size / validated_config.shard_count
+            });
+            if (err != PPDB_OK) goto cleanup;
+        }
+
+        // Initialize stats
+        err = init_metrics(&(*base)->metrics);
+        if (err != PPDB_OK) goto cleanup;
+
+        return PPDB_OK;
+    }
+
+    // 处理基础类型
+    switch (base_type) {
         case PPDB_TYPE_SKIPLIST: {
+            ppdb_log(PPDB_LOG_DEBUG, "Creating skiplist with type 0x%x", base_type);
+            
             // Create head node (using max level)
-            ppdb_key_t dummy_key = {NULL, 0};
-            ppdb_value_t dummy_value = {NULL, 0};
-            (*base)->storage.head = node_create(*base, &dummy_key, &dummy_value, MAX_SKIPLIST_LEVEL);
+            ppdb_key_t dummy_key = {0};
+            ppdb_value_t dummy_value = {0};
+            (*base)->storage.head = node_create(*base, NULL, NULL, MAX_SKIPLIST_LEVEL);
             if (!(*base)->storage.head) {
+                ppdb_log(PPDB_LOG_ERROR, "Failed to create head node");
                 err = PPDB_ERR_OUT_OF_MEMORY;
                 goto cleanup;
             }
+            ppdb_log(PPDB_LOG_DEBUG, "Created head node at %p", (void*)(*base)->storage.head);
 
             // Initialize storage level lock
             if (ppdb_sync_create(&(*base)->storage.lock, &(ppdb_sync_config_t){
@@ -341,68 +550,52 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
                 .backoff_us = 1,
                 .max_retries = 100
             }) != PPDB_OK) {
+                ppdb_log(PPDB_LOG_ERROR, "Failed to create storage lock");
                 err = PPDB_ERR_LOCK_FAILED;
                 goto cleanup;
             }
-            break;
-        }
-        case PPDB_TYPE_MEMTABLE: {
-            // Initialize skiplist part
-            err = ppdb_create(base, &(ppdb_config_t){
-                .type = PPDB_TYPE_SKIPLIST,
-                .use_lockfree = validated_config.use_lockfree
-            });
-            if (err != PPDB_OK) goto cleanup;
+            ppdb_log(PPDB_LOG_DEBUG, "Created storage lock");
 
-            // Set memory limit
-            (*base)->mem.limit = validated_config.memtable_size;
-            ppdb_sync_counter_init(&(*base)->mem.used, sizeof(ppdb_node_t));
-            
-            // Initialize flush lock
-            if (ppdb_sync_create(&(*base)->mem.flush_lock, &(ppdb_sync_config_t){
-                .type = PPDB_SYNC_MUTEX,
-                .use_lockfree = false,
-                .backoff_us = 1,
-                .max_retries = 100
-            }) != PPDB_OK) {
-                err = PPDB_ERR_LOCK_FAILED;
-                goto cleanup;
+            // 如果是内存表层，初始化内存表相关结构
+            if (layer_type == PPDB_LAYER_MEMTABLE) {
+                ppdb_log(PPDB_LOG_DEBUG, "Initializing memtable with size %zu", validated_config.memtable_size);
+                
+                // 设置内存限制
+                (*base)->mem.limit = validated_config.memtable_size;
+                err = ppdb_sync_counter_init(&(*base)->mem.used, sizeof(ppdb_node_t));
+                if (err != PPDB_OK) {
+                    ppdb_log(PPDB_LOG_ERROR, "Failed to initialize memory counter");
+                    goto cleanup;
+                }
+
+                // 初始化刷新锁
+                if (ppdb_sync_create(&(*base)->mem.flush_lock, &(ppdb_sync_config_t){
+                    .type = PPDB_SYNC_MUTEX,
+                    .use_lockfree = false,
+                    .backoff_us = 1,
+                    .max_retries = 100
+                }) != PPDB_OK) {
+                    ppdb_log(PPDB_LOG_ERROR, "Failed to create flush lock");
+                    err = PPDB_ERR_LOCK_FAILED;
+                    goto cleanup;
+                }
+                ppdb_log(PPDB_LOG_DEBUG, "Created flush lock");
             }
             break;
         }
-        case PPDB_TYPE_SHARDED: {
-            // Initialize shard array
-            (*base)->array.count = validated_config.shard_count;
-            (*base)->array.ptrs = PPDB_ALIGNED_ALLOC((*base)->array.count * sizeof(ppdb_base_t*));
-            if (!(*base)->array.ptrs) {
-                err = PPDB_ERR_OUT_OF_MEMORY;
-                goto cleanup;
-            }
-            memset((*base)->array.ptrs, 0, (*base)->array.count * sizeof(ppdb_base_t*));
-
-            // Initialize each shard
-            for (uint32_t i = 0; i < (*base)->array.count; i++) {
-                err = ppdb_create(&(*base)->array.ptrs[i], &(ppdb_config_t){
-                    .type = PPDB_TYPE_MEMTABLE,
+        case PPDB_TYPE_LSM:
+            if (layer_type == PPDB_LAYER_KVSTORE) {
+                // KV storage based on LSM tree
+                err = ppdb_create(base, &(ppdb_config_t){
+                    .type = PPDB_TYPE_SKIPLIST | PPDB_LAYER_MEMTABLE,
                     .use_lockfree = validated_config.use_lockfree,
-                    .memtable_size = validated_config.memtable_size
+                    .shard_count = validated_config.shard_count,
+                    .memtable_size = validated_config.memtable_size,
+                    .path = validated_config.path
                 });
                 if (err != PPDB_OK) goto cleanup;
             }
             break;
-        }
-        case PPDB_TYPE_KVSTORE: {
-            // KV storage based on shard storage
-            err = ppdb_create(base, &(ppdb_config_t){
-                .type = PPDB_TYPE_SHARDED,
-                .use_lockfree = validated_config.use_lockfree,
-                .shard_count = validated_config.shard_count,
-                .memtable_size = validated_config.memtable_size,
-                .path = validated_config.path
-            });
-            if (err != PPDB_OK) goto cleanup;
-            break;
-        }
         default:
             err = PPDB_ERR_INVALID_TYPE;
             goto cleanup;
@@ -431,13 +624,47 @@ void ppdb_destroy(ppdb_base_t* base) {
 
 ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value) {
     if (!base || !key || !value) return PPDB_ERR_NULL_POINTER;
+    if (!key->data || !value->data) return PPDB_ERR_NULL_POINTER;
+    if (key->size == 0 || value->size == 0) return PPDB_ERR_INVALID_ARGUMENT;
+    if (key->size > MAX_KEY_SIZE || value->size > MAX_VALUE_SIZE) return PPDB_ERR_INVALID_ARGUMENT;
 
     ppdb_error_t err = PPDB_OK;
-    switch (base->type & 0xFF) {  // 只检查基础类型
-        case PPDB_TYPE_SKIPLIST:
-        case PPDB_TYPE_MEMTABLE: {
-            // For MEMTABLE type, check memory limit
-            if (base->type & 0xFF == PPDB_TYPE_MEMTABLE) {
+    ppdb_type_t base_type = PPDB_TYPE_BASE(base->type);
+    ppdb_type_t layer_type = PPDB_TYPE_LAYER(base->type);
+    ppdb_type_t feature_type = PPDB_TYPE_FEATURE(base->type);
+
+    // 处理分片特性
+    if (feature_type & PPDB_FEAT_SHARDED) {
+        // 验证分片数组
+        if (!base->array.ptrs || base->array.count == 0) {
+            return PPDB_ERR_NOT_INITIALIZED;
+        }
+
+        // Calculate shard index
+        uint32_t index = get_shard_index(key, base->array.count);
+        if (index >= base->array.count) {
+            return PPDB_ERR_INVALID_ARGUMENT;
+        }
+
+        // 获取分片
+        ppdb_base_t* shard = base->array.ptrs[index];
+        if (!shard) {
+            return PPDB_ERR_NOT_INITIALIZED;
+        }
+
+        // Insert into corresponding shard
+        err = ppdb_put(shard, key, value);
+        if (err == PPDB_OK) {
+            ppdb_sync_counter_add(&base->metrics.put_count, 1);
+        }
+        return err;
+    }
+
+    // 处理基础类型
+    switch (base_type) {
+        case PPDB_TYPE_SKIPLIST: {
+            // 如果是内存表层，检查内存限制
+            if (layer_type == PPDB_LAYER_MEMTABLE) {
                 // Pre-calculate random level to ensure accurate memory usage statistics
                 uint32_t height = random_level();
                 size_t node_size = sizeof(ppdb_node_t) + height * sizeof(ppdb_node_t*);
@@ -528,24 +755,18 @@ ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value
             return PPDB_OK;
         }
         
-        case PPDB_TYPE_SHARDED:
-        case PPDB_TYPE_KVSTORE: {
-            // Calculate shard index
-            uint32_t index = get_shard_index(key, base->array.count);
-            ppdb_base_t* shard = base->array.ptrs[index];
-            if (!shard) return PPDB_ERR_NOT_INITIALIZED;
-
-            // Insert into corresponding shard
-            err = ppdb_put(shard, key, value);
-            if (err == PPDB_OK) {
-                ppdb_sync_counter_add(&base->metrics.put_count, 1);
+        case PPDB_TYPE_LSM:
+            if (layer_type == PPDB_LAYER_KVSTORE) {
+                // TODO: Implement LSM tree put
+                return PPDB_ERR_NOT_IMPLEMENTED;
             }
-            return err;
-        }
+            break;
         
         default:
             return PPDB_ERR_INVALID_TYPE;
     }
+
+    return PPDB_ERR_INVALID_TYPE;
 }
 
 ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key) {
@@ -1117,41 +1338,6 @@ void ppdb_iterator_destroy(void* iter) {
 static void cleanup_base(ppdb_base_t* base) {
     if (!base) return;
 
-    // Get write lock (if exists)
-    if (base->storage.lock) {
-        ppdb_sync_write_lock(base->storage.lock);
-    }
-
-    switch (base->type & 0xFF) {  // 只检查基础类型
-        case PPDB_TYPE_SKIPLIST:
-        case PPDB_TYPE_MEMTABLE: {
-            // Destroy skiplist nodes
-            if (base->storage.head) {
-                ppdb_node_t* current = base->storage.head;
-                while (current) {
-                    ppdb_node_t* next = current->next[0];
-                    node_unref(current);
-                    current = next;
-                }
-                base->storage.head = NULL;
-            }
-            break;
-        }
-        case PPDB_TYPE_LSM: {
-            // Destroy skiplist nodes
-            if (base->storage.head) {
-                ppdb_node_t* current = base->storage.head;
-                while (current) {
-                    ppdb_node_t* next = current->next[0];
-                    node_unref(current);
-                    current = next;
-                }
-                base->storage.head = NULL;
-            }
-            break;
-        }
-    }
-
     // 检查是否有分片特性
     if (base->type & PPDB_FEAT_SHARDED) {
         // 处理分片清理
@@ -1159,10 +1345,30 @@ static void cleanup_base(ppdb_base_t* base) {
             for (uint32_t i = 0; i < base->array.count; i++) {
                 if (base->array.ptrs[i]) {
                     ppdb_destroy(base->array.ptrs[i]);
+                    base->array.ptrs[i] = NULL;
                 }
             }
             PPDB_ALIGNED_FREE(base->array.ptrs);
+            base->array.ptrs = NULL;
+            base->array.count = 0;
         }
+        return;  // 分片模式下，其他资源由子分片清理
+    }
+
+    // Get write lock (if exists)
+    if (base->storage.lock) {
+        ppdb_sync_write_lock(base->storage.lock);
+    }
+
+    // 清理存储结构
+    if (base->storage.head) {
+        ppdb_node_t* current = base->storage.head;
+        while (current) {
+            ppdb_node_t* next = current->next[0];
+            node_destroy(current);  // 使用 node_destroy 而不是 node_unref
+            current = next;
+        }
+        base->storage.head = NULL;
     }
 
     // Release write lock and destroy lock
@@ -1189,4 +1395,7 @@ static void cleanup_base(ppdb_base_t* base) {
         PPDB_ALIGNED_FREE(base->path);
         base->path = NULL;
     }
+
+    // 清理内存表计数器
+    ppdb_sync_counter_destroy(&base->mem.used);
 }

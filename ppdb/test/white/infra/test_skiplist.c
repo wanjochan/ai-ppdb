@@ -15,6 +15,14 @@ static void test_skiplist_concurrent(bool use_lockfree);
 static void test_skiplist_iterator(bool use_lockfree);
 
 int main(void) {
+    // 初始化日志系统
+    ppdb_log_init(&(ppdb_log_config_t){
+        .enabled = true,
+        .level = PPDB_LOG_DEBUG,
+        .log_file = NULL,
+        .outputs = 1  // stdout
+    });
+    
     // 从环境变量获取测试模式
     const char* test_mode = getenv("PPDB_SYNC_MODE");
     bool use_lockfree = (test_mode && strcmp(test_mode, "lockfree") == 0);
@@ -28,6 +36,8 @@ int main(void) {
     test_skiplist_iterator(use_lockfree);
     
     printf("\n=== All Tests Completed Successfully! ===\n");
+    
+    ppdb_log_cleanup();
     return 0;
 }
 

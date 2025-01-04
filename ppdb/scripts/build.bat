@@ -299,6 +299,7 @@ rem ===== Helper Functions =====
 :build_memtable_lockfree
     echo Building memtable lockfree test...
     set "PPDB_SYNC_MODE=lockfree"
+    call :set_build_flags
     "%GCC%" %CFLAGS% ^
         "%PPDB_DIR%\src\base.c" ^
         "%PPDB_DIR%\src\storage.c" ^
@@ -388,7 +389,8 @@ if "%1"=="skiplist_lockfree" goto build_skiplist_lockfree
 if "%1"=="memtable" goto build_memtable
 if "%1"=="memtable_locked" goto build_memtable_locked
 if "%1"=="memtable_lockfree" goto build_memtable_lockfree
-if "%1"=="sharded" goto build_sharded
+if "%1"=="sharded_locked" goto build_sharded_locked
+if "%1"=="sharded_lockfree" goto build_sharded_lockfree
 if "%1"=="ppdb" goto build_ppdb
 if "%1"=="kvstore" goto build_kvstore
 if "%1"=="wal_core" goto build_wal_core
