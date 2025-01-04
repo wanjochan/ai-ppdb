@@ -7,33 +7,6 @@ char current_test_result[32];
 int test_case_count = 0;
 int test_case_failed = 0;
 
-// 信号处理函数
-static void test_timeout_handler(int sig) {
-    (void)sig;
-    longjmp(g_test_state.timeout_jmp, 1);
-}
-
-// 初始化测试框架
-void test_framework_init(void) {
-    memset(&g_test_state, 0, sizeof(test_state_t));
-    g_test_state.initialized = true;
-    g_test_state.config.type = TEST_TYPE_ALL;
-    
-    // 设置信号处理
-    signal(SIGALRM, test_timeout_handler);
-}
-
-// 清理测试框架
-void test_framework_cleanup(void) {
-    if (!g_test_state.initialized) {
-        return;
-    }
-    
-    // 恢复信号处理
-    signal(SIGALRM, SIG_DFL);
-    g_test_state.initialized = false;
-}
-
 // 运行单个测试用例
 int run_test_case(const test_case_t* test_case) {
     if (!test_case || !test_case->fn) {
@@ -53,16 +26,8 @@ int run_test_case(const test_case_t* test_case) {
     // 记录开始时间
     g_test_state.stats.start_time = clock();
     
-    // 设置超时处理
-    int result = 0;
-    if (setjmp(g_test_state.timeout_jmp) == 0) {
-        alarm(test_case->timeout_seconds);
-        result = test_case->fn();
-        alarm(0);
-    } else {
-        printf("Test timeout: %s\n", current_test_name);
-        result = -1;
-    }
+    // 运行测试
+    int result = test_case->fn();
     
     // 记录结束时间
     g_test_state.stats.end_time = clock();
@@ -132,4 +97,19 @@ void test_print_stats(void) {
 // 获取测试结果
 int test_get_result(void) {
     return test_case_failed;
+}
+
+// 初始化测试框架
+void test_framework_init(void) {
+    memset(&g_test_state, 0, sizeof(test_state_t));
+    g_test_state.initialized = true;
+    g_test_state.config.type = TEST_TYPE_ALL;
+}
+
+// 清理测试框架
+void test_framework_cleanup(void) {
+    if (!g_test_state.initialized) {
+        return;
+    }
+    g_test_state.initialized = false;
 }

@@ -112,14 +112,15 @@ rem ===== Helper Functions =====
     echo Usage: build.bat [module] [build mode]
     echo.
     echo Available modules:
-    echo   test42           Run basic tests
-    echo   sync_locked      Run locked synchronization tests
-    echo   sync_lockfree    Run lock-free synchronization tests
-    echo   skiplist_locked  Run locked skiplist tests
+    echo   test42            Run basic tests
+    echo   sync_locked       Run locked synchronization tests
+    echo   sync_lockfree     Run lock-free synchronization tests
+    echo   skiplist_locked   Run locked skiplist tests
     echo   skiplist_lockfree Run lock-free skiplist tests
-    echo   memtable_locked  Run locked memtable tests
+    echo   memtable_locked   Run locked memtable tests
     echo   memtable_lockfree Run lock-free memtable tests
-    echo   sharded          Run sharded memtable tests
+    echo   sharded_locked    Run sharded memtable tests
+    echo   sharded_lockfree  Run sharded memtable tests
     echo.
     echo   kvstore          Run KVStore tests
     echo   wal_core         Run WAL core tests

@@ -1,5 +1,5 @@
-#ifndef PPDB_TEST_FRAMEWORK_H
-#define PPDB_TEST_FRAMEWORK_H
+#ifndef TEST_FRAMEWORK_H
+#define TEST_FRAMEWORK_H
 
 #include <cosmopolitan.h>
 
@@ -56,13 +56,23 @@ extern char current_test_result[32];
 extern int test_case_count;
 extern int test_case_failed;
 
-// 函数声明
+
+// Assert macro for testing
+#define ASSERT(condition, format, ...) \
+    do { \
+        if (!(condition)) { \
+            fprintf(stderr, "Assertion failed: " format "\n", ##__VA_ARGS__); \
+            fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
+            exit(1); \
+        } \
+    } while (0)
+
+// Test framework functions
 void test_framework_init(void);
 void test_framework_cleanup(void);
 int run_test_case(const test_case_t* test_case);
 int run_test_suite(const test_suite_t* suite);
 bool test_framework_should_run(test_type_t type);
 void test_print_stats(void);
-int test_get_result(void);
 
-#endif // PPDB_TEST_FRAMEWORK_H
+#endif // TEST_FRAMEWORK_H
