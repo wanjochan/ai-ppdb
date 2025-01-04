@@ -10,7 +10,16 @@ static void node_unref(ppdb_node_t* node);
 static uint32_t random_level(void);
 static ppdb_error_t init_metrics(ppdb_metrics_t* metrics);
 static void cleanup_base(ppdb_base_t* base);
-static uint32_t get_shard_index(const ppdb_key_t* key, uint32_t shard_count);
+static void MurmurHash3_x86_32(const void* key, int len, uint32_t seed, void* out);
+
+// Calculate key shard index
+uint32_t get_shard_index(const ppdb_key_t* key, uint32_t shard_count) {
+    // Use MurmurHash3 to calculate hash
+    uint32_t hash = 0;
+    uint32_t seed = 0x12345678;
+    MurmurHash3_x86_32(key->data, key->size, seed, &hash);
+    return hash % shard_count;
+}
 
 // MurmurHash3 implementation for consistent hashing
 static void MurmurHash3_x86_32(const void* key, int len, uint32_t seed, void* out) {
@@ -246,82 +255,6 @@ static ppdb_error_t init_metrics(ppdb_metrics_t* metrics) {
     return PPDB_OK;
 }
 
-// Unified cleanup function
-static void cleanup_base(ppdb_base_t* base) {
-    if (!base) return;
-
-    // Get write lock (if exists)
-    if (base->storage.lock) {
-        ppdb_sync_write_lock(base->storage.lock);
-    }
-
-    switch (base->type) {
-        case PPDB_TYPE_SKIPLIST:
-        case PPDB_TYPE_MEMTABLE: {
-            // Destroy skiplist nodes
-            if (base->storage.head) {
-                ppdb_node_t* current = base->storage.head;
-                while (current) {
-                    ppdb_node_t* next = current->next[0];
-                    node_unref(current);
-                    current = next;
-                }
-                base->storage.head = NULL;
-            }
-            break;
-        }
-        case PPDB_TYPE_SHARDED:
-        case PPDB_TYPE_KVSTORE: {
-            // Destroy all shards
-            if (base->array.ptrs) {
-                for (uint32_t i = 0; i < base->array.count; i++) {
-                    if (base->array.ptrs[i]) {
-                        ppdb_destroy(base->array.ptrs[i]);
-                    }
-                }
-                PPDB_ALIGNED_FREE(base->array.ptrs);
-                base->array.ptrs = NULL;
-                base->array.count = 0;
-            }
-            break;
-        }
-    }
-
-    // Release write lock and destroy lock
-    if (base->storage.lock) {
-        ppdb_sync_write_unlock(base->storage.lock);
-        ppdb_sync_destroy(base->storage.lock);
-        base->storage.lock = NULL;
-    }
-
-    // Destroy flush lock (if exists)
-    if (base->mem.flush_lock) {
-        ppdb_sync_destroy(base->mem.flush_lock);
-        base->mem.flush_lock = NULL;
-    }
-
-    // Release advanced interface
-    if (base->advance) {
-        PPDB_ALIGNED_FREE(base->advance);
-        base->advance = NULL;
-    }
-
-    // Release path
-    if (base->path) {
-        PPDB_ALIGNED_FREE(base->path);
-        base->path = NULL;
-    }
-}
-
-// Calculate key shard index
-static uint32_t get_shard_index(const ppdb_key_t* key, uint32_t shard_count) {
-    // Use MurmurHash3 to calculate hash
-    uint32_t hash = 0;
-    uint32_t seed = 0x12345678;
-    MurmurHash3_x86_32(key->data, key->size, seed, &hash);
-    return hash % shard_count;
-}
-
 // Helper function to validate and setup default configuration
 static ppdb_error_t validate_and_setup_config(ppdb_config_t* config) {
     if (!config) return PPDB_ERR_NULL_POINTER;
@@ -389,7 +322,7 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     }
 
     // Initialize storage based on type
-    switch (validated_config.type) {
+    switch (validated_config.type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST: {
             // Create head node (using max level)
             ppdb_key_t dummy_key = {NULL, 0};
@@ -500,11 +433,11 @@ ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value
     if (!base || !key || !value) return PPDB_ERR_NULL_POINTER;
 
     ppdb_error_t err = PPDB_OK;
-    switch (base->type) {
+    switch (base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
         case PPDB_TYPE_MEMTABLE: {
             // For MEMTABLE type, check memory limit
-            if (base->type == PPDB_TYPE_MEMTABLE) {
+            if (base->type & 0xFF == PPDB_TYPE_MEMTABLE) {
                 // Pre-calculate random level to ensure accurate memory usage statistics
                 uint32_t height = random_level();
                 size_t node_size = sizeof(ppdb_node_t) + height * sizeof(ppdb_node_t*);
@@ -620,7 +553,7 @@ ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key) {
 
     // Inline implementation of skiplist_remove logic
     ppdb_error_t err;
-    switch (base->type) {
+    switch (base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
         case PPDB_TYPE_MEMTABLE: {
             ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
@@ -715,7 +648,7 @@ ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key) {
 ppdb_error_t ppdb_storage_sync(ppdb_base_t* base) {
     if (!base) return PPDB_ERR_NULL_POINTER;
 
-    switch (base->type) {
+    switch (base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
         case PPDB_TYPE_MEMTABLE:
             return PPDB_OK;  // Memory storage does not need synchronization
@@ -744,7 +677,7 @@ ppdb_error_t ppdb_storage_flush(ppdb_base_t* base) {
     ppdb_base_t* new_base = NULL;  // Modify to pointer
     bool new_base_initialized = false;
 
-    switch (base->type) {
+    switch (base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
             return PPDB_OK;  // Base skiplist does not need flushing
 
@@ -838,7 +771,7 @@ cleanup:
 ppdb_error_t ppdb_storage_compact(ppdb_base_t* base) {
     if (!base) return PPDB_ERR_NULL_POINTER;
 
-    switch (base->type) {
+    switch (base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
             return PPDB_OK;  // Base skiplist does not need compaction
         case PPDB_TYPE_MEMTABLE:
@@ -862,7 +795,7 @@ ppdb_error_t ppdb_storage_compact(ppdb_base_t* base) {
 ppdb_error_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_metrics_t* stats) {
     if (!base || !stats) return PPDB_ERR_NULL_POINTER;
 
-    switch (base->type) {
+    switch (base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
         case PPDB_TYPE_MEMTABLE: {
             // Directly copy stats
@@ -886,7 +819,7 @@ ppdb_error_t ppdb_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* va
     if (!base || !key || !value) return PPDB_ERR_NULL_POINTER;
 
     ppdb_error_t err = PPDB_OK;
-    switch (base->type) {
+    switch (base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
         case PPDB_TYPE_MEMTABLE: {
             // Get storage level read lock
@@ -1013,7 +946,7 @@ ppdb_error_t ppdb_iterator_init(ppdb_base_t* base, void** iter) {
     iterator->base = base;
     iterator->is_valid = true;
 
-    switch (base->type) {
+    switch (base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
         case PPDB_TYPE_MEMTABLE: {
             iterator->skiplist.current = base->storage.head;
@@ -1059,7 +992,7 @@ ppdb_error_t ppdb_iterator_next(void* iter, ppdb_key_t* key, ppdb_value_t* value
     if (!iterator->is_valid) return PPDB_ERR_ITERATOR_INVALID;
 
     ppdb_error_t err;
-    switch (iterator->base->type) {
+    switch (iterator->base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
         case PPDB_TYPE_MEMTABLE: {
             // Get storage level read lock
@@ -1160,7 +1093,7 @@ void ppdb_iterator_destroy(void* iter) {
     if (!iter) return;
     ppdb_iterator_t* iterator = (ppdb_iterator_t*)iter;
 
-    switch (iterator->base->type) {
+    switch (iterator->base->type & 0xFF) {  // 只检查基础类型
         case PPDB_TYPE_SKIPLIST:
         case PPDB_TYPE_MEMTABLE:
             break;  // No special cleanup needed
@@ -1173,4 +1106,87 @@ void ppdb_iterator_destroy(void* iter) {
     }
 
     PPDB_ALIGNED_FREE(iterator);
+}
+
+// 添加类型转换宏
+#define IS_TYPE(type, mask) (((type) & 0xFF) == (mask))
+#define IS_LAYER(type, mask) (((type) & 0xF00) == (mask))
+#define IS_FEATURE(type, mask) (((type) & 0xF000) == (mask))
+
+// Unified cleanup function
+static void cleanup_base(ppdb_base_t* base) {
+    if (!base) return;
+
+    // Get write lock (if exists)
+    if (base->storage.lock) {
+        ppdb_sync_write_lock(base->storage.lock);
+    }
+
+    switch (base->type & 0xFF) {  // 只检查基础类型
+        case PPDB_TYPE_SKIPLIST:
+        case PPDB_TYPE_MEMTABLE: {
+            // Destroy skiplist nodes
+            if (base->storage.head) {
+                ppdb_node_t* current = base->storage.head;
+                while (current) {
+                    ppdb_node_t* next = current->next[0];
+                    node_unref(current);
+                    current = next;
+                }
+                base->storage.head = NULL;
+            }
+            break;
+        }
+        case PPDB_TYPE_LSM: {
+            // Destroy skiplist nodes
+            if (base->storage.head) {
+                ppdb_node_t* current = base->storage.head;
+                while (current) {
+                    ppdb_node_t* next = current->next[0];
+                    node_unref(current);
+                    current = next;
+                }
+                base->storage.head = NULL;
+            }
+            break;
+        }
+    }
+
+    // 检查是否有分片特性
+    if (base->type & PPDB_FEAT_SHARDED) {
+        // 处理分片清理
+        if (base->array.ptrs) {
+            for (uint32_t i = 0; i < base->array.count; i++) {
+                if (base->array.ptrs[i]) {
+                    ppdb_destroy(base->array.ptrs[i]);
+                }
+            }
+            PPDB_ALIGNED_FREE(base->array.ptrs);
+        }
+    }
+
+    // Release write lock and destroy lock
+    if (base->storage.lock) {
+        ppdb_sync_write_unlock(base->storage.lock);
+        ppdb_sync_destroy(base->storage.lock);
+        base->storage.lock = NULL;
+    }
+
+    // Destroy flush lock (if exists)
+    if (base->mem.flush_lock) {
+        ppdb_sync_destroy(base->mem.flush_lock);
+        base->mem.flush_lock = NULL;
+    }
+
+    // Release advanced interface
+    if (base->advance) {
+        PPDB_ALIGNED_FREE(base->advance);
+        base->advance = NULL;
+    }
+
+    // Release path
+    if (base->path) {
+        PPDB_ALIGNED_FREE(base->path);
+        base->path = NULL;
+    }
 }

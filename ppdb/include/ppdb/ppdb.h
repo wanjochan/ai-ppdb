@@ -59,14 +59,39 @@ typedef enum ppdb_error {
 
 // 存储类型定义
 typedef enum ppdb_type {
-    PPDB_TYPE_SKIPLIST,          // 跳表
-    PPDB_TYPE_BTREE,             // B树
-    PPDB_TYPE_LSM,               // LSM树
-    PPDB_TYPE_HASH,              // 哈希表
-    PPDB_TYPE_MEMTABLE,          // 内存表（memkv）
-    PPDB_TYPE_SHARDED,           // 分片存储
-    PPDB_TYPE_KVSTORE,           // KV存储（diskv）内部要实现wal和sstable
+    // 基础存储类型 (0x00-0xFF)
+    PPDB_TYPE_SKIPLIST = 0x01,    // 跳表:  0001
+    PPDB_TYPE_BTREE    = 0x02,    // B树:   0010
+    PPDB_TYPE_LSM      = 0x04,    // LSM:   0100
+    PPDB_TYPE_HASH     = 0x08,    // 哈希:  1000
+    
+    // 保留区域，为未来扩展预留空间 (0x10-0xFF)
+    PPDB_TYPE_RESERVED = 0xFF,
+    
+    // 存储层次 (0x100-0xF00)
+    PPDB_LAYER_MEMTABLE = 0x100,  // 内存表层
+    PPDB_LAYER_KVSTORE  = 0x200,  // 持久化层
+    
+    // 存储特性 (0x1000-0xF000)
+    PPDB_FEAT_SHARDED   = 0x1000  // 分片特性
 } ppdb_type_t;
+
+// 向后兼容的类型定义
+#define PPDB_TYPE_MEMTABLE  (PPDB_TYPE_SKIPLIST | PPDB_LAYER_MEMTABLE)
+#define PPDB_TYPE_SHARDED   PPDB_FEAT_SHARDED
+#define PPDB_TYPE_KVSTORE   (PPDB_TYPE_LSM | PPDB_LAYER_KVSTORE)
+
+// 常用组合
+#define PPDB_MEMKV_DEFAULT  (PPDB_TYPE_SKIPLIST | PPDB_LAYER_MEMTABLE)
+#define PPDB_MEMKV_SHARDED  (PPDB_TYPE_SKIPLIST | PPDB_LAYER_MEMTABLE | PPDB_FEAT_SHARDED)
+#define PPDB_DISKV_DEFAULT  (PPDB_TYPE_LSM | PPDB_LAYER_KVSTORE)
+#define PPDB_DISKV_SHARDED  (PPDB_TYPE_LSM | PPDB_LAYER_KVSTORE | PPDB_FEAT_SHARDED)
+
+// 类型检查辅助宏
+#define PPDB_TYPE_BASE(type)    ((type) & 0xFF)
+#define PPDB_TYPE_LAYER(type)   ((type) & 0xF00)
+#define PPDB_TYPE_FEATURE(type) ((type) & 0xF000)
+#define PPDB_IS_SHARDED(type)   ((type) & PPDB_FEAT_SHARDED)
 
 //-----------------------------------------------------------------------------
 // 同步原语定义
@@ -90,6 +115,8 @@ typedef struct ppdb_sync_config {
 
 // 前向声明
 typedef struct ppdb_base ppdb_base_t;
+typedef struct ppdb_peer_s ppdb_peer_t;
+typedef ppdb_base_t ppdb_t;  // 修改为使用ppdb_base_t作为ppdb_t
 
 typedef struct ppdb_sync_counter {
     atomic_size_t value PPDB_CACHELINE_ALIGNED;
@@ -302,5 +329,67 @@ ppdb_error_t ppdb_kvstore_create(ppdb_base_t* base, const ppdb_config_t* config)
 // 
 const char* ppdb_strerror(ppdb_error_t err);
 ppdb_error_t ppdb_system_error(int err);
+
+// 类型检查辅助函数
+static inline bool ppdb_type_has_feature(ppdb_type_t type, ppdb_type_t feature) {
+    return (type & feature) == feature;
+}
+
+static inline ppdb_type_t ppdb_type_base(ppdb_type_t type) {
+    return type & 0xFF;  // 获取基础存储类型
+}
+
+static inline ppdb_type_t ppdb_type_layer(ppdb_type_t type) {
+    return type & 0xF00;  // 获取存储层次
+}
+
+static inline bool ppdb_type_is_sharded(ppdb_type_t type) {
+    return ppdb_type_has_feature(type, PPDB_FEAT_SHARDED);
+}
+
+//==============================================================================
+// Peer API
+//==============================================================================
+
+// Peer 相关常量
+#define PPDB_DEFAULT_PORT 11211
+#define PPDB_MAX_COMMAND_LEN 1024
+#define PPDB_MAX_VALUE_SIZE (1024 * 1024)  // 1MB
+
+// Peer 角色和状态
+typedef enum ppdb_peer_role_e {
+    PPDB_PEER_SERVER = 1,
+    PPDB_PEER_CLIENT = 2,
+    PPDB_PEER_REPLICA = 3,     // 预留
+    PPDB_PEER_CLUSTER = 4      // 预留
+} ppdb_peer_role_t;
+
+// Peer 错误码
+typedef enum ppdb_peer_error_e {
+    PPDB_PEER_OK = 0,
+    PPDB_PEER_ERROR = -1,
+    PPDB_PEER_AUTH_REQUIRED = -2,
+    PPDB_PEER_INVALID_COMMAND = -3,
+    PPDB_PEER_NETWORK_ERROR = -4
+} ppdb_peer_error_t;
+
+// Peer API 函数
+// 创建peer（服务端/客户端）
+ppdb_peer_t* ppdb_peer_create_server(ppdb_t* db, const char* host, int port);
+ppdb_peer_t* ppdb_peer_create_client(void);
+
+// 基础操作
+int ppdb_peer_start(ppdb_peer_t* peer);
+void ppdb_peer_stop(ppdb_peer_t* peer);
+void ppdb_peer_free(ppdb_peer_t* peer);
+
+// 客户端操作
+int ppdb_peer_connect(ppdb_peer_t* peer, const char* host, int port);
+int ppdb_peer_auth(ppdb_peer_t* peer, const char* user, const char* pass);
+int ppdb_peer_execute(ppdb_peer_t* peer, const char* cmd);
+
+// 为将来扩展预留的分布式接口
+int ppdb_peer_join(ppdb_peer_t* peer, const char* cluster);
+int ppdb_peer_replicate(ppdb_peer_t* peer, const char* master);
 
 #endif // PPDB_H

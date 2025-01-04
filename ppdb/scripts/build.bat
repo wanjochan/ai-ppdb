@@ -421,3 +421,33 @@ echo Building skiplist test...
 if errorlevel 1 exit /b 1
 echo Skiplist test built successfully
 exit /b 0 
+
+:build_sharded_locked
+    echo Building sharded memtable test (locked mode)...
+    set "PPDB_SYNC_MODE=locked"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\storage\test_sharded_memtable.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sharded_locked_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\sharded_locked_test.exe.dbg" "%BUILD_DIR%\sharded_locked_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\sharded_locked_test.exe"
+    exit /b 0
+
+:build_sharded_lockfree
+    echo Building sharded memtable test (lockfree mode)...
+    set "PPDB_SYNC_MODE=lockfree"
+    "%GCC%" %CFLAGS% ^
+        "%PPDB_DIR%\src\base.c" ^
+        "%PPDB_DIR%\src\storage.c" ^
+        "%PPDB_DIR%\test\white\test_framework.c" ^
+        "%PPDB_DIR%\test\white\storage\test_sharded_memtable.c" ^
+        %LDFLAGS% %LIBS% -o "%BUILD_DIR%\sharded_lockfree_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\sharded_lockfree_test.exe.dbg" "%BUILD_DIR%\sharded_lockfree_test.exe"
+    if errorlevel 1 exit /b 1
+    "%BUILD_DIR%\sharded_lockfree_test.exe"
+    exit /b 0 

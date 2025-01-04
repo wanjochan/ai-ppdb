@@ -1,5 +1,7 @@
 【严禁新增文件】
 根据测试的问题进行分析、针对严重问题或非常容易解决问题制定可并行处理的修复计划然后平行处理修复，然后再次执行测试，如果还有问题就重复这个过程
+cd D:\dev\ai-ppdb\ppdb\scripts; cmd /c build.bat sharded_lockfree
+
 build skiplist_locked debug
 
 
@@ -22,14 +24,16 @@ cd ppdb\scripts\
 .\build.bat skiplist_lockfree
 .\build.bat memtable_locked
 .\build.bat memtable_lockfree
+.\build.bat sharded_locked
+.\build.bat sharded_lockfree
 
+.\build.bat memkv
 
 .\build.bat wal_core
-.\build.bat wal_func
 .\build.bat wal_advanced
-.\build.bat kvstore
-.\build.bat unit
-.\build.bat all
+
+.\build.bat diskv
+
 .\build.bat ppdb
 
 //遇到windows适配的顺手删除，因为我们用cosmopolitan架构不需要适配操作系统；
