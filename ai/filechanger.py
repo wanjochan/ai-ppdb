@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""文件行替换工具
+"""Enhanced File Line Replacement Tool
 
-这个工具提供了一个简单的方法来替换文件中的指定行。支持:
-1. 使用正数行号从文件开始处理
-2. 使用负数行号从文件末尾处理
-3. 通过提供空内容来删除行
-4. 支持从管道读取内容
-5. 自动处理UTF-8编码
+A tool for replacing lines in files, supporting:
+1. Single line operations with start,end numbers
+2. Batch operations with format: 'start,end:content'
+3. Line deletion with empty content
+4. Pipe input support
+5. UTF-8 encoding
 """
 
 def replace_lines(filename, start, end, content=""):
@@ -37,6 +37,66 @@ def replace_lines(filename, start, end, content=""):
     with open(filename, 'w', encoding='utf-8', newline='') as f:
         f.writelines(lines)
 
+def process_batch_input(filename, batch_content):
+    """处理批量替换输入
+    
+    输入格式：
+    start,end:content
+    start,end:content
+    ...
+    
+    特殊字符处理：
+    - \n   表示换行
+    - \\n  表示字面的 \n
+    - \\   表示字面的 \
+    
+    Args:
+        filename: 要处理的文件路径
+        batch_content: 批处理内容字符串
+    """
+    # 读取文件
+    with open(filename, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    total = len(lines)
+    
+    # 处理每一行批处理命令
+    for cmd in batch_content.splitlines():
+        if not cmd.strip() or not ':' in cmd:
+            continue
+            
+        # 分割行号和内容
+        range_part, content = cmd.split(':', 1)
+        if ',' not in range_part:
+            continue
+            
+        start, end = map(str.strip, range_part.split(','))
+        try:
+            start = int(start)
+            end = int(end)
+        except ValueError:
+            continue
+            
+        # 处理负数行号
+        start = start if start > 0 else total + start + 1
+        end = end if end > 0 else total + end + 1
+        
+        # 处理转义字符
+        # 1. 先将 \\ 转换为临时标记
+        # 2. 将 \n 转换为实际的换行符
+        # 3. 将临时标记转换回 \
+        content = content.replace('\\\\', '\x00')  # 临时标记
+        content = content.replace('\\n', '\n')
+        content = content.replace('\x00', '\\')
+        
+        # 替换内容
+        new_content = content.splitlines(True)
+        lines[start-1:end] = new_content
+    
+    # 写回文件
+    with open(filename, 'w', encoding='utf-8', newline='') as f:
+        f.writelines(lines)
+
 def test_replace_lines():
     """测试行替换功能"""
     test_file = "test.txt"
@@ -44,17 +104,10 @@ def test_replace_lines():
         f.write("line1\nline2\nline3\nline4\nline5\n")
     
     try:
-        # 测试正数行号替换
-        replace_lines(test_file, 2, 3, "new line2\nnew line3\n")
-        print("1. Testing positive line numbers...", file=sys.stderr)
-        
-        # 测试负数行号替换
-        replace_lines(test_file, -2, -1, "new line4\nnew line5\n")
-        print("2. Testing negative line numbers...", file=sys.stderr)
-        
-        # 测试删除行
-        replace_lines(test_file, 1, 1, "")
-        print("3. Testing line deletion...", file=sys.stderr)
+        # 测试批处理替换
+        batch_content = "1,2:new line1\nnew line2\n3,4:new line3\nnew line4"
+        process_batch_input(test_file, batch_content)
+        print("1. Testing batch replacement...", file=sys.stderr)
         
         # 验证结果
         with open(test_file, "r", encoding="utf-8") as f:
@@ -77,41 +130,61 @@ if __name__ == '__main__':
         print("Running tests...", file=sys.stderr)
         test_replace_lines()
     # 参数不足时显示用法
-    elif len(sys.argv) < 4:
-        print("Usage: python filechanger.py <file> <start> <end> [content]", file=sys.stderr)
-        print("Arguments:", file=sys.stderr)
-        print("  file    - File path to modify", file=sys.stderr)
-        print("  start   - Starting line number (supports negative numbers)", file=sys.stderr)
-        print("  end     - Ending line number (supports negative numbers)", file=sys.stderr)
-        print("  content - New content (optional, default is empty string to delete lines)", file=sys.stderr)
+    elif len(sys.argv) < 2:
+        print("Usage:", file=sys.stderr)
+        print("  1. Single replacement:", file=sys.stderr)
+        print("     python filechanger.py <file> <start> <end> [content]", file=sys.stderr)
+        print("  2. Batch replacement:", file=sys.stderr)
+        print("     echo 'start,end:content' | python filechanger.py <file>", file=sys.stderr)
         print("\nExamples:", file=sys.stderr)
-        print("  python filechanger.py test.txt 1 3 'new content'  # Replace lines 1-3", file=sys.stderr)
-        print("  python filechanger.py test.txt -2 -1 'new end'    # Replace last two lines", file=sys.stderr)
-        print("  python filechanger.py test.txt 5 7                 # Delete lines 5-7", file=sys.stderr)
-        print("  echo 'new content' | python filechanger.py test.txt 1 3  # Read content from pipe", file=sys.stderr)
+        print("  Single:", file=sys.stderr)
+        print("    python filechanger.py test.txt 1 3 'new content'", file=sys.stderr)
+        print("  Batch:", file=sys.stderr)
+        print("    echo '1,3:line1\\nline2' | python filechanger.py test.txt", file=sys.stderr)
+        print("    echo '1,2:a\\\\n' | python filechanger.py test.txt  # 写入字面的 \\n", file=sys.stderr)
         sys.exit(1)
     # 执行替换
     else:
         filename = sys.argv[1]
-        start = int(sys.argv[2])
-        end = int(sys.argv[3])
         
-        # 如果有第4个参数，使用它作为内容
-        if len(sys.argv) > 4:
-            content = sys.argv[4]
-        # 否则检查是否有管道输入
-        elif not sys.stdin.isatty():
+        # 检查是否有管道输入
+        if not sys.stdin.isatty():
             # 从管道读取内容，确保使用 UTF-8 编码
             if hasattr(sys.stdin, 'buffer'):
                 import io
                 content = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8').read()
             else:
                 content = sys.stdin.read()
+                
+            # 如果输入包含 ':' 则视为批处理模式
+            if ':' in content:
+                try:
+                    process_batch_input(filename, content)
+                except Exception as e:
+                    print(f"Error in batch processing: {str(e)}", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                # 单行模式需要完整参数
+                if len(sys.argv) < 4:
+                    print("Error: Single replacement mode requires <start> and <end> parameters", file=sys.stderr)
+                    sys.exit(1)
+                try:
+                    start = int(sys.argv[2])
+                    end = int(sys.argv[3])
+                    replace_lines(filename, start, end, content)
+                except Exception as e:
+                    print(f"Error: {str(e)}", file=sys.stderr)
+                    sys.exit(1)
         else:
-            content = ""
-            
-        try:
-            replace_lines(filename, start, end, content)
-        except Exception as e:
-            print(f"Error: {str(e)}", file=sys.stderr)
-            sys.exit(1)
+            # 命令行模式需要完整参数
+            if len(sys.argv) < 4:
+                print("Error: Command line mode requires <start> and <end> parameters", file=sys.stderr)
+                sys.exit(1)
+            try:
+                start = int(sys.argv[2])
+                end = int(sys.argv[3])
+                content = sys.argv[4] if len(sys.argv) > 4 else ""
+                replace_lines(filename, start, end, content)
+            except Exception as e:
+                print(f"Error: {str(e)}", file=sys.stderr)
+                sys.exit(1)
