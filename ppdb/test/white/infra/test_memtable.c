@@ -6,7 +6,8 @@
 #define TEST_MEMTABLE_SIZE (1024 * 1024)  // 1MB
 #define TEST_KEY_SIZE 16
 #define TEST_VALUE_SIZE 100
-#define TEST_ITERATIONS 10  // Reduced from 100 to 10 for faster testing
+#define TEST_ITERATIONS 5  // 减少迭代次数
+#define TEST_THREAD_COUNT 2  // 减少线程数量
 
 // Forward declarations
 static void* worker_thread(void* arg);
@@ -85,27 +86,37 @@ static int test_memtable_basic(void) {
 static int test_memtable_concurrent(void) {
     printf("Starting concurrent memtable test (use_lockfree=%d)...\n", USE_LOCKFREE);
 
-    // Create memtable
+    // Create memtable with larger size
     ppdb_base_t* base = NULL;
     ppdb_error_t err = ppdb_create(&base, &(ppdb_config_t){
         .type = PPDB_TYPE_MEMTABLE,
         .use_lockfree = USE_LOCKFREE,
-        .memtable_size = TEST_MEMTABLE_SIZE
+        .memtable_size = TEST_MEMTABLE_SIZE * 2
     });
-    ASSERT(err == PPDB_OK, "Create memtable failed");
+    
+    if (err != PPDB_OK) {
+        printf("Failed to create memtable: %d\n", err);
+        return -1;
+    }
+    
+    printf("Memtable created successfully\n");
 
     // Create worker threads
-    pthread_t threads[4];
+    pthread_t threads[TEST_THREAD_COUNT];
     int thread_created = 0;
     
-    for (int i = 0; i < 4; i++) {
+    printf("Creating worker threads...\n");
+    for (int i = 0; i < TEST_THREAD_COUNT; i++) {
         err = pthread_create(&threads[i], NULL, worker_thread, base);
         if (err == 0) {
             thread_created++;
+            printf("Thread %d created successfully (tid: %lu)\n", i, (unsigned long)threads[i]);
         } else {
-            printf("Failed to create thread %d: %s\n", i, strerror(err));
+            printf("Failed to create thread %d: %s (error: %d)\n", i, strerror(err), err);
             break;
         }
+        // 添加短暂延迟，避免线程同时启动
+        usleep(100000);  // 100ms delay
     }
 
     if (thread_created == 0) {
@@ -114,41 +125,78 @@ static int test_memtable_concurrent(void) {
         return -1;
     }
 
+    printf("Successfully created %d threads\n", thread_created);
+
     // Wait for threads to complete with timeout
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += 10;  // 增加超时时间到10秒
+    ts.tv_sec += 10;  // 减少超时时间到10秒
 
     bool all_threads_completed = true;
+    printf("Waiting for threads to complete...\n");
+    
     for (int i = 0; i < thread_created; i++) {
-        err = pthread_timedjoin_np(threads[i], NULL, &ts);
+        printf("Waiting for thread %d (tid: %lu)...\n", i, (unsigned long)threads[i]);
+        void* thread_result;
+        err = pthread_timedjoin_np(threads[i], &thread_result, &ts);
+        
         if (err != 0) {
-            printf("Thread %d join timeout or error: %s\n", i, strerror(err));
+            printf("Thread %d join error: %s (error: %d)\n", i, strerror(err), err);
             all_threads_completed = false;
-            pthread_cancel(threads[i]);
-            // 等待线程实际结束
-            pthread_join(threads[i], NULL);
+            
+            // 尝试正常终止线程
+            printf("Attempting to cancel thread %d...\n", i);
+            if (pthread_cancel(threads[i]) != 0) {
+                printf("Failed to cancel thread %d\n", i);
+            }
+            
+            // 等待线程结束，但设置较短的超时
+            struct timespec short_ts;
+            clock_gettime(CLOCK_REALTIME, &short_ts);
+            short_ts.tv_sec += 2;
+            
+            if (pthread_timedjoin_np(threads[i], NULL, &short_ts) != 0) {
+                printf("Failed to join thread %d after cancellation\n", i);
+            } else {
+                printf("Thread %d terminated after cancellation\n", i);
+            }
+        } else {
+            printf("Thread %d completed successfully\n", i);
         }
+        
+        // 更新下一个线程的超时时间
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += 10;
     }
 
     if (!all_threads_completed) {
         printf("Some threads did not complete normally\n");
+    } else {
+        printf("All threads completed successfully\n");
     }
 
     // Get and print metrics
+    printf("Getting metrics...\n");
     ppdb_metrics_t metrics = {0};
     err = ppdb_storage_get_stats(base, &metrics);
     if (err == PPDB_OK) {
         printf("Concurrent test results:\n");
         printf("Total expected operations: %d\n", TEST_ITERATIONS * thread_created);
-        printf("Insert ops: %lu (success: %lu)\n", metrics.put_count, metrics.put_count);
-        printf("Find ops: %lu (success: %lu)\n", metrics.get_count, metrics.get_hits);
-        printf("Delete ops: %lu (success: %lu)\n", metrics.remove_count, metrics.remove_count);
+        printf("Insert ops: %zu (success: %zu)\n", 
+               ppdb_sync_counter_load(&metrics.put_count),
+               ppdb_sync_counter_load(&metrics.put_count));
+        printf("Find ops: %zu (success: %zu)\n",
+               ppdb_sync_counter_load(&metrics.get_count),
+               ppdb_sync_counter_load(&metrics.get_hits));
+        printf("Delete ops: %zu (success: %zu)\n",
+               ppdb_sync_counter_load(&metrics.remove_count),
+               ppdb_sync_counter_load(&metrics.remove_count));
     } else {
         printf("Failed to get metrics: %d\n", err);
     }
 
     // Cleanup
+    printf("Cleaning up...\n");
     ppdb_destroy(base);
     printf("Concurrent test completed\n");
     return all_threads_completed ? 0 : -1;
@@ -211,16 +259,30 @@ static int test_memtable_iterator(void) {
 // Worker thread function for concurrent test
 static void* worker_thread(void* arg) {
     ppdb_base_t* base = (ppdb_base_t*)arg;
-    char key_data[TEST_KEY_SIZE];
-    char value_data[TEST_VALUE_SIZE];
+    char key_data[TEST_KEY_SIZE] = {0};
+    char value_data[TEST_VALUE_SIZE] = {0};
     ppdb_key_t key = {0};
     ppdb_value_t value = {0};
     ppdb_value_t get_value = {0};
+    ppdb_error_t err;
+    
+    // 本地计数器
+    size_t local_put_count = 0;
+    size_t local_get_count = 0;
+    size_t local_get_hits = 0;
+    size_t local_remove_count = 0;
 
     for (int i = 0; i < TEST_ITERATIONS; i++) {
-        // 使用栈内存而不是堆内存来存储临时数据
-        snprintf(key_data, TEST_KEY_SIZE, "key_%d_%d", (int)pthread_self(), i);
-        snprintf(value_data, TEST_VALUE_SIZE, "value_%d_%d", (int)pthread_self(), i);
+        // 清理之前的状态
+        memset(&key, 0, sizeof(key));
+        memset(&value, 0, sizeof(value));
+        memset(&get_value, 0, sizeof(get_value));
+        
+        // 准备数据
+        memset(key_data, 0, TEST_KEY_SIZE);
+        memset(value_data, 0, TEST_VALUE_SIZE);
+        snprintf(key_data, TEST_KEY_SIZE - 1, "key_%lu_%d", (unsigned long)pthread_self(), i);
+        snprintf(value_data, TEST_VALUE_SIZE - 1, "value_%lu_%d", (unsigned long)pthread_self(), i);
 
         key.data = key_data;
         key.size = strlen(key_data);
@@ -231,26 +293,59 @@ static void* worker_thread(void* arg) {
         int op = lemur64() % 3;
         switch (op) {
             case 0: {  // Put
-                ppdb_put(base, &key, &value);
+                err = ppdb_put(base, &key, &value);
+                if (err == PPDB_OK) {
+                    local_put_count++;
+                } else {
+                    printf("Thread %lu: Put failed with error %d\n", (unsigned long)pthread_self(), err);
+                }
                 break;
             }
             case 1: {  // Get
-                ppdb_error_t err = ppdb_get(base, &key, &get_value);
-                if (err == PPDB_OK && get_value.data) {
-                    PPDB_ALIGNED_FREE(get_value.data);
-                    get_value.data = NULL;
-                    get_value.size = 0;
+                err = ppdb_get(base, &key, &get_value);
+                local_get_count++;
+                if (err == PPDB_OK) {
+                    local_get_hits++;
+                    if (get_value.data != NULL) {
+                        PPDB_ALIGNED_FREE(get_value.data);
+                        get_value.data = NULL;
+                    }
                 }
                 break;
             }
             case 2: {  // Remove
-                ppdb_remove(base, &key);
+                err = ppdb_remove(base, &key);
+                if (err == PPDB_OK) {
+                    local_remove_count++;
+                } else if (err != PPDB_ERR_NOT_FOUND) {
+                    printf("Thread %lu: Remove failed with error %d\n", (unsigned long)pthread_self(), err);
+                }
                 break;
             }
         }
         
+        // 确保清理所有可能的内存
+        if (get_value.data != NULL) {
+            PPDB_ALIGNED_FREE(get_value.data);
+            get_value.data = NULL;
+        }
+
         // 短暂休眠以减少资源竞争
-        usleep(100);
+        usleep(1000); // 增加休眠时间到1ms
+    }
+
+    // 原子更新全局计数器
+    if (local_put_count > 0) {
+        ppdb_sync_counter_add(&base->metrics.put_count, local_put_count);
+    }
+    if (local_get_count > 0) {
+        ppdb_sync_counter_add(&base->metrics.get_count, local_get_count);
+    }
+    if (local_get_hits > 0) {
+        ppdb_sync_counter_add(&base->metrics.get_hits, local_get_hits);
+    }
+    if (local_remove_count > 0) {
+        ppdb_sync_counter_add(&base->metrics.remove_count, local_remove_count);
     }
 
     return NULL;

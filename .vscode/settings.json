@@ -1,4 +1,3 @@
 {
-    "files.eol": "\r\n",
-    "marscode.chatLanguage": "cn"
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
 }

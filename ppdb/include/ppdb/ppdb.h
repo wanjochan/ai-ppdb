@@ -25,6 +25,7 @@
 
 // 对齐宏
 #define PPDB_ALIGNED __attribute__((aligned(PPDB_ALIGNMENT)))
+#define PPDB_CACHELINE_ALIGNED __attribute__((aligned(64)))
 
 // 内存分配函数
 void* aligned_alloc(size_t alignment, size_t size);
@@ -84,19 +85,22 @@ typedef struct ppdb_sync_config {
     uint32_t max_readers;
     uint32_t backoff_us;
     uint32_t max_retries;
-} PPDB_ALIGNED ppdb_sync_config_t;
+    char padding[40];
+} PPDB_CACHELINE_ALIGNED ppdb_sync_config_t;
 
 // 前向声明
 typedef struct ppdb_base ppdb_base_t;
 
 typedef struct ppdb_sync_counter {
-    atomic_size_t value;
+    atomic_size_t value PPDB_CACHELINE_ALIGNED;
     struct ppdb_sync* lock;
     #ifdef PPDB_ENABLE_METRICS
-    atomic_size_t add_count;
-    atomic_size_t sub_count;
+    atomic_size_t add_count PPDB_CACHELINE_ALIGNED;
+    atomic_size_t sub_count PPDB_CACHELINE_ALIGNED;
+    __thread size_t local_add_count;
+    __thread size_t local_sub_count;
     #endif
-} PPDB_ALIGNED ppdb_sync_counter_t;
+} PPDB_CACHELINE_ALIGNED ppdb_sync_counter_t;
 
 typedef struct ppdb_sync_stats {
     ppdb_sync_counter_t read_locks;      // 读锁计数
@@ -142,11 +146,12 @@ typedef struct ppdb_node {
 } PPDB_ALIGNED ppdb_node_t;
 
 typedef struct ppdb_metrics {
-    ppdb_sync_counter_t get_count;    // get count
-    ppdb_sync_counter_t get_hits;     // hit count
-    ppdb_sync_counter_t put_count;    // put count
-    ppdb_sync_counter_t remove_count; // remove count
-} PPDB_ALIGNED ppdb_metrics_t;
+    ppdb_sync_counter_t get_count PPDB_CACHELINE_ALIGNED;    // get count
+    ppdb_sync_counter_t get_hits PPDB_CACHELINE_ALIGNED;     // hit count
+    ppdb_sync_counter_t put_count PPDB_CACHELINE_ALIGNED;    // put count
+    ppdb_sync_counter_t remove_count PPDB_CACHELINE_ALIGNED; // remove count
+    char padding[64];  // 确保整个结构体64字节对齐
+} PPDB_CACHELINE_ALIGNED ppdb_metrics_t;
 
 typedef struct ppdb_memory_block {
     void* data;
