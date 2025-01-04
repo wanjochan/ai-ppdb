@@ -437,7 +437,7 @@ static ppdb_error_t validate_and_setup_config(ppdb_config_t* config) {
     }
 
     // 验证特性类型
-    if (feature_type != 0 && feature_type != PPDB_FEAT_SHARDED) {
+    if (feature_type != 0 && feature_type != PPDB_TYPE_SHARDED) {
         return PPDB_ERR_INVALID_TYPE;
     }
 
@@ -499,11 +499,14 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     ppdb_type_t feature_type = PPDB_TYPE_FEATURE(validated_config.type);
 
     // 处理分片特性
-    if (feature_type & PPDB_FEAT_SHARDED) {
+    if (feature_type & PPDB_TYPE_SHARDED) {
+        ppdb_log(PPDB_LOG_DEBUG, "Creating sharded storage with %u shards", validated_config.shard_count);
+        
         // Initialize shard array
         (*base)->array.count = validated_config.shard_count;
         (*base)->array.ptrs = PPDB_ALIGNED_ALLOC((*base)->array.count * sizeof(ppdb_base_t*));
         if (!(*base)->array.ptrs) {
+            ppdb_log(PPDB_LOG_ERROR, "Failed to allocate shard array");
             err = PPDB_ERR_OUT_OF_MEMORY;
             goto cleanup;
         }
@@ -511,17 +514,27 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
 
         // Initialize each shard
         for (uint32_t i = 0; i < (*base)->array.count; i++) {
+            ppdb_log(PPDB_LOG_DEBUG, "Creating shard %u with type 0x%x", i, (base_type & ~PPDB_TYPE_SHARDED) | layer_type);
             err = ppdb_create(&(*base)->array.ptrs[i], &(ppdb_config_t){
-                .type = base_type | layer_type,  // 移除分片特性
+                .type = PPDB_TYPE_SKIPLIST | layer_type,  // 使用跳表作为基础类型
                 .use_lockfree = validated_config.use_lockfree,
-                .memtable_size = validated_config.memtable_size / validated_config.shard_count
+                .memtable_size = validated_config.memtable_size / validated_config.shard_count,
+                .shard_count = 1  // 确保子分片不会再次分片
             });
-            if (err != PPDB_OK) goto cleanup;
+            if (err != PPDB_OK) {
+                ppdb_log(PPDB_LOG_ERROR, "Failed to create shard %u: %s", i, ppdb_strerror(err));
+                goto cleanup;
+            }
+            ppdb_log(PPDB_LOG_DEBUG, "Successfully created shard %u", i);
         }
 
         // Initialize stats
         err = init_metrics(&(*base)->metrics);
-        if (err != PPDB_OK) goto cleanup;
+        if (err != PPDB_OK) {
+            ppdb_log(PPDB_LOG_ERROR, "Failed to initialize metrics: %s", ppdb_strerror(err));
+            goto cleanup;
+        }
+        ppdb_log(PPDB_LOG_DEBUG, "Successfully created sharded storage");
 
         return PPDB_OK;
     }
@@ -634,7 +647,7 @@ ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value
     ppdb_type_t feature_type = PPDB_TYPE_FEATURE(base->type);
 
     // 处理分片特性
-    if (feature_type & PPDB_FEAT_SHARDED) {
+    if (feature_type & PPDB_TYPE_SHARDED) {
         // 验证分片数组
         if (!base->array.ptrs || base->array.count == 0) {
             return PPDB_ERR_NOT_INITIALIZED;
@@ -1330,9 +1343,9 @@ void ppdb_iterator_destroy(void* iter) {
 }
 
 // 添加类型转换宏
-#define IS_TYPE(type, mask) (((type) & 0xFF) == (mask))
-#define IS_LAYER(type, mask) (((type) & 0xF00) == (mask))
-#define IS_FEATURE(type, mask) (((type) & 0xF000) == (mask))
+#define IS_TYPE(type, mask) (((type) & 0xFF) == (mask)
+#define IS_LAYER(type, mask) (((type) & 0xF00) == (mask)
+#define IS_FEATURE(type, mask) (((type) & 0xF000) == (mask)
 
 // Unified cleanup function
 static void cleanup_base(ppdb_base_t* base) {

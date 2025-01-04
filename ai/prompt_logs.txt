@@ -7,16 +7,20 @@ build skiplist_locked debug
 
 as warm-up, read *.md in docs/;
 
-特别注意：项目ai-ppdb用的是cosmopolitan跨平台底层!，构建工具已经在的，遇到不在时先停下来问；
-如果你要新建文件、或已经没有严重的问题要处理时先停下来；
-遇到特别不明白的问题，你可以使用curl工具（使用代理http://127.0.0.1:8888）去上网查询解决方案；
-
 【测试类构建】
+# windows:
+执行 build_all.ps1 遇到问题停下来先从相对宏观的角度来分析，
+根据问题严重性来制定或更新修复计划（注意更新到文档 RUNNING.md）并且重读 文档AGENT_RULES.md 后再执行计划，
+重复这个过程直到没有问题为止；
+
+# linux
 按顺序执行 ppdb/scripts/ 中的（一个测试没有任何问题才进入下一个）
 每个测试后就把问题按严重程度列出来，先做一个完整的修改计划，然后再进行修复。
 修复后执行的顺序还是从test42那个开始从头来，直到没有问题才停下:
-# windows:
-cd ppdb\scripts\
+//TODO build_all.sh 重构
+
+
+
 .\build.bat test42
 .\build.bat sync_locked
 .\build.bat sync_lockfree

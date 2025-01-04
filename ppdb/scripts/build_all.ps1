@@ -24,6 +24,6 @@ foreach ($test in $tests) {
         exit $LASTEXITCODE
     }
     Write-Host "Test $test completed successfully"
-    Write-Host "Press Enter to continue to next test..."
+    #Write-Host "Press Enter to continue to next test..."
     #Read-Host
 } 
