@@ -48,7 +48,7 @@ static void test_basic_write_recover() {
     assert(len == strlen(value2));
     assert(memcmp(buf, value2, len) == 0);
 
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     ppdb_wal_destroy(wal);
     ppdb_log_info("test_basic_write_recover passed");
 }
@@ -96,7 +96,7 @@ static void test_segment_switch() {
         assert(memcmp(buf, value, len) == 0);
     }
 
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     ppdb_wal_destroy(wal);
     ppdb_log_info("test_segment_switch passed");
 }
@@ -147,7 +147,7 @@ static void test_crash_recovery() {
         assert(len == strlen(value));
         assert(memcmp(buf, value, len) == 0);
 
-        ppdb_memtable_destroy(table);
+        ppdb_destroy(table);
         ppdb_wal_destroy(wal);
     }
 
@@ -195,7 +195,7 @@ static void test_archive() {
         assert(memcmp(buf, value, len) == 0);
     }
 
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     ppdb_wal_destroy(wal);
     printf("test_archive passed\n");
 }

@@ -70,7 +70,7 @@ void test_concurrent_write(void) {
     }
 
     // 清理
-    ppdb_memtable_destroy(memtable);
+    ppdb_destroy(memtable);
     ppdb_wal_destroy(wal);
     rmdir("test_wal");
 }
@@ -126,7 +126,7 @@ void test_batch_write(void) {
     }
 
     // 清理
-    ppdb_memtable_destroy(memtable);
+    ppdb_destroy(memtable);
     ppdb_wal_destroy(wal);
     rmdir("test_wal");
 }
@@ -170,7 +170,7 @@ void test_compaction(void) {
     free(read_value);
 
     // 清理
-    ppdb_memtable_destroy(memtable);
+    ppdb_destroy(memtable);
     ppdb_wal_destroy(wal);
     rmdir("test_wal");
 }

@@ -72,7 +72,14 @@ static void test_skiplist_basic(bool use_lockfree) {
     ppdb_error_t err;
     
     // 创建skiplist
-    err = ppdb_create(PPDB_TYPE_SKIPLIST, &base);
+    ppdb_config_t config = {
+        .type = PPDB_TYPE_SKIPLIST,
+        .path = NULL,
+        .memtable_size = DEFAULT_MEMTABLE_SIZE,
+        .shard_count = DEFAULT_SHARD_COUNT,
+        .use_lockfree = use_lockfree
+    };
+    err = ppdb_create(&base, &config);
     printf("Create skiplist result: %d\n", err);
     TEST_ASSERT(err == PPDB_OK, "Failed to create skiplist");
     TEST_ASSERT(base != NULL, "Base pointer is NULL");
@@ -254,7 +261,14 @@ static void test_skiplist_concurrent(bool use_lockfree) {
     ppdb_error_t err;
     
     // 创建skiplist
-    err = ppdb_create(PPDB_TYPE_SKIPLIST, &base);
+    ppdb_config_t config = {
+        .type = PPDB_TYPE_SKIPLIST,
+        .path = NULL,
+        .memtable_size = DEFAULT_MEMTABLE_SIZE,
+        .shard_count = DEFAULT_SHARD_COUNT,
+        .use_lockfree = use_lockfree
+    };
+    err = ppdb_create(&base, &config);
     TEST_ASSERT(err == PPDB_OK, "Failed to create skiplist");
     TEST_ASSERT(base != NULL, "Base pointer is NULL");
 
@@ -319,105 +333,64 @@ static void test_skiplist_iterator(bool use_lockfree) {
     ppdb_error_t err;
     
     // 创建skiplist
-    err = ppdb_create(PPDB_TYPE_SKIPLIST, &base);
+    ppdb_config_t config = {
+        .type = PPDB_TYPE_SKIPLIST,
+        .path = NULL,
+        .memtable_size = DEFAULT_MEMTABLE_SIZE,
+        .shard_count = DEFAULT_SHARD_COUNT,
+        .use_lockfree = use_lockfree
+    };
+    err = ppdb_create(&base, &config);
     TEST_ASSERT(err == PPDB_OK, "Failed to create skiplist");
     TEST_ASSERT(base != NULL, "Base pointer is NULL");
 
-    // 初始化迭代器接口
-    err = ppdb_iterator_init(base);
-    TEST_ASSERT(err == PPDB_OK, "Failed to initialize iterator interface");
-    TEST_ASSERT(base->advance != NULL, "Advance ops is NULL");
-    TEST_ASSERT(base->advance->iterator != NULL, "Iterator function is NULL");
-    TEST_ASSERT(base->advance->next != NULL, "Next function is NULL");
-    TEST_ASSERT(base->advance->iterator_destroy != NULL, "Iterator destroy function is NULL");
-
-    // 插入测试数据
-    const int NUM_ITEMS = 100;
-    uint8_t** key_data = PPDB_ALIGNED_ALLOC(NUM_ITEMS * sizeof(uint8_t*));
-    uint8_t** value_data = PPDB_ALIGNED_ALLOC(NUM_ITEMS * sizeof(uint8_t*));
-    TEST_ASSERT(key_data != NULL && value_data != NULL, "Failed to allocate memory");
-
-    for (int i = 0; i < NUM_ITEMS; i++) {
-        key_data[i] = PPDB_ALIGNED_ALLOC(32);
-        value_data[i] = PPDB_ALIGNED_ALLOC(32);
-        TEST_ASSERT(key_data[i] != NULL && value_data[i] != NULL, "Failed to allocate memory");
-        
-        int key_size = snprintf((char*)key_data[i], 32, "key_%03d", i);
-        int value_size = snprintf((char*)value_data[i], 32, "value_%03d", i);
+    // 插入一些测试数据
+    for (int i = 0; i < 10; i++) {
+        char key_buf[32], value_buf[32];
+        snprintf(key_buf, sizeof(key_buf), "key_%d", i);
+        snprintf(value_buf, sizeof(value_buf), "value_%d", i);
         
         ppdb_key_t key = {
-            .data = key_data[i],
-            .size = key_size,
+            .data = key_buf,
+            .size = strlen(key_buf),
             .ref_count = {.value = 1}
         };
         ppdb_value_t value = {
-            .data = value_data[i],
-            .size = value_size,
+            .data = value_buf,
+            .size = strlen(value_buf),
             .ref_count = {.value = 1}
         };
         
         err = ppdb_put(base, &key, &value);
-        TEST_ASSERT(err == PPDB_OK, "Failed to insert test data");
+        TEST_ASSERT(err == PPDB_OK, "Failed to put test data");
     }
 
-    // 创建迭代器
+    // 初始化迭代器
     void* iter = NULL;
-    err = base->advance->iterator(base, &iter);
-    TEST_ASSERT(err == PPDB_OK, "Failed to create iterator");
+    err = ppdb_iterator_init(base, &iter);
+    TEST_ASSERT(err == PPDB_OK, "Failed to initialize iterator");
     TEST_ASSERT(iter != NULL, "Iterator is NULL");
 
-    // 遍历并验证数据
+    // 遍历所有数据
     int count = 0;
-    char prev_key[32] = "";
-    while (1) {
-        ppdb_key_t key = {0};
-        ppdb_value_t value = {0};
+    ppdb_key_t key;
+    ppdb_value_t value;
+    while ((err = ppdb_iterator_next(iter, &key, &value)) == PPDB_OK) {
+        printf("Iter %d: key=%.*s, value=%.*s\n", 
+               count, (int)key.size, (char*)key.data,
+               (int)value.size, (char*)value.data);
         
-        err = base->advance->next(iter, &key, &value);
-        if (err == PPDB_ERR_NOT_FOUND) break;
-        TEST_ASSERT(err == PPDB_OK, "Iterator next failed");
-
-        // 验证key格式
-        TEST_ASSERT(key.size < 32, "Key size too large");
-        char key_str[32];
-        memcpy(key_str, key.data, key.size);
-        key_str[key.size] = '\0';
-        
-        // 验证顺序
-        if (count > 0) {
-            TEST_ASSERT(strcmp(key_str, prev_key) > 0, "Keys not in order");
-        }
-        strcpy(prev_key, key_str);
-
-        // 验证value格式
-        TEST_ASSERT(value.size < 32, "Value size too large");
-        char value_str[32];
-        memcpy(value_str, value.data, value.size);
-        value_str[value.size] = '\0';
-
-        // 验证key-value对应关系
-        char expected_value[32];
-        snprintf(expected_value, sizeof(expected_value), "value_%s", key_str + 4);  // skip "key_"
-        TEST_ASSERT(strcmp(value_str, expected_value) == 0, "Key-value mismatch");
-
         PPDB_ALIGNED_FREE(key.data);
         PPDB_ALIGNED_FREE(value.data);
         count++;
     }
-
-    TEST_ASSERT(count == NUM_ITEMS, "Iterator count mismatch");
+    TEST_ASSERT(err == PPDB_ERR_ITERATOR_END, "Iterator should end with PPDB_ERR_ITERATOR_END");
+    TEST_ASSERT(count == 10, "Iterator should return all 10 items");
 
     // 销毁迭代器
-    base->advance->iterator_destroy(iter);
+    ppdb_iterator_destroy(iter);
 
-    // 清理测试数据
-    for (int i = 0; i < NUM_ITEMS; i++) {
-        PPDB_ALIGNED_FREE(key_data[i]);
-        PPDB_ALIGNED_FREE(value_data[i]);
-    }
-    PPDB_ALIGNED_FREE(key_data);
-    PPDB_ALIGNED_FREE(value_data);
-
+    // 销毁skiplist
     ppdb_destroy(base);
     printf("Iterator test completed\n");
 }

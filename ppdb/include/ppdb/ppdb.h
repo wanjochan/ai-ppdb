@@ -52,6 +52,8 @@ typedef enum ppdb_error {
     PPDB_ERR_TIMEOUT,            // 超时
     PPDB_ERR_FULL,              // 已满
     PPDB_ERR_NOT_IMPLEMENTED,   // 未实现
+    PPDB_ERR_ITERATOR_INVALID,  // 迭代器无效
+    PPDB_ERR_ITERATOR_END,      // 迭代器到达末尾
 } ppdb_error_t;
 
 // 存储类型定义
@@ -220,8 +222,30 @@ struct ppdb_base {
 } PPDB_ALIGNED;
 
 //-----------------------------------------------------------------------------
-// 
+// 存储操作函数声明
 //-----------------------------------------------------------------------------
+
+// 创建存储实例
+ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config);
+
+// 销毁存储实例
+void ppdb_destroy(ppdb_base_t* base);
+
+// 基本操作
+ppdb_error_t ppdb_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value);
+ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value);
+ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key);
+
+// 迭代器操作
+ppdb_error_t ppdb_iterator_init(ppdb_base_t* base, void** iter);
+ppdb_error_t ppdb_iterator_next(void* iter, ppdb_key_t* key, ppdb_value_t* value);
+void ppdb_iterator_destroy(void* iter);
+
+// 高级操作
+ppdb_error_t ppdb_storage_sync(ppdb_base_t* base);
+ppdb_error_t ppdb_storage_flush(ppdb_base_t* base);
+ppdb_error_t ppdb_storage_compact(ppdb_base_t* base);
+ppdb_error_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_metrics_t* stats);
 
 // 
 ppdb_error_t ppdb_sync_counter_init(ppdb_sync_counter_t* counter, size_t initial_value);
@@ -255,13 +279,6 @@ void* ppdb_memory_pool_alloc(ppdb_memory_pool_t* pool, size_t size);
 void ppdb_memory_pool_free(ppdb_memory_pool_t* pool, void* ptr);
 
 // 
-ppdb_error_t ppdb_create(ppdb_type_t type, ppdb_base_t** base);
-void ppdb_destroy(ppdb_base_t* base);
-ppdb_error_t ppdb_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value);
-ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value);
-ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key);
-
-// 
 ppdb_error_t ppdb_fs_init(const char* path);
 ppdb_error_t ppdb_fs_cleanup(const char* path);
 ppdb_error_t ppdb_fs_write(const char* path, const void* data, size_t size);
@@ -272,23 +289,10 @@ bool ppdb_fs_is_file(const char* path);
 bool ppdb_fs_is_dir(const char* path);
 
 // 
-ppdb_error_t ppdb_storage_sync(ppdb_base_t* base);
-ppdb_error_t ppdb_storage_flush(ppdb_base_t* base);
-ppdb_error_t ppdb_storage_compact(ppdb_base_t* base);
-ppdb_error_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_metrics_t* stats);
-
-// 
-ppdb_error_t ppdb_iterator_init(ppdb_base_t* base);
-
-// 
 ppdb_error_t ppdb_skiplist_create(ppdb_base_t* base, const ppdb_config_t* config);
 ppdb_error_t ppdb_memtable_create(ppdb_base_t* base, const ppdb_config_t* config);
 ppdb_error_t ppdb_sharded_create(ppdb_base_t* base, const ppdb_config_t* config);
 ppdb_error_t ppdb_kvstore_create(ppdb_base_t* base, const ppdb_config_t* config);
-void ppdb_skiplist_destroy(ppdb_base_t* base);
-void ppdb_memtable_destroy(ppdb_base_t* base);
-void ppdb_sharded_destroy(ppdb_base_t* base);
-void ppdb_kvstore_destroy(ppdb_base_t* base);
 
 // 
 const char* ppdb_strerror(ppdb_error_t err);

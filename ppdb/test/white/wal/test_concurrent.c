@@ -117,7 +117,7 @@ static int test_wal_concurrent_write(void) {
     }
     
     // Cleanup
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     ppdb_wal_destroy(wal);
     cleanup_test_dir(test_dir);
     
@@ -205,7 +205,7 @@ static int test_wal_concurrent_write_archive(void) {
     }
     
     // Cleanup
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     ppdb_wal_destroy(wal);
     cleanup_test_dir(test_dir);
     

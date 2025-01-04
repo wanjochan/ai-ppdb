@@ -52,7 +52,7 @@ static int test_basic_ops(void) {
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key still exists after deletion");
 
     // 销毁内存表
-    ppdb_sharded_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 
@@ -87,7 +87,7 @@ static int test_shard_distribution(void) {
     TEST_ASSERT(empty_shards == 0, "Found empty shards");
 
     // 销毁内存表
-    ppdb_sharded_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 
@@ -172,7 +172,7 @@ static int test_concurrent_ops(void) {
     }
 
     // 销毁内存表
-    ppdb_sharded_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 
@@ -219,8 +219,8 @@ static void test_iterator(void) {
     assert(i == 100);
 
     // 清理资源
-    ppdb_iterator_destroy(iter);
-    ppdb_sharded_memtable_destroy(table);
+    ppdb_destroy(iter);
+    ppdb_destroy(table);
 }
 
 // 测试套件

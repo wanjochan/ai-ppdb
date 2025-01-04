@@ -115,7 +115,7 @@ void test_basic_recovery(void) {
     }
 
     // 清理
-    ppdb_memtable_destroy(memtable);
+    ppdb_destroy(memtable);
     ppdb_wal_destroy(wal);
     rmdir("test_wal");
 }

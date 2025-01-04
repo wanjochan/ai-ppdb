@@ -128,7 +128,7 @@ static int test_basic_ops(void) {
         &value_buf, &actual_size);
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after delete");
 
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -160,7 +160,7 @@ static int test_wal_persistence(void) {
     }
 
     // 关闭第一个实例
-    ppdb_kvstore_destroy(store1);
+    ppdb_destroy(store1);
 
     // 创建第二个实例，它应该从WAL中恢复数据
     ppdb_kvstore_t* store2 = NULL;
@@ -184,7 +184,7 @@ static int test_wal_persistence(void) {
         free(value);
     }
 
-    ppdb_kvstore_destroy(store2);
+    ppdb_destroy(store2);
     return 0;
 }
 
@@ -254,7 +254,7 @@ static int test_batch_ops(void) {
     }
 
     ppdb_batch_destroy(batch);
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -288,7 +288,7 @@ static int test_concurrent_ops(void) {
         TEST_ASSERT(thread_args[i].success, "Thread operation failed");
     }
 
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -354,7 +354,7 @@ static int test_iterator(void) {
     TEST_ASSERT(count == num_entries, "Iterator count mismatch");
 
     ppdb_iterator_destroy(iter);
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 

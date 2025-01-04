@@ -152,7 +152,7 @@ static int test_basic_operations(void) {
 
     printf("Destroying skiplist...\n");
     // 销毁跳表
-    ppdb_skiplist_destroy(list);
+    ppdb_destroy(list);
     printf("Test completed\n");
     return 0;
 }
@@ -230,7 +230,7 @@ static int test_iterator(void) {
     
     // 销毁跳表
     printf("Destroying skiplist...\n");
-    ppdb_skiplist_destroy(list);
+    ppdb_destroy(list);
     printf("Test completed\n");
     return 0;
 }
@@ -256,7 +256,7 @@ static int test_concurrent_operations(void) {
     // TODO: 添加并发测试用例
 
     // 销毁跳表
-    ppdb_skiplist_destroy(list);
+    ppdb_destroy(list);
     return 0;
 }
 

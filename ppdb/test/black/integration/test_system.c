@@ -80,7 +80,7 @@ static int test_full_workflow(void) {
     // 5. 强制刷新并重新打开
     err = ppdb_kvstore_sync(store);
     TEST_ASSERT_OK(err, "Failed to sync store");
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
 
     // 重新打开并验证数据
     err = ppdb_kvstore_create(&store, &config);
@@ -104,7 +104,7 @@ static int test_full_workflow(void) {
     TEST_ASSERT(found_count > 0, "No data found after reopening");
 
     // 6. 清理
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     cleanup_test_dir(TEST_DIR);
     
     return 0;
@@ -162,7 +162,7 @@ static int test_recovery_workflow(void) {
                "Recovery incomplete: only %d/100 items recovered", recovered_count);
 
     // 6. 清理
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     cleanup_test_dir(TEST_DIR);
     
     return 0;

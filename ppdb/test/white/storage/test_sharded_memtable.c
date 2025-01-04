@@ -117,7 +117,7 @@ static int test_basic_ops(void) {
         &value_buf, &actual_size);
     ASSERT_EQ(err, PPDB_ERR_NOT_FOUND);
 
-    ppdb_sharded_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 
@@ -161,7 +161,7 @@ static int test_shard_distribution(void) {
         ASSERT_GT(variance_threshold + 1, diff);
     }
 
-    ppdb_sharded_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 
@@ -188,7 +188,7 @@ static int test_concurrent_ops(void) {
         ASSERT_EQ(thread_args[i].success, true);
     }
 
-    ppdb_sharded_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 
@@ -252,7 +252,7 @@ static int test_iterator(void) {
     ASSERT_EQ(count, num_entries);
 
     ppdb_iterator_destroy(iter);
-    ppdb_sharded_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 

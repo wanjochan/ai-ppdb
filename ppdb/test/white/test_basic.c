@@ -22,13 +22,13 @@ static int test_create_destroy(void) {
     
     if (!table->basic) {
         PPDB_LOG_ERROR("Basic memtable structure is NULL");
-        ppdb_memtable_destroy(table);
+        ppdb_destroy(table);
         return 1;
     }
     
     if (!table->basic->skiplist) {
         PPDB_LOG_ERROR("Skiplist is NULL");
-        ppdb_memtable_destroy(table);
+        ppdb_destroy(table);
         return 1;
     }
     
@@ -36,26 +36,26 @@ static int test_create_destroy(void) {
     size_t size = ppdb_memtable_size_basic(table);
     if (size != 0) {
         PPDB_LOG_ERROR("Initial size should be 0, got %zu", size);
-        ppdb_memtable_destroy(table);
+        ppdb_destroy(table);
         return 1;
     }
     
     size_t max_size = ppdb_memtable_max_size_basic(table);
     if (max_size != 1024) {
         PPDB_LOG_ERROR("Wrong max size: expected 1024, got %zu", max_size);
-        ppdb_memtable_destroy(table);
+        ppdb_destroy(table);
         return 1;
     }
     
     bool is_immutable = ppdb_memtable_is_immutable_basic(table);
     if (is_immutable) {
         PPDB_LOG_ERROR("Should not be immutable initially");
-        ppdb_memtable_destroy(table);
+        ppdb_destroy(table);
         return 1;
     }
     
     // 销毁内存表
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     table = NULL;
     return 0;
 }
@@ -100,7 +100,7 @@ static int test_put_get(void) {
         free(retrieved_value);
         retrieved_value = NULL;
     }
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     table = NULL;
     return 0;
 }
@@ -141,7 +141,7 @@ static int test_delete(void) {
         free(retrieved_value);
         retrieved_value = NULL;
     }
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     table = NULL;
     return 0;
 }
@@ -172,7 +172,7 @@ static int test_size_limit(void) {
     TEST_ASSERT(err == PPDB_ERR_OUT_OF_MEMORY, "Should reject data exceeding size limit");
 
     // 清理
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     table = NULL;
     return 0;
 }
@@ -218,7 +218,7 @@ static int test_update(void) {
         free(retrieved_value);
         retrieved_value = NULL;
     }
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     table = NULL;
     return 0;
 }

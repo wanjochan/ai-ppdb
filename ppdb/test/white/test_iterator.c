@@ -52,8 +52,8 @@ static void test_basic_iteration(void) {
         ppdb_skiplist_iterator_next(iter);
     }
 
-    ppdb_skiplist_iterator_destroy(iter);
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(iter);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -109,8 +109,8 @@ static void test_seek_iteration(void) {
         printf("    Iterator reached end\n");
     }
 
-    ppdb_skiplist_iterator_destroy(iter);
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(iter);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -136,8 +136,8 @@ static void test_empty_iteration(void) {
            !ppdb_skiplist_iterator_valid(iter) ? "Correctly invalid" : "Incorrectly valid");
     assert(!ppdb_skiplist_iterator_valid(iter));
 
-    ppdb_skiplist_iterator_destroy(iter);
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(iter);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }

@@ -18,7 +18,7 @@ static void test_empty_key(void) {
     printf("  Put empty key: %s\n", err == INVALID_ARGUMENT ? "Correctly rejected" : "Incorrectly accepted");
     assert(err == INVALID_ARGUMENT);
 
-    memtable_destroy(table);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -46,7 +46,7 @@ static void test_empty_value(void) {
     assert(err == OK);
     assert(buf_len == 0);
 
-    memtable_destroy(table);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -83,7 +83,7 @@ static void test_max_key_length(void) {
     assert(memcmp(buf, value, buf_len) == 0);
 
     free(key);
-    memtable_destroy(table);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -122,7 +122,7 @@ static void test_max_value_length(void) {
 
     free(value);
     free(buf);
-    memtable_destroy(table);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -186,7 +186,7 @@ static int test_edge_memory_full(void) {
     TEST_ASSERT(strcmp(value, large_value) == 0, "Data corruption detected");
 
     free(large_value);
-    kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -230,7 +230,7 @@ static int test_edge_large_keys(void) {
     free(large_key);
     free(large_value);
     free(read_value);
-    kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -267,7 +267,7 @@ static int test_edge_empty_keys(void) {
     TEST_ASSERT_OK(err, "Failed to read empty value");
     TEST_ASSERT(strlen(read_value) == 0, "Empty value corrupted");
 
-    kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 

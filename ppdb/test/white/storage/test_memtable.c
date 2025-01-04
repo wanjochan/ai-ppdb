@@ -150,7 +150,7 @@ static int test_basic_ops(void) {
     PPDB_LOG_INFO("Get after delete result: %d", err);
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key should not exist after delete");
 
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 
@@ -194,7 +194,7 @@ static int test_sharding(void) {
         free(value);
     }
 
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 
@@ -221,7 +221,7 @@ static int test_concurrent_ops(void) {
         TEST_ASSERT(thread_args[i].success, "Thread operation failed");
     }
 
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     return 0;
 }
 

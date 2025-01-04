@@ -157,7 +157,7 @@ static int benchmark_memtable_ops(void) {
 
     free(write_latencies);
     free(read_latencies);
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -201,7 +201,7 @@ static int benchmark_wal_ops(void) {
         sync_stats.total_bytes += strlen(key) + strlen(value);
     }
 
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
 
     // 测试异步写入
     ppdb_config_t async_config = {
@@ -248,7 +248,7 @@ static int benchmark_wal_ops(void) {
 
     free(sync_latencies);
     free(async_latencies);
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     cleanup_test_dir("/tmp/ppdb_wal_sync");
     cleanup_test_dir("/tmp/ppdb_wal_async");
     return 0;
@@ -294,7 +294,7 @@ static int benchmark_compression(void) {
         comp_stats.total_bytes += strlen(key) + strlen(value);
     }
 
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
 
     // 测试禁用压缩
     ppdb_config_t no_comp_config = {
@@ -339,7 +339,7 @@ static int benchmark_compression(void) {
 
     free(comp_latencies);
     free(no_comp_latencies);
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -429,7 +429,7 @@ static int benchmark_batch_ops(void) {
 
     free(batch_latencies);
     free(single_latencies);
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     cleanup_test_dir("/tmp/ppdb_batch");
     return 0;
 }
@@ -531,7 +531,7 @@ static int benchmark_concurrent_ops(void) {
         free(contexts[i].latencies);
     }
     free(all_latencies);
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     cleanup_test_dir("/tmp/ppdb_concurrent");
     return 0;
 }

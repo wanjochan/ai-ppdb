@@ -16,7 +16,7 @@ TEST_CASE("MemTable基本操作") {
         REQUIRE(memtable_get(table, "key1", &value) == 0);
         REQUIRE(strcmp(value, "value1") == 0);
         
-        memtable_destroy(table);
+        ppdb_destroy(table);
     }
     
     SECTION("删除") {

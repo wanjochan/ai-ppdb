@@ -88,7 +88,7 @@ static void test_concurrent_operations(void) {
     printf("  All threads completed successfully\n");
     printf("  Final table size: %zu\n", ppdb_memtable_size(table));
     
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -134,7 +134,7 @@ static void test_concurrent_updates(void) {
     printf("  Final value length: %zu\n", buf_len);
     printf("  Final value: %s\n", buf);
     
-    ppdb_memtable_destroy(table);
+    ppdb_destroy(table);
     printf("  Destroy MemTable: OK\n");
     printf("Test passed!\n\n");
 }
@@ -182,7 +182,7 @@ static int test_concurrent_memtable(void) {
         }
     }
 
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -225,7 +225,7 @@ static int test_concurrent_wal(void) {
     err = ppdb_kvstore_sync(store);
     TEST_ASSERT_OK(err, "Failed to sync WAL");
 
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
@@ -259,7 +259,7 @@ static int test_concurrent_read_write(void) {
         TEST_ASSERT(contexts[i].success_ops > 0, "Thread %d had no successful operations", i);
     }
 
-    ppdb_kvstore_destroy(store);
+    ppdb_destroy(store);
     return 0;
 }
 
