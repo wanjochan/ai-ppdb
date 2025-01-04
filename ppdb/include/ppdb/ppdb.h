@@ -51,6 +51,7 @@ typedef enum ppdb_error {
     PPDB_ERR_INVALID_ARGUMENT,   // 无效参数
     PPDB_ERR_TIMEOUT,            // 超时
     PPDB_ERR_FULL,              // 已满
+    PPDB_ERR_NOT_IMPLEMENTED,   // 未实现
 } ppdb_error_t;
 
 // 存储类型定义
@@ -84,7 +85,7 @@ typedef struct ppdb_sync_config {
 } PPDB_ALIGNED ppdb_sync_config_t;
 
 // 前向声明
-struct ppdb_sync;
+typedef struct ppdb_base ppdb_base_t;
 
 typedef struct ppdb_sync_counter {
     atomic_size_t value;
@@ -128,26 +129,22 @@ typedef struct ppdb_value {
 } PPDB_ALIGNED ppdb_value_t;
 
 typedef struct ppdb_node {
-    ppdb_sync_t* lock;              
-    ppdb_sync_counter_t height;    
-    ppdb_sync_counter_t ref_count;  
-    ppdb_key_t* key;               
-    ppdb_value_t* value;           
-    ppdb_sync_counter_t is_deleted;
-    ppdb_sync_counter_t is_garbage;
-    struct ppdb_node* next[];     // 柔性数组成员
+    ppdb_sync_t* lock;              // lock for node
+    ppdb_sync_counter_t height;     // height of node
+    ppdb_sync_counter_t ref_count;  // reference count
+    ppdb_key_t* key;               // key
+    ppdb_value_t* value;           // value
+    ppdb_sync_counter_t is_deleted; // deleted flag
+    ppdb_sync_counter_t is_garbage; // garbage flag
+    struct ppdb_node* next[];      // next pointers
 } PPDB_ALIGNED ppdb_node_t;
 
 typedef struct ppdb_metrics {
-    ppdb_sync_counter_t get_count;    // 获取计数
-    ppdb_sync_counter_t get_hits;     // 命中计数
-    ppdb_sync_counter_t put_count;    // 写入计数
-    ppdb_sync_counter_t remove_count; // 删除计数
+    ppdb_sync_counter_t get_count;    // get count
+    ppdb_sync_counter_t get_hits;     // hit count
+    ppdb_sync_counter_t put_count;    // put count
+    ppdb_sync_counter_t remove_count; // remove count
 } PPDB_ALIGNED ppdb_metrics_t;
-
-//-----------------------------------------------------------------------------
-// 内存池定义
-//-----------------------------------------------------------------------------
 
 typedef struct ppdb_memory_block {
     void* data;
@@ -174,24 +171,23 @@ typedef struct ppdb_storage {
     ppdb_sync_t* lock;
     ppdb_memory_pool_t* pool;
     ppdb_sync_counter_t node_count;
+    uint32_t shard_count;         // shard count
+    ppdb_base_t** shards;         // shard array
 } PPDB_ALIGNED ppdb_storage_t;
 
 typedef struct ppdb_memtable {
-    size_t limit;                  // 内存限制
-    ppdb_sync_counter_t used;      // 已用内存
-    ppdb_sync_t* flush_lock;       // 刷盘锁
+    size_t limit;                  // memory limit
+    ppdb_sync_counter_t used;      // used memory
+    ppdb_sync_t* flush_lock;       // flush lock
 } PPDB_ALIGNED ppdb_memtable_t;
 
 typedef struct ppdb_array {
-    uint32_t count;               // 分片数量
-    struct ppdb_base** ptrs;      // 分片指针数组
+    uint32_t count;               // shard count
+    struct ppdb_base** ptrs;      // shard pointers
 } PPDB_ALIGNED ppdb_array_t;
 
-// 前向声明
-typedef struct ppdb_base ppdb_base_t;
-
 //-----------------------------------------------------------------------------
-// 高级操作定义
+// 
 //-----------------------------------------------------------------------------
 
 typedef struct ppdb_advance_ops {
@@ -205,29 +201,29 @@ typedef struct ppdb_advance_ops {
 } ppdb_advance_ops_t;
 
 typedef struct ppdb_config {
-    ppdb_type_t type;                // 存储类型
-    const char* path;                // 存储路径
-    size_t memtable_size;           // 内存表大小
-    uint32_t shard_count;           // 分片数量
-    bool use_lockfree;              // 是否使用无锁模式
+    ppdb_type_t type;                // storage type
+    const char* path;                // storage path
+    size_t memtable_size;           // memtable size
+    uint32_t shard_count;           // shard count
+    bool use_lockfree;              // use lockfree mode
 } PPDB_ALIGNED ppdb_config_t;
 
 struct ppdb_base {
-    ppdb_type_t type;            // 存储类型
-    char* path;                  // 存储路径
-    ppdb_storage_t storage;      // 存储结构
-    ppdb_memtable_t mem;         // 内存表
-    ppdb_array_t array;          // 分片数组
-    ppdb_metrics_t metrics;      // 统计信息
-    ppdb_advance_ops_t* advance; // 高级功能接口
-    ppdb_config_t config;        // 存储配置
+    ppdb_type_t type;            // storage type
+    char* path;                  // storage path
+    ppdb_storage_t storage;      // storage structure
+    ppdb_memtable_t mem;         // memtable
+    ppdb_array_t array;          // shard array
+    ppdb_metrics_t metrics;      // metrics
+    ppdb_advance_ops_t* advance; // advanced operations
+    ppdb_config_t config;        // configuration
 } PPDB_ALIGNED;
 
 //-----------------------------------------------------------------------------
-// 函数声明
+// 
 //-----------------------------------------------------------------------------
 
-// 计数器操作
+// 
 ppdb_error_t ppdb_sync_counter_init(ppdb_sync_counter_t* counter, size_t initial_value);
 void ppdb_sync_counter_destroy(ppdb_sync_counter_t* counter);
 size_t ppdb_sync_counter_add(ppdb_sync_counter_t* counter, size_t delta);
@@ -236,7 +232,7 @@ size_t ppdb_sync_counter_load(ppdb_sync_counter_t* counter);
 void ppdb_sync_counter_store(ppdb_sync_counter_t* counter, size_t value);
 bool ppdb_sync_counter_cas(ppdb_sync_counter_t* counter, size_t expected, size_t desired);
 
-// 同步原语函数
+// 
 ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, ppdb_sync_config_t* config);
 ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, ppdb_sync_config_t* config);
 ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync);
@@ -252,20 +248,20 @@ ppdb_error_t ppdb_sync_try_write_lock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync);
 ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync);
 
-// 内存池操作
+// 
 ppdb_error_t ppdb_memory_pool_create(ppdb_memory_pool_t** pool, size_t block_size);
 void ppdb_memory_pool_destroy(ppdb_memory_pool_t* pool);
 void* ppdb_memory_pool_alloc(ppdb_memory_pool_t* pool, size_t size);
 void ppdb_memory_pool_free(ppdb_memory_pool_t* pool, void* ptr);
 
-// 存储接口函数
+// 
 ppdb_error_t ppdb_create(ppdb_type_t type, ppdb_base_t** base);
 void ppdb_destroy(ppdb_base_t* base);
 ppdb_error_t ppdb_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* value);
 ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value);
 ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key);
 
-// 文件系统操作
+// 
 ppdb_error_t ppdb_fs_init(const char* path);
 ppdb_error_t ppdb_fs_cleanup(const char* path);
 ppdb_error_t ppdb_fs_write(const char* path, const void* data, size_t size);
@@ -275,16 +271,16 @@ bool ppdb_fs_exists(const char* path);
 bool ppdb_fs_is_file(const char* path);
 bool ppdb_fs_is_dir(const char* path);
 
-// 存储操作
+// 
 ppdb_error_t ppdb_storage_sync(ppdb_base_t* base);
 ppdb_error_t ppdb_storage_flush(ppdb_base_t* base);
 ppdb_error_t ppdb_storage_compact(ppdb_base_t* base);
 ppdb_error_t ppdb_storage_get_stats(ppdb_base_t* base, ppdb_metrics_t* stats);
 
-// 迭代器操作
+// 
 ppdb_error_t ppdb_iterator_init(ppdb_base_t* base);
 
-// 存储创建和销毁
+// 
 ppdb_error_t ppdb_skiplist_create(ppdb_base_t* base, const ppdb_config_t* config);
 ppdb_error_t ppdb_memtable_create(ppdb_base_t* base, const ppdb_config_t* config);
 ppdb_error_t ppdb_sharded_create(ppdb_base_t* base, const ppdb_config_t* config);
@@ -294,7 +290,7 @@ void ppdb_memtable_destroy(ppdb_base_t* base);
 void ppdb_sharded_destroy(ppdb_base_t* base);
 void ppdb_kvstore_destroy(ppdb_base_t* base);
 
-// 错误处理
+// 
 const char* ppdb_strerror(ppdb_error_t err);
 ppdb_error_t ppdb_system_error(int err);
 
