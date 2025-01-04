@@ -1112,103 +1112,94 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     return err;
 }
 
-static ppdb_error_t skiplist_remove(ppdb_base_t* base, const ppdb_key_t* key) {
-    if (!base || !key) return PPDB_ERR_NULL_POINTER;
-
-    ppdb_error_t err = PPDB_OK;
-    ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
-    ppdb_node_t* current = base->storage.head;
-
-    // 获取存储级写锁
-    if ((err = ppdb_sync_write_lock(base->storage.lock)) != PPDB_OK) {
-        return err;
-    }
-
-    // 从最高层开始查找
-    for (int level = MAX_SKIPLIST_LEVEL - 1; level >= 0; level--) {
-        while (current->next[level]) {
-            ppdb_node_t* next = current->next[level];
-            
-            // 获取节点读锁
-            if (ppdb_sync_read_lock(next->lock) != PPDB_OK) {
-                break;
-            }
-            
-            // 跳过已删除的节点
-            if (ppdb_sync_counter_load(&next->is_deleted) || 
-                ppdb_sync_counter_load(&next->is_garbage)) {
-                ppdb_sync_read_unlock(next->lock);
-                current = next;
-                continue;
-            }
-            
-            // 比较key
-            int cmp = memcmp(next->key->data, key->data,
-                           MIN(next->key->size, key->size));
-            if (cmp > 0 || (cmp == 0 && next->key->size > key->size)) {
-                ppdb_sync_read_unlock(next->lock);
-                break;
-            }
-            
-            if (cmp == 0 && next->key->size == key->size) {
-                // 找到了要删除的节点
-                ppdb_sync_read_unlock(next->lock);
-                update[level] = current;
-                break;
-            }
-            
-            current = next;
-            ppdb_sync_read_unlock(next->lock);
-        }
-        update[level] = current;
-    }
-
-    // 检查是否找到要删除的节点
-    ppdb_node_t* target = update[0]->next[0];
-    if (!target || target->key->size != key->size ||
-        memcmp(target->key->data, key->data, key->size) != 0) {
-        ppdb_sync_write_unlock(base->storage.lock);
-        return PPDB_ERR_NOT_FOUND;
-    }
-
-    // 获取目标节点的写锁
-    if ((err = ppdb_sync_write_lock(target->lock)) != PPDB_OK) {
-        ppdb_sync_write_unlock(base->storage.lock);
-        return err;
-    }
-
-    // 标记为已删除
-    ppdb_sync_counter_store(&target->is_deleted, 1);  // true
-
-    // 更新指针
-    for (uint32_t i = 0; i < ppdb_sync_counter_load(&target->height); i++) {
-        if (update[i]->next[i] != target) {
-            break;
-        }
-        update[i]->next[i] = target->next[i];
-    }
-
-    // 释放锁
-    ppdb_sync_write_unlock(target->lock);
-    ppdb_sync_write_unlock(base->storage.lock);
-
-    // 增加删除计数
-    ppdb_sync_counter_add(&base->metrics.remove_count, 1);
-
-    return PPDB_OK;
-}
-
 ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key) {
     if (!base || !key) return PPDB_ERR_NULL_POINTER;
 
+    // 内联实现 skiplist_remove 逻辑
     ppdb_error_t err;
     switch (base->type) {
         case PPDB_TYPE_SKIPLIST:
-            err = skiplist_remove(base, key);
-            break;
-        case PPDB_TYPE_MEMTABLE:
-            err = skiplist_remove(base, key);
-            break;
+        case PPDB_TYPE_MEMTABLE: {
+            ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
+            ppdb_node_t* current = base->storage.head;
+
+            // 获取存储级写锁
+            if ((err = ppdb_sync_write_lock(base->storage.lock)) != PPDB_OK) {
+                return err;
+            }
+
+            // 从最高层开始查找
+            for (int level = MAX_SKIPLIST_LEVEL - 1; level >= 0; level--) {
+                while (current->next[level]) {
+                    ppdb_node_t* next = current->next[level];
+                    
+                    // 获取节点读锁
+                    if (ppdb_sync_read_lock(next->lock) != PPDB_OK) {
+                        break;
+                    }
+                    
+                    // 跳过已删除的节点
+                    if (ppdb_sync_counter_load(&next->is_deleted) || 
+                        ppdb_sync_counter_load(&next->is_garbage)) {
+                        ppdb_sync_read_unlock(next->lock);
+                        current = next;
+                        continue;
+                    }
+                    
+                    // 比较key
+                    int cmp = memcmp(next->key->data, key->data,
+                                MIN(next->key->size, key->size));
+                    if (cmp > 0 || (cmp == 0 && next->key->size > key->size)) {
+                        ppdb_sync_read_unlock(next->lock);
+                        break;
+                    }
+                    
+                    if (cmp == 0 && next->key->size == key->size) {
+                        // 找到了要删除的节点
+                        ppdb_sync_read_unlock(next->lock);
+                        update[level] = current;
+                        break;
+                    }
+                    
+                    current = next;
+                    ppdb_sync_read_unlock(next->lock);
+                }
+                update[level] = current;
+            }
+
+            // 检查是否找到要删除的节点
+            ppdb_node_t* target = update[0]->next[0];
+            if (!target || target->key->size != key->size ||
+                memcmp(target->key->data, key->data, key->size) != 0) {
+                ppdb_sync_write_unlock(base->storage.lock);
+                return PPDB_ERR_NOT_FOUND;
+            }
+
+            // 获取目标节点的写锁
+            if ((err = ppdb_sync_write_lock(target->lock)) != PPDB_OK) {
+                ppdb_sync_write_unlock(base->storage.lock);
+                return err;
+            }
+
+            // 标记为已删除
+            ppdb_sync_counter_store(&target->is_deleted, 1);  // true
+
+            // 更新指针
+            for (uint32_t i = 0; i < ppdb_sync_counter_load(&target->height); i++) {
+                if (update[i]->next[i] != target) {
+                    break;
+                }
+                update[i]->next[i] = target->next[i];
+            }
+
+            // 释放锁
+            ppdb_sync_write_unlock(target->lock);
+            ppdb_sync_write_unlock(base->storage.lock);
+
+            // 增加删除计数
+            ppdb_sync_counter_add(&base->metrics.remove_count, 1);
+            return PPDB_OK;
+        }
         case PPDB_TYPE_SHARDED:
         case PPDB_TYPE_KVSTORE:
             // TODO: 实现分片存储的删除操作
@@ -1216,8 +1207,6 @@ ppdb_error_t ppdb_remove(ppdb_base_t* base, const ppdb_key_t* key) {
         default:
             return PPDB_ERR_INVALID_TYPE;
     }
-
-    return err;
 }
 
 ppdb_error_t ppdb_iterator_init(ppdb_base_t* base, void** iter) {
