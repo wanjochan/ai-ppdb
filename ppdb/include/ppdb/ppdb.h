@@ -62,9 +62,9 @@ typedef enum ppdb_type {
     PPDB_TYPE_BTREE,             // B树
     PPDB_TYPE_LSM,               // LSM树
     PPDB_TYPE_HASH,              // 哈希表
-    PPDB_TYPE_MEMTABLE,          // 内存表
+    PPDB_TYPE_MEMTABLE,          // 内存表（memkv）
     PPDB_TYPE_SHARDED,           // 分片存储
-    PPDB_TYPE_KVSTORE,           // KV存储
+    PPDB_TYPE_KVSTORE,           // KV存储（diskv）内部要实现wal和sstable
 } ppdb_type_t;
 
 //-----------------------------------------------------------------------------

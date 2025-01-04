@@ -184,13 +184,19 @@ static int test_memtable_iterator(void) {
 // Worker thread function for concurrent test
 static void* worker_thread(void* arg) {
     ppdb_base_t* base = (ppdb_base_t*)arg;
-    char key_data[TEST_KEY_SIZE];
-    char value_data[TEST_VALUE_SIZE];
+    char* key_data = PPDB_ALIGNED_ALLOC(TEST_KEY_SIZE);
+    char* value_data = PPDB_ALIGNED_ALLOC(TEST_VALUE_SIZE);
+
+    if (!key_data || !value_data) {
+        if (key_data) PPDB_ALIGNED_FREE(key_data);
+        if (value_data) PPDB_ALIGNED_FREE(value_data);
+        return NULL;
+    }
 
     for (int i = 0; i < TEST_ITERATIONS; i++) {
         // Generate random key and value
-        snprintf(key_data, sizeof(key_data), "key_%d_%d", (int)pthread_self(), i);
-        snprintf(value_data, sizeof(value_data), "value_%d_%d", (int)pthread_self(), i);
+        snprintf(key_data, TEST_KEY_SIZE, "key_%d_%d", (int)pthread_self(), i);
+        snprintf(value_data, TEST_VALUE_SIZE, "value_%d_%d", (int)pthread_self(), i);
 
         ppdb_key_t key = {
             .data = key_data,
@@ -222,6 +228,9 @@ static void* worker_thread(void* arg) {
             }
         }
     }
+
+    PPDB_ALIGNED_FREE(key_data);
+    PPDB_ALIGNED_FREE(value_data);
     return NULL;
 }
 

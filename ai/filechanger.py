@@ -1,55 +1,56 @@
 #!/usr/bin/env python3
 """Enhanced File Line Replacement Tool
 
-A tool designed for AI agents to modify files, particularly useful in Windows/PowerShell
-environments. This tool replaces the default file modification methods available to agents.
+A specialized tool designed for AI agents to modify files, with robust handling of
+edge cases and errors. Particularly optimized for Windows/PowerShell environments.
 
-Format for AI agents (PowerShell):
+Key Features:
+1. Safe file operations with automatic backup
+2. Robust handling of line numbers and content
+3. Support for both single and batch operations
+4. Automatic handling of encodings and line endings
+5. Detailed error reporting
+
+Usage for AI Agents:
+
+1. Basic line replacement:
     @'
-    start,end:content\\n
-    start,end:content\\n
+    1,2:new content
     '@ | python filechanger.py file.txt
-
-    Or for multiple commands:
-    @(
-        'start,end:content\\n',
-        'start,end:content\\n'
-    ) | python filechanger.py file.txt
-
-Key Features for AI Agents:
-1. Supports both single and batch line replacements
-2. Handles line numbers intuitively (-1 means last line)
-3. Automatically manages newlines
-4. Works well with PowerShell escape sequences
-5. Safe handling of edge cases and errors
-
-Example Usage in AI Agent Context:
-1. Replace specific lines:
-    @'
-    1,2:def my_function():\\n    return True
-    '@ | python filechanger.py file.py
 
 2. Multiple operations:
     @(
-        '1,1:# File: example.py\\n# Updated: 2024',
+        '1,1:# File header',
         '5,6:def new_function():\\n    print("Hello")',
         '-1,0:# End of file'
-    ) | python filechanger.py file.py
+    ) | python filechanger.py file.txt
 
-3. Common operations:
-    - Delete lines: '3,4:'
-    - Insert at start: '0,0:new first line'
-    - Append at end: '-1,0:new last line'
-    - Replace single line: '5,5:new content'
+Common Operations:
+- Replace lines:     '5,6:new content'
+- Delete lines:      '3,4:'
+- Insert at start:   '0,0:first line'
+- Append at end:     '-1,0:last line'
+- Replace one line:  '5,5:new line'
 
-Note:
-    - Line numbers start from 1
-    - Use 0,0 to insert at the beginning
-    - Use -1,0 to append at the end
-    - Empty content means delete the lines
-    - Content will automatically end with newline
-    - Invalid line numbers will be clamped to valid range
-    - File will be created if it doesn't exist
+Line Number Rules:
+- Numbers start from 1
+- Negative indices count from end (-1 = last line)
+- 0,0 means insert before first line
+- -1,0 means append after last line
+- Invalid numbers are automatically adjusted to valid range
+
+Special Features:
+- Creates missing files and directories
+- Handles UTF-8 and system encodings
+- Creates .bak files on write failures
+- Normalizes line endings
+- Supports \\n for newlines in content
+
+Error Handling:
+- Detailed error messages with line numbers
+- Safe handling of invalid inputs
+- Graceful handling of encoding issues
+- Automatic backup on write failures
 """
 
 import sys
@@ -226,9 +227,9 @@ def test_replace_lines():
         
         # 测试批处理
         print("\nTest: Batch processing", file=sys.stderr)
-        batch_content = """1,2:header line 1\\nheader line 2
-3,4:middle\\ncontent
--1,0:last line 1\\nlast line 2"""
+        batch_content = """1,2:header line 1\nheader line 2
+3,4:middle\ncontent
+-1,0:last line 1\nlast line 2"""
         process_batch_input(test_file, batch_content)
         with open(test_file, "r", encoding='utf-8') as f:
             print(f.read(), file=sys.stderr)
