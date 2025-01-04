@@ -1,4 +1,6 @@
-#powershell .\build_all.ps1
+# To enable debug logs, set PPDB_DEBUG environment variable before running:
+# $env:PPDB_DEBUG=1
+# powershell .\build_all.ps1
 $ErrorActionPreference = "Stop"
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location "$scriptPath"
@@ -26,4 +28,4 @@ foreach ($test in $tests) {
     Write-Host "Test $test completed successfully"
     #Write-Host "Press Enter to continue to next test..."
     #Read-Host
-} 
+}

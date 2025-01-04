@@ -80,7 +80,7 @@ static void* concurrent_worker(void* arg) {
 static int test_basic_ops(void) {
     ppdb_base_t* base = NULL;
     ppdb_error_t err = ppdb_create(&base, &(ppdb_config_t){
-        .type = PPDB_TYPE_SHARDED | PPDB_LAYER_MEMTABLE,
+        .type = PPDB_TYPE_SKIPLIST | PPDB_LAYER_MEMTABLE | PPDB_FEAT_SHARDED,
         .shard_count = NUM_SHARDS,
         .memtable_size = TABLE_SIZE,
         .use_lockfree = true
@@ -121,7 +121,7 @@ static int test_basic_ops(void) {
 static int test_shard_distribution(void) {
     ppdb_base_t* base = NULL;
     ppdb_error_t err = ppdb_create(&base, &(ppdb_config_t){
-        .type = PPDB_TYPE_SHARDED | PPDB_LAYER_MEMTABLE,
+        .type = PPDB_TYPE_SKIPLIST | PPDB_LAYER_MEMTABLE | PPDB_FEAT_SHARDED,
         .shard_count = NUM_SHARDS,
         .memtable_size = TABLE_SIZE,
         .use_lockfree = true
@@ -163,7 +163,7 @@ static int test_shard_distribution(void) {
 static int test_concurrent_ops(void) {
     ppdb_base_t* base = NULL;
     ppdb_error_t err = ppdb_create(&base, &(ppdb_config_t){
-        .type = PPDB_TYPE_SHARDED | PPDB_LAYER_MEMTABLE,
+        .type = PPDB_TYPE_SKIPLIST | PPDB_LAYER_MEMTABLE | PPDB_FEAT_SHARDED,
         .shard_count = NUM_SHARDS,
         .memtable_size = TABLE_SIZE,
         .use_lockfree = true
@@ -196,7 +196,7 @@ static int test_concurrent_ops(void) {
 static int test_iterator(void) {
     ppdb_base_t* base = NULL;
     ppdb_error_t err = ppdb_create(&base, &(ppdb_config_t){
-        .type = PPDB_TYPE_SHARDED | PPDB_LAYER_MEMTABLE,
+        .type = PPDB_TYPE_SKIPLIST | PPDB_LAYER_MEMTABLE | PPDB_FEAT_SHARDED,
         .shard_count = NUM_SHARDS,
         .memtable_size = TABLE_SIZE,
         .use_lockfree = true

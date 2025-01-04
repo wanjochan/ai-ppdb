@@ -1,0 +1,158 @@
+as warm-up, read *.md in docs/;
+
+一些临时笔记
+
+主任务：执行构建命令并进行修复
+
+# windows:
+执行 build_all.ps1
+遇到问题停下来先从相对宏观的角度来分析，
+根据问题严重性来调整修复计划，把计划写到文件 RUNNING.md（非常重要），
+然后重读文档 AGENT_RULES.md 后再按照 RUNNING.md 执行计划，
+重复这个过程直到没有问题为止；
+特别注意：未经讨论确认不要新建文件
+
+# linux
+按顺序执行 ppdb/scripts/ 中的（一个测试没有任何问题才进入下一个）
+每个测试后就把问题按严重程度列出来，先做一个完整的修改计划，然后再进行修复。
+修复后执行的顺序还是从test42那个开始从头来，直到没有问题才停下:
+//TODO build_all.sh 重构
+
+
+
+.\build.bat test42
+.\build.bat sync_locked
+.\build.bat sync_lockfree
+.\build.bat skiplist_locked
+.\build.bat skiplist_lockfree
+.\build.bat memtable_locked
+.\build.bat memtable_lockfree
+.\build.bat sharded_locked
+.\build.bat sharded_lockfree
+
+.\build.bat memkv
+
+.\build.bat wal_core
+.\build.bat wal_advanced
+
+.\build.bat diskv
+
+.\build.bat ppdb
+
+//遇到windows适配的顺手删除，因为我们用cosmopolitan架构不需要适配操作系统；
+//然后停下来等我确认后续动作；
+
+
+========
+
+
+##不是哦，之前构建成功过的，工具都在的，可能只是路径问题
+##stop,这些工具都在代码仓的了，你查一下
+##cosmopolitan底层哦
+
+===【尝试构建】
+运行了 ppdb\scripts\build_ppdb.bat之后，
+把问题按严重程度列出来，针对P0的做一个完整的修改计划，
+然后停下来等我确认后续动作；
+留意可能所谓的未定义函数也许已经存在，要先查看一下对应的下一层的代码；
+===
+
+可能所谓的未定义函数也许已经存在，要先查看一下对应的下一层的代码
+
+exec ppdb\scripts\build_ppdb.bat and make a fix plan for the problems and wait for confirm;
+
+again, check all
+=== 【修复关系】
+参考 build_ppdb.bat 和 FILES.md比对目前文件树中的文档和代码，看是否完全对上了；
+如果对上了，就全部的代码中的引用部分看看还有没有错了要修复的；
+如果没有修复了，可以停下来
+===
+
+
+
+
+改得不好，应该按照FILES.md来改引用部分？
+
+why added hash.c?? reuse the function in sync.c and sync.h
+
+wait
+
+
+那现在运行一下
+cd ppdb\scripts && build_ppdb.bat
+把简单的问题先修复，而复杂的问题先调整计划到PLAN.md
+注意：构建工具都在的，可能目录不对调整一下就行的
+
+结合build_ppdb.bat找出代码中引用sync.h不正确的地方
+
+=====
+
+
+as warm-up, in ppdb/, you need to review all .md in docs/ and .c in src/;
+
+run scripts\build_ppdb.bat and do fix after detail planned;
+during this process, if any key progress or plan changed, you MUST update related documents  (for example, update the PLAN.md etc);
+ALWAYS plan before action to save time；
+新增文件或函数前可以就近先找一下，有可能已经写好了只是路径或位置问题（但也要确认不是恰巧同名）；
+我们用的是cosompolitan跨平台底层；
+构建工具都在的，可能目录不对调整一下就行的
+
+# warmup
+
+as warm-up, in ppdb/, you need to review all .md in docs/ and .c in src/;
+
+and then run scripts/build*.bat and do fix action after detail planned
+
+during this process, if any key progress or plan changed, you MUST update related documents  (for example, update the plan/progress etc);
+
+ALWAYS plan before action to save time；
+
+continue, remember, always plan before action to save time
+#
+
+现在函数对齐了，可以先运行build.bat并修复下
+
+好，再对比下 skiplist_mutex.c 和 skiplist_lockfree.c 两个文件，
+先把对齐后的函数的参数也对齐一下
+
+
+之后的重构（把代码重命名为 {mod}_{[mutex|lockfree]}.{c|h}，现在继续对内部内容对齐
+从 skiplist_mutex.c 和 skiplist_lockfree.c 开始
+现在到
+memtable_mutex.c 和 memtable_lockfree.c
+wal_mutex.c 和 wal_lockfree.c
+
+先做个计划
+
+运行了很久，是卡在某个测试吗？
+
+
+# cursor rules (update in ide settings)
+```
+Always respond in 中文,而且尽量简洁（concise）但要精准（precise）
+但特别注意代码中的注释默认全部用英文！
+```
+
+# 构建并修复
+运行build.bat然后修复下
+
+#
+=========
+
+【本轮执行】
+如果有P0问题则先修复，然后再按【目前主流程】执行一次
+
+【目前主流程】
+  {本轮目标）
+准备先顺序运行一次，但遇到问题不用修改文件！！！先按问题的严重程序指定计划并列出来（比如说P0最严重），如果有P0问题就回到【本轮执行】。
+
+【注意事项】
+新增文件或函数前可以就近先找一下，有可能已经写好了只是路径或位置问题（但也要确认不是恰巧同名）；
+我们用的是cosompolitan跨平台底层；
+
+
+
+# chn to eng
+源码中所有的中文注释换成英文的，这个工作量不小，先做计划表再一次过改
+
+安排执行，但如果遇到功能太明显的干脆把注释去掉
