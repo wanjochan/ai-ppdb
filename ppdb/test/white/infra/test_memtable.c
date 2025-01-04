@@ -184,17 +184,18 @@ static int test_memtable_iterator(void) {
 // Worker thread function for concurrent test
 static void* worker_thread(void* arg) {
     ppdb_base_t* base = (ppdb_base_t*)arg;
-    char* key_data = PPDB_ALIGNED_ALLOC(TEST_KEY_SIZE);
-    char* value_data = PPDB_ALIGNED_ALLOC(TEST_VALUE_SIZE);
-
-    if (!key_data || !value_data) {
-        if (key_data) PPDB_ALIGNED_FREE(key_data);
-        if (value_data) PPDB_ALIGNED_FREE(value_data);
-        return NULL;
-    }
 
     for (int i = 0; i < TEST_ITERATIONS; i++) {
         // Generate random key and value
+        char* key_data = PPDB_ALIGNED_ALLOC(TEST_KEY_SIZE);
+        char* value_data = PPDB_ALIGNED_ALLOC(TEST_VALUE_SIZE);
+
+        if (!key_data || !value_data) {
+            if (key_data) PPDB_ALIGNED_FREE(key_data);
+            if (value_data) PPDB_ALIGNED_FREE(value_data);
+            continue;
+        }
+
         snprintf(key_data, TEST_KEY_SIZE, "key_%d_%d", (int)pthread_self(), i);
         snprintf(value_data, TEST_VALUE_SIZE, "value_%d_%d", (int)pthread_self(), i);
 
@@ -212,6 +213,8 @@ static void* worker_thread(void* arg) {
         switch (op) {
             case 0: {  // Put
                 ppdb_put(base, &key, &value);
+                PPDB_ALIGNED_FREE(key_data);
+                PPDB_ALIGNED_FREE(value_data);
                 break;
             }
             case 1: {  // Get
@@ -220,17 +223,19 @@ static void* worker_thread(void* arg) {
                 if (get_value.data) {
                     PPDB_ALIGNED_FREE(get_value.data);
                 }
+                PPDB_ALIGNED_FREE(key_data);
+                PPDB_ALIGNED_FREE(value_data);
                 break;
             }
             case 2: {  // Remove
                 ppdb_remove(base, &key);
+                PPDB_ALIGNED_FREE(key_data);
+                PPDB_ALIGNED_FREE(value_data);
                 break;
             }
         }
     }
 
-    PPDB_ALIGNED_FREE(key_data);
-    PPDB_ALIGNED_FREE(value_data);
     return NULL;
 }
 

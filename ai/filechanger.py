@@ -240,16 +240,16 @@ def test_replace_lines():
             os.remove(test_file)
 
 if __name__ == '__main__':
-    # 无参数时运行测试
-    if len(sys.argv) == 1:
-        print("Running tests...", file=sys.stderr)
-        test_replace_lines()
-        sys.exit(0)
-    
     # 显示帮助
     if len(sys.argv) < 2 or sys.argv[1] in ['--help', '-h']:
         print(__doc__, file=sys.stderr)
         sys.exit(1)
+    
+    # 运行测试
+    if sys.argv[1] == '--test':
+        print("Running tests...", file=sys.stderr)
+        test_replace_lines()
+        sys.exit(0)
     
     # 执行替换
     try:
