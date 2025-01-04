@@ -6,24 +6,6 @@
 // 前向声明
 struct ppdb_base;  // 避免循环引用
 
-// 迭代器接口
-typedef struct ppdb_iterator ppdb_iterator_t;
-struct ppdb_iterator {
-    void* internal;  // 内部实现数据
-    ppdb_error_t (*next)(ppdb_iterator_t* iter);
-    ppdb_error_t (*current)(ppdb_iterator_t* iter, ppdb_key_t* key, ppdb_value_t* value);
-    void (*destroy)(ppdb_iterator_t* iter);
-};
-
-// 范围扫描选项
-typedef struct ppdb_scan_options {
-    ppdb_key_t* start_key;     // 起始键（NULL表示从头开始）
-    ppdb_key_t* end_key;       // 结束键（NULL表示扫描到末尾）
-    bool include_start;         // 是否包含起始键
-    bool include_end;          // 是否包含结束键
-    size_t batch_size;         // 批量获取大小（0表示使用默认值）
-} ppdb_scan_options_t;
-
 // 性能指标
 typedef struct ppdb_metrics {
     // 基础计数器
@@ -44,11 +26,6 @@ typedef struct ppdb_metrics {
 
 // 高级操作接口
 typedef struct ppdb_advance_ops {
-    // 范围扫描
-    ppdb_error_t (*scan)(struct ppdb_base* base, 
-                        const ppdb_scan_options_t* options,
-                        ppdb_iterator_t** iterator);
-    
     // 性能指标
     ppdb_error_t (*metrics_get)(struct ppdb_base* base,
                                ppdb_metrics_t* metrics);
