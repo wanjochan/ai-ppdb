@@ -97,12 +97,23 @@ static int test_memtable_concurrent(void) {
     // Create worker threads
     pthread_t threads[4];
     for (int i = 0; i < 4; i++) {
-        pthread_create(&threads[i], NULL, worker_thread, base);
+        err = pthread_create(&threads[i], NULL, worker_thread, base);
+        ASSERT(err == 0, "Failed to create thread %d", i);
     }
 
-    // Wait for threads to complete
+    // Wait for threads to complete with timeout
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += 5; // 5 seconds timeout
+
     for (int i = 0; i < 4; i++) {
-        pthread_join(threads[i], NULL);
+        err = pthread_timedjoin_np(threads[i], NULL, &ts);
+        if (err != 0) {
+            printf("Thread %d join timeout\n", i);
+            // Force thread termination
+            pthread_cancel(threads[i]);
+            pthread_join(threads[i], NULL);
+        }
     }
 
     // Get and print metrics
@@ -115,11 +126,6 @@ static int test_memtable_concurrent(void) {
     printf("Insert ops: %lu (success: %lu)\n", metrics.put_count, metrics.put_count);
     printf("Find ops: %lu (success: %lu)\n", metrics.get_count, metrics.get_hits);
     printf("Delete ops: %lu (success: %lu)\n", metrics.remove_count, metrics.remove_count);
-
-    printf("Storage metrics:\n");
-    printf("Get count: %lu (hits: %lu)\n", metrics.get_count, metrics.get_hits);
-    printf("Put count: %lu\n", metrics.put_count);
-    printf("Remove count: %lu\n", metrics.remove_count);
 
     // Cleanup
     ppdb_destroy(base);
@@ -199,41 +205,51 @@ static void* worker_thread(void* arg) {
         snprintf(key_data, TEST_KEY_SIZE, "key_%d_%d", (int)pthread_self(), i);
         snprintf(value_data, TEST_VALUE_SIZE, "value_%d_%d", (int)pthread_self(), i);
 
-        ppdb_key_t key = {
-            .data = key_data,
-            .size = strlen(key_data)
-        };
-        ppdb_value_t value = {
-            .data = value_data,
-            .size = strlen(value_data)
-        };
+        ppdb_key_t* key = PPDB_ALIGNED_ALLOC(sizeof(ppdb_key_t));
+        ppdb_value_t* value = PPDB_ALIGNED_ALLOC(sizeof(ppdb_value_t));
+
+        if (!key || !value) {
+            PPDB_ALIGNED_FREE(key_data);
+            PPDB_ALIGNED_FREE(value_data);
+            if (key) PPDB_ALIGNED_FREE(key);
+            if (value) PPDB_ALIGNED_FREE(value);
+            continue;
+        }
+
+        key->data = key_data;
+        key->size = strlen(key_data);
+        value->data = value_data;
+        value->size = strlen(value_data);
 
         // Randomly choose operation
         int op = lemur64() % 3;
         switch (op) {
             case 0: {  // Put
-                ppdb_put(base, &key, &value);
-                PPDB_ALIGNED_FREE(key_data);
-                PPDB_ALIGNED_FREE(value_data);
+                ppdb_put(base, key, value);
                 break;
             }
             case 1: {  // Get
-                ppdb_value_t get_value = {0};
-                ppdb_get(base, &key, &get_value);
-                if (get_value.data) {
-                    PPDB_ALIGNED_FREE(get_value.data);
+                ppdb_value_t* get_value = PPDB_ALIGNED_ALLOC(sizeof(ppdb_value_t));
+                if (get_value) {
+                    memset(get_value, 0, sizeof(ppdb_value_t));
+                    ppdb_get(base, key, get_value);
+                    if (get_value->data) {
+                        PPDB_ALIGNED_FREE(get_value->data);
+                    }
+                    PPDB_ALIGNED_FREE(get_value);
                 }
-                PPDB_ALIGNED_FREE(key_data);
-                PPDB_ALIGNED_FREE(value_data);
                 break;
             }
             case 2: {  // Remove
-                ppdb_remove(base, &key);
-                PPDB_ALIGNED_FREE(key_data);
-                PPDB_ALIGNED_FREE(value_data);
+                ppdb_remove(base, key);
                 break;
             }
         }
+
+        PPDB_ALIGNED_FREE(key_data);
+        PPDB_ALIGNED_FREE(value_data);
+        PPDB_ALIGNED_FREE(key);
+        PPDB_ALIGNED_FREE(value);
     }
 
     return NULL;
