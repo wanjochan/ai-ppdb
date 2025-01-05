@@ -1,103 +1,107 @@
 #ifndef PPDB_INTERNAL_CORE_H
 #define PPDB_INTERNAL_CORE_H
 
-#include <cosmopolitan.h>
-#include "ppdb/ppdb.h"
+#include "../include/ppdb/ppdb.h"
+#include "base.h"
 
 //-----------------------------------------------------------------------------
-// Memory Management
+// 内部类型定义
 //-----------------------------------------------------------------------------
-#define PPDB_ALIGNMENT 64
-#define PPDB_CACHELINE_SIZE 64
 
-void* ppdb_core_malloc(size_t size);
-void* ppdb_core_calloc(size_t nmemb, size_t size);
-void* ppdb_core_realloc(void* ptr, size_t size);
-void ppdb_core_free(void* ptr);
-void* ppdb_core_aligned_alloc(size_t alignment, size_t size);
+// 同步原语类型
+typedef enum ppdb_sync_type {
+    PPDB_SYNC_MUTEX,     // 互斥锁
+    PPDB_SYNC_SPINLOCK,  // 自旋锁
+    PPDB_SYNC_RWLOCK     // 读写锁
+} ppdb_sync_type_t;
+
+// 同步原语
+typedef struct ppdb_sync {
+    ppdb_sync_type_t type;
+    union {
+        struct {
+            atomic_flag flag;
+            uint32_t owner;
+        } mutex;
+        struct {
+            atomic_flag flag;
+            uint32_t count;
+        } spinlock;
+        struct {
+            atomic_uint readers;
+            atomic_flag writer;
+        } rwlock;
+    };
+    struct {
+        atomic_uint64_t contention_count;
+        atomic_uint64_t wait_time_us;
+    } stats;
+} ppdb_sync_t;
+
+// 内存页
+typedef struct ppdb_page {
+    uint32_t id;
+    uint8_t* data;
+    uint32_t size;
+    bool dirty;
+    ppdb_sync_t lock;
+} ppdb_page_t;
+
+// 事务上下文
+typedef struct ppdb_tx_ctx {
+    uint64_t id;
+    bool read_only;
+    ppdb_page_t** pages;
+    uint32_t page_count;
+    void* snapshot;
+} ppdb_tx_ctx_t;
+
+// 数据库上下文
+typedef struct ppdb_db_ctx {
+    char* name;
+    ppdb_sync_t global_lock;
+    ppdb_page_t** pages;
+    uint32_t page_count;
+    ppdb_tx_ctx_t** active_txs;
+    uint32_t tx_count;
+} ppdb_db_ctx_t;
+
+// 全局上下文
+typedef struct ppdb_ctx_impl {
+    ppdb_options_t options;
+    ppdb_sync_t lock;
+    ppdb_db_ctx_t** dbs;
+    uint32_t db_count;
+} ppdb_ctx_impl_t;
 
 //-----------------------------------------------------------------------------
-// Core Types
+// 内部函数
 //-----------------------------------------------------------------------------
-// Mutex
-typedef struct ppdb_core_mutex ppdb_core_mutex_t;
 
-ppdb_error_t ppdb_core_mutex_create(ppdb_core_mutex_t** mutex);
-ppdb_error_t ppdb_core_mutex_destroy(ppdb_core_mutex_t* mutex);
-ppdb_error_t ppdb_core_mutex_lock(ppdb_core_mutex_t* mutex);
-ppdb_error_t ppdb_core_mutex_unlock(ppdb_core_mutex_t* mutex);
-ppdb_error_t ppdb_core_mutex_trylock(ppdb_core_mutex_t* mutex);
+// 同步原语操作
+ppdb_error_t ppdb_sync_init(ppdb_sync_t* sync, ppdb_sync_type_t type);
+ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_rdlock(ppdb_sync_t* sync);
+ppdb_error_t ppdb_sync_rdunlock(ppdb_sync_t* sync);
 
-// Read-Write Lock
-typedef struct ppdb_core_rwlock ppdb_core_rwlock_t;
+// 内存页操作
+ppdb_error_t ppdb_page_create(ppdb_page_t** page, uint32_t size);
+ppdb_error_t ppdb_page_destroy(ppdb_page_t* page);
+ppdb_error_t ppdb_page_read(ppdb_page_t* page, uint32_t offset, void* data, uint32_t size);
+ppdb_error_t ppdb_page_write(ppdb_page_t* page, uint32_t offset, const void* data, uint32_t size);
 
-ppdb_error_t ppdb_core_rwlock_create(ppdb_core_rwlock_t** lock);
-ppdb_error_t ppdb_core_rwlock_destroy(ppdb_core_rwlock_t* lock);
-ppdb_error_t ppdb_core_rwlock_rdlock(ppdb_core_rwlock_t* lock);
-ppdb_error_t ppdb_core_rwlock_wrlock(ppdb_core_rwlock_t* lock);
-ppdb_error_t ppdb_core_rwlock_unlock(ppdb_core_rwlock_t* lock);
-ppdb_error_t ppdb_core_rwlock_tryrdlock(ppdb_core_rwlock_t* lock);
-ppdb_error_t ppdb_core_rwlock_trywrlock(ppdb_core_rwlock_t* lock);
+// 事务操作
+ppdb_error_t ppdb_tx_create(ppdb_tx_ctx_t** tx, bool read_only);
+ppdb_error_t ppdb_tx_destroy(ppdb_tx_ctx_t* tx);
+ppdb_error_t ppdb_tx_add_page(ppdb_tx_ctx_t* tx, ppdb_page_t* page);
+ppdb_error_t ppdb_tx_remove_page(ppdb_tx_ctx_t* tx, ppdb_page_t* page);
 
-// Condition Variable
-typedef struct ppdb_core_cond ppdb_core_cond_t;
-
-ppdb_error_t ppdb_core_cond_create(ppdb_core_cond_t** cond);
-ppdb_error_t ppdb_core_cond_destroy(ppdb_core_cond_t* cond);
-ppdb_error_t ppdb_core_cond_wait(ppdb_core_cond_t* cond, ppdb_core_mutex_t* mutex);
-ppdb_error_t ppdb_core_cond_timedwait(ppdb_core_cond_t* cond, ppdb_core_mutex_t* mutex, uint32_t timeout_ms);
-ppdb_error_t ppdb_core_cond_signal(ppdb_core_cond_t* cond);
-ppdb_error_t ppdb_core_cond_broadcast(ppdb_core_cond_t* cond);
-
-// Async I/O
-typedef struct ppdb_core_async_loop ppdb_core_async_loop_t;
-typedef struct ppdb_core_async_handle ppdb_core_async_handle_t;
-typedef struct ppdb_core_async_future ppdb_core_async_future_t;
-
-typedef void (*ppdb_core_async_callback_t)(ppdb_core_async_handle_t* handle, ppdb_error_t status);
-
-ppdb_error_t ppdb_core_async_loop_create(ppdb_core_async_loop_t** loop);
-ppdb_error_t ppdb_core_async_loop_destroy(ppdb_core_async_loop_t* loop);
-ppdb_error_t ppdb_core_async_loop_run(ppdb_core_async_loop_t* loop, int timeout_ms);
-
-ppdb_error_t ppdb_core_async_handle_create(ppdb_core_async_loop_t* loop,
-                                         ppdb_core_async_handle_t** handle);
-ppdb_error_t ppdb_core_async_handle_destroy(ppdb_core_async_handle_t* handle);
-ppdb_error_t ppdb_core_async_read(ppdb_core_async_handle_t* handle,
-                                void* buf,
-                                size_t size,
-                                ppdb_core_async_callback_t callback);
-ppdb_error_t ppdb_core_async_write(ppdb_core_async_handle_t* handle,
-                                 const void* buf,
-                                 size_t size,
-                                 ppdb_core_async_callback_t callback);
-
-ppdb_error_t ppdb_core_async_future_create(ppdb_core_async_loop_t* loop,
-                                        ppdb_core_async_future_t** future);
-ppdb_error_t ppdb_core_async_future_destroy(ppdb_core_async_future_t* future);
-ppdb_error_t ppdb_core_async_future_wait(ppdb_core_async_future_t* future);
-ppdb_error_t ppdb_core_async_future_is_ready(ppdb_core_async_future_t* future, bool* ready);
-
-// File I/O
-typedef struct ppdb_core_file ppdb_core_file_t;
-
-ppdb_error_t ppdb_core_file_open(const char* path, const char* mode, ppdb_core_file_t** file);
-ppdb_error_t ppdb_core_file_close(ppdb_core_file_t* file);
-ppdb_error_t ppdb_core_file_read(ppdb_core_file_t* file, void* buf, size_t size, size_t* read);
-ppdb_error_t ppdb_core_file_write(ppdb_core_file_t* file, const void* buf, size_t size, size_t* written);
-ppdb_error_t ppdb_core_file_sync(ppdb_core_file_t* file);
-ppdb_error_t ppdb_core_file_seek(ppdb_core_file_t* file, int64_t offset, int whence);
-ppdb_error_t ppdb_core_file_tell(ppdb_core_file_t* file, int64_t* pos);
-
-// Thread
-typedef struct ppdb_core_thread ppdb_core_thread_t;
-typedef void* (*ppdb_core_thread_func_t)(void* arg);
-
-ppdb_error_t ppdb_core_thread_create(ppdb_core_thread_t** thread,
-                                  ppdb_core_thread_func_t func,
-                                  void* arg);
-ppdb_error_t ppdb_core_thread_join(ppdb_core_thread_t* thread, void** retval);
-ppdb_error_t ppdb_core_thread_detach(ppdb_core_thread_t* thread);
-ppdb_error_t ppdb_core_thread_yield(void);
+// 数据库操作
+ppdb_error_t ppdb_db_create(ppdb_db_ctx_t** db, const char* name);
+ppdb_error_t ppdb_db_destroy(ppdb_db_ctx_t* db);
+ppdb_error_t ppdb_db_add_tx(ppdb_db_ctx_t* db, ppdb_tx_ctx_t* tx);
+ppdb_error_t ppdb_db_remove_tx(ppdb_db_ctx_t* db, ppdb_tx_ctx_t* tx);
 
 #endif // PPDB_INTERNAL_CORE_H

@@ -21,6 +21,8 @@ set "ROOT_DIR=%CD%"
 popd
 set "PPDB_DIR=%ROOT_DIR%"
 set "BUILD_DIR=%PPDB_DIR%\build"
+set "BIN_DIR=%PPDB_DIR%\bin"
+set "SRC_DIR=%PPDB_DIR%\src"
 set "INCLUDE_DIR=%PPDB_DIR%\include"
 set "INTERNAL_DIR=%PPDB_DIR%\internal"
 set "TEST_DIR=%PPDB_DIR%\test"

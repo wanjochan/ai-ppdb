@@ -1,127 +1,94 @@
 #ifndef PPDB_H
 #define PPDB_H
 
-#include <cosmopolitan.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 //-----------------------------------------------------------------------------
-// Error Handling
+// 基础定义
 //-----------------------------------------------------------------------------
+
+// 错误码
 typedef int32_t ppdb_error_t;
 
-#define PPDB_OK                    0
-#define PPDB_ERR_NULL_POINTER      1
-#define PPDB_ERR_INVALID_ARGUMENT  2
-#define PPDB_ERR_INVALID_SIZE      3
-#define PPDB_ERR_INVALID_STATE     4
-#define PPDB_ERR_OUT_OF_MEMORY     5
-#define PPDB_ERR_FULL             6
-#define PPDB_ERR_NOT_IMPLEMENTED   7
-#define PPDB_ERR_BUSY             8
-#define PPDB_ERR_TIMEOUT          9
+// 常见错误
+#define PPDB_OK                     0  // 成功
+#define PPDB_ERR_NULL_POINTER       1  // 空指针
+#define PPDB_ERR_INVALID_ARGUMENT   2  // 无效参数
+#define PPDB_ERR_INVALID_STATE      3  // 无效状态
+#define PPDB_ERR_NOT_IMPLEMENTED    4  // 未实现
+#define PPDB_ERR_OUT_OF_MEMORY     5  // 内存不足
+#define PPDB_ERR_TIMEOUT           6  // 超时
+#define PPDB_ERR_BUSY             7  // 忙
+#define PPDB_ERR_FULL             8  // 满
+#define PPDB_ERR_NOT_FOUND        9  // 未找到
+#define PPDB_ERR_EXISTS           10 // 已存在
 
-//-----------------------------------------------------------------------------
-// Public Types
-//-----------------------------------------------------------------------------
-// Opaque handles
-typedef uint64_t ppdb_context_t;
-typedef uint64_t ppdb_cursor_t;
-typedef uint64_t ppdb_batch_t;
-typedef uint64_t ppdb_sync_t;
-typedef uint64_t ppdb_storage_t;
-typedef uint64_t ppdb_peer_t;
+// 句柄类型
+typedef uint64_t ppdb_handle_t;    // 基础句柄类型
+typedef ppdb_handle_t ppdb_ctx_t;  // 上下文句柄
+typedef ppdb_handle_t ppdb_db_t;   // 数据库句柄
+typedef ppdb_handle_t ppdb_tx_t;   // 事务句柄
 
-// Data buffer
+// 数据缓冲区
 typedef struct ppdb_data {
-    uint8_t inline_data[32];  // Small data optimization
-    uint32_t size;
-    uint32_t flags;
-    void* extended_data;  // For data larger than inline buffer
+    uint8_t inline_data[32];  // 小数据优化
+    uint32_t size;           // 数据大小
+    uint32_t flags;          // 标志位
+    void* extended_data;     // 大数据指针
 } ppdb_data_t;
 
-// Synchronization
-typedef enum ppdb_sync_type {
-    PPDB_SYNC_MUTEX = 1,
-    PPDB_SYNC_RWLOCK = 2,
-} ppdb_sync_type_t;
+//-----------------------------------------------------------------------------
+// 数据库配置
+//-----------------------------------------------------------------------------
 
-typedef struct ppdb_sync_config {
-    ppdb_sync_type_t type;
-    bool use_lockfree;
-    uint32_t max_readers;
-    uint32_t backoff_us;
-    uint32_t max_retries;
-} ppdb_sync_config_t;
-
-// Storage
-typedef struct ppdb_storage_config {
-    const char* path;
-    uint32_t block_size;
-    uint32_t cache_size;
-    bool sync_writes;
-} ppdb_storage_config_t;
-
-// Peer
-typedef struct ppdb_peer_config {
-    const char* host;
-    uint16_t port;
-    uint32_t timeout_ms;
-} ppdb_peer_config_t;
+typedef struct ppdb_options {
+    const char* db_path;          // 数据库路径
+    uint64_t cache_size;         // 缓存大小
+    uint32_t max_readers;        // 最大读取器数量
+    bool sync_writes;           // 同步写入
+    uint32_t flush_period_ms;   // 刷新周期
+} ppdb_options_t;
 
 //-----------------------------------------------------------------------------
-// Public API
+// 数据库接口
 //-----------------------------------------------------------------------------
-// Context Management
-ppdb_error_t ppdb_context_create(ppdb_context_t* ctx);
-void ppdb_context_destroy(ppdb_context_t ctx);
-ppdb_error_t ppdb_context_get_state(ppdb_context_t ctx, uint32_t* state);
 
-// Data Management
-ppdb_error_t ppdb_data_create(const void* data, size_t size, ppdb_data_t* out);
-ppdb_error_t ppdb_data_destroy(ppdb_data_t* data);
-ppdb_error_t ppdb_data_get(const ppdb_data_t* data, void* buf, size_t size, size_t* copied);
-ppdb_error_t ppdb_data_size(const ppdb_data_t* data, size_t* size);
+// 创建数据库上下文
+ppdb_error_t ppdb_create(ppdb_ctx_t* ctx, const ppdb_options_t* options);
 
-// Cursor Operations
-ppdb_error_t ppdb_cursor_create(ppdb_context_t ctx, ppdb_cursor_t* cursor);
-void ppdb_cursor_destroy(ppdb_cursor_t cursor);
-ppdb_error_t ppdb_cursor_next(ppdb_cursor_t cursor, ppdb_data_t* key, ppdb_data_t* value);
-ppdb_error_t ppdb_cursor_prev(ppdb_cursor_t cursor, ppdb_data_t* key, ppdb_data_t* value);
-ppdb_error_t ppdb_cursor_seek(ppdb_cursor_t cursor, const ppdb_data_t* key);
+// 销毁数据库上下文
+ppdb_error_t ppdb_destroy(ppdb_ctx_t ctx);
 
-// Batch Operations
-ppdb_error_t ppdb_batch_create(ppdb_context_t ctx, ppdb_batch_t* batch);
-void ppdb_batch_destroy(ppdb_batch_t batch);
-ppdb_error_t ppdb_batch_put(ppdb_batch_t batch, const ppdb_data_t* key, const ppdb_data_t* value);
-ppdb_error_t ppdb_batch_delete(ppdb_batch_t batch, const ppdb_data_t* key);
-ppdb_error_t ppdb_batch_commit(ppdb_batch_t batch);
-ppdb_error_t ppdb_batch_clear(ppdb_batch_t batch);
+// 打开数据库
+ppdb_error_t ppdb_open(ppdb_ctx_t ctx, ppdb_db_t* db, const char* name);
 
-// Synchronization
-ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, const ppdb_sync_config_t* config);
-void ppdb_sync_destroy(ppdb_sync_t* sync);
+// 关闭数据库
+ppdb_error_t ppdb_close(ppdb_db_t db);
 
-ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync);
-ppdb_error_t ppdb_sync_try_lock(ppdb_sync_t* sync);
-ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync);
+// 开始事务
+ppdb_error_t ppdb_begin_tx(ppdb_db_t db, ppdb_tx_t* tx, bool read_only);
 
-ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync);
-ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync);
-ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync);
-ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync);
+// 提交事务
+ppdb_error_t ppdb_commit_tx(ppdb_tx_t tx);
 
-// Storage
-ppdb_error_t ppdb_storage_create(ppdb_storage_t** storage, const ppdb_storage_config_t* config);
-void ppdb_storage_destroy(ppdb_storage_t* storage);
-ppdb_error_t ppdb_storage_read(ppdb_storage_t* storage, uint64_t offset, void* buf, size_t size);
-ppdb_error_t ppdb_storage_write(ppdb_storage_t* storage, uint64_t offset, const void* buf, size_t size);
-ppdb_error_t ppdb_storage_sync(ppdb_storage_t* storage);
+// 回滚事务
+ppdb_error_t ppdb_rollback_tx(ppdb_tx_t tx);
 
-// Peer Communication
-ppdb_error_t ppdb_peer_create(ppdb_peer_t** peer, const ppdb_peer_config_t* config);
-void ppdb_peer_destroy(ppdb_peer_t* peer);
-ppdb_error_t ppdb_peer_connect(ppdb_peer_t* peer);
-ppdb_error_t ppdb_peer_disconnect(ppdb_peer_t* peer);
-ppdb_error_t ppdb_peer_send(ppdb_peer_t* peer, const void* buf, size_t size);
-ppdb_error_t ppdb_peer_recv(ppdb_peer_t* peer, void* buf, size_t size, size_t* received);
+// 写入数据
+ppdb_error_t ppdb_put(ppdb_tx_t tx, const ppdb_data_t* key, const ppdb_data_t* value);
+
+// 读取数据
+ppdb_error_t ppdb_get(ppdb_tx_t tx, const ppdb_data_t* key, ppdb_data_t* value);
+
+// 删除数据
+ppdb_error_t ppdb_delete(ppdb_tx_t tx, const ppdb_data_t* key);
+
+// 清空数据库
+ppdb_error_t ppdb_clear(ppdb_tx_t tx);
+
+// 获取统计信息
+ppdb_error_t ppdb_get_stats(ppdb_db_t db, char* buffer, size_t size);
 
 #endif // PPDB_H
