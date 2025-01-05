@@ -1,3 +1,10 @@
+请先阅读 AI_GUIDELINES.md。
+
+我们现在要：审阅主代码、测试代码、构建与测试脚本。然后准备完善和测试 base、core这两层，未未来的 storage 和 peer 高级层打好坚实的基础
+
+
+
+
 as warm-up, read *.md in docs/;
 
 一些临时笔记
