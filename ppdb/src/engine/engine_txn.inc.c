@@ -7,9 +7,8 @@
  * Copyright (c) 2023 PPDB Authors
  */
 
-#include "base/error.h"
-#include "base/txn.h"
-#include "engine/internal.h"
+#include <internal/base.h>
+#include <internal/engine.h>
 
 // ... existing code ...
 

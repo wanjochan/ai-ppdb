@@ -1,5 +1,5 @@
 #include <cosmopolitan.h>
-#include <ppdb/internal.h>
+#include "internal/base.h"
 
 // Test macros
 #define ASSERT(cond) \
@@ -70,7 +70,7 @@
 // Test cases
 void test_memory_basic(void) {
     // Test aligned allocation
-    void* ptr = ppdb_aligned_alloc(16, 1024);
+    void* ptr = ppdb_base_aligned_alloc(16, 1024);
     ASSERT_NOT_NULL(ptr);
     ASSERT_EQ((uintptr_t)ptr % 16, 0);
 
@@ -78,31 +78,31 @@ void test_memory_basic(void) {
     memset(ptr, 0xAA, 1024);
 
     // Free memory
-    ppdb_aligned_free(ptr);
+    ppdb_base_aligned_free(ptr);
 
     // Test invalid parameters
-    ptr = ppdb_aligned_alloc(0, 1024);
+    ptr = ppdb_base_aligned_alloc(0, 1024);
     ASSERT_NULL(ptr);
 
-    ptr = ppdb_aligned_alloc(16, 0);
+    ptr = ppdb_base_aligned_alloc(16, 0);
     ASSERT_NULL(ptr);
 }
 
 void test_memory_pool(void) {
-    ppdb_mempool_t* pool = NULL;
+    ppdb_base_mempool_t* pool = NULL;
     ppdb_error_t err;
 
     // Create pool
-    err = ppdb_mempool_create(&pool, 4096, 16);
+    err = ppdb_base_mempool_create(&pool, 4096, 16);
     ASSERT_OK(err);
     ASSERT_NOT_NULL(pool);
 
     // Allocate memory
-    void* ptr1 = ppdb_mempool_alloc(pool);
+    void* ptr1 = ppdb_base_mempool_alloc(pool);
     ASSERT_NOT_NULL(ptr1);
     ASSERT_EQ((uintptr_t)ptr1 % 16, 0);
 
-    void* ptr2 = ppdb_mempool_alloc(pool);
+    void* ptr2 = ppdb_base_mempool_alloc(pool);
     ASSERT_NOT_NULL(ptr2);
     ASSERT_EQ((uintptr_t)ptr2 % 16, 0);
 
@@ -111,11 +111,11 @@ void test_memory_pool(void) {
     memset(ptr2, 0xBB, 16);
 
     // Free memory
-    ppdb_mempool_free(pool, ptr1);
-    ppdb_mempool_free(pool, ptr2);
+    ppdb_base_mempool_free(pool, ptr1);
+    ppdb_base_mempool_free(pool, ptr2);
 
     // Destroy pool
-    ppdb_mempool_destroy(pool);
+    ppdb_base_mempool_destroy(pool);
 }
 
 #define ALLOC_SIZE 1024
@@ -126,14 +126,14 @@ static void* thread_func(void* arg) {
     void* ptrs[NUM_ALLOCS];
 
     for (int i = 0; i < NUM_ALLOCS; i++) {
-        ptrs[i] = ppdb_aligned_alloc(16, ALLOC_SIZE);
+        ptrs[i] = ppdb_base_aligned_alloc(16, ALLOC_SIZE);
         ASSERT_NOT_NULL(ptrs[i]);
         ASSERT_EQ((uintptr_t)ptrs[i] % 16, 0);
         memset(ptrs[i], i & 0xFF, ALLOC_SIZE);
     }
 
     for (int i = 0; i < NUM_ALLOCS; i++) {
-        ppdb_aligned_free(ptrs[i]);
+        ppdb_base_aligned_free(ptrs[i]);
     }
 
     return NULL;

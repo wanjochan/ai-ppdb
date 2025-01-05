@@ -1,4 +1,12 @@
-#include "ppdb/internal.h"
+/*
+ * peer_connection.inc.c - PPDB对等节点连接管理
+ *
+ * 本文件实现了PPDB对等节点之间的连接管理功能。
+ */
+
+#include <cosmopolitan.h>
+#include <internal/base.h>
+#include <internal/peer.h>
 
 // Implementation of connection functions
 ppdb_error_t ppdb_peer_connection_create(ppdb_engine_async_loop_t* loop, ppdb_peer_connection_t** conn) {

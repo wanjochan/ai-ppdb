@@ -9,7 +9,7 @@
  */
 
 #include <cosmopolitan.h>
-#include <ppdb/internal/base.h>
+#include <internal/base.h>
 
 // Include implementation files
 #include "base_memory.inc.c"   // 内存管理实现

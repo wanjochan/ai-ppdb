@@ -3,14 +3,16 @@
  *
  * 本文件是PPDB引擎层的主入口，负责组织和初始化所有引擎模块。
  * 包含以下模块：
- * 1. 核心功能 (engine_core.inc.c)
- * 2. 事务管理 (engine_txn.inc.c)
- * 3. IO管理 (engine_io.inc.c)
+ * 1. 错误处理 (engine_error.inc.c)
+ * 2. 数据结构 (engine_struct.inc.c)
+ * 3. 核心功能 (engine_core.inc.c)
+ * 4. 事务管理 (engine_txn.inc.c)
+ * 5. IO管理 (engine_io.inc.c)
  */
 
 #include <cosmopolitan.h>
-#include <ppdb/internal/base.h>
-#include <ppdb/internal/engine.h>
+#include <ppdb/base.h>
+#include <ppdb/engine.h>
 
 // 引擎层结构定义
 struct ppdb_engine_s {
@@ -42,6 +44,8 @@ struct ppdb_engine_s {
 };
 
 // 包含各模块实现
+#include "engine/engine_error.inc.c"
+#include "engine/engine_struct.inc.c"
 #include "engine/engine_core.inc.c"
 #include "engine/engine_txn.inc.c"
 #include "engine/engine_io.inc.c"

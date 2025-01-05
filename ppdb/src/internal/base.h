@@ -21,6 +21,7 @@
 #define PPDB_BASE_ERR_MEMORY   (PPDB_BASE_ERR_START + 0x06)
 #define PPDB_BASE_ERR_IO       (PPDB_BASE_ERR_START + 0x07)
 #define PPDB_BASE_ERR_PARAM    (PPDB_BASE_ERR_START + 0x08)
+#define PPDB_ERR_INVALID_STATE (PPDB_BASE_ERR_START + 0x09)
 
 // Error handling macros
 #define PPDB_RETURN_IF_ERROR(expr) \
@@ -77,7 +78,25 @@ const char* ppdb_error_to_string(ppdb_error_t err);
 // Forward declarations
 typedef struct ppdb_base_s ppdb_base_t;
 
+// Configuration types
+typedef struct ppdb_base_config_s {
+    size_t memory_limit;
+    size_t thread_pool_size;
+    bool thread_safe;
+} ppdb_base_config_t;
+
+typedef struct ppdb_base_stats_s {
+    uint64_t total_allocs;
+    uint64_t total_frees;
+    uint64_t current_memory;
+    uint64_t peak_memory;
+} ppdb_base_stats_t;
+
 // Extended base types
+struct ppdb_base_mutex_s {
+    pthread_mutex_t mutex;
+    bool initialized;
+};
 typedef struct ppdb_base_mutex_s ppdb_base_mutex_t;
 typedef struct ppdb_base_rwlock_s ppdb_base_rwlock_t;
 typedef struct ppdb_base_cond_s ppdb_base_cond_t;
@@ -144,34 +163,44 @@ typedef struct ppdb_base_sync_s {
     ppdb_base_sync_config_t config;
 } ppdb_base_sync_t;
 
-// Base layer operations
-ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex);
-void ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
-ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
-ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);
+// Skip list types
+typedef struct ppdb_base_skiplist_node_s ppdb_base_skiplist_node_t;
+typedef struct ppdb_base_skiplist_s ppdb_base_skiplist_t;
+typedef int (*ppdb_base_compare_func_t)(void* a, void* b);
 
-// ... existing rwlock operations with updated ppdb_base_ prefix ...
+//-----------------------------------------------------------------------------
+// Base layer functions
+//-----------------------------------------------------------------------------
 
-// Memory management
-void* ppdb_base_aligned_alloc(size_t alignment, size_t size);
-void ppdb_base_aligned_free(void* ptr);
+// Base initialization and cleanup
+ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config);
+void ppdb_base_destroy(ppdb_base_t* base);
+void ppdb_base_get_stats(ppdb_base_t* base, ppdb_base_stats_t* stats);
 
-// ... existing memory pool operations with updated ppdb_base_ prefix ...
+// Memory management initialization
+ppdb_error_t ppdb_base_memory_init(ppdb_base_t* base);
+void ppdb_base_memory_cleanup(ppdb_base_t* base);
 
-// ... existing context operations with updated ppdb_base_ prefix ...
+// Memory pool operations
+ppdb_error_t ppdb_base_mempool_create(ppdb_base_mempool_t** pool, size_t block_size, size_t alignment);
+void ppdb_base_mempool_destroy(ppdb_base_mempool_t* pool);
+void* ppdb_base_mempool_alloc(ppdb_base_mempool_t* pool);
+void ppdb_base_mempool_free(ppdb_base_mempool_t* pool, void* ptr);
 
-// ... existing cursor operations with updated ppdb_base_ prefix ...
+// Sync initialization
+ppdb_error_t ppdb_base_sync_init(ppdb_base_t* base);
+void ppdb_base_sync_cleanup(ppdb_base_t* base);
 
-// ... existing sync operations with updated ppdb_base_ prefix ...
+// Utils initialization
+ppdb_error_t ppdb_base_utils_init(ppdb_base_t* base);
+void ppdb_base_utils_cleanup(ppdb_base_t* base);
 
-// ... existing logging operations with updated ppdb_base_ prefix ...
-
-// ... existing thread operations with updated ppdb_base_ prefix ...
-
-// ... existing condition variable operations with updated ppdb_base_ prefix ...
-
-// ... existing file IO operations with updated ppdb_base_ prefix ...
-
-// ... existing IO manager operations with updated ppdb_base_ prefix ...
+// Skip list operations
+ppdb_error_t ppdb_base_skiplist_create(ppdb_base_skiplist_t** list, ppdb_base_compare_func_t compare);
+void ppdb_base_skiplist_destroy(ppdb_base_skiplist_t* list);
+ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, void* value);
+void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key);
+ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, void* key);
+size_t ppdb_base_skiplist_size(ppdb_base_skiplist_t* list);
 
 #endif // PPDB_INTERNAL_BASE_H_

@@ -7,27 +7,42 @@
  * Copyright (c) 2023 PPDB Authors
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <cosmopolitan.h>
+#include "internal/base.h"
 
 // Standardized error handling macros
-#define PPDB_BASE_CHECK_NULL(ptr) if ((ptr) == NULL) return PPDB_ERROR_NULL_PTR
-#define PPDB_BASE_CHECK_PARAM(cond) if (!(cond)) return PPDB_ERROR_INVALID_PARAM
+#define PPDB_BASE_CHECK_NULL(ptr) if ((ptr) == NULL) return PPDB_ERR_PARAM
+#define PPDB_BASE_CHECK_PARAM(cond) if (!(cond)) return PPDB_ERR_PARAM
 
-// Rename utility functions with ppdb_base_ prefix
-int ppdb_base_init_string(char **dest, const char *src) {
+// String utility functions
+ppdb_error_t ppdb_base_init_string(char **dest, const char *src) {
     PPDB_BASE_CHECK_NULL(dest);
     PPDB_BASE_CHECK_NULL(src);
     
-    // ... existing implementation ...
+    size_t len = strlen(src);
+    *dest = ppdb_base_aligned_alloc(1, len + 1);
+    if (!*dest) return PPDB_ERR_MEMORY;
+    
+    memcpy(*dest, src, len + 1);
+    return PPDB_OK;
 }
 
-int ppdb_base_copy_buffer(void *dest, const void *src, size_t len) {
+ppdb_error_t ppdb_base_copy_buffer(void *dest, const void *src, size_t len) {
     PPDB_BASE_CHECK_NULL(dest);
     PPDB_BASE_CHECK_NULL(src);
     
-    // ... existing implementation ...
+    memcpy(dest, src, len);
+    return PPDB_OK;
+}
+
+// Utils initialization
+ppdb_error_t ppdb_base_utils_init(ppdb_base_t* base) {
+    if (!base) return PPDB_ERR_PARAM;
+    return PPDB_OK;
+}
+
+void ppdb_base_utils_cleanup(ppdb_base_t* base) {
+    if (!base) return;
 }
 
 // ... additional utility functions with standardized naming and error handling ...

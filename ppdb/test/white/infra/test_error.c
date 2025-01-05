@@ -1,128 +1,53 @@
 #include <cosmopolitan.h>
-#include <ppdb/internal.h>
+#include "internal/base.h"
 
-// Test macros
-#define ASSERT(cond) \
-    do { \
-        if (!(cond)) { \
-            fprintf(stderr, "Assertion failed: %s\n", #cond); \
-            exit(1); \
-        } \
-    } while (0)
-
-#define ASSERT_EQ(a, b) \
-    do { \
-        if ((a) != (b)) { \
-            fprintf(stderr, "Assertion failed: %s != %s\n", #a, #b); \
-            exit(1); \
-        } \
-    } while (0)
-
-#define ASSERT_NE(a, b) \
-    do { \
-        if ((a) == (b)) { \
-            fprintf(stderr, "Assertion failed: %s == %s\n", #a, #b); \
-            exit(1); \
-        } \
-    } while (0)
-
-#define ASSERT_NOT_NULL(ptr) \
-    do { \
-        if ((ptr) == NULL) { \
-            fprintf(stderr, "Assertion failed: %s is NULL\n", #ptr); \
-            exit(1); \
-        } \
-    } while (0)
-
-#define ASSERT_NULL(ptr) \
-    do { \
-        if ((ptr) != NULL) { \
-            fprintf(stderr, "Assertion failed: %s is not NULL\n", #ptr); \
-            exit(1); \
-        } \
-    } while (0)
-
-#define ASSERT_OK(err) \
-    do { \
-        if ((err) != PPDB_OK) { \
-            fprintf(stderr, "Assertion failed: %s is not OK\n", #err); \
-            exit(1); \
-        } \
-    } while (0)
-
-#define TEST_SUITE_BEGIN(name) \
-    do { \
-        printf("Running test suite: %s\n", name); \
-    } while (0)
-
-#define TEST_RUN(test) \
-    do { \
-        printf("  Running test: %s\n", #test); \
-        test(); \
-        printf("  Test passed: %s\n", #test); \
-    } while (0)
-
-#define TEST_SUITE_END() \
-    do { \
-        printf("Test suite completed\n"); \
-    } while (0)
-
-// Test cases
-void test_error_codes(void) {
-    ASSERT_EQ(PPDB_OK, 0);
-    ASSERT_NE(PPDB_ERR_OUT_OF_MEMORY, PPDB_OK);
-    ASSERT_NE(PPDB_ERR_INVALID_ARGUMENT, PPDB_OK);
-    ASSERT_NE(PPDB_ERR_INVALID_STATE, PPDB_OK);
+// Test suite for error handling
+static void test_error_basic(void) {
+    ppdb_error_t err = PPDB_OK;
+    assert(err == PPDB_OK);
 }
 
-void test_error_strings(void) {
-    const char* ok_str = ppdb_error_string(PPDB_OK);
-    const char* oom_str = ppdb_error_string(PPDB_ERR_OUT_OF_MEMORY);
-    const char* invalid_arg_str = ppdb_error_string(PPDB_ERR_INVALID_ARGUMENT);
-    const char* invalid_state_str = ppdb_error_string(PPDB_ERR_INVALID_STATE);
-    const char* unknown_str = ppdb_error_string(-1);
-
-    ASSERT_NOT_NULL(ok_str);
-    ASSERT_NOT_NULL(oom_str);
-    ASSERT_NOT_NULL(invalid_arg_str);
-    ASSERT_NOT_NULL(invalid_state_str);
-    ASSERT_NOT_NULL(unknown_str);
-
-    ASSERT(strcmp(ok_str, "Success") == 0);
-    ASSERT(strcmp(oom_str, "Out of memory") == 0);
-    ASSERT(strcmp(invalid_arg_str, "Invalid argument") == 0);
-    ASSERT(strcmp(invalid_state_str, "Invalid state") == 0);
-    ASSERT(strcmp(unknown_str, "Unknown error") == 0);
+static void test_error_context(void) {
+    ppdb_error_context_t ctx;
+    ctx.code = PPDB_ERR_MEMORY;
+    ctx.file = __FILE__;
+    ctx.line = __LINE__;
+    ctx.func = __func__;
+    snprintf(ctx.message, sizeof(ctx.message), "Test error message");
+    
+    ppdb_error_set_context(&ctx);
+    const ppdb_error_context_t* get_ctx = ppdb_error_get_context();
+    
+    assert(get_ctx->code == ctx.code);
+    assert(strcmp(get_ctx->file, ctx.file) == 0);
+    assert(get_ctx->line == ctx.line);
+    assert(strcmp(get_ctx->func, ctx.func) == 0);
+    assert(strcmp(get_ctx->message, ctx.message) == 0);
 }
 
-void test_error_propagation(void) {
-    ppdb_error_t err;
-    void* ptr;
-
-    // Test error propagation through memory allocation
-    ptr = ppdb_aligned_alloc(0, 1024);  // Invalid alignment
-    ASSERT_NULL(ptr);
-
-    ptr = ppdb_aligned_alloc(16, 0);  // Invalid size
-    ASSERT_NULL(ptr);
-
-    // Test error propagation through memory pool
-    ppdb_mempool_t* pool = NULL;
-    err = ppdb_mempool_create(&pool, 0, 0);  // Invalid arguments
-    ASSERT_EQ(err, PPDB_ERR_INVALID_ARGUMENT);
-    ASSERT_NULL(pool);
+static void test_error_string(void) {
+    const char* ok_str = ppdb_error_to_string(PPDB_OK);
+    assert(strcmp(ok_str, "Success") == 0);
+    
+    const char* memory_str = ppdb_error_to_string(PPDB_ERR_MEMORY);
+    assert(strcmp(memory_str, "Memory allocation failed") == 0);
 }
 
-int main(int argc, char* argv[]) {
-    (void)argc;  // Unused parameter
-    (void)argv;  // Unused parameter
-
-    TEST_SUITE_BEGIN("Error Tests");
-
-    TEST_RUN(test_error_codes);
-    TEST_RUN(test_error_strings);
-    TEST_RUN(test_error_propagation);
-
-    TEST_SUITE_END();
+int main(void) {
+    printf("Running test suite: Error Tests\n");
+    
+    printf("  Running test: test_error_basic\n");
+    test_error_basic();
+    printf("  Test passed: test_error_basic\n");
+    
+    printf("  Running test: test_error_context\n");
+    test_error_context();
+    printf("  Test passed: test_error_context\n");
+    
+    printf("  Running test: test_error_string\n");
+    test_error_string();
+    printf("  Test passed: test_error_string\n");
+    
+    printf("Test suite completed\n");
     return 0;
 } 

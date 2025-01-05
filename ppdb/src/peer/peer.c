@@ -1,4 +1,12 @@
-#include "ppdb/internal.h"
+/*
+ * peer.c - PPDB对等节点实现
+ *
+ * 本文件是PPDB对等节点层的主入口，负责组织和初始化所有对等节点模块。
+ */
+
+#include <cosmopolitan.h>
+#include <internal/base.h>
+#include <internal/peer.h>
 
 // Internal types
 typedef struct ppdb_peer {

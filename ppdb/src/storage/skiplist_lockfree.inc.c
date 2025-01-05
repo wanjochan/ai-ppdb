@@ -1,4 +1,4 @@
-#include "ppdb/internal.h"
+#include <internal/storage.h>
 
 // 跳表节点结构
 typedef struct ppdb_skiplist_node {

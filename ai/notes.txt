@@ -1,7 +1,11 @@
 请先阅读 AI_GUIDELINES.md。
 
-我们现在要：审阅主代码、测试代码、构建与测试脚本。然后准备完善和测试 base、core这两层，未未来的 storage 和 peer 高级层打好坚实的基础
+cd scripts; .\build.bat test42
 
+先重读 AGENT_RULES.md 和 ppdb/中的项目文档。
+遇到问题自己制定可以 parallel_apply 的修复方案，重复这个过程直到没有新问题。
+特别注意：不要胡乱自己创建新文件（因为可能只是目录搞错了），要坚持用cosmopolitan标准；
+cd scripts; .\build.bat base
 
 
 
