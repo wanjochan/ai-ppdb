@@ -12,6 +12,7 @@ static void test_txn_basic(void) {
         .thread_pool_size = 4,
         .thread_safe = true
     };
+    PPDB_UNUSED(config);
 
     // Initialize base layer
     assert(ppdb_base_init(&base, &config) == PPDB_OK);
@@ -73,6 +74,7 @@ static void test_txn_rollback(void) {
         .thread_pool_size = 4,
         .thread_safe = true
     };
+    PPDB_UNUSED(config);
 
     // Initialize
     assert(ppdb_base_init(&base, &config) == PPDB_OK);
@@ -116,6 +118,7 @@ static void test_txn_error(void) {
         .thread_pool_size = 4,
         .thread_safe = true
     };
+    PPDB_UNUSED(config);
 
     // Test invalid parameters
     assert(ppdb_engine_init(NULL, NULL) == PPDB_ERR_PARAM);
@@ -129,6 +132,7 @@ static void test_txn_error(void) {
     // Begin a transaction
     ppdb_engine_txn_t* txn = NULL;
     assert(ppdb_engine_txn_begin(engine, &txn) == PPDB_OK);
+    PPDB_UNUSED(txn);
 
     // Try to commit twice
     assert(ppdb_engine_txn_commit(txn) == PPDB_OK);
@@ -140,6 +144,7 @@ static void test_txn_error(void) {
     // Begin another transaction
     ppdb_engine_txn_t* txn2 = NULL;
     assert(ppdb_engine_txn_begin(engine, &txn2) == PPDB_OK);
+    PPDB_UNUSED(txn2);
 
     // Try to rollback twice
     assert(ppdb_engine_txn_rollback(txn2) == PPDB_OK);
@@ -161,6 +166,7 @@ static void test_txn_concurrent(void) {
         .thread_pool_size = 4,
         .thread_safe = true
     };
+    PPDB_UNUSED(config);
 
     // Initialize with thread safety enabled
     assert(ppdb_base_init(&base, &config) == PPDB_OK);
@@ -170,6 +176,9 @@ static void test_txn_concurrent(void) {
     ppdb_engine_txn_t* txn1 = NULL;
     ppdb_engine_txn_t* txn2 = NULL;
     ppdb_engine_txn_t* txn3 = NULL;
+    PPDB_UNUSED(txn1);
+    PPDB_UNUSED(txn2);
+    PPDB_UNUSED(txn3);
 
     assert(ppdb_engine_txn_begin(engine, &txn1) == PPDB_OK);
     assert(ppdb_engine_txn_begin(engine, &txn2) == PPDB_OK);

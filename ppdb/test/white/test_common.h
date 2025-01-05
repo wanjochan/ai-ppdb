@@ -7,6 +7,9 @@
 
 #include <cosmopolitan.h>
 
+// Utility macros
+#define PPDB_UNUSED(x) ((void)(x))
+
 // Test macros
 #define ASSERT_TRUE(x) \
     do { \

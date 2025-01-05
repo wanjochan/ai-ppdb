@@ -1,15 +1,31 @@
-# init 确认构建工具在的 
+# 首次，先确认构建工具在的 
 cd ../ppdb/scripts; .\build.bat test42
 
-# base
+#任务
 先重读 AGENT_RULES.md 和 ppdb/中的项目文档。
 遇到问题自己制定可以 parallel_apply 的修复方案，重复这个过程直到没有新问题（包括警告类）。
 特别注意：不要胡乱自己创建新文件（因为可能只是目录搞错了）、坚持用cosmopolitan标准；
 cd ../ppdb/scripts; .\build.bat base
 
-# engine
+#
 先重读 AGENT_RULES.md 和 ppdb/中的项目文档。
 遇到问题自己制定可以利用平行处理（parallel_apply）的修复方案，重复这个过程直到没有新问题（包括警告类）。
 特别注意：不要胡乱自己创建新文件（因为可能只是目录搞错了）、坚持用cosmopolitan标准；
 cd ../ppdb/scripts; .\build.bat engine
 
+先重读 AGENT_RULES.md 和 ppdb/中的项目文档。
+遇到问题自己制定可以利用平行处理（parallel_apply）的修复方案，重复这个过程直到没有新问题（包括警告类）。
+特别注意：不要胡乱自己创建新文件（因为可能只是目录搞错了）、坚持用cosmopolitan标准；
+engine层：
+    添加计数器的单元测试
+    优化计数器的性能（如使用自旋锁）
+    扩展计数器的功能（如添加最大值限制）
+cd ../ppdb/scripts; .\build.bat engine
+
+# storage
+先重读 AGENT_RULES.md 和 ppdb/中的项目文档。
+遇到问题自己制定可以利用平行处理（parallel_apply）的修复方案，重复这个过程直到没有新问题（包括警告类）。
+特别注意：不要胡乱自己创建新文件（因为可能只是目录搞错了）、坚持用cosmopolitan标准；
+根据设计理念，编写 storage层的主代码、测试代码、构建脚本
+
+cd ../ppdb/scripts; .\build.bat storage

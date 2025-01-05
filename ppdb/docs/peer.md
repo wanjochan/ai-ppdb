@@ -1,143 +1,144 @@
-# PPDB Peer Design
+# PPDB 节点层文档
 
-## 架构概述
+## 概述
 
-PPDB的peer系统采用"三主一�?的基础架构�?- 3个主节点：负责数据分片和写入
-- 1个从节点：用于只读查询和数据备份
+节点层负责管理PPDB的分布式功能，包括：
 
-## 组件设计
+- 节点发现和管理
+- 集群通信
+- 一致性协议
+- 分布式事务
 
-### Server 设计
-1. **基础服务�?*
-   - 监听指定端口
-   - 处理客户端连�?   - 管理数据存储和访�?
-2. **主节点服务器**
-   - 处理写入请求
-   - 维护分片数据
-   - 参与集群协调
+## 节点管理
 
-3. **从节点服务器**
-   - 提供只读服务
-   - 异步复制数据
-   - 负载均衡支持
+### 节点状态
 
-### CLI 设计
-1. **命令行工�?*
-   ```bash
-   ppdb-cli [options] command [arguments]
-   ```
-
-2. **基础命令**
-   - `connect`: 连接到服务器
-   - `get/set`: 基础KV操作
-   - `info`: 查看服务器信�?   - `status`: 查看集群状�?
-3. **管理命令**
-   - `cluster`: 集群管理
-   - `shard`: 分片操作
-   - `replica`: 复制管理
-   - `strategy`: 策略控制
-
-4. **监控命令**
-   - `monitor`: 实时监控
-   - `stats`: 统计信息
-   - `logs`: 日志查看
-
-### 交互流程
-1. **客户端写�?*
-   ```
-   Client -> CLI -> 主节�?-> 分片存储 -> 从节点同�?   ```
-
-2. **客户端读�?*
-   ```
-   Client -> CLI -> 负载均衡 -> 主节�?从节�?   ```
-
-3. **管理操作**
-   ```
-   Admin -> CLI -> 管控接口 -> 集群协调 -> 节点执行
-   ```
-
-## 分发策略
-
-### 策略类型
-1. **分片模式**（默认）
-   - 数据通过一致性哈希分布在主节点上
-   - 每个主节点负责部分数�?   - 从节点异步复制所有数�?
-2. **全量复制模式**
-   - 所有主节点保存完整数据
-   - 适用于读多写少的场景
-   - 类似CDN边缘节点模式
-
-### 策略切换
-策略切换通过管控命令进行，而不是自动切换，以避免抖动�?
-## 安全机制
-
-### 预检查系�?```c
-typedef struct ppdb_precheck {
-    bool system_healthy;      // 系统健康状况
-    bool network_stable;      // 网络稳定�?    bool enough_resources;    // 资源充足�?    double estimated_impact;  // 预估影响
-} ppdb_precheck_t;
-```
-
-### 熔断保护
 ```c
-struct ppdb_circuit_breaker {
-    uint32_t error_count;         // 错误计数
-    uint32_t slow_request_count;  // 慢请求计�?    time_t last_failure_time;     // 上次失败时间
-    bool is_open;                 // 熔断状�?};
+typedef enum ppdb_peer_state_e {
+    PPDB_PEER_STATE_INIT,       // 初始化
+    PPDB_PEER_STATE_JOINING,    // 正在加入集群
+    PPDB_PEER_STATE_ACTIVE,     // 活跃状态
+    PPDB_PEER_STATE_LEAVING,    // 正在离开集群
+    PPDB_PEER_STATE_INACTIVE    // 非活跃状态
+} ppdb_peer_state_t;
 ```
 
-### 安全�?```c
-typedef struct ppdb_safety_net {
-    uint32_t max_concurrent_ops;  // 最大并发操作数
-    uint32_t max_batch_size;      // 最大批处理大小
-    uint32_t timeout_ms;          // 超时时间
-    double load_threshold;        // 负载阈�?} ppdb_safety_net_t;
+### 节点配置
+
+```c
+typedef struct ppdb_peer_config_s {
+    const char* host;           // 主机地址
+    uint16_t port;             // 端口号
+    const char* cluster_id;     // 集群ID
+    const char* node_id;        // 节点ID
+    size_t heartbeat_interval;  // 心跳间隔（毫秒）
+    size_t election_timeout;    // 选举超时（毫秒）
+} ppdb_peer_config_t;
 ```
+
+## 集群通信
+
+### 消息类型
+
+```c
+typedef enum ppdb_peer_msg_type_e {
+    PPDB_PEER_MSG_HEARTBEAT,    // 心跳消息
+    PPDB_PEER_MSG_VOTE,         // 投票消息
+    PPDB_PEER_MSG_APPEND,       // 日志追加
+    PPDB_PEER_MSG_SNAPSHOT,     // 快照传输
+    PPDB_PEER_MSG_COMMAND       // 命令消息
+} ppdb_peer_msg_type_t;
+```
+
+### 通信接口
+
+```c
+ppdb_error_t ppdb_peer_send(ppdb_peer_t* peer, const void* data, size_t size);
+ppdb_error_t ppdb_peer_recv(ppdb_peer_t* peer, void* buffer, size_t* size);
+ppdb_error_t ppdb_peer_broadcast(ppdb_peer_t* peer, const void* data, size_t size);
+```
+
+## 一致性协议
+
+### Raft状态机
+
+```c
+typedef enum ppdb_peer_role_e {
+    PPDB_PEER_ROLE_FOLLOWER,   // 跟随者
+    PPDB_PEER_ROLE_CANDIDATE,  // 候选者
+    PPDB_PEER_ROLE_LEADER      // 领导者
+} ppdb_peer_role_t;
+```
+
+### 日志复制
+
+```c
+ppdb_error_t ppdb_peer_append_entries(ppdb_peer_t* peer, const ppdb_peer_entry_t* entries, size_t count);
+ppdb_error_t ppdb_peer_apply_entries(ppdb_peer_t* peer, uint64_t commit_index);
+```
+
+## 分布式事务
+
+### 事务状态
+
+```c
+typedef enum ppdb_peer_txn_state_e {
+    PPDB_PEER_TXN_INIT,        // 初始化
+    PPDB_PEER_TXN_PREPARING,   // 准备中
+    PPDB_PEER_TXN_PREPARED,    // 已准备
+    PPDB_PEER_TXN_COMMITTING,  // 提交中
+    PPDB_PEER_TXN_COMMITTED,   // 已提交
+    PPDB_PEER_TXN_ABORTING,    // 回滚中
+    PPDB_PEER_TXN_ABORTED      // 已回滚
+} ppdb_peer_txn_state_t;
+```
+
+### 两阶段提交
+
+```c
+ppdb_error_t ppdb_peer_txn_prepare(ppdb_peer_t* peer, const char* txn_id);
+ppdb_error_t ppdb_peer_txn_commit(ppdb_peer_t* peer, const char* txn_id);
+ppdb_error_t ppdb_peer_txn_abort(ppdb_peer_t* peer, const char* txn_id);
+```
+
+## 最佳实践
+
+1. **节点管理**
+   - 定期检查节点健康状态
+   - 及时清理失效节点
+   - 合理配置超时参数
+
+2. **网络通信**
+   - 使用异步I/O提高性能
+   - 实现消息重传机制
+   - 处理网络分区情况
+
+3. **一致性保证**
+   - 正确实现Raft协议
+   - 确保日志一致性
+   - 处理成员变更
+
+4. **故障恢复**
+   - 实现快照机制
+   - 定期备份状态
+   - 支持增量恢复
+
+## 错误处理
+
+所有函数返回`ppdb_error_t`，可能的值包括：
+
+- `PPDB_OK`：成功
+- `PPDB_ERR_NETWORK`：网络错误
+- `PPDB_ERR_TIMEOUT`：操作超时
+- `PPDB_ERR_CONSENSUS`：一致性错误
+- `PPDB_ERR_PARTITION`：网络分区
+- `PPDB_ERR_STATE`：状态错误
 
 ## 监控指标
 
-### 基础指标
-```c
-struct ppdb_metrics {
-    uint64_t strategy_switches;   // 策略切换次数
-    uint64_t failed_operations;   // 失败操作�?    double avg_switch_time;       // 平均切换时间
-    struct timeval last_switch_time;  // 上次切换时间
-};
-```
-
-## 故障恢复
-
-### 两阶段切�?1. **准备阶段**
-   - 系统预检�?   - 资源评估
-   - 创建检查点
-
-2. **提交阶段**
-   - 执行切换
-   - 监控影响
-   - 准备回滚�?
-### 回滚机制
-在切换失败时，系统能够：
-- 恢复到之前的状�?- 保持数据一致�?- 记录失败原因
-
-## 最佳实�?
-1. **策略切换时机**
-   - 大促前切换到全量模式
-   - 维护时进行节点隔�?   - 数据分布不均时重平衡
-
-2. **安全考虑**
-   - 避免在高峰期切换
-   - 确保有足够资�?   - 保持可回滚�?
-3. **监控建议**
-   - 实时监控系统指标
-   - 设置合理的告警阈�?   - 保存详细的操作日�?
-## 后续规划
-
-1. **智能分发模式**
-   - 基于访问模式的智能分�?   - 热点数据的动态调�?   - 自适应的复制策�?
-2. **更多安全特�?*
-   - 细粒度的权限控制
-   - 更完善的审计日志
-   - 自动化的灾难恢复
-
-3. **性能优化**
-   - 批量操作的优�?   - 网络传输的优�?   - 存储引擎的优�?
+- 节点状态
+- 网络延迟
+- 日志同步延迟
+- 选举频率
+- 事务成功率
+- 网络吞吐量
