@@ -1,8 +1,7 @@
 #ifndef PPDB_BASE_CONTEXT_INC_C
 #define PPDB_BASE_CONTEXT_INC_C
 
-// Context pool
-#define PPDB_CONTEXT_POOL_SIZE 256
+#define CONTEXT_ALIGNMENT 16  // 添加对齐常量
 
 typedef struct ppdb_context_internal {
     ppdb_context_t ctx;
@@ -11,7 +10,7 @@ typedef struct ppdb_context_internal {
 } ppdb_context_internal_t;
 
 static ppdb_context_internal_t* g_context_pool = NULL;
-static size_t g_context_pool_size = PPDB_CONTEXT_POOL_SIZE;
+static size_t g_context_pool_size = 256;  // 默认池大小
 static ppdb_core_mutex_t* g_context_pool_mutex = NULL;
 
 static ppdb_error_t context_system_init(void) {
@@ -22,7 +21,7 @@ static ppdb_error_t context_system_init(void) {
     if (err != PPDB_OK) return err;
 
     // Allocate context pool
-    g_context_pool = (ppdb_context_internal_t*)ppdb_aligned_alloc(
+    g_context_pool = (ppdb_context_internal_t*)ppdb_aligned_alloc(CONTEXT_ALIGNMENT,
         g_context_pool_size * sizeof(ppdb_context_internal_t));
     if (!g_context_pool) {
         ppdb_core_mutex_destroy(g_context_pool_mutex);
@@ -47,8 +46,9 @@ static void context_system_cleanup(void) {
     }
 }
 
-ppdb_error_t ppdb_context_create(ppdb_ctx_t* ctx_handle) {
-    if (!ctx_handle) return PPDB_ERR_NULL_POINTER;
+ppdb_error_t ppdb_context_create(ppdb_context_t** ctx) {
+    if (!ctx) return PPDB_ERR_NULL_POINTER;
+    *ctx = NULL;
 
     // Initialize context system if needed
     ppdb_error_t err = context_system_init();
@@ -80,24 +80,35 @@ ppdb_error_t ppdb_context_create(ppdb_ctx_t* ctx_handle) {
     context->ctx.flags = 0;
     context->ctx.user_data = NULL;
 
-    *ctx_handle = (ppdb_ctx_t)context->id;
+    *ctx = &context->ctx;
     return PPDB_OK;
 }
 
-void ppdb_context_destroy(ppdb_ctx_t ctx_handle) {
-    if (!ctx_handle || !g_context_pool) return;
-
-    size_t index = (size_t)(ctx_handle - 1);
-    if (index >= g_context_pool_size) return;
+void ppdb_context_destroy(ppdb_context_t* ctx) {
+    if (!ctx || !g_context_pool) return;
 
     ppdb_core_mutex_lock(g_context_pool_mutex);
 
-    ppdb_context_internal_t* context = &g_context_pool[index];
-    if (context->used && context->id == ctx_handle) {
+    // Find context in pool
+    ppdb_context_internal_t* context = NULL;
+    for (size_t i = 0; i < g_context_pool_size; i++) {
+        if (g_context_pool[i].used && &g_context_pool[i].ctx == ctx) {
+            context = &g_context_pool[i];
+            break;
+        }
+    }
+
+    if (context) {
+        // 销毁内存池
         if (context->ctx.pool) {
             ppdb_mempool_destroy(context->ctx.pool);
+            context->ctx.pool = NULL;
         }
-        memset(context, 0, sizeof(ppdb_context_internal_t));
+        
+        // 清理上下文
+        memset(&context->ctx, 0, sizeof(ppdb_context_t));
+        context->used = false;
+        context->id = 0;
     }
 
     ppdb_core_mutex_unlock(g_context_pool_mutex);

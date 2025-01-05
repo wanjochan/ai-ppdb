@@ -1,49 +1,42 @@
 #include "ppdb/ppdb.h"
 #include "ppdb/internal.h"
+#include "ppdb/internal/base.h"
 #include <cosmopolitan.h>
 
 static void test_skiplist_basic() {
     // 创建基础配置
-    ppdb_config_t config = {
-        .type = PPDB_TYPE_SKIPLIST,
-        .shard_count = 1,
-        .use_lockfree = true,
-        .memory_limit = 1024 * 1024 * 16,  // 16MB
-        .max_key_size = 16 * 1024,    // 16KB
-        .max_value_size = 64 * 1024,  // 64KB
-        .max_level = MAX_SKIPLIST_LEVEL
+    ppdb_options_t config = {
+        .db_path = ":memory:",
+        .cache_size = 1024 * 1024 * 16,  // 16MB
+        .max_readers = 32,
+        .sync_writes = false,
+        .flush_period_ms = 1000
     };
 
     // 创建基础存储
-    ppdb_base_t* base;
-    ppdb_error_t err = ppdb_create(&base, &config);
+    ppdb_ctx_t ctx;
+    ppdb_error_t err = ppdb_create(&ctx, &config);
     assert(err == PPDB_OK);
-    assert(base != NULL);
 
     // 创建头节点
-    ppdb_node_t* head = node_create(base, NULL, NULL, MAX_SKIPLIST_LEVEL);
+    ppdb_node_t* head = node_create(NULL, NULL, NULL, MAX_SKIPLIST_LEVEL);
     assert(head != NULL);
     assert(node_get_height(head) == MAX_SKIPLIST_LEVEL);
     
     // 准备测试数据
-    uint8_t* key_data = PPDB_ALIGNED_ALLOC(16);
-    uint8_t* value_data = PPDB_ALIGNED_ALLOC(16);
-    assert(key_data != NULL);
-    assert(value_data != NULL);
-    memcpy(key_data, "test_key", 8);
-    memcpy(value_data, "test_value", 10);
+    ppdb_data_t key = {0};
+    ppdb_data_t value = {0};
     
-    ppdb_key_t key = {
-        .data = key_data,
-        .size = 8
-    };
-    ppdb_value_t value = {
-        .data = value_data,
-        .size = 10
-    };
+    memcpy(key.inline_data, "test_key", 8);
+    key.size = 8;
+    key.flags = 0;  // 使用内联存储
+    
+    memcpy(value.inline_data, "test_value", 10);
+    value.size = 10;
+    value.flags = 0;  // 使用内联存储
     
     // 创建测试节点
-    ppdb_node_t* node = node_create(base, &key, &value, 4);
+    ppdb_node_t* node = node_create(NULL, &key, &value, 4);
     assert(node != NULL);
     assert(node_get_height(node) == 4);
     
@@ -52,53 +45,48 @@ static void test_skiplist_basic() {
     assert(head->next[0] == node);
     
     // 测试节点数据
+    assert(node->key != NULL);
+    assert(node->value != NULL);
     assert(node->key->size == key.size);
-    assert(memcmp(node->key->data, key.data, key.size) == 0);
     assert(node->value->size == value.size);
-    assert(memcmp(node->value->data, value.data, value.size) == 0);
+    assert(memcmp(node->key->inline_data, key.inline_data, key.size) == 0);
+    assert(memcmp(node->value->inline_data, value.inline_data, value.size) == 0);
     
     // 清理
     head->next[0] = NULL;  // 断开链接
     node_unref(node);      // 释放测试节点
     node_unref(head);      // 释放头节点
-    PPDB_ALIGNED_FREE(key_data);
-    PPDB_ALIGNED_FREE(value_data);
-    ppdb_destroy(base);    // 销毁基础存储
+    ppdb_destroy(ctx);    // 销毁基础存储
 }
 
 static void test_skiplist_atomic_ops() {
-    ppdb_config_t config = {
-        .type = PPDB_TYPE_SKIPLIST,
-        .shard_count = 1,
-        .use_lockfree = true,
-        .memory_limit = 1024 * 1024 * 16,  // 16MB
-        .max_key_size = 16 * 1024,    // 16KB
-        .max_value_size = 64 * 1024,  // 64KB
-        .max_level = MAX_SKIPLIST_LEVEL
+    // 创建基础配置
+    ppdb_options_t config = {
+        .db_path = ":memory:",
+        .cache_size = 1024 * 1024 * 16,  // 16MB
+        .max_readers = 32,
+        .sync_writes = false,
+        .flush_period_ms = 1000
     };
 
-    ppdb_base_t* base;
-    ppdb_error_t err = ppdb_create(&base, &config);
+    // 创建基础存储
+    ppdb_ctx_t ctx;
+    ppdb_error_t err = ppdb_create(&ctx, &config);
     assert(err == PPDB_OK);
 
-    // 使用静态数据避免内存管理问题
-    uint8_t* atomic_key_data = PPDB_ALIGNED_ALLOC(16);
-    uint8_t* atomic_value_data = PPDB_ALIGNED_ALLOC(16);
-    assert(atomic_key_data != NULL);
-    assert(atomic_value_data != NULL);
-    memcpy(atomic_key_data, "atomic_key", 10);
-    memcpy(atomic_value_data, "atomic_value", 12);
+    // 准备测试数据
+    ppdb_data_t key = {0};
+    ppdb_data_t value = {0};
     
-    ppdb_key_t key = {
-        .data = atomic_key_data,
-        .size = 10
-    };
-    ppdb_value_t value = {
-        .data = atomic_value_data,
-        .size = 12
-    };
+    memcpy(key.inline_data, "atomic_key", 10);
+    key.size = 10;
+    key.flags = 0;  // 使用内联存储
+    
+    memcpy(value.inline_data, "atomic_value", 12);
+    value.size = 12;
+    value.flags = 0;  // 使用内联存储
 
-    ppdb_node_t* node = node_create(base, &key, &value, 4);
+    ppdb_node_t* node = node_create(NULL, &key, &value, 4);
     assert(node != NULL);
 
     // Test reference counting
@@ -119,9 +107,7 @@ static void test_skiplist_atomic_ops() {
     
     // 释放节点
     node_unref(node);  // ref_count = 0，这会触发node的销毁
-    PPDB_ALIGNED_FREE(atomic_key_data);
-    PPDB_ALIGNED_FREE(atomic_value_data);
-    ppdb_destroy(base);
+    ppdb_destroy(ctx);
 }
 
 static void test_skiplist_random_level() {
@@ -159,6 +145,9 @@ static void test_skiplist_random_level() {
 }
 
 int main(int argc, char** argv) {
+    (void)argc;  // 未使用的参数
+    (void)argv;  // 未使用的参数
+    
     printf("\n=== PPDB Skiplist Node Test Suite ===\n");
     test_skiplist_basic();
     test_skiplist_atomic_ops();

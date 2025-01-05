@@ -54,7 +54,7 @@
 
 ## Phase 1: Memory KV Store (Current)
 
-### Core Layer
+### engine layer
 > Focus on building a robust foundation with proper abstractions
 
 #### 1.1 Synchronization Primitives
