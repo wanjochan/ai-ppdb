@@ -104,6 +104,33 @@ if /i "%TEST_TYPE%"=="wal_advanced" (
     exit /b %ERRORLEVEL%
 )
 
+rem ===== Async Tests =====
+if /i "%TEST_TYPE%"=="async_core" (
+    call "%~dp0\build_async.bat" core %BUILD_MODE%
+    exit /b %ERRORLEVEL%
+)
+
+if /i "%TEST_TYPE%"=="async_timer" (
+    call "%~dp0\build_async.bat" timer %BUILD_MODE%
+    exit /b %ERRORLEVEL%
+)
+
+if /i "%TEST_TYPE%"=="async_future" (
+    call "%~dp0\build_async.bat" future %BUILD_MODE%
+    exit /b %ERRORLEVEL%
+)
+
+if /i "%TEST_TYPE%"=="async_iocp" (
+    call "%~dp0\build_async.bat" iocp %BUILD_MODE%
+    exit /b %ERRORLEVEL%
+)
+
+rem ===== Performance Tests =====
+if /i "%TEST_TYPE%"=="perf" (
+    call "%~dp0\build_perf.bat" %BUILD_MODE%
+    exit /b %ERRORLEVEL%
+)
+
 rem ===== Display Help Information =====
 if /i "%TEST_TYPE%"=="help" (
     echo PPDB Build and Test Tool
@@ -125,9 +152,13 @@ if /i "%TEST_TYPE%"=="help" (
     echo   wal_core         Run WAL core tests
     echo   wal_func         Run WAL function tests
     echo   wal_advanced     Run WAL advanced tests
+    echo   async_core       Run async core tests
+    echo   async_timer      Run async timer tests
+    echo   async_future     Run async future tests
+    echo   async_iocp       Run async IOCP tests
+    echo   perf            Run performance tests
     echo   clean            Clean build directory
     echo   rebuild          Force rebuild
-    echo   ppdb             Build PPDB
     echo.
     echo Build modes:
     echo   debug     Debug mode
