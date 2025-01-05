@@ -4,8 +4,7 @@ PPDB 提供三层 API 接口，以满足不同场景的需求：
 
 ## 1. C 原生接口
 
-最底层、最高性能的接口，提供静态库和动态库：
-
+最底层、最高性能的接口，提供静态库和动态库�?
 ```c
 #include <ppdb/ppdb.h>
 
@@ -13,8 +12,7 @@ ppdb_t* db = ppdb_open("test.db");
 ppdb_set(db, "key", "value");
 ```
 
-### 库文件
-- libppdb.so (Linux)
+### 库文�?- libppdb.so (Linux)
 - libppdb.dll (Windows)
 - libppdb.a (静态库)
 
@@ -25,14 +23,11 @@ ppdb_set(db, "key", "value");
 
 ## 2. Memcached 协议接口
 
-基于 socket 的高性能网络接口，使用 async 库实现高并发：
-
-### 服务端
-```c
+基于 socket 的高性能网络接口，使�?async 库实现高并发�?
+### 服务�?```c
 #include "ppdb/async.h"
 
-// 异步处理新连接
-void on_client_connect(async_handle_t* handle, int status) {
+// 异步处理新连�?void on_client_connect(async_handle_t* handle, int status) {
     // accept 新客户端
     async_handle_read(client, buf, len, on_command);
 }
@@ -43,18 +38,15 @@ void on_command(async_handle_t* handle, int status) {
 }
 ```
 
-### 客户端示例
-```python
+### 客户端示�?```python
 from pymemcache.client import Client
 client = Client(('localhost', 11211))
 client.set('key', 'value')
 ```
 
 ### 特点
-- 高性能二进制协议
-- 异步处理所有 I/O
-- 支持连接池
-- 支持 pipeline
+- 高性能二进制协�?- 异步处理所�?I/O
+- 支持连接�?- 支持 pipeline
 
 ## 3. Web API 接口
 
@@ -66,8 +58,7 @@ RESTful HTTP 接口，提供最广泛的兼容性：
 - DELETE /api/v1/delete/{key}
 - POST /api/v1/batch
 
-### 客户端示例
-```python
+### 客户端示�?```python
 import requests
 
 # 同步
@@ -83,13 +74,11 @@ async with aiohttp.ClientSession() as session:
 ### 特点
 - RESTful 设计
 - JSON 数据格式
-- 跨平台兼容
-- 易于集成
+- 跨平台兼�?- 易于集成
 
 ## 服务端内置客户端
 
-PPDB 服务端内置了一个交互式客户端，用于直接访问和管理 PPDB 数据：
-
+PPDB 服务端内置了一个交互式客户端，用于直接访问和管�?PPDB 数据�?
 ```bash
 $ ppdb_server
 Starting PPDB server on port 11211...
@@ -100,9 +89,8 @@ OK
 ppdb> 
 ```
 
-## 独立客户端
-
-PPDB 提供了独立的客户端工具，用于连接和访问 PPDB 服务端：
+## 独立客户�?
+PPDB 提供了独立的客户端工具，用于连接和访�?PPDB 服务端：
 
 ### 命令行客户端
 
@@ -151,20 +139,18 @@ client.set('key', 'value');
 
 ## 性能对比
 
-| API 层           | 延迟     | 吞吐量      | 易用性 | 场景                 |
+| API �?          | 延迟     | 吞吐�?     | 易用�?| 场景                 |
 |-----------------|---------|------------|--------|---------------------|
-| C 原生          | <0.1ms  | 最高       | 较难   | 本地高性能应用        |
-| Memcached 协议  | ~0.5ms  | 高         | 中等   | 分布式缓存、高并发    |
-| Web API        | 1-2ms   | 中等       | 最易   | 通用应用、跨平台集成   |
+| C 原生          | <0.1ms  | 最�?      | 较难   | 本地高性能应用        |
+| Memcached 协议  | ~0.5ms  | �?        | 中等   | 分布式缓存、高并发    |
+| Web API        | 1-2ms   | 中等       | 最�?  | 通用应用、跨平台集成   |
 
-## 最佳实践
-
+## 最佳实�?
 1. **选择合适的 API**
-   - 本地高性能应用：使用 C 原生接口
+   - 本地高性能应用：使�?C 原生接口
    - 网络高并发场景：使用 Memcached 协议
    - 普通应用集成：使用 Web API
 
 2. **异步处理**
-   - 服务端全面采用 async 库
-   - 客户端根据需求选择同步/异步 API
-   - 批量操作使用 pipeline 或 batch API
+   - 服务端全面采�?async �?   - 客户端根据需求选择同步/异步 API
+   - 批量操作使用 pipeline �?batch API

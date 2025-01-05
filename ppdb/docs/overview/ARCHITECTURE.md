@@ -4,7 +4,7 @@
 
 ### 1.1 系统层次
 ```
-应用层
+应用�?
   |
   |-- memkv               diskv
       |                    |
@@ -18,44 +18,44 @@
              (基础组件)
              - 原生skiplist
              - 分片支持
-             - 迭代器
+             - 迭代�?
 
 
 
-基础层 (base.c)
+基础�?(base.c)
 ├── 错误处理
 ├── 日志系统
 ├── 同步原语 (base_sync.inc.c)
 ├── 内存分配
-└── 随机数生成
+└── 随机数生�?
 
-存储层 (storage.c)
-├── 键值操作
+存储�?(storage.c)
+├── 键值操�?
 ├── 节点操作 (storage_misc.inc.c)
 ├── CRUD操作 (storage_crud.inc.c)
-└── 迭代器操作 (storage_iterator.inc.c)
+└── 迭代器操�?(storage_iterator.inc.c)
 
 
 ```
 
 ### 1.2 核心组件
 
-#### skiplist（基础组件）
+#### skiplist（基础组件�?
 - 核心数据结构
 - 支持并发访问
 - 提供分片能力
-- 实现迭代器接口
+- 实现迭代器接�?
 
-#### memkv（内存KV存储）
+#### memkv（内存KV存储�?
 - 基于分片skiplist
 - 高性能内存存储
 - 支持过期时间
-- 协议兼容层
+- 协议兼容�?
 
-#### diskv（持久化存储）
-- 基于LSM树
+#### diskv（持久化存储�?
+- 基于LSM�?
 - 使用skiplist实现memtable
-- WAL保证持久性
+- WAL保证持久�?
 - SSTable分层存储
 
 ## 2. 关键设计决策
@@ -63,18 +63,18 @@
 ### 2.1 统一的skiplist
 - 作为共享基础组件
 - 支持无锁/有锁两种模式
-- 提供分片能力以支持并发
+- 提供分片能力以支持并�?
 - 可由memkv和diskv复用
 
 ### 2.2 简化的层次结构
-- 去除多余抽象层
+- 去除多余抽象�?
 - 直接使用具体实现
 - 明确组件职责
 - 降低维护成本
 
-### 2.3 两条产品线
+### 2.3 两条产品�?
 - memkv: 追求极致性能
-- diskv: 保证数据持久性
+- diskv: 保证数据持久�?
 - 共享基础设施
 - 独立演进发展
 
@@ -117,11 +117,11 @@ typedef struct ppdb_diskv {
     ppdb_skiplist_t* active;
     ppdb_skiplist_t* imm;
     
-    // 持久化部分
+    // 持久化部�?
     ppdb_wal_t* wal;
     ppdb_sstable_t** sst;
     
-    // 配置和统计
+    // 配置和统�?
     ppdb_config_t config;
     ppdb_metrics_t metrics;
 } ppdb_diskv_t;
@@ -142,16 +142,16 @@ typedef struct ppdb_diskv {
 ### 4.2 读取流程
 1. memkv
    - 从分片skiplist读取
-   - 检查过期时间
+   - 检查过期时�?
 
 2. diskv
    - 查找active memtable
    - 查找immutable memtable
    - 按层查找SSTable
 
-### 4.3 compaction流程（diskv）
+### 4.3 compaction流程（diskv�?
 1. 触发条件
-   - memtable达到阈值
+   - memtable达到阈�?
    - 手动触发
    - 后台定时触发
 
@@ -159,7 +159,7 @@ typedef struct ppdb_diskv {
    - 冻结当前memtable
    - 创建新的memtable
    - 后台进行合并
-   - 更新元数据
+   - 更新元数�?
 
 ## 5. 监控指标
 
@@ -176,8 +176,8 @@ typedef struct ppdb_diskv {
 - 过期统计
 
 ### 5.3 diskv指标
-- 写放大
-- 读放大
+- 写放�?
+- 读放�?
 - 空间放大
 - compaction统计
 
@@ -200,7 +200,7 @@ typedef struct ppdb_diskv {
    - 增加事务支持
 
 ### 6.2 长期规划
-1. 分布式支持
+1. 分布式支�?
 2. 更多存储引擎
 3. 云原生适配
 4. 监控体系完善 
