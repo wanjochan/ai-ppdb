@@ -2,6 +2,7 @@
 #define PPDB_INTERNAL_CORE_H
 
 #include <cosmopolitan.h>
+#include "ppdb/ppdb.h"
 
 //-----------------------------------------------------------------------------
 // Core Types

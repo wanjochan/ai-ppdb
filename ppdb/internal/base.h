@@ -4,50 +4,46 @@
 #include "core.h"
 
 //-----------------------------------------------------------------------------
-// Context Management
+// Context Management Internal
 //-----------------------------------------------------------------------------
-typedef uint64_t ppdb_context_t;
+#define PPDB_MAX_CONTEXTS 1024
 
-ppdb_error_t ppdb_context_create(ppdb_context_t* ctx);
-void ppdb_context_destroy(ppdb_context_t ctx);
-ppdb_error_t ppdb_context_get_state(ppdb_context_t ctx, uint32_t* state);
+typedef struct ppdb_context_pool_entry {
+    ppdb_core_mutex_t* mutex;
+    uint32_t state;
+    bool used;
+} ppdb_context_pool_entry_t;
 
 //-----------------------------------------------------------------------------
-// Safe Data Management
+// Safe Data Management Internal
 //-----------------------------------------------------------------------------
-typedef struct ppdb_data {
+typedef struct ppdb_data_internal {
     uint8_t inline_data[32];  // Small data optimization
     uint32_t size;
     uint32_t flags;
-    void* extended_data;      // For data larger than inline_data
-} ppdb_data_t;
-
-ppdb_error_t ppdb_data_create(const void* data, size_t size, ppdb_data_t* out);
-ppdb_error_t ppdb_data_destroy(ppdb_data_t* data);
-ppdb_error_t ppdb_data_get(const ppdb_data_t* data, void* buf, size_t size, size_t* copied);
-ppdb_error_t ppdb_data_size(const ppdb_data_t* data, size_t* size);
+    void* extended_data;  // For data larger than inline buffer
+} ppdb_data_internal_t;
 
 //-----------------------------------------------------------------------------
-// Safe Iterator Management
+// Cursor Management Internal
 //-----------------------------------------------------------------------------
-typedef uint64_t ppdb_cursor_t;
+#define PPDB_MAX_CURSORS 1024
 
-ppdb_error_t ppdb_cursor_create(ppdb_context_t ctx, ppdb_cursor_t* cursor);
-void ppdb_cursor_destroy(ppdb_cursor_t cursor);
-ppdb_error_t ppdb_cursor_next(ppdb_cursor_t cursor, ppdb_data_t* key, ppdb_data_t* value);
-ppdb_error_t ppdb_cursor_prev(ppdb_cursor_t cursor, ppdb_data_t* key, ppdb_data_t* value);
-ppdb_error_t ppdb_cursor_seek(ppdb_cursor_t cursor, const ppdb_data_t* key);
+typedef struct ppdb_cursor_pool_entry {
+    ppdb_core_mutex_t* mutex;
+    ppdb_context_t ctx;
+    bool used;
+} ppdb_cursor_pool_entry_t;
 
 //-----------------------------------------------------------------------------
-// Batch Operations
+// Batch Management Internal
 //-----------------------------------------------------------------------------
-typedef uint64_t ppdb_batch_t;
+#define PPDB_MAX_BATCHES 1024
 
-ppdb_error_t ppdb_batch_create(ppdb_context_t ctx, ppdb_batch_t* batch);
-void ppdb_batch_destroy(ppdb_batch_t batch);
-ppdb_error_t ppdb_batch_put(ppdb_batch_t batch, const ppdb_data_t* key, const ppdb_data_t* value);
-ppdb_error_t ppdb_batch_delete(ppdb_batch_t batch, const ppdb_data_t* key);
-ppdb_error_t ppdb_batch_commit(ppdb_batch_t batch);
-ppdb_error_t ppdb_batch_clear(ppdb_batch_t batch);
+typedef struct ppdb_batch_pool_entry {
+    ppdb_core_mutex_t* mutex;
+    ppdb_context_t ctx;
+    bool used;
+} ppdb_batch_pool_entry_t;
 
 #endif // PPDB_INTERNAL_BASE_H
