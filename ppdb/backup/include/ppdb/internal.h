@@ -42,14 +42,14 @@ typedef struct ppdb_stats {
 
 // 节点结构
 typedef struct ppdb_node {
-    ppdb_sync_t* lock;              // lock for node
-    ppdb_sync_counter_t height;     // height of node
-    ppdb_sync_counter_t ref_count;  // reference count
-    ppdb_key_t* key;               // key
-    ppdb_value_t* value;           // value
-    ppdb_sync_counter_t is_deleted; // deleted flag
-    ppdb_sync_counter_t is_garbage; // garbage flag
-    struct ppdb_node* next[];      // next pointers
+    ppdb_node_state_machine_t state_machine;  // 节点状态机
+    ppdb_sync_t* lock;                        // 节点锁
+    ppdb_key_t* key;                         // 键
+    ppdb_value_t* value;                     // 值
+    ppdb_sync_counter_t height;              // 节点高度
+    ppdb_sync_counter_t is_deleted;          // 删除标记
+    ppdb_sync_counter_t is_garbage;          // 垃圾标记
+    struct ppdb_node* next[];                // 后继节点数组
 } PPDB_ALIGNED ppdb_node_t;
 
 // 分片结构
@@ -93,5 +93,28 @@ void init_random(void);
 ppdb_error_t init_metrics(ppdb_metrics_t* metrics);
 ppdb_shard_t* get_shard(ppdb_base_t* base, const ppdb_key_t* key);
 ppdb_error_t aggregate_shard_stats(ppdb_base_t* base, ppdb_stats_t* stats);
+
+//-----------------------------------------------------------------------------
+// 节点操作函数声明
+//-----------------------------------------------------------------------------
+ppdb_node_t* node_create(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value, uint32_t height);
+void node_destroy(ppdb_node_t* node);
+void node_ref(ppdb_node_t* node);
+void node_unref(ppdb_node_t* node);
+uint32_t node_get_height(ppdb_node_t* node);
+ppdb_node_t* node_get_next(ppdb_node_t* node, uint32_t level);
+void node_set_next(ppdb_node_t* node, uint32_t level, ppdb_node_t* next);
+bool node_cas_next(ppdb_node_t* node, uint32_t level, ppdb_node_t* expected, ppdb_node_t* desired);
+bool node_is_deleted(ppdb_node_t* node);
+bool node_mark_deleted(ppdb_node_t* node);
+bool node_is_active(ppdb_node_t* node);
+bool node_try_mark(ppdb_node_t* node);
+
+// 节点状态管理函数声明
+void init_node_state_machine(ppdb_node_state_machine_t* sm);
+bool try_enter_state(ppdb_node_state_machine_t* sm, ppdb_node_state_t expected, ppdb_node_state_t desired);
+bool safe_ref_inc(ppdb_node_state_machine_t* sm);
+bool safe_ref_dec(ppdb_node_state_machine_t* sm);
+void wait_readers(ppdb_node_state_machine_t* sm);
 
 #endif // PPDB_INTERNAL_H 

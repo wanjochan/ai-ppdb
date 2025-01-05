@@ -69,8 +69,8 @@ typedef enum ppdb_error {
 #define PPDB_ALIGNED __attribute__((aligned(PPDB_ALIGNMENT)))
 #define PPDB_CACHELINE_ALIGNED __attribute__((aligned(64)))
 
-#define PPDB_ALIGNED_ALLOC(size) \
-    aligned_alloc(PPDB_ALIGNMENT, (((size) + PPDB_ALIGNMENT - 1) / PPDB_ALIGNMENT) * PPDB_ALIGNMENT)
+#define PPDB_ALIGNED_SIZE(size) ((size + PPDB_ALIGNMENT - 1) & ~(PPDB_ALIGNMENT - 1))
+#define PPDB_ALIGNED_ALLOC(size) aligned_alloc(PPDB_ALIGNMENT, PPDB_ALIGNED_SIZE(size))
 #define PPDB_ALIGNED_FREE(ptr) free(ptr)
 
 void* aligned_alloc(size_t alignment, size_t size);
@@ -88,7 +88,6 @@ typedef enum ppdb_sync_type {
 // 同步计数器
 typedef struct ppdb_sync_counter {
     atomic_size_t value PPDB_CACHELINE_ALIGNED;
-    struct ppdb_sync* lock;
     #ifdef PPDB_ENABLE_METRICS
     atomic_size_t add_count PPDB_CACHELINE_ALIGNED;
     atomic_size_t sub_count PPDB_CACHELINE_ALIGNED;
@@ -237,15 +236,31 @@ ppdb_error_t ppdb_sync_try_write_lock(ppdb_sync_t* sync);
 
 // 同步计数器操作
 ppdb_error_t ppdb_sync_counter_init(ppdb_sync_counter_t* counter, size_t initial_value);
-size_t ppdb_sync_counter_cleanup(ppdb_sync_counter_t* counter);
+void ppdb_sync_counter_cleanup(ppdb_sync_counter_t* counter);
 size_t ppdb_sync_counter_inc(ppdb_sync_counter_t* counter);
 size_t ppdb_sync_counter_dec(ppdb_sync_counter_t* counter);
 size_t ppdb_sync_counter_get(ppdb_sync_counter_t* counter);
-size_t ppdb_sync_counter_set(ppdb_sync_counter_t* counter, size_t value);
 size_t ppdb_sync_counter_add(ppdb_sync_counter_t* counter, size_t value);
 size_t ppdb_sync_counter_sub(ppdb_sync_counter_t* counter, size_t value);
 size_t ppdb_sync_counter_load(ppdb_sync_counter_t* counter);
 size_t ppdb_sync_counter_store(ppdb_sync_counter_t* counter, size_t value);
 bool ppdb_sync_counter_cas(ppdb_sync_counter_t* counter, size_t expected, size_t desired);
+
+//-----------------------------------------------------------------------------
+// 节点状态定义
+//-----------------------------------------------------------------------------
+typedef enum ppdb_node_state {
+    PPDB_NODE_ACTIVE = 0,    // 活跃状态
+    PPDB_NODE_MARKED = 1,    // 标记删除
+    PPDB_NODE_RETIRING = 2,  // 正在退出
+    PPDB_NODE_DEAD = 3       // 已死亡
+} ppdb_node_state_t;
+
+// 节点状态转换器
+typedef struct ppdb_node_state_machine {
+    atomic_uint_fast32_t state;
+    atomic_size_t ref_count;
+    atomic_size_t reader_count;
+} PPDB_ALIGNED ppdb_node_state_machine_t;
 
 #endif // PPDB_H
