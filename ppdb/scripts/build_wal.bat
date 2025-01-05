@@ -4,13 +4,13 @@ setlocal EnableDelayedExpansion
 rem Get test type and build mode from parameters
 set "WAL_TEST=%1"
 set "BUILD_MODE=%2"
-if "%WAL_TEST%"=="" set "WAL_TEST=core"
+if "%WAL_TEST%"=="" set "WAL_TEST=engine"
 if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
 
 rem Validate WAL test type
-if /i not "%WAL_TEST%"=="core" if /i not "%WAL_TEST%"=="func" if /i not "%WAL_TEST%"=="advanced" (
+if /i not "%WAL_TEST%"=="engine" if /i not "%WAL_TEST%"=="func" if /i not "%WAL_TEST%"=="advanced" (
     echo Invalid WAL test type: %WAL_TEST%
-    echo Valid types are: core, func, advanced
+    echo Valid types are: engine, func, advanced
     exit /b 1
 )
 

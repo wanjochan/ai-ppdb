@@ -2,39 +2,39 @@
 // Timer Implementation
 //-----------------------------------------------------------------------------
 
-struct ppdb_core_timer {
-    ppdb_core_async_loop_t* loop;
+struct ppdb_engine_timer {
+    ppdb_engine_async_loop_t* loop;
     int timer_fd;
-    ppdb_core_async_handle_t* handle;
-    ppdb_core_async_cb callback;
+    ppdb_engine_async_handle_t* handle;
+    ppdb_engine_async_cb callback;
     void* user_data;
     bool repeat;
     uint64_t interval_ms;
 };
 
-ppdb_error_t ppdb_core_timer_create(ppdb_core_async_loop_t* loop,
-                                   ppdb_core_timer_t** timer) {
+ppdb_error_t ppdb_engine_timer_create(ppdb_engine_async_loop_t* loop,
+                                     ppdb_engine_timer_t** timer) {
     if (!loop || !timer) return PPDB_ERR_NULL_POINTER;
 
-    *timer = ppdb_core_alloc(sizeof(ppdb_core_timer_t));
+    *timer = ppdb_engine_alloc(sizeof(ppdb_engine_timer_t));
     if (!*timer) return PPDB_ERR_OUT_OF_MEMORY;
 
-    memset(*timer, 0, sizeof(ppdb_core_timer_t));
+    memset(*timer, 0, sizeof(ppdb_engine_timer_t));
     (*timer)->loop = loop;
 
     // 创建定时器文件描述符
     (*timer)->timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if ((*timer)->timer_fd < 0) {
-        ppdb_core_free(*timer);
+        ppdb_engine_free(*timer);
         *timer = NULL;
         return PPDB_ERR_INTERNAL;
     }
 
     // 创建异步句柄
-    ppdb_error_t err = ppdb_core_async_handle_create(loop, (*timer)->timer_fd, &(*timer)->handle);
+    ppdb_error_t err = ppdb_engine_async_handle_create(loop, (*timer)->timer_fd, &(*timer)->handle);
     if (err != PPDB_OK) {
         close((*timer)->timer_fd);
-        ppdb_core_free(*timer);
+        ppdb_engine_free(*timer);
         *timer = NULL;
         return err;
     }
@@ -42,23 +42,23 @@ ppdb_error_t ppdb_core_timer_create(ppdb_core_async_loop_t* loop,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_timer_destroy(ppdb_core_timer_t* timer) {
+ppdb_error_t ppdb_engine_timer_destroy(ppdb_engine_timer_t* timer) {
     if (!timer) return PPDB_ERR_NULL_POINTER;
 
     if (timer->handle) {
-        ppdb_core_async_handle_destroy(timer->handle);
+        ppdb_engine_async_handle_destroy(timer->handle);
     }
 
     if (timer->timer_fd >= 0) {
         close(timer->timer_fd);
     }
 
-    ppdb_core_free(timer);
+    ppdb_engine_free(timer);
     return PPDB_OK;
 }
 
-static void timer_callback(ppdb_core_async_handle_t* handle, int status) {
-    ppdb_core_timer_t* timer = handle->data;
+static void timer_callback(ppdb_engine_async_handle_t* handle, int status) {
+    ppdb_engine_timer_t* timer = handle->data;
     if (!timer || !timer->callback) return;
 
     uint64_t expirations;
@@ -76,11 +76,11 @@ static void timer_callback(ppdb_core_async_handle_t* handle, int status) {
     }
 }
 
-ppdb_error_t ppdb_core_timer_start(ppdb_core_timer_t* timer,
-                                  uint64_t timeout_ms,
-                                  bool repeat,
-                                  ppdb_core_async_cb cb,
-                                  void* user_data) {
+ppdb_error_t ppdb_engine_timer_start(ppdb_engine_timer_t* timer,
+                                    uint64_t timeout_ms,
+                                    bool repeat,
+                                    ppdb_engine_async_cb cb,
+                                    void* user_data) {
     if (!timer || !cb) return PPDB_ERR_NULL_POINTER;
 
     timer->callback = cb;
@@ -102,10 +102,10 @@ ppdb_error_t ppdb_core_timer_start(ppdb_core_timer_t* timer,
     }
 
     // 开始监听定时器事件
-    return ppdb_core_async_read(timer->handle, NULL, 0, timer_callback);
+    return ppdb_engine_async_read(timer->handle, NULL, 0, timer_callback);
 }
 
-ppdb_error_t ppdb_core_timer_stop(ppdb_core_timer_t* timer) {
+ppdb_error_t ppdb_engine_timer_stop(ppdb_engine_timer_t* timer) {
     if (!timer) return PPDB_ERR_NULL_POINTER;
 
     struct itimerspec its = {0};
@@ -116,7 +116,7 @@ ppdb_error_t ppdb_core_timer_stop(ppdb_core_timer_t* timer) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_timer_reset(ppdb_core_timer_t* timer) {
+ppdb_error_t ppdb_engine_timer_reset(ppdb_engine_timer_t* timer) {
     if (!timer) return PPDB_ERR_NULL_POINTER;
 
     struct itimerspec its = {0};

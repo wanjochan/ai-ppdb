@@ -3,7 +3,7 @@
 
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
-#include "ppdb/internal/core.h"
+#include "ppdb/internal/engine.h"
 
 // Log levels
 #define PPDB_LOG_DEBUG 0
@@ -48,7 +48,7 @@ typedef struct ppdb_sync_config_s {
 } ppdb_sync_config_t;
 
 typedef struct ppdb_sync_s {
-    ppdb_core_mutex_t* mutex;
+    ppdb_engine_mutex_t* mutex;
     uint32_t readers;
     bool writer;
     ppdb_sync_config_t config;

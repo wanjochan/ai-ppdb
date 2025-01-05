@@ -4,7 +4,7 @@
 // 重要提示：
 // 1. 这是唯一的内部实现入口
 // 2. 所有内部实现都必须通过这个文件引入
-// 3. 不要直接包含 base.h 或 core.h
+// 3. 不要直接包含 base.h 或 engine.h
 // 4. 查看 docs/ARCHITECTURE.md 了解完整的项目结构
 //=============================================================================
 
@@ -15,8 +15,8 @@
 #include "ppdb.h"
 
 // 内部实现
-#include "internal/base.h"  // 基础工具
-#include "internal/core.h"  // 核心实现
+#include "internal/base.h"   // 基础工具
+#include "internal/engine.h" // 核心实现
 
 // 内部使用的宏
 #define PPDB_INTERNAL_ASSERT(x) do { \

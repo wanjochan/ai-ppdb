@@ -11,20 +11,20 @@ typedef struct ppdb_context_internal {
 
 static ppdb_context_internal_t* g_context_pool = NULL;
 static size_t g_context_pool_size = 256;  // 默认池大小
-static ppdb_core_mutex_t* g_context_pool_mutex = NULL;
+static ppdb_engine_mutex_t* g_context_pool_mutex = NULL;
 
 static ppdb_error_t context_system_init(void) {
     if (g_context_pool) return PPDB_ERR_EXISTS;
 
     // Create pool mutex
-    ppdb_error_t err = ppdb_core_mutex_create(&g_context_pool_mutex);
+    ppdb_error_t err = ppdb_engine_mutex_create(&g_context_pool_mutex);
     if (err != PPDB_OK) return err;
 
     // Allocate context pool
     g_context_pool = (ppdb_context_internal_t*)ppdb_aligned_alloc(CONTEXT_ALIGNMENT,
         g_context_pool_size * sizeof(ppdb_context_internal_t));
     if (!g_context_pool) {
-        ppdb_core_mutex_destroy(g_context_pool_mutex);
+        ppdb_engine_mutex_destroy(g_context_pool_mutex);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
@@ -41,7 +41,7 @@ static void context_system_cleanup(void) {
     }
 
     if (g_context_pool_mutex) {
-        ppdb_core_mutex_destroy(g_context_pool_mutex);
+        ppdb_engine_mutex_destroy(g_context_pool_mutex);
         g_context_pool_mutex = NULL;
     }
 }
@@ -55,7 +55,7 @@ ppdb_error_t ppdb_context_create(ppdb_context_t** ctx) {
     if (err != PPDB_OK) return err;
 
     // Lock pool
-    err = ppdb_core_mutex_lock(g_context_pool_mutex);
+    err = ppdb_engine_mutex_lock(g_context_pool_mutex);
     if (err != PPDB_OK) return err;
 
     // Find free slot
@@ -70,7 +70,7 @@ ppdb_error_t ppdb_context_create(ppdb_context_t** ctx) {
     }
 
     // Unlock pool
-    ppdb_core_mutex_unlock(g_context_pool_mutex);
+    ppdb_engine_mutex_unlock(g_context_pool_mutex);
 
     if (!context) return PPDB_ERR_FULL;
 
@@ -87,7 +87,7 @@ ppdb_error_t ppdb_context_create(ppdb_context_t** ctx) {
 void ppdb_context_destroy(ppdb_context_t* ctx) {
     if (!ctx || !g_context_pool) return;
 
-    ppdb_core_mutex_lock(g_context_pool_mutex);
+    ppdb_engine_mutex_lock(g_context_pool_mutex);
 
     // Find context in pool
     ppdb_context_internal_t* context = NULL;
@@ -111,7 +111,7 @@ void ppdb_context_destroy(ppdb_context_t* ctx) {
         context->id = 0;
     }
 
-    ppdb_core_mutex_unlock(g_context_pool_mutex);
+    ppdb_engine_mutex_unlock(g_context_pool_mutex);
 }
 
 ppdb_context_t* ppdb_context_get(ppdb_ctx_t ctx_handle) {

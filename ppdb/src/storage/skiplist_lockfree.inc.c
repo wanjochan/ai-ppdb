@@ -15,13 +15,13 @@ struct ppdb_skiplist {
     atomic_size_t size;               // 元素数量
     uint32_t max_level;               // 最大层数
     ppdb_skiplist_config_t config;    // 配置
-    ppdb_core_sync_stats_t* stats;    // 统计信息
+    ppdb_engine_sync_stats_t* stats;  // 统计信息
 };
 
 // 创建新节点
 static ppdb_skiplist_node_t* create_node(const ppdb_key_t* key, const ppdb_value_t* value, uint32_t level) {
     size_t node_size = sizeof(ppdb_skiplist_node_t) + level * sizeof(atomic_uintptr_t);
-    ppdb_skiplist_node_t* node = ppdb_core_aligned_alloc(PPDB_ALIGNMENT, node_size);
+    ppdb_skiplist_node_t* node = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, node_size);
     if (!node) return NULL;
     
     memcpy(&node->key, key, sizeof(ppdb_key_t));
@@ -120,7 +120,7 @@ ppdb_error_t ppdb_skiplist_insert(ppdb_skiplist_t* list, const ppdb_key_t* key, 
         
         if (!atomic_compare_exchange_strong(&pred->next[0],
             (uintptr_t*)&succ, (uintptr_t)new_node)) {
-            ppdb_core_free(new_node);
+            ppdb_engine_free(new_node);
             continue;  // CAS失败，重试
         }
         

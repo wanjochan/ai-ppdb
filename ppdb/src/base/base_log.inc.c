@@ -6,7 +6,7 @@ static struct {
     FILE* file;
     int level;
     bool thread_safe;
-    ppdb_core_mutex_t* mutex;
+    ppdb_engine_mutex_t* mutex;
 } g_log_ctx = {NULL, PPDB_LOG_INFO, false, NULL};
 
 // Level strings
@@ -30,7 +30,7 @@ static void log_write(int level, const char* format, va_list args) {
 
     // Lock if thread safe
     if (g_log_ctx.thread_safe && g_log_ctx.mutex) {
-        ppdb_core_mutex_lock(g_log_ctx.mutex);
+        ppdb_engine_mutex_lock(g_log_ctx.mutex);
     }
 
     // Write log entry
@@ -41,7 +41,7 @@ static void log_write(int level, const char* format, va_list args) {
 
     // Unlock if thread safe
     if (g_log_ctx.thread_safe && g_log_ctx.mutex) {
-        ppdb_core_mutex_unlock(g_log_ctx.mutex);
+        ppdb_engine_mutex_unlock(g_log_ctx.mutex);
     }
 }
 
@@ -60,7 +60,7 @@ ppdb_error_t ppdb_log_init(const char* filename, int level, bool thread_safe) {
 
     // Create mutex if thread safe
     if (thread_safe) {
-        ppdb_error_t err = ppdb_core_mutex_create(&g_log_ctx.mutex);
+        ppdb_error_t err = ppdb_engine_mutex_create(&g_log_ctx.mutex);
         if (err != PPDB_OK) {
             fclose(g_log_ctx.file);
             g_log_ctx.file = NULL;
@@ -78,7 +78,7 @@ void ppdb_log_close(void) {
     }
 
     if (g_log_ctx.mutex) {
-        ppdb_core_mutex_destroy(g_log_ctx.mutex);
+        ppdb_engine_mutex_destroy(g_log_ctx.mutex);
         g_log_ctx.mutex = NULL;
     }
 

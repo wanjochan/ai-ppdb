@@ -9,7 +9,7 @@ typedef struct ppdb_cursor_internal_s {
 } ppdb_cursor_internal_t;
 
 static ppdb_cursor_internal_t* g_cursor_pool = NULL;
-static ppdb_core_mutex_t* g_cursor_mutex = NULL;
+static ppdb_engine_mutex_t* g_cursor_mutex = NULL;
 static bool g_cursor_initialized = false;
 
 // Initialize cursor system
@@ -17,14 +17,14 @@ static ppdb_error_t cursor_system_init(void) {
     if (g_cursor_initialized) return PPDB_OK;
 
     // Create mutex
-    ppdb_error_t err = ppdb_core_mutex_create(&g_cursor_mutex);
+    ppdb_error_t err = ppdb_engine_mutex_create(&g_cursor_mutex);
     if (err != PPDB_OK) return err;
 
     // Allocate initial pool
     g_cursor_pool = (ppdb_cursor_internal_t*)ppdb_aligned_alloc(CURSOR_ALIGNMENT, 
         sizeof(ppdb_cursor_internal_t) * 16);  // Initial pool size
     if (!g_cursor_pool) {
-        ppdb_core_mutex_destroy(g_cursor_mutex);
+        ppdb_engine_mutex_destroy(g_cursor_mutex);
         return PPDB_ERR_OUT_OF_MEMORY;
     }
 
@@ -48,7 +48,7 @@ ppdb_error_t ppdb_cursor_create(ppdb_ctx_t ctx_handle, ppdb_cursor_t** cursor) {
     if (err != PPDB_OK) return err;
 
     // Lock pool
-    ppdb_core_mutex_lock(g_cursor_mutex);
+    ppdb_engine_mutex_lock(g_cursor_mutex);
 
     // Get cursor from pool
     ppdb_cursor_internal_t* internal = g_cursor_pool;
@@ -59,7 +59,7 @@ ppdb_error_t ppdb_cursor_create(ppdb_ctx_t ctx_handle, ppdb_cursor_t** cursor) {
         internal = (ppdb_cursor_internal_t*)ppdb_aligned_alloc(CURSOR_ALIGNMENT, 
             sizeof(ppdb_cursor_internal_t));
         if (!internal) {
-            ppdb_core_mutex_unlock(g_cursor_mutex);
+            ppdb_engine_mutex_unlock(g_cursor_mutex);
             return PPDB_ERR_OUT_OF_MEMORY;
         }
     }
@@ -69,12 +69,12 @@ ppdb_error_t ppdb_cursor_create(ppdb_ctx_t ctx_handle, ppdb_cursor_t** cursor) {
     internal->cursor.ctx = ppdb_context_get(ctx_handle);
     if (!internal->cursor.ctx) {
         ppdb_aligned_free(internal);
-        ppdb_core_mutex_unlock(g_cursor_mutex);
+        ppdb_engine_mutex_unlock(g_cursor_mutex);
         return PPDB_ERR_INVALID_ARGUMENT;
     }
 
     *cursor = &internal->cursor;
-    ppdb_core_mutex_unlock(g_cursor_mutex);
+    ppdb_engine_mutex_unlock(g_cursor_mutex);
     return PPDB_OK;
 }
 
@@ -86,13 +86,13 @@ void ppdb_cursor_destroy(ppdb_cursor_t* cursor) {
     ppdb_cursor_internal_t* internal = (ppdb_cursor_internal_t*)cursor;
 
     // Lock pool
-    ppdb_core_mutex_lock(g_cursor_mutex);
+    ppdb_engine_mutex_lock(g_cursor_mutex);
 
     // Return to pool
     internal->next = g_cursor_pool;
     g_cursor_pool = internal;
 
-    ppdb_core_mutex_unlock(g_cursor_mutex);
+    ppdb_engine_mutex_unlock(g_cursor_mutex);
 }
 
 // Get next key-value pair

@@ -2,47 +2,47 @@
 // Semaphore Implementation
 //-----------------------------------------------------------------------------
 
-struct ppdb_core_sem {
+struct ppdb_engine_sem {
     #ifdef _WIN32
     HANDLE handle;
     #else
     sem_t sem;
     #endif
     atomic_size_t value;
-    ppdb_core_mutex_t* mutex;
-    ppdb_core_cond_t* cond;
+    ppdb_engine_mutex_t* mutex;
+    ppdb_engine_cond_t* cond;
     bool use_native;
 };
 
-ppdb_error_t ppdb_core_sem_create(ppdb_core_sem_t** sem, size_t initial_value) {
+ppdb_error_t ppdb_engine_sem_create(ppdb_engine_sem_t** sem, size_t initial_value) {
     if (!sem) return PPDB_ERR_NULL_POINTER;
 
-    *sem = ppdb_core_alloc(sizeof(ppdb_core_sem_t));
+    *sem = ppdb_engine_alloc(sizeof(ppdb_engine_sem_t));
     if (!*sem) return PPDB_ERR_OUT_OF_MEMORY;
 
-    memset(*sem, 0, sizeof(ppdb_core_sem_t));
+    memset(*sem, 0, sizeof(ppdb_engine_sem_t));
     atomic_init(&(*sem)->value, initial_value);
 
     #ifdef _WIN32
     (*sem)->handle = CreateSemaphore(NULL, initial_value, INT_MAX, NULL);
     if (!(*sem)->handle) {
-        ppdb_core_free(*sem);
+        ppdb_engine_free(*sem);
         return PPDB_ERR_INTERNAL;
     }
     (*sem)->use_native = true;
     #else
     if (sem_init(&(*sem)->sem, 0, initial_value) != 0) {
         // 如果原生信号量失败，使用条件变量实现
-        ppdb_error_t err = ppdb_core_mutex_create(&(*sem)->mutex);
+        ppdb_error_t err = ppdb_engine_mutex_create(&(*sem)->mutex);
         if (err != PPDB_OK) {
-            ppdb_core_free(*sem);
+            ppdb_engine_free(*sem);
             return err;
         }
 
-        err = ppdb_core_cond_create(&(*sem)->cond);
+        err = ppdb_engine_cond_create(&(*sem)->cond);
         if (err != PPDB_OK) {
-            ppdb_core_mutex_destroy((*sem)->mutex);
-            ppdb_core_free(*sem);
+            ppdb_engine_mutex_destroy((*sem)->mutex);
+            ppdb_engine_free(*sem);
             return err;
         }
         (*sem)->use_native = false;
@@ -54,7 +54,7 @@ ppdb_error_t ppdb_core_sem_create(ppdb_core_sem_t** sem, size_t initial_value) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_sem_destroy(ppdb_core_sem_t* sem) {
+ppdb_error_t ppdb_engine_sem_destroy(ppdb_engine_sem_t* sem) {
     if (!sem) return PPDB_ERR_NULL_POINTER;
 
     if (sem->use_native) {
@@ -64,15 +64,15 @@ ppdb_error_t ppdb_core_sem_destroy(ppdb_core_sem_t* sem) {
         sem_destroy(&sem->sem);
         #endif
     } else {
-        if (sem->mutex) ppdb_core_mutex_destroy(sem->mutex);
-        if (sem->cond) ppdb_core_cond_destroy(sem->cond);
+        if (sem->mutex) ppdb_engine_mutex_destroy(sem->mutex);
+        if (sem->cond) ppdb_engine_cond_destroy(sem->cond);
     }
 
-    ppdb_core_free(sem);
+    ppdb_engine_free(sem);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_sem_wait(ppdb_core_sem_t* sem) {
+ppdb_error_t ppdb_engine_sem_wait(ppdb_engine_sem_t* sem) {
     if (!sem) return PPDB_ERR_NULL_POINTER;
 
     if (sem->use_native) {
@@ -86,18 +86,18 @@ ppdb_error_t ppdb_core_sem_wait(ppdb_core_sem_t* sem) {
         }
         #endif
     } else {
-        ppdb_core_mutex_lock(sem->mutex);
+        ppdb_engine_mutex_lock(sem->mutex);
         while (atomic_load(&sem->value) == 0) {
-            ppdb_core_cond_wait(sem->cond, sem->mutex);
+            ppdb_engine_cond_wait(sem->cond, sem->mutex);
         }
         atomic_fetch_sub(&sem->value, 1);
-        ppdb_core_mutex_unlock(sem->mutex);
+        ppdb_engine_mutex_unlock(sem->mutex);
     }
 
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_sem_trywait(ppdb_core_sem_t* sem) {
+ppdb_error_t ppdb_engine_sem_trywait(ppdb_engine_sem_t* sem) {
     if (!sem) return PPDB_ERR_NULL_POINTER;
 
     if (sem->use_native) {
@@ -111,19 +111,19 @@ ppdb_error_t ppdb_core_sem_trywait(ppdb_core_sem_t* sem) {
         }
         #endif
     } else {
-        ppdb_core_mutex_lock(sem->mutex);
+        ppdb_engine_mutex_lock(sem->mutex);
         if (atomic_load(&sem->value) == 0) {
-            ppdb_core_mutex_unlock(sem->mutex);
+            ppdb_engine_mutex_unlock(sem->mutex);
             return PPDB_ERR_WOULD_BLOCK;
         }
         atomic_fetch_sub(&sem->value, 1);
-        ppdb_core_mutex_unlock(sem->mutex);
+        ppdb_engine_mutex_unlock(sem->mutex);
     }
 
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_sem_timedwait(ppdb_core_sem_t* sem, uint32_t timeout_ms) {
+ppdb_error_t ppdb_engine_sem_timedwait(ppdb_engine_sem_t* sem, uint32_t timeout_ms) {
     if (!sem) return PPDB_ERR_NULL_POINTER;
 
     if (sem->use_native) {
@@ -145,22 +145,22 @@ ppdb_error_t ppdb_core_sem_timedwait(ppdb_core_sem_t* sem, uint32_t timeout_ms) 
         }
         #endif
     } else {
-        ppdb_core_mutex_lock(sem->mutex);
+        ppdb_engine_mutex_lock(sem->mutex);
         while (atomic_load(&sem->value) == 0) {
-            ppdb_error_t err = ppdb_core_cond_timedwait(sem->cond, sem->mutex, timeout_ms);
+            ppdb_error_t err = ppdb_engine_cond_timedwait(sem->cond, sem->mutex, timeout_ms);
             if (err != PPDB_OK) {
-                ppdb_core_mutex_unlock(sem->mutex);
+                ppdb_engine_mutex_unlock(sem->mutex);
                 return err;
             }
         }
         atomic_fetch_sub(&sem->value, 1);
-        ppdb_core_mutex_unlock(sem->mutex);
+        ppdb_engine_mutex_unlock(sem->mutex);
     }
 
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_sem_post(ppdb_core_sem_t* sem) {
+ppdb_error_t ppdb_engine_sem_post(ppdb_engine_sem_t* sem) {
     if (!sem) return PPDB_ERR_NULL_POINTER;
 
     if (sem->use_native) {
@@ -174,16 +174,16 @@ ppdb_error_t ppdb_core_sem_post(ppdb_core_sem_t* sem) {
         }
         #endif
     } else {
-        ppdb_core_mutex_lock(sem->mutex);
+        ppdb_engine_mutex_lock(sem->mutex);
         atomic_fetch_add(&sem->value, 1);
-        ppdb_core_cond_signal(sem->cond);
-        ppdb_core_mutex_unlock(sem->mutex);
+        ppdb_engine_cond_signal(sem->cond);
+        ppdb_engine_mutex_unlock(sem->mutex);
     }
 
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_sem_getvalue(ppdb_core_sem_t* sem, size_t* value) {
+ppdb_error_t ppdb_engine_sem_getvalue(ppdb_engine_sem_t* sem, size_t* value) {
     if (!sem || !value) return PPDB_ERR_NULL_POINTER;
 
     if (sem->use_native) {

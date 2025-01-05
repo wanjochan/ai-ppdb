@@ -2,19 +2,19 @@
 // Thread Management Implementation
 //-----------------------------------------------------------------------------
 
-struct ppdb_core_thread {
+struct ppdb_engine_thread {
     pthread_t thread;
     void* (*start_routine)(void*);
     void* arg;
     bool detached;
 };
 
-ppdb_error_t ppdb_core_thread_create(ppdb_core_thread_t** thread,
+ppdb_error_t ppdb_engine_thread_create(ppdb_engine_thread_t** thread,
                                     void* (*start_routine)(void*),
                                     void* arg) {
     if (!thread || !start_routine) return PPDB_ERR_NULL_POINTER;
     
-    *thread = ppdb_core_alloc(sizeof(ppdb_core_thread_t));
+    *thread = ppdb_engine_alloc(sizeof(ppdb_engine_thread_t));
     if (!*thread) return PPDB_ERR_OUT_OF_MEMORY;
     
     (*thread)->start_routine = start_routine;
@@ -22,7 +22,7 @@ ppdb_error_t ppdb_core_thread_create(ppdb_core_thread_t** thread,
     (*thread)->detached = false;
     
     if (pthread_create(&(*thread)->thread, NULL, start_routine, arg) != 0) {
-        ppdb_core_free(*thread);
+        ppdb_engine_free(*thread);
         *thread = NULL;
         return PPDB_ERR_INTERNAL;
     }
@@ -30,7 +30,7 @@ ppdb_error_t ppdb_core_thread_create(ppdb_core_thread_t** thread,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_thread_join(ppdb_core_thread_t* thread, void** retval) {
+ppdb_error_t ppdb_engine_thread_join(ppdb_engine_thread_t* thread, void** retval) {
     if (!thread) return PPDB_ERR_NULL_POINTER;
     if (thread->detached) return PPDB_ERR_INVALID_STATE;
     
@@ -38,11 +38,11 @@ ppdb_error_t ppdb_core_thread_join(ppdb_core_thread_t* thread, void** retval) {
         return PPDB_ERR_INTERNAL;
     }
     
-    ppdb_core_free(thread);
+    ppdb_engine_free(thread);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_thread_detach(ppdb_core_thread_t* thread) {
+ppdb_error_t ppdb_engine_thread_detach(ppdb_engine_thread_t* thread) {
     if (!thread) return PPDB_ERR_NULL_POINTER;
     if (thread->detached) return PPDB_ERR_INVALID_STATE;
     

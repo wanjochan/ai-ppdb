@@ -2,23 +2,23 @@
 // Condition Variable Implementation 
 //-----------------------------------------------------------------------------
 
-struct ppdb_core_cond {
+struct ppdb_engine_cond {
     pthread_cond_t cond;
-    ppdb_core_mutex_t* mutex;
+    ppdb_engine_mutex_t* mutex;
     atomic_size_t waiters;
 };
 
-ppdb_error_t ppdb_core_cond_create(ppdb_core_cond_t** cond) {
+ppdb_error_t ppdb_engine_cond_create(ppdb_engine_cond_t** cond) {
     if (!cond) return PPDB_ERR_NULL_POINTER;
 
-    *cond = ppdb_core_alloc(sizeof(ppdb_core_cond_t));
+    *cond = ppdb_engine_alloc(sizeof(ppdb_engine_cond_t));
     if (!*cond) return PPDB_ERR_OUT_OF_MEMORY;
 
-    memset(*cond, 0, sizeof(ppdb_core_cond_t));
+    memset(*cond, 0, sizeof(ppdb_engine_cond_t));
     atomic_init(&(*cond)->waiters, 0);
 
     if (pthread_cond_init(&(*cond)->cond, NULL) != 0) {
-        ppdb_core_free(*cond);
+        ppdb_engine_free(*cond);
         *cond = NULL;
         return PPDB_ERR_INTERNAL;
     }
@@ -26,18 +26,18 @@ ppdb_error_t ppdb_core_cond_create(ppdb_core_cond_t** cond) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_cond_destroy(ppdb_core_cond_t* cond) {
+ppdb_error_t ppdb_engine_cond_destroy(ppdb_engine_cond_t* cond) {
     if (!cond) return PPDB_ERR_NULL_POINTER;
 
     if (pthread_cond_destroy(&cond->cond) != 0) {
         return PPDB_ERR_INTERNAL;
     }
 
-    ppdb_core_free(cond);
+    ppdb_engine_free(cond);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_cond_wait(ppdb_core_cond_t* cond, ppdb_core_mutex_t* mutex) {
+ppdb_error_t ppdb_engine_cond_wait(ppdb_engine_cond_t* cond, ppdb_engine_mutex_t* mutex) {
     if (!cond || !mutex) return PPDB_ERR_NULL_POINTER;
 
     atomic_fetch_add(&cond->waiters, 1);
@@ -48,9 +48,9 @@ ppdb_error_t ppdb_core_cond_wait(ppdb_core_cond_t* cond, ppdb_core_mutex_t* mute
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_cond_timedwait(ppdb_core_cond_t* cond, 
-                                     ppdb_core_mutex_t* mutex,
-                                     uint32_t timeout_ms) {
+ppdb_error_t ppdb_engine_cond_timedwait(ppdb_engine_cond_t* cond, 
+                                       ppdb_engine_mutex_t* mutex,
+                                       uint32_t timeout_ms) {
     if (!cond || !mutex) return PPDB_ERR_NULL_POINTER;
 
     struct timespec ts;
@@ -71,7 +71,7 @@ ppdb_error_t ppdb_core_cond_timedwait(ppdb_core_cond_t* cond,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_cond_signal(ppdb_core_cond_t* cond) {
+ppdb_error_t ppdb_engine_cond_signal(ppdb_engine_cond_t* cond) {
     if (!cond) return PPDB_ERR_NULL_POINTER;
 
     if (atomic_load(&cond->waiters) > 0) {
@@ -82,7 +82,7 @@ ppdb_error_t ppdb_core_cond_signal(ppdb_core_cond_t* cond) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_core_cond_broadcast(ppdb_core_cond_t* cond) {
+ppdb_error_t ppdb_engine_cond_broadcast(ppdb_engine_cond_t* cond) {
     if (!cond) return PPDB_ERR_NULL_POINTER;
 
     if (atomic_load(&cond->waiters) > 0) {

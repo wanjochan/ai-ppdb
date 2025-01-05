@@ -52,11 +52,11 @@ static bool is_visible(ppdb_txn_t* txn, ppdb_version_t* version) {
     return false;
 }
 
-ppdb_error_t ppdb_mvcc_get(ppdb_core_t* core, ppdb_txn_t* txn, 
+ppdb_error_t ppdb_mvcc_get(ppdb_engine_t* engine, ppdb_txn_t* txn, 
                           ppdb_key_t* key, ppdb_value_t* value) {
     ppdb_mvcc_item_t* item = NULL;
     // Find item in storage (implementation depends on storage layer)
-    ppdb_error_t err = ppdb_storage_get(core, txn, key, value);
+    ppdb_error_t err = ppdb_storage_get(engine, txn, key, value);
     if (err != PPDB_OK) return err;
     
     ppdb_sync_lock(item->lock);
@@ -85,11 +85,11 @@ ppdb_error_t ppdb_mvcc_get(ppdb_core_t* core, ppdb_txn_t* txn,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_mvcc_put(ppdb_core_t* core, ppdb_txn_t* txn,
+ppdb_error_t ppdb_mvcc_put(ppdb_engine_t* engine, ppdb_txn_t* txn,
                           ppdb_key_t* key, ppdb_value_t* value) {
     ppdb_mvcc_item_t* item = NULL;
     // Find or create item in storage (implementation depends on storage layer)
-    ppdb_error_t err = ppdb_storage_get(core, txn, key, NULL);
+    ppdb_error_t err = ppdb_storage_get(engine, txn, key, NULL);
     if (err != PPDB_OK && err != PPDB_ERROR_NOT_FOUND) return err;
     
     ppdb_sync_lock(item->lock);
@@ -109,11 +109,11 @@ ppdb_error_t ppdb_mvcc_put(ppdb_core_t* core, ppdb_txn_t* txn,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_mvcc_delete(ppdb_core_t* core, ppdb_txn_t* txn,
+ppdb_error_t ppdb_mvcc_delete(ppdb_engine_t* engine, ppdb_txn_t* txn,
                              ppdb_key_t* key) {
     // Delete is implemented as a put with NULL value
     ppdb_value_t null_value = {0};
-    return ppdb_mvcc_put(core, txn, key, &null_value);
+    return ppdb_mvcc_put(engine, txn, key, &null_value);
 }
 
 static void cleanup_versions(ppdb_mvcc_item_t* item, uint64_t oldest_active_ts) {

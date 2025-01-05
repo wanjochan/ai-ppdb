@@ -1,4 +1,4 @@
 #include "ppdb/internal.h"
 
-// Include core implementations
-#include "core/core_sync.inc.c"
+// Include engine implementations
+#include "engine/engine_sync.inc.c"

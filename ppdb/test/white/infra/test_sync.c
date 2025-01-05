@@ -69,24 +69,24 @@
 
 // Test cases
 void test_mutex_basic(void) {
-    ppdb_core_mutex_t* mutex = NULL;
+    ppdb_engine_mutex_t* mutex = NULL;
     ppdb_error_t err;
 
     // Create mutex
-    err = ppdb_core_mutex_create(&mutex);
+    err = ppdb_engine_mutex_create(&mutex);
     ASSERT_OK(err);
     ASSERT_NOT_NULL(mutex);
 
     // Lock mutex
-    err = ppdb_core_mutex_lock(mutex);
+    err = ppdb_engine_mutex_lock(mutex);
     ASSERT_OK(err);
 
     // Unlock mutex
-    err = ppdb_core_mutex_unlock(mutex);
+    err = ppdb_engine_mutex_unlock(mutex);
     ASSERT_OK(err);
 
     // Destroy mutex
-    ppdb_core_mutex_destroy(mutex);
+    ppdb_engine_mutex_destroy(mutex);
 }
 
 #define NUM_THREADS 4
@@ -95,7 +95,7 @@ void test_mutex_basic(void) {
 
 static atomic_uint counter = 0;
 static atomic_uint active_threads = 0;
-static ppdb_core_mutex_t* shared_mutex = NULL;
+static ppdb_engine_mutex_t* shared_mutex = NULL;
 static bool test_timeout = false;
 
 static void* thread_func(void* arg) {
@@ -105,7 +105,7 @@ static void* thread_func(void* arg) {
     atomic_fetch_add(&active_threads, 1);
 
     for (int i = 0; i < NUM_ITERATIONS && !test_timeout; i++) {
-        ppdb_error_t err = ppdb_core_mutex_lock(shared_mutex);
+        ppdb_error_t err = ppdb_engine_mutex_lock(shared_mutex);
         if (err != PPDB_OK) {
             printf("Thread %d: Lock failed with error %d\n", thread_id, err);
             break;
@@ -115,7 +115,7 @@ static void* thread_func(void* arg) {
         sched_yield();
         atomic_store(&counter, value + 1);
 
-        err = ppdb_core_mutex_unlock(shared_mutex);
+        err = ppdb_engine_mutex_unlock(shared_mutex);
         if (err != PPDB_OK) {
             printf("Thread %d: Unlock failed with error %d\n", thread_id, err);
             break;
@@ -151,7 +151,7 @@ void test_mutex_concurrent(void) {
         NUM_THREADS, NUM_ITERATIONS);
 
     // Create shared mutex
-    err = ppdb_core_mutex_create(&shared_mutex);
+    err = ppdb_engine_mutex_create(&shared_mutex);
     ASSERT_OK(err);
     ASSERT_NOT_NULL(shared_mutex);
 
@@ -189,7 +189,7 @@ void test_mutex_concurrent(void) {
     ASSERT_EQ(actual, expected);
 
     // Destroy mutex
-    ppdb_core_mutex_destroy(shared_mutex);
+    ppdb_engine_mutex_destroy(shared_mutex);
     shared_mutex = NULL;
 }
 

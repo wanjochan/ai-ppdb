@@ -20,21 +20,25 @@ if "%TARGET%"=="test42" (
 ) else if "%TARGET%"=="base" (
     call "%~dp0\build_base.bat" %BUILD_MODE%
     exit /b !errorlevel!
-) else if "%TARGET%"=="core" (
-    call "%~dp0\build_core.bat" %BUILD_MODE%
+) else if "%TARGET%"=="engine" (
+    call "%~dp0\build_engine.bat" %BUILD_MODE%
     exit /b !errorlevel!
 ) else if "%TARGET%"=="store" (
+    call "%~dp0\build_base.bat" %BUILD_MODE%
+    if errorlevel 1 exit /b 1
+    call "%~dp0\build_engine.bat" %BUILD_MODE%
+    if errorlevel 1 exit /b 1
     call "%~dp0\build_store.bat" %BUILD_MODE%
     exit /b !errorlevel!
 ) else if "%TARGET%"=="all" (
     call "%~dp0\build_base.bat" %BUILD_MODE%
     if errorlevel 1 exit /b 1
-    call "%~dp0\build_core.bat" %BUILD_MODE%
+    call "%~dp0\build_engine.bat" %BUILD_MODE%
     if errorlevel 1 exit /b 1
     call "%~dp0\build_store.bat" %BUILD_MODE%
     exit /b !errorlevel!
 ) else (
     echo Error: Unknown target %TARGET%
-    echo Available targets: test42, base, core, store, all
+    echo Available targets: test42, base, engine, store, all
     exit /b 1
 ) 
