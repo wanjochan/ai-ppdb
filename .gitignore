@@ -69,3 +69,4 @@ repos/
 agentic/venv/
 *.del
 *.un~
+*~

@@ -2,10 +2,12 @@
 
 ## 1. 概述
 
-PPDB存储引擎提供了一套完整的C语言API，支持基本的键值操作和高级特性�?
+PPDB存储引擎提供了一套完整的C语言API，支持基本的键值操作和高级特性。
+
 ## 2. 基础数据结构
 
-### 2.1 数据库实�?```c
+### 2.1 数据库实例
+```c
 typedef struct ppdb_t ppdb_t;
 ```
 
@@ -15,10 +17,13 @@ typedef struct {
     const char* data_dir;     // 数据目录
     size_t cache_size;        // 缓存大小
     bool sync_write;          // 同步写入
-    uint32_t max_file_size;   // 最大文件大�?    uint32_t block_size;      // 块大�?} ppdb_options_t;
+    uint32_t max_file_size;   // 最大文件大小
+    uint32_t block_size;      // 块大小
+} ppdb_options_t;
 ```
 
-### 2.3 迭代�?```c
+### 2.3 迭代器
+```c
 typedef struct ppdb_iterator_t ppdb_iterator_t;
 ```
 
@@ -54,7 +59,8 @@ ppdb_error_t ppdb_delete(ppdb_t* db,
 
 ### 4.1 批量操作
 ```c
-// 开始批量操�?ppdb_error_t ppdb_batch_begin(ppdb_t* db);
+// 开始批量操作
+ppdb_error_t ppdb_batch_begin(ppdb_t* db);
 
 // 提交批量操作
 ppdb_error_t ppdb_batch_commit(ppdb_t* db);
@@ -63,8 +69,10 @@ ppdb_error_t ppdb_batch_commit(ppdb_t* db);
 ppdb_error_t ppdb_batch_rollback(ppdb_t* db);
 ```
 
-### 4.2 迭代器操�?```c
-// 创建迭代�?ppdb_error_t ppdb_iterator_create(ppdb_t* db,
+### 4.2 迭代器操作
+```c
+// 创建迭代器
+ppdb_error_t ppdb_iterator_create(ppdb_t* db,
                                  const uint8_t* start_key,
                                  size_t start_key_len,
                                  ppdb_iterator_t** iter);
@@ -72,7 +80,8 @@ ppdb_error_t ppdb_batch_rollback(ppdb_t* db);
 // 移动到下一个键值对
 ppdb_error_t ppdb_iterator_next(ppdb_iterator_t* iter);
 
-// 获取当前键�?ppdb_error_t ppdb_iterator_get(ppdb_iterator_t* iter,
+// 获取当前键值
+ppdb_error_t ppdb_iterator_get(ppdb_iterator_t* iter,
                               uint8_t** key, size_t* key_len,
                               uint8_t** value, size_t* value_len);
 
@@ -84,7 +93,8 @@ void ppdb_iterator_destroy(ppdb_iterator_t* iter);
 
 ### 5.1 事务操作
 ```c
-// 开始事�?ppdb_error_t ppdb_txn_begin(ppdb_t* db);
+// 开始事务
+ppdb_error_t ppdb_txn_begin(ppdb_t* db);
 
 // 提交事务
 ppdb_error_t ppdb_txn_commit(ppdb_t* db);
@@ -101,7 +111,8 @@ ppdb_error_t ppdb_txn_rollback(ppdb_t* db);
 ppdb_error_t ppdb_snapshot_create(ppdb_t* db, 
                                  ppdb_snapshot_t** snapshot);
 
-// 从快照读�?ppdb_error_t ppdb_snapshot_get(ppdb_snapshot_t* snapshot,
+// 从快照读取
+ppdb_error_t ppdb_snapshot_get(ppdb_snapshot_t* snapshot,
                               const uint8_t* key, size_t key_len,
                               uint8_t** value, size_t* value_len);
 
@@ -111,7 +122,8 @@ void ppdb_snapshot_release(ppdb_snapshot_t* snapshot);
 
 ## 7. 错误处理
 
-### 7.1 错误�?```c
+### 7.1 错误码
+```c
 typedef enum {
     PPDB_OK = 0,
     PPDB_ERR_IO,
@@ -142,7 +154,8 @@ ppdb_options_t options = {
     .sync_write = true
 };
 
-// 打开数据�?ppdb_error_t err = ppdb_open(&options, &db);
+// 打开数据库
+ppdb_error_t err = ppdb_open(&options, &db);
 if (err != PPDB_OK) {
     fprintf(stderr, "Failed to open database: %s\n",
             ppdb_error_string(err));
@@ -155,5 +168,6 @@ const char* value = "world";
 err = ppdb_put(db, (uint8_t*)key, strlen(key),
                (uint8_t*)value, strlen(value));
 
-// 关闭数据�?ppdb_close(db);
+// 关闭数据库
+ppdb_close(db);
 ```
