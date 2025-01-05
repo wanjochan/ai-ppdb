@@ -84,19 +84,28 @@
 
 #### 2.1 Skip List
 - [ ] **Guideline**: Balance between complexity and performance
-- [ ] Basic implementation
-- [ ] Concurrent access
+- [x] Basic implementation
+- [x] Concurrent access
 - [ ] Memory layout optimization
 - [ ] Iterator support
 
 #### 2.2 Memory Table
 - [ ] **Guideline**: Focus on write amplification and read performance
-- [ ] Basic table structure
-- [ ] Concurrent operations
+- [x] Basic table structure
+- [x] Concurrent operations
 - [ ] Compaction strategy
 - [ ] Bloom filter
 
-#### 2.3 Sharding
+#### 2.3 Storage Interface
+- [x] **Guideline**: Design clean and extensible API
+- [x] Storage instance management
+- [x] Table operations interface
+- [x] Index operations interface
+- [x] Basic data operations (put/get/delete)
+- [ ] Statistics collection
+- [ ] Configuration management
+
+#### 2.4 Sharding
 - [ ] **Guideline**: Consider future distributed deployment
 - [ ] Sharding strategy
 - [ ] Data distribution
