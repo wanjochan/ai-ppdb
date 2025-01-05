@@ -162,6 +162,12 @@ void node_destroy(ppdb_node_t* node) {
         return;
     }
 
+    // 先清理原子计数器
+    ppdb_sync_counter_cleanup(&node->height);
+    ppdb_sync_counter_cleanup(&node->ref_count);
+    ppdb_sync_counter_cleanup(&node->is_deleted);
+    ppdb_sync_counter_cleanup(&node->is_garbage);
+
     if (node->key) {
         ppdb_key_cleanup(node->key);
         PPDB_ALIGNED_FREE(node->key);
@@ -198,8 +204,18 @@ void node_unref(ppdb_node_t* node) {
     if (!node) {
         return;
     }
-    if (ppdb_sync_counter_sub(&node->ref_count, 1) == 0) {
+    
+    // 先获取节点锁
+    ppdb_sync_lock(node->lock);
+    
+    if (ppdb_sync_counter_sub(&node->ref_count, 1) == 0 && 
+        !ppdb_sync_counter_load(&node->is_garbage)) {
+        // 标记为垃圾，延迟删除
+        ppdb_sync_counter_store(&node->is_garbage, 1);
+        ppdb_sync_unlock(node->lock);
         node_destroy(node);
+    } else {
+        ppdb_sync_unlock(node->lock);
     }
 }
 
@@ -356,20 +372,4 @@ ppdb_shard_t* get_shard(ppdb_base_t* base, const ppdb_key_t* key) {
 
     uint32_t shard_index = hash % base->config.shard_count;
     return &base->shards[shard_index];
-}
-
-static ppdb_random_state_t random_state;
-
-void init_random(void) {
-    // 使用当前时间作为种子
-    uint64_t seed = (uint64_t)time(NULL);
-    ppdb_random_init(&random_state, seed);
-}
-
-uint32_t random_level(void) {
-    uint32_t level = 1;
-    while (level < PPDB_MAX_HEIGHT && ppdb_random_double(&random_state) < PPDB_LEVEL_PROBABILITY) {
-        level++;
-    }
-    return level;
 }

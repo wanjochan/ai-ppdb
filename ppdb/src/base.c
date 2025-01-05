@@ -368,16 +368,68 @@ void aligned_free(void* ptr) {
 // 其他辅助函数
 //-----------------------------------------------------------------------------
 
-uint64_t ppdb_random(void) {
-    static _Atomic uint64_t counter = 0;
-    uint64_t value = atomic_fetch_add(&counter, 1);
-    value = value * 6364136223846793005ULL + 1442695040888963407ULL;
-    return value;
+// xoshiro256** 算法实现
+static inline uint64_t rotl(const uint64_t x, int k) {
+    return (x << k) | (x >> (64 - k));
+}
+
+void ppdb_random_init(ppdb_random_state_t* state, uint64_t seed) {
+    // 使用 SplitMix64 生成初始种子
+    uint64_t z = (seed + 0x9e3779b97f4a7c15);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+    state->seed[0] = z ^ (z >> 31);
+
+    z = (state->seed[0] + 0x9e3779b97f4a7c15);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+    state->seed[1] = z ^ (z >> 31);
+
+    z = (state->seed[1] + 0x9e3779b97f4a7c15);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+    state->seed[2] = z ^ (z >> 31);
+
+    z = (state->seed[2] + 0x9e3779b97f4a7c15);
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+    state->seed[3] = z ^ (z >> 31);
+}
+
+uint64_t ppdb_random_next(ppdb_random_state_t* state) {
+    const uint64_t result = rotl(state->seed[1] * 5, 7) * 9;
+    const uint64_t t = state->seed[1] << 17;
+
+    state->seed[2] ^= state->seed[0];
+    state->seed[3] ^= state->seed[1];
+    state->seed[1] ^= state->seed[2];
+    state->seed[0] ^= state->seed[3];
+
+    state->seed[2] ^= t;
+    state->seed[3] = rotl(state->seed[3], 45);
+
+    return result;
+}
+
+double ppdb_random_double(ppdb_random_state_t* state) {
+    // 生成 [0, 1) 范围的双精度浮点数
+    const uint64_t value = ppdb_random_next(state);
+    // 使用高53位来构造双精度浮点数
+    const uint64_t mask = (1ULL << 53) - 1;
+    return (value & mask) * (1.0 / (1ULL << 53));
+}
+
+static ppdb_random_state_t global_random_state;
+
+void init_random(void) {
+    // 使用当前时间作为种子
+    uint64_t seed = (uint64_t)time(NULL);
+    ppdb_random_init(&global_random_state, seed);
 }
 
 uint32_t random_level(void) {
     uint32_t level = 1;
-    while (level < PPDB_MAX_HEIGHT && (ppdb_random() & 0x3) == 0) {
+    while (level < PPDB_MAX_HEIGHT && ppdb_random_double(&global_random_state) < PPDB_LEVEL_PROBABILITY) {
         level++;
     }
     return level;
