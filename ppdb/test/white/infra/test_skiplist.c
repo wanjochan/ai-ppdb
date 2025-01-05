@@ -104,9 +104,24 @@ static void test_skiplist_random_level() {
         level_counts[level - 1]++;
     }
 
+    // Print level distribution
+    printf("\nLevel distribution:\n");
+    for (int i = 0; i < MAX_SKIPLIST_LEVEL; i++) {
+        if (level_counts[i] > 0) {
+            printf("Level %2d: %5d nodes", i + 1, level_counts[i]);
+            if (i > 0) {
+                float ratio = (float)level_counts[i] / level_counts[i-1];
+                printf(" (ratio: %.3f)", ratio);
+            }
+            printf("\n");
+        }
+    }
+
     // Verify level distribution follows approximate 1/4 probability
     for (int i = 1; i < MAX_SKIPLIST_LEVEL - 1; i++) {
+        if (level_counts[i] == 0 || level_counts[i-1] == 0) continue;
         float ratio = (float)level_counts[i] / level_counts[i-1];
+        printf("Level %d to %d ratio: %.3f\n", i + 1, i, ratio);
         // Allow some variance due to randomness
         assert(ratio > 0.15 && ratio < 0.35);
     }

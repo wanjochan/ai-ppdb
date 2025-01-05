@@ -19,6 +19,23 @@
              - 原生skiplist
              - 分片支持
              - 迭代器
+
+
+
+基础层 (base.c)
+├── 错误处理
+├── 日志系统
+├── 同步原语 (base_sync.inc.c)
+├── 内存分配
+└── 随机数生成
+
+存储层 (storage.c)
+├── 键值操作
+├── 节点操作 (storage_misc.inc.c)
+├── CRUD操作 (storage_crud.inc.c)
+└── 迭代器操作 (storage_iterator.inc.c)
+
+
 ```
 
 ### 1.2 核心组件
@@ -187,3 +204,4 @@ typedef struct ppdb_diskv {
 2. 更多存储引擎
 3. 云原生适配
 4. 监控体系完善 
+

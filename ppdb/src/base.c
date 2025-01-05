@@ -371,14 +371,13 @@ void aligned_free(void* ptr) {
 uint64_t ppdb_random(void) {
     static _Atomic uint64_t counter = 0;
     uint64_t value = atomic_fetch_add(&counter, 1);
-    value = value * 2862933555777941757ULL + 3037000493ULL;
-    value = (value >> 32) | (value << 32);
+    value = value * 6364136223846793005ULL + 1442695040888963407ULL;
     return value;
 }
 
 uint32_t random_level(void) {
     uint32_t level = 1;
-    while (level < PPDB_MAX_HEIGHT && (ppdb_random() % 100) < PPDB_LEVEL_PROBABILITY) {
+    while (level < PPDB_MAX_HEIGHT && (ppdb_random() & 0x3) == 0) {
         level++;
     }
     return level;

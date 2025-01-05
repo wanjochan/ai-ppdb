@@ -357,3 +357,19 @@ ppdb_shard_t* get_shard(ppdb_base_t* base, const ppdb_key_t* key) {
     uint32_t shard_index = hash % base->config.shard_count;
     return &base->shards[shard_index];
 }
+
+static ppdb_random_state_t random_state;
+
+void init_random(void) {
+    // 使用当前时间作为种子
+    uint64_t seed = (uint64_t)time(NULL);
+    ppdb_random_init(&random_state, seed);
+}
+
+uint32_t random_level(void) {
+    uint32_t level = 1;
+    while (level < PPDB_MAX_HEIGHT && ppdb_random_double(&random_state) < PPDB_LEVEL_PROBABILITY) {
+        level++;
+    }
+    return level;
+}

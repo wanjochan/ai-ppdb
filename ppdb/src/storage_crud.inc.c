@@ -1,19 +1,20 @@
 // Basic CRUD operations
 // This file is included by storage.c
 
-ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
-    if (!base) {
-        return PPDB_ERR_INVALID_ARGUMENT;
-    }
-
-    // Validate and setup configuration
-    ppdb_config_t cfg = {0};
-    if (config) {
-        memcpy(&cfg, config, sizeof(ppdb_config_t));
-    }
-    ppdb_error_t err = validate_and_setup_config(&cfg);
+ppdb_error_t ppdb_create(ppdb_config_t* config, ppdb_t** out_base) {
+    ppdb_error_t err;
+    
+    // 验证配置
+    err = validate_and_setup_config(config);
     if (err != PPDB_OK) {
         return err;
+    }
+    
+    // 初始化随机数生成器
+    init_random();
+    
+    if (!out_base) {
+        return PPDB_ERR_INVALID_ARGUMENT;
     }
 
     // Allocate base structure
@@ -24,18 +25,18 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     memset(b, 0, sizeof(ppdb_base_t));
 
     // Copy configuration
-    memcpy(&b->config, &cfg, sizeof(ppdb_config_t));
+    memcpy(&b->config, config, sizeof(ppdb_config_t));
 
     // Allocate shards
-    b->shards = PPDB_ALIGNED_ALLOC(sizeof(ppdb_shard_t) * cfg.shard_count);
+    b->shards = PPDB_ALIGNED_ALLOC(sizeof(ppdb_shard_t) * config->shard_count);
     if (!b->shards) {
         cleanup_base(b);
         return PPDB_ERR_NO_MEMORY;
     }
-    memset(b->shards, 0, sizeof(ppdb_shard_t) * cfg.shard_count);
+    memset(b->shards, 0, sizeof(ppdb_shard_t) * config->shard_count);
 
     // Initialize each shard
-    for (uint32_t i = 0; i < cfg.shard_count; i++) {
+    for (uint32_t i = 0; i < config->shard_count; i++) {
         ppdb_shard_t* shard = &b->shards[i];
 
         // Initialize metrics
@@ -55,7 +56,7 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
         // Initialize shard lock
         err = ppdb_sync_create(&shard->lock, &(ppdb_sync_config_t){
             .type = PPDB_SYNC_RWLOCK,
-            .use_lockfree = cfg.use_lockfree,
+            .use_lockfree = config->use_lockfree,
             .max_readers = 32,
             .backoff_us = 1,
             .max_retries = 100
@@ -66,7 +67,7 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
         }
     }
 
-    *base = b;
+    *out_base = b;
     return PPDB_OK;
 }
 

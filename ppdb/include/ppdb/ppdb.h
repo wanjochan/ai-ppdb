@@ -341,6 +341,10 @@ size_t ppdb_sync_counter_sub(ppdb_sync_counter_t* counter, size_t delta);
 size_t ppdb_sync_counter_load(ppdb_sync_counter_t* counter);
 void ppdb_sync_counter_store(ppdb_sync_counter_t* counter, size_t value);
 bool ppdb_sync_counter_cas(ppdb_sync_counter_t* counter, size_t expected, size_t desired);
+void ppdb_sync_counter_inc(ppdb_sync_counter_t* counter);
+void ppdb_sync_counter_dec(ppdb_sync_counter_t* counter);
+uint64_t ppdb_sync_counter_get(ppdb_sync_counter_t* counter);
+void ppdb_sync_counter_cleanup(ppdb_sync_counter_t* counter);
 
 // 
 ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, ppdb_sync_config_t* config);
@@ -439,50 +443,10 @@ int ppdb_peer_execute(ppdb_peer_t* peer, const char* cmd);
 int ppdb_peer_join(ppdb_peer_t* peer, const char* cluster);
 int ppdb_peer_replicate(ppdb_peer_t* peer, const char* master);
 
-/*
-//==============================================================================
-// Peer API
-//==============================================================================
+// 键值操作
+ppdb_error_t ppdb_key_copy(ppdb_key_t* dst, const ppdb_key_t* src);
+void ppdb_key_cleanup(ppdb_key_t* key);
+ppdb_error_t ppdb_value_copy(ppdb_value_t* dst, const ppdb_value_t* src);
+void ppdb_value_cleanup(ppdb_value_t* value);
 
-// Peer 相关常量
-#define PPDB_DEFAULT_PORT 11211
-#define PPDB_MAX_COMMAND_LEN 1024
-#define PPDB_MAX_VALUE_SIZE (1024 * 1024)  // 1MB
-
-// Peer 角色和状态
-typedef enum ppdb_peer_role_e {
-    PPDB_PEER_SERVER = 1,
-    PPDB_PEER_CLIENT = 2,
-    PPDB_PEER_REPLICA = 3,     // 预留
-    PPDB_PEER_CLUSTER = 4      // 预留
-} ppdb_peer_role_t;
-
-// Peer 错误码
-typedef enum ppdb_peer_error_e {
-    PPDB_PEER_OK = 0,
-    PPDB_PEER_ERROR = -1,
-    PPDB_PEER_AUTH_REQUIRED = -2,
-    PPDB_PEER_INVALID_COMMAND = -3,
-    PPDB_PEER_NETWORK_ERROR = -4
-} ppdb_peer_error_t;
-
-// Peer API 函数
-// 创建peer（服务端/客户端）
-ppdb_peer_t* ppdb_peer_create_server(ppdb_t* db, const char* host, int port);
-ppdb_peer_t* ppdb_peer_create_client(void);
-
-// 基础操作
-int ppdb_peer_start(ppdb_peer_t* peer);
-void ppdb_peer_stop(ppdb_peer_t* peer);
-void ppdb_peer_free(ppdb_peer_t* peer);
-
-// 客户端操作
-int ppdb_peer_connect(ppdb_peer_t* peer, const char* host, int port);
-int ppdb_peer_auth(ppdb_peer_t* peer, const char* user, const char* pass);
-int ppdb_peer_execute(ppdb_peer_t* peer, const char* cmd);
-
-// 为将来扩展预留的分布式接口
-int ppdb_peer_join(ppdb_peer_t* peer, const char* cluster);
-int ppdb_peer_replicate(ppdb_peer_t* peer, const char* master);
-*/
 #endif // PPDB_H
