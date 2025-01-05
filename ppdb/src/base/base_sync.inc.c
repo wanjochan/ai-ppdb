@@ -195,10 +195,10 @@ ppdb_error_t ppdb_sync_try_write_lock(ppdb_sync_t* sync) {
     return PPDB_ERR_BUSY;
 }
 
-ppdb_error_t ppdb_engine_mutex_create(ppdb_engine_mutex_t** mutex) {
+ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex) {
     if (!mutex) return PPDB_ERR_NULL_POINTER;
 
-    ppdb_engine_mutex_t* m = (ppdb_engine_mutex_t*)ppdb_aligned_alloc(16, sizeof(ppdb_engine_mutex_t));
+    ppdb_base_mutex_t* m = (ppdb_base_mutex_t*)ppdb_aligned_alloc(16, sizeof(ppdb_base_mutex_t));
     if (!m) return PPDB_ERR_OUT_OF_MEMORY;
 
     if (pthread_mutex_init(&m->mutex, NULL) != 0) {
@@ -211,7 +211,7 @@ ppdb_error_t ppdb_engine_mutex_create(ppdb_engine_mutex_t** mutex) {
     return PPDB_OK;
 }
 
-void ppdb_engine_mutex_destroy(ppdb_engine_mutex_t* mutex) {
+void ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex) {
     if (!mutex) return;
     if (mutex->initialized) {
         pthread_mutex_destroy(&mutex->mutex);
@@ -219,7 +219,7 @@ void ppdb_engine_mutex_destroy(ppdb_engine_mutex_t* mutex) {
     ppdb_aligned_free(mutex);
 }
 
-ppdb_error_t ppdb_engine_mutex_lock(ppdb_engine_mutex_t* mutex) {
+ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
     if (!mutex) return PPDB_ERR_NULL_POINTER;
     if (!mutex->initialized) return PPDB_ERR_INVALID_STATE;
 
@@ -229,7 +229,7 @@ ppdb_error_t ppdb_engine_mutex_lock(ppdb_engine_mutex_t* mutex) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_mutex_unlock(ppdb_engine_mutex_t* mutex) {
+ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex) {
     if (!mutex) return PPDB_ERR_NULL_POINTER;
     if (!mutex->initialized) return PPDB_ERR_INVALID_STATE;
 
@@ -239,4 +239,4 @@ ppdb_error_t ppdb_engine_mutex_unlock(ppdb_engine_mutex_t* mutex) {
     return PPDB_OK;
 }
 
-#endif // PPDB_BASE_SYNC_INC_C 
+#endif // PPDB_BASE_SYNC_INC_C

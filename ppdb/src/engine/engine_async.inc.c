@@ -2,17 +2,17 @@
 // Asynchronous Operations Implementation
 //-----------------------------------------------------------------------------
 
-struct ppdb_engine_async_loop {
+struct ppdb_base_async_loop {
     int epoll_fd;           // epoll 文件描述符
     bool is_running;        // 事件循环是否在运行
-    ppdb_engine_mutex_t* mutex;  // 保护内部状态
+    ppdb_base_mutex_t* mutex;  // 保护内部状态
 };
 
-struct ppdb_engine_async_handle {
-    ppdb_engine_async_loop_t* loop;  // 所属事件循环
+struct ppdb_base_async_handle {
+    ppdb_base_async_loop_t* loop;  // 所属事件循环
     int fd;                        // 文件描述符
     void* data;                    // 用户数据
-    ppdb_engine_async_cb callback;   // 回调函数
+    ppdb_base_async_cb callback;   // 回调函数
     struct {
         void* buf;                 // 读写缓冲区
         size_t len;                // 缓冲区长度
@@ -20,36 +20,36 @@ struct ppdb_engine_async_handle {
     } io;
 };
 
-struct ppdb_engine_async_future {
-    ppdb_engine_async_loop_t* loop;  // 所属事件循环
+struct ppdb_base_async_future {
+    ppdb_base_async_loop_t* loop;  // 所属事件循环
     bool is_ready;                 // 是否就绪
     void* result;                  // 结果数据
-    ppdb_engine_mutex_t* mutex;      // 保护内部状态
-    ppdb_engine_cond_t* cond;        // 条件变量
+    ppdb_base_mutex_t* mutex;      // 保护内部状态
+    ppdb_base_cond_t* cond;        // 条件变量
 };
 
 // Event loop operations
-ppdb_error_t ppdb_engine_async_loop_create(ppdb_engine_async_loop_t** loop) {
+ppdb_error_t ppdb_base_async_loop_create(ppdb_base_async_loop_t** loop) {
     if (!loop) return PPDB_ERR_NULL_POINTER;
     
-    *loop = ppdb_engine_alloc(sizeof(ppdb_engine_async_loop_t));
+    *loop = ppdb_base_alloc(sizeof(ppdb_base_async_loop_t));
     if (!*loop) return PPDB_ERR_OUT_OF_MEMORY;
     
-    memset(*loop, 0, sizeof(ppdb_engine_async_loop_t));
+    memset(*loop, 0, sizeof(ppdb_base_async_loop_t));
     
     // 创建 epoll 实例
     (*loop)->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
     if ((*loop)->epoll_fd < 0) {
-        ppdb_engine_free(*loop);
+        ppdb_base_free(*loop);
         *loop = NULL;
         return PPDB_ERR_INTERNAL;
     }
     
     // 创建互斥锁
-    ppdb_error_t err = ppdb_engine_mutex_create(&(*loop)->mutex);
+    ppdb_error_t err = ppdb_base_mutex_create(&(*loop)->mutex);
     if (err != PPDB_OK) {
         close((*loop)->epoll_fd);
-        ppdb_engine_free(*loop);
+        ppdb_base_free(*loop);
         *loop = NULL;
         return err;
     }
@@ -57,38 +57,38 @@ ppdb_error_t ppdb_engine_async_loop_create(ppdb_engine_async_loop_t** loop) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_async_loop_destroy(ppdb_engine_async_loop_t* loop) {
+ppdb_error_t ppdb_base_async_loop_destroy(ppdb_base_async_loop_t* loop) {
     if (!loop) return PPDB_ERR_NULL_POINTER;
     
     if (loop->mutex) {
-        ppdb_engine_mutex_destroy(loop->mutex);
+        ppdb_base_mutex_destroy(loop->mutex);
     }
     
     if (loop->epoll_fd >= 0) {
         close(loop->epoll_fd);
     }
     
-    ppdb_engine_free(loop);
+    ppdb_base_free(loop);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_async_loop_run(ppdb_engine_async_loop_t* loop, int timeout_ms) {
+ppdb_error_t ppdb_base_async_loop_run(ppdb_base_async_loop_t* loop, int timeout_ms) {
     if (!loop) return PPDB_ERR_NULL_POINTER;
     
     struct epoll_event events[64];
     int nfds;
     
-    ppdb_engine_mutex_lock(loop->mutex);
+    ppdb_base_mutex_lock(loop->mutex);
     loop->is_running = true;
-    ppdb_engine_mutex_unlock(loop->mutex);
+    ppdb_base_mutex_unlock(loop->mutex);
     
     while (1) {
-        ppdb_engine_mutex_lock(loop->mutex);
+        ppdb_base_mutex_lock(loop->mutex);
         if (!loop->is_running) {
-            ppdb_engine_mutex_unlock(loop->mutex);
+            ppdb_base_mutex_unlock(loop->mutex);
             break;
         }
-        ppdb_engine_mutex_unlock(loop->mutex);
+        ppdb_base_mutex_unlock(loop->mutex);
         
         nfds = epoll_wait(loop->epoll_fd, events, 64, timeout_ms);
         if (nfds < 0) {
@@ -97,7 +97,7 @@ ppdb_error_t ppdb_engine_async_loop_run(ppdb_engine_async_loop_t* loop, int time
         }
         
         for (int i = 0; i < nfds; i++) {
-            ppdb_engine_async_handle_t* handle = events[i].data.ptr;
+            ppdb_base_async_handle_t* handle = events[i].data.ptr;
             if (!handle || !handle->callback) continue;
             
             int status = 0;
@@ -119,37 +119,37 @@ ppdb_error_t ppdb_engine_async_loop_run(ppdb_engine_async_loop_t* loop, int time
 }
 
 // I/O handle operations
-ppdb_error_t ppdb_engine_async_handle_create(ppdb_engine_async_loop_t* loop,
+ppdb_error_t ppdb_base_async_handle_create(ppdb_base_async_loop_t* loop,
                                           int fd,
-                                          ppdb_engine_async_handle_t** handle) {
+                                          ppdb_base_async_handle_t** handle) {
     if (!loop || !handle) return PPDB_ERR_NULL_POINTER;
     if (fd < 0) return PPDB_ERR_INVALID_ARGUMENT;
     
-    *handle = ppdb_engine_alloc(sizeof(ppdb_engine_async_handle_t));
+    *handle = ppdb_base_alloc(sizeof(ppdb_base_async_handle_t));
     if (!*handle) return PPDB_ERR_OUT_OF_MEMORY;
     
-    memset(*handle, 0, sizeof(ppdb_engine_async_handle_t));
+    memset(*handle, 0, sizeof(ppdb_base_async_handle_t));
     (*handle)->loop = loop;
     (*handle)->fd = fd;
     
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_async_handle_destroy(ppdb_engine_async_handle_t* handle) {
+ppdb_error_t ppdb_base_async_handle_destroy(ppdb_base_async_handle_t* handle) {
     if (!handle) return PPDB_ERR_NULL_POINTER;
     
     if (handle->io.buf) {
-        ppdb_engine_free(handle->io.buf);
+        ppdb_base_free(handle->io.buf);
     }
     
-    ppdb_engine_free(handle);
+    ppdb_base_free(handle);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_async_read(ppdb_engine_async_handle_t* handle,
+ppdb_error_t ppdb_base_async_read(ppdb_base_async_handle_t* handle,
                                  void* buf,
                                  size_t len,
-                                 ppdb_engine_async_cb cb) {
+                                 ppdb_base_async_cb cb) {
     if (!handle || !buf || !cb) return PPDB_ERR_NULL_POINTER;
     if (len == 0) return PPDB_ERR_INVALID_ARGUMENT;
     
@@ -169,10 +169,10 @@ ppdb_error_t ppdb_engine_async_read(ppdb_engine_async_handle_t* handle,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_async_write(ppdb_engine_async_handle_t* handle,
+ppdb_error_t ppdb_base_async_write(ppdb_base_async_handle_t* handle,
                                   const void* buf,
                                   size_t len,
-                                  ppdb_engine_async_cb cb) {
+                                  ppdb_base_async_cb cb) {
     if (!handle || !buf || !cb) return PPDB_ERR_NULL_POINTER;
     if (len == 0) return PPDB_ERR_INVALID_ARGUMENT;
     
@@ -193,19 +193,19 @@ ppdb_error_t ppdb_engine_async_write(ppdb_engine_async_handle_t* handle,
 }
 
 // Future pattern
-ppdb_error_t ppdb_engine_async_future_create(ppdb_engine_async_loop_t* loop,
-                                          ppdb_engine_async_future_t** future) {
+ppdb_error_t ppdb_base_async_future_create(ppdb_base_async_loop_t* loop,
+                                          ppdb_base_async_future_t** future) {
     if (!loop || !future) return PPDB_ERR_NULL_POINTER;
     
-    *future = ppdb_engine_alloc(sizeof(ppdb_engine_async_future_t));
+    *future = ppdb_base_alloc(sizeof(ppdb_base_async_future_t));
     if (!*future) return PPDB_ERR_OUT_OF_MEMORY;
     
-    memset(*future, 0, sizeof(ppdb_engine_async_future_t));
+    memset(*future, 0, sizeof(ppdb_base_async_future_t));
     (*future)->loop = loop;
     
-    ppdb_error_t err = ppdb_engine_mutex_create(&(*future)->mutex);
+    ppdb_error_t err = ppdb_base_mutex_create(&(*future)->mutex);
     if (err != PPDB_OK) {
-        ppdb_engine_free(*future);
+        ppdb_base_free(*future);
         *future = NULL;
         return err;
     }
@@ -215,11 +215,11 @@ ppdb_error_t ppdb_engine_async_future_create(ppdb_engine_async_loop_t* loop,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_async_future_destroy(ppdb_engine_async_future_t* future) {
+ppdb_error_t ppdb_base_async_future_destroy(ppdb_base_async_future_t* future) {
     if (!future) return PPDB_ERR_NULL_POINTER;
     
     if (future->mutex) {
-        ppdb_engine_mutex_destroy(future->mutex);
+        ppdb_base_mutex_destroy(future->mutex);
     }
     
     if (future->cond) {
@@ -227,33 +227,33 @@ ppdb_error_t ppdb_engine_async_future_destroy(ppdb_engine_async_future_t* future
     }
     
     if (future->result) {
-        ppdb_engine_free(future->result);
+        ppdb_base_free(future->result);
     }
     
-    ppdb_engine_free(future);
+    ppdb_base_free(future);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_async_future_wait(ppdb_engine_async_future_t* future) {
+ppdb_error_t ppdb_base_async_future_wait(ppdb_base_async_future_t* future) {
     if (!future) return PPDB_ERR_NULL_POINTER;
     
-    ppdb_engine_mutex_lock(future->mutex);
+    ppdb_base_mutex_lock(future->mutex);
     while (!future->is_ready) {
         // TODO: 实现条件变量等待
-        ppdb_engine_thread_yield();
+        ppdb_base_thread_yield();
     }
-    ppdb_engine_mutex_unlock(future->mutex);
+    ppdb_base_mutex_unlock(future->mutex);
     
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_async_future_is_ready(ppdb_engine_async_future_t* future,
+ppdb_error_t ppdb_base_async_future_is_ready(ppdb_base_async_future_t* future,
                                             bool* ready) {
     if (!future || !ready) return PPDB_ERR_NULL_POINTER;
     
-    ppdb_engine_mutex_lock(future->mutex);
+    ppdb_base_mutex_lock(future->mutex);
     *ready = future->is_ready;
-    ppdb_engine_mutex_unlock(future->mutex);
+    ppdb_base_mutex_unlock(future->mutex);
     
     return PPDB_OK;
 }

@@ -1,34 +1,25 @@
 //-----------------------------------------------------------------------------
-// Memory Management Implementation
+// Memory Management Implementation (Moved to base/base_mem.inc.c)
+// This file should be deprecated after migration
 //-----------------------------------------------------------------------------
 
+// These functions are now moved to base layer and should be updated to use base_ prefix
+// Keeping stubs here for backward compatibility
+
 void* ppdb_engine_alloc(size_t size) {
-    if (size == 0) return NULL;
-    return aligned_alloc(PPDB_ALIGNMENT, (size + PPDB_ALIGNMENT - 1) & ~(PPDB_ALIGNMENT - 1));
+    return ppdb_base_alloc(size);  // Call new base layer function
 }
 
 void ppdb_engine_free(void* ptr) {
-    if (ptr) free(ptr);
+    ppdb_base_free(ptr);  // Call new base layer function
 }
 
 void* ppdb_engine_calloc(size_t nmemb, size_t size) {
-    if (nmemb == 0 || size == 0) return NULL;
-    
-    size_t total_size = nmemb * size;
-    // Check for overflow
-    if (size != total_size / nmemb) return NULL;
-    
-    void* ptr = ppdb_engine_alloc(total_size);
-    if (ptr) memset(ptr, 0, total_size);
-    return ptr;
+    return ppdb_base_calloc(nmemb, size);  // Call new base layer function
 }
 
 void* ppdb_engine_realloc(void* ptr, size_t size) {
-    if (size == 0) {
-        ppdb_engine_free(ptr);
-        return NULL;
-    }
-    
-    size_t aligned_size = (size + PPDB_ALIGNMENT - 1) & ~(PPDB_ALIGNMENT - 1);
-    return realloc(ptr, aligned_size);
+    return ppdb_base_realloc(ptr, size);  // Call new base layer function
 }
+
+// ... existing code ...

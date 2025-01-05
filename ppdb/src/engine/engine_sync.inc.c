@@ -2,15 +2,15 @@
 // Synchronization Primitives Implementation
 //-----------------------------------------------------------------------------
 
-struct ppdb_engine_mutex {
+struct ppdb_base_mutex {
     pthread_mutex_t mutex;
     atomic_flag spinlock;
     atomic_uint64_t version;
-    ppdb_engine_sync_config_t config;
-    ppdb_engine_sync_stats_t* stats;
+    ppdb_base_sync_config_t config;
+    ppdb_base_sync_stats_t* stats;
 };
 
-struct ppdb_engine_rwlock {
+struct ppdb_base_rwlock {
     union {
         pthread_rwlock_t rwlock;
         struct {
@@ -20,40 +20,40 @@ struct ppdb_engine_rwlock {
             atomic_uint64_t version;
         } lockfree;
     };
-    ppdb_engine_sync_config_t config;
-    ppdb_engine_sync_stats_t* stats;
+    ppdb_base_sync_config_t config;
+    ppdb_base_sync_stats_t* stats;
 };
 
-struct ppdb_engine_cond {
+struct ppdb_base_cond {
     pthread_cond_t cond;
 };
 
-struct ppdb_engine_sync {
+struct ppdb_base_sync {
     pthread_mutex_t mutex;
     atomic_flag spinlock;
     atomic_uint64_t version;
-    ppdb_engine_sync_config_t config;
-    ppdb_engine_sync_stats_t* stats;
+    ppdb_base_sync_config_t config;
+    ppdb_base_sync_stats_t* stats;
 };
 
 // Sync operations
-ppdb_error_t ppdb_engine_sync_create(ppdb_engine_sync_t** sync, ppdb_engine_sync_config_t* config) {
+ppdb_error_t ppdb_base_sync_create(ppdb_base_sync_t** sync, ppdb_base_sync_config_t* config) {
     if (!sync || !config) return PPDB_ERR_NULL_POINTER;
     
-    *sync = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, sizeof(ppdb_engine_sync_t));
+    *sync = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, sizeof(ppdb_base_sync_t));
     if (!*sync) return PPDB_ERR_OUT_OF_MEMORY;
     
-    memset(*sync, 0, sizeof(ppdb_engine_sync_t));
+    memset(*sync, 0, sizeof(ppdb_base_sync_t));
     (*sync)->config = *config;
     
     // 初始化统计信息
     if (config->collect_stats) {
-        (*sync)->stats = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, sizeof(ppdb_engine_sync_stats_t));
+        (*sync)->stats = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, sizeof(ppdb_base_sync_stats_t));
         if (!(*sync)->stats) {
             ppdb_engine_free(*sync);
             return PPDB_ERR_OUT_OF_MEMORY;
         }
-        memset((*sync)->stats, 0, sizeof(ppdb_engine_sync_stats_t));
+        memset((*sync)->stats, 0, sizeof(ppdb_base_sync_stats_t));
     }
     
     // 如果启用无锁模式，强制使用自旋锁
@@ -73,7 +73,7 @@ ppdb_error_t ppdb_engine_sync_create(ppdb_engine_sync_t** sync, ppdb_engine_sync
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_sync_destroy(ppdb_engine_sync_t* sync) {
+ppdb_error_t ppdb_base_sync_destroy(ppdb_base_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
     if (!sync->config.use_lockfree) {
@@ -90,7 +90,7 @@ ppdb_error_t ppdb_engine_sync_destroy(ppdb_engine_sync_t* sync) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_sync_lock(ppdb_engine_sync_t* sync) {
+ppdb_error_t ppdb_base_sync_lock(ppdb_base_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
     uint64_t start_time = 0;
@@ -141,7 +141,7 @@ ppdb_error_t ppdb_engine_sync_lock(ppdb_engine_sync_t* sync) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_sync_unlock(ppdb_engine_sync_t* sync) {
+ppdb_error_t ppdb_base_sync_unlock(ppdb_base_sync_t* sync) {
     if (!sync) return PPDB_ERR_NULL_POINTER;
     
     if (sync->config.use_lockfree) {
@@ -159,13 +159,13 @@ ppdb_error_t ppdb_engine_sync_unlock(ppdb_engine_sync_t* sync) {
 }
 
 // Mutex operations
-ppdb_error_t ppdb_engine_mutex_create(ppdb_engine_mutex_t** mutex) {
+ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex) {
     if (!mutex) return PPDB_ERR_NULL_POINTER;
     
-    *mutex = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, sizeof(ppdb_engine_mutex_t));
+    *mutex = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, sizeof(ppdb_base_mutex_t));
     if (!*mutex) return PPDB_ERR_OUT_OF_MEMORY;
     
-    memset(*mutex, 0, sizeof(ppdb_engine_mutex_t));
+    memset(*mutex, 0, sizeof(ppdb_base_mutex_t));
     atomic_flag_clear(&(*mutex)->spinlock);
     atomic_init(&(*mutex)->version, 0);
     
@@ -184,7 +184,7 @@ ppdb_error_t ppdb_engine_mutex_create(ppdb_engine_mutex_t** mutex) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_mutex_destroy(ppdb_engine_mutex_t* mutex) {
+ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex) {
     if (!mutex) return PPDB_ERR_NULL_POINTER;
     
     if (!mutex->config.use_lockfree) {
@@ -197,7 +197,7 @@ ppdb_error_t ppdb_engine_mutex_destroy(ppdb_engine_mutex_t* mutex) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_mutex_lock(ppdb_engine_mutex_t* mutex) {
+ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
     if (!mutex) return PPDB_ERR_NULL_POINTER;
     
     if (mutex->config.use_lockfree) {
@@ -245,7 +245,7 @@ ppdb_error_t ppdb_engine_mutex_lock(ppdb_engine_mutex_t* mutex) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_mutex_unlock(ppdb_engine_mutex_t* mutex) {
+ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex) {
     if (!mutex) return PPDB_ERR_NULL_POINTER;
     
     if (mutex->config.use_lockfree) {
@@ -260,7 +260,7 @@ ppdb_error_t ppdb_engine_mutex_unlock(ppdb_engine_mutex_t* mutex) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_mutex_trylock(ppdb_engine_mutex_t* mutex) {
+ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex) {
     if (!mutex) return PPDB_ERR_NULL_POINTER;
     
     if (mutex->config.use_lockfree) {
@@ -281,13 +281,13 @@ ppdb_error_t ppdb_engine_mutex_trylock(ppdb_engine_mutex_t* mutex) {
 }
 
 // RWLock operations
-ppdb_error_t ppdb_engine_rwlock_create(ppdb_engine_rwlock_t** lock) {
+ppdb_error_t ppdb_base_rwlock_create(ppdb_base_rwlock_t** lock) {
     if (!lock) return PPDB_ERR_NULL_POINTER;
     
-    *lock = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, sizeof(ppdb_engine_rwlock_t));
+    *lock = ppdb_engine_aligned_alloc(PPDB_ALIGNMENT, sizeof(ppdb_base_rwlock_t));
     if (!*lock) return PPDB_ERR_OUT_OF_MEMORY;
     
-    memset(*lock, 0, sizeof(ppdb_engine_rwlock_t));
+    memset(*lock, 0, sizeof(ppdb_base_rwlock_t));
     atomic_init(&(*lock)->lockfree.version, 0);
     
     (*lock)->config.type = PPDB_ENGINE_SYNC_RWLOCK;
@@ -310,7 +310,7 @@ ppdb_error_t ppdb_engine_rwlock_create(ppdb_engine_rwlock_t** lock) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_rwlock_destroy(ppdb_engine_rwlock_t* lock) {
+ppdb_error_t ppdb_base_rwlock_destroy(ppdb_base_rwlock_t* lock) {
     if (!lock) return PPDB_ERR_NULL_POINTER;
     
     if (!lock->config.use_lockfree) {
@@ -323,7 +323,7 @@ ppdb_error_t ppdb_engine_rwlock_destroy(ppdb_engine_rwlock_t* lock) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_rwlock_rdlock(ppdb_engine_rwlock_t* lock) {
+ppdb_error_t ppdb_base_rwlock_rdlock(ppdb_base_rwlock_t* lock) {
     if (!lock) return PPDB_ERR_NULL_POINTER;
     
     if (lock->config.use_lockfree) {
@@ -388,7 +388,7 @@ ppdb_error_t ppdb_engine_rwlock_rdlock(ppdb_engine_rwlock_t* lock) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_rwlock_wrlock(ppdb_engine_rwlock_t* lock) {
+ppdb_error_t ppdb_base_rwlock_wrlock(ppdb_base_rwlock_t* lock) {
     if (!lock) return PPDB_ERR_NULL_POINTER;
     
     if (lock->config.use_lockfree) {
@@ -446,7 +446,7 @@ ppdb_error_t ppdb_engine_rwlock_wrlock(ppdb_engine_rwlock_t* lock) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_rwlock_unlock(ppdb_engine_rwlock_t* lock) {
+ppdb_error_t ppdb_base_rwlock_unlock(ppdb_base_rwlock_t* lock) {
     if (!lock) return PPDB_ERR_NULL_POINTER;
     
     if (lock->config.use_lockfree) {
@@ -477,22 +477,22 @@ ppdb_error_t ppdb_engine_rwlock_unlock(ppdb_engine_rwlock_t* lock) {
 }
 
 // Atomic operations
-size_t ppdb_engine_atomic_load(const size_t* ptr) {
+size_t ppdb_base_atomic_load(const size_t* ptr) {
     return atomic_load((const atomic_size_t*)ptr);
 }
 
-void ppdb_engine_atomic_store(size_t* ptr, size_t val) {
+void ppdb_base_atomic_store(size_t* ptr, size_t val) {
     atomic_store((atomic_size_t*)ptr, val);
 }
 
-size_t ppdb_engine_atomic_add(size_t* ptr, size_t val) {
+size_t ppdb_base_atomic_add(size_t* ptr, size_t val) {
     return atomic_fetch_add((atomic_size_t*)ptr, val);
 }
 
-size_t ppdb_engine_atomic_sub(size_t* ptr, size_t val) {
+size_t ppdb_base_atomic_sub(size_t* ptr, size_t val) {
     return atomic_fetch_sub((atomic_size_t*)ptr, val);
 }
 
-bool ppdb_engine_atomic_cas(size_t* ptr, size_t expected, size_t desired) {
+bool ppdb_base_atomic_cas(size_t* ptr, size_t expected, size_t desired) {
     return atomic_compare_exchange_strong((atomic_size_t*)ptr, &expected, desired);
 }

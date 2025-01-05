@@ -3,15 +3,20 @@
 
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
-#include "ppdb/internal/engine.h"
 
-// Log levels
+// Base layer constants
 #define PPDB_LOG_DEBUG 0
 #define PPDB_LOG_INFO  1
 #define PPDB_LOG_WARN  2
 #define PPDB_LOG_ERROR 3
+#define MAX_SKIPLIST_LEVEL 32
 
-// Memory pool
+// Base types (moved from engine)
+typedef struct ppdb_mutex_s ppdb_mutex_t;
+typedef struct ppdb_rwlock_s ppdb_rwlock_t;
+typedef struct ppdb_cond_s ppdb_cond_t;
+
+// Memory pool structures
 typedef struct ppdb_mempool_block_s {
     struct ppdb_mempool_block_s* next;
     size_t size;
@@ -40,7 +45,7 @@ typedef struct ppdb_cursor_s {
     void* internal;
 } ppdb_cursor_t;
 
-// Sync types
+// Sync types with updated mutex reference
 typedef struct ppdb_sync_config_s {
     bool thread_safe;
     uint32_t spin_count;
@@ -48,11 +53,23 @@ typedef struct ppdb_sync_config_s {
 } ppdb_sync_config_t;
 
 typedef struct ppdb_sync_s {
-    ppdb_engine_mutex_t* mutex;
+    ppdb_mutex_t* mutex;  // Updated to use base mutex type
     uint32_t readers;
     bool writer;
     ppdb_sync_config_t config;
 } ppdb_sync_t;
+
+// Base layer operations (moved from engine)
+ppdb_error_t ppdb_mutex_create(ppdb_mutex_t** mutex);
+void ppdb_mutex_destroy(ppdb_mutex_t* mutex);
+ppdb_error_t ppdb_mutex_lock(ppdb_mutex_t* mutex);
+ppdb_error_t ppdb_mutex_unlock(ppdb_mutex_t* mutex);
+
+ppdb_error_t ppdb_rwlock_create(ppdb_rwlock_t** rwlock);
+void ppdb_rwlock_destroy(ppdb_rwlock_t* rwlock);
+ppdb_error_t ppdb_rwlock_rdlock(ppdb_rwlock_t* rwlock);
+ppdb_error_t ppdb_rwlock_wrlock(ppdb_rwlock_t* rwlock);
+ppdb_error_t ppdb_rwlock_unlock(ppdb_rwlock_t* rwlock);
 
 // Memory management
 void* ppdb_aligned_alloc(size_t alignment, size_t size);
@@ -94,33 +111,5 @@ void ppdb_log_debug(const char* format, ...);
 void ppdb_log_info(const char* format, ...);
 void ppdb_log_warn(const char* format, ...);
 void ppdb_log_error(const char* format, ...);
-
-// Base layer definitions
-#define MAX_SKIPLIST_LEVEL 32
-
-typedef struct ppdb_node_s {
-    ppdb_base_t* base;
-    ppdb_data_t* key;
-    ppdb_data_t* value;
-    uint32_t height;
-    struct {
-        _Atomic(uint32_t) ref_count;
-        _Atomic(bool) marked;
-    } state_machine;
-    struct ppdb_node_s* next[0];  // flexible array member
-} ppdb_node_t;
-
-// Node management functions
-ppdb_node_t* node_create(ppdb_base_t* base, const ppdb_data_t* key, const ppdb_data_t* value, uint32_t height);
-void node_ref(ppdb_node_t* node);
-void node_unref(ppdb_node_t* node);
-bool node_is_active(const ppdb_node_t* node);
-bool node_try_mark(ppdb_node_t* node);
-uint32_t node_get_height(const ppdb_node_t* node);
-uint32_t random_level(void);
-
-// Base operations
-ppdb_error_t ppdb_base_init(ppdb_base_t** base);
-void ppdb_base_destroy(ppdb_base_t* base);
 
 #endif // PPDB_INTERNAL_BASE_H_

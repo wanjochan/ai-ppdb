@@ -4,17 +4,17 @@
 
 #ifdef _WIN32
 
-struct ppdb_engine_iocp_loop {
+struct ppdb_base_iocp_loop {
     HANDLE iocp;
     bool is_running;
-    ppdb_engine_mutex_t* mutex;
+    ppdb_base_mutex_t* mutex;
 };
 
-struct ppdb_engine_iocp_handle {
-    ppdb_engine_iocp_loop_t* loop;
+struct ppdb_base_iocp_handle {
+    ppdb_base_iocp_loop_t* loop;
     HANDLE handle;
     void* data;
-    ppdb_engine_async_cb callback;
+    ppdb_base_async_cb callback;
     OVERLAPPED overlapped;
     struct {
         void* buf;
@@ -23,27 +23,27 @@ struct ppdb_engine_iocp_handle {
     } io;
 };
 
-ppdb_error_t ppdb_engine_iocp_loop_create(ppdb_engine_iocp_loop_t** loop) {
+ppdb_error_t ppdb_base_iocp_loop_create(ppdb_base_iocp_loop_t** loop) {
     if (!loop) return PPDB_ERR_NULL_POINTER;
 
-    *loop = ppdb_engine_alloc(sizeof(ppdb_engine_iocp_loop_t));
+    *loop = ppdb_base_alloc(sizeof(ppdb_base_iocp_loop_t));
     if (!*loop) return PPDB_ERR_OUT_OF_MEMORY;
 
-    memset(*loop, 0, sizeof(ppdb_engine_iocp_loop_t));
+    memset(*loop, 0, sizeof(ppdb_base_iocp_loop_t));
 
     // 创建 IOCP
     (*loop)->iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
     if (!(*loop)->iocp) {
-        ppdb_engine_free(*loop);
+        ppdb_base_free(*loop);
         *loop = NULL;
         return PPDB_ERR_INTERNAL;
     }
 
     // 创建互斥锁
-    ppdb_error_t err = ppdb_engine_mutex_create(&(*loop)->mutex);
+    ppdb_error_t err = ppdb_base_mutex_create(&(*loop)->mutex);
     if (err != PPDB_OK) {
         CloseHandle((*loop)->iocp);
-        ppdb_engine_free(*loop);
+        ppdb_base_free(*loop);
         *loop = NULL;
         return err;
     }
@@ -51,40 +51,40 @@ ppdb_error_t ppdb_engine_iocp_loop_create(ppdb_engine_iocp_loop_t** loop) {
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_iocp_loop_destroy(ppdb_engine_iocp_loop_t* loop) {
+ppdb_error_t ppdb_base_iocp_loop_destroy(ppdb_base_iocp_loop_t* loop) {
     if (!loop) return PPDB_ERR_NULL_POINTER;
 
     if (loop->mutex) {
-        ppdb_engine_mutex_destroy(loop->mutex);
+        ppdb_base_mutex_destroy(loop->mutex);
     }
 
     if (loop->iocp) {
         CloseHandle(loop->iocp);
     }
 
-    ppdb_engine_free(loop);
+    ppdb_base_free(loop);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_iocp_loop_run(ppdb_engine_iocp_loop_t* loop, int timeout_ms) {
+ppdb_error_t ppdb_base_iocp_loop_run(ppdb_base_iocp_loop_t* loop, int timeout_ms) {
     if (!loop) return PPDB_ERR_NULL_POINTER;
 
     DWORD bytes;
     ULONG_PTR key;
     OVERLAPPED* overlapped;
-    ppdb_engine_iocp_handle_t* handle;
+    ppdb_base_iocp_handle_t* handle;
 
-    ppdb_engine_mutex_lock(loop->mutex);
+    ppdb_base_mutex_lock(loop->mutex);
     loop->is_running = true;
-    ppdb_engine_mutex_unlock(loop->mutex);
+    ppdb_base_mutex_unlock(loop->mutex);
 
     while (1) {
-        ppdb_engine_mutex_lock(loop->mutex);
+        ppdb_base_mutex_lock(loop->mutex);
         if (!loop->is_running) {
-            ppdb_engine_mutex_unlock(loop->mutex);
+            ppdb_base_mutex_unlock(loop->mutex);
             break;
         }
-        ppdb_engine_mutex_unlock(loop->mutex);
+        ppdb_base_mutex_unlock(loop->mutex);
 
         BOOL success = GetQueuedCompletionStatus(loop->iocp,
                                                &bytes,
@@ -99,32 +99,32 @@ ppdb_error_t ppdb_engine_iocp_loop_run(ppdb_engine_iocp_loop_t* loop, int timeou
             continue;
         }
 
-        handle = CONTAINING_RECORD(overlapped, ppdb_engine_iocp_handle_t, overlapped);
+        handle = CONTAINING_RECORD(overlapped, ppdb_base_iocp_handle_t, overlapped);
         if (!handle || !handle->callback) continue;
 
         int status = success ? (int)bytes : -1;
-        handle->callback((ppdb_engine_async_handle_t*)handle, status);
+        handle->callback((ppdb_base_async_handle_t*)handle, status);
     }
 
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_iocp_handle_create(ppdb_engine_iocp_loop_t* loop,
+ppdb_error_t ppdb_base_iocp_handle_create(ppdb_base_iocp_loop_t* loop,
                                          HANDLE win_handle,
-                                         ppdb_engine_iocp_handle_t** handle) {
+                                         ppdb_base_iocp_handle_t** handle) {
     if (!loop || !handle) return PPDB_ERR_NULL_POINTER;
     if (win_handle == INVALID_HANDLE_VALUE) return PPDB_ERR_INVALID_ARGUMENT;
 
-    *handle = ppdb_engine_alloc(sizeof(ppdb_engine_iocp_handle_t));
+    *handle = ppdb_base_alloc(sizeof(ppdb_base_iocp_handle_t));
     if (!*handle) return PPDB_ERR_OUT_OF_MEMORY;
 
-    memset(*handle, 0, sizeof(ppdb_engine_iocp_handle_t));
+    memset(*handle, 0, sizeof(ppdb_base_iocp_handle_t));
     (*handle)->loop = loop;
     (*handle)->handle = win_handle;
 
     // 关联到 IOCP
     if (!CreateIoCompletionPort(win_handle, loop->iocp, (ULONG_PTR)*handle, 0)) {
-        ppdb_engine_free(*handle);
+        ppdb_base_free(*handle);
         *handle = NULL;
         return PPDB_ERR_INTERNAL;
     }
@@ -132,25 +132,25 @@ ppdb_error_t ppdb_engine_iocp_handle_create(ppdb_engine_iocp_loop_t* loop,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_iocp_handle_destroy(ppdb_engine_iocp_handle_t* handle) {
+ppdb_error_t ppdb_base_iocp_handle_destroy(ppdb_base_iocp_handle_t* handle) {
     if (!handle) return PPDB_ERR_NULL_POINTER;
 
     if (handle->io.buf) {
-        ppdb_engine_free(handle->io.buf);
+        ppdb_base_free(handle->io.buf);
     }
 
     if (handle->handle != INVALID_HANDLE_VALUE) {
         CloseHandle(handle->handle);
     }
 
-    ppdb_engine_free(handle);
+    ppdb_base_free(handle);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_iocp_read(ppdb_engine_iocp_handle_t* handle,
+ppdb_error_t ppdb_base_iocp_read(ppdb_base_iocp_handle_t* handle,
                                 void* buf,
                                 size_t len,
-                                ppdb_engine_async_cb cb) {
+                                ppdb_base_async_cb cb) {
     if (!handle || !buf || !cb) return PPDB_ERR_NULL_POINTER;
     if (len == 0) return PPDB_ERR_INVALID_ARGUMENT;
 
@@ -175,10 +175,10 @@ ppdb_error_t ppdb_engine_iocp_read(ppdb_engine_iocp_handle_t* handle,
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_engine_iocp_write(ppdb_engine_iocp_handle_t* handle,
+ppdb_error_t ppdb_base_iocp_write(ppdb_base_iocp_handle_t* handle,
                                  const void* buf,
                                  size_t len,
-                                 ppdb_engine_async_cb cb) {
+                                 ppdb_base_async_cb cb) {
     if (!handle || !buf || !cb) return PPDB_ERR_NULL_POINTER;
     if (len == 0) return PPDB_ERR_INVALID_ARGUMENT;
 
