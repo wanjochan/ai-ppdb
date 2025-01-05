@@ -1,102 +1,46 @@
-// Base synchronization primitives implementation
-#include <cosmopolitan.h>
+#ifndef PPDB_BASE_SYNC_INC_C
+#define PPDB_BASE_SYNC_INC_C
 
-struct ppdb_sync_s {
-    pthread_mutex_t mutex;
-    pthread_rwlock_t rwlock;
-    int type;  // 0: mutex, 1: rwlock
-};
+ppdb_error_t ppdb_core_mutex_create(ppdb_core_mutex_t** mutex) {
+    if (!mutex) return PPDB_ERR_NULL_POINTER;
 
-ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, int type) {
-    ppdb_sync_t* s = malloc(sizeof(ppdb_sync_t));
-    if (!s) return PPDB_ERROR_OOM;
-    
-    s->type = type;
-    if (type == 0) {
-        if (pthread_mutex_init(&s->mutex, NULL) != 0) {
-            free(s);
-            return PPDB_ERROR_SYNC;
-        }
-    } else {
-        if (pthread_rwlock_init(&s->rwlock, NULL) != 0) {
-            free(s);
-            return PPDB_ERROR_SYNC;
-        }
+    ppdb_core_mutex_t* m = (ppdb_core_mutex_t*)ppdb_aligned_alloc(sizeof(ppdb_core_mutex_t));
+    if (!m) return PPDB_ERR_OUT_OF_MEMORY;
+
+    if (pthread_mutex_init(&m->mutex, NULL) != 0) {
+        ppdb_aligned_free(m);
+        return PPDB_ERR_BUSY;
     }
-    
-    *sync = s;
+
+    *mutex = m;
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_sync_destroy(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERROR_INVALID;
-    
-    if (sync->type == 0) {
-        pthread_mutex_destroy(&sync->mutex);
-    } else {
-        pthread_rwlock_destroy(&sync->rwlock);
+void ppdb_core_mutex_destroy(ppdb_core_mutex_t* mutex) {
+    if (!mutex) return;
+
+    pthread_mutex_destroy(&mutex->mutex);
+    ppdb_aligned_free(mutex);
+}
+
+ppdb_error_t ppdb_core_mutex_lock(ppdb_core_mutex_t* mutex) {
+    if (!mutex) return PPDB_ERR_NULL_POINTER;
+
+    if (pthread_mutex_lock(&mutex->mutex) != 0) {
+        return PPDB_ERR_BUSY;
     }
-    
-    free(sync);
+
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_sync_lock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERROR_INVALID;
-    if (sync->type != 0) return PPDB_ERROR_INVALID;
-    
-    if (pthread_mutex_lock(&sync->mutex) != 0) {
-        return PPDB_ERROR_SYNC;
+ppdb_error_t ppdb_core_mutex_unlock(ppdb_core_mutex_t* mutex) {
+    if (!mutex) return PPDB_ERR_NULL_POINTER;
+
+    if (pthread_mutex_unlock(&mutex->mutex) != 0) {
+        return PPDB_ERR_BUSY;
     }
+
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_sync_unlock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERROR_INVALID;
-    if (sync->type != 0) return PPDB_ERROR_INVALID;
-    
-    if (pthread_mutex_unlock(&sync->mutex) != 0) {
-        return PPDB_ERROR_SYNC;
-    }
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_sync_read_lock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERROR_INVALID;
-    if (sync->type != 1) return PPDB_ERROR_INVALID;
-    
-    if (pthread_rwlock_rdlock(&sync->rwlock) != 0) {
-        return PPDB_ERROR_SYNC;
-    }
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_sync_read_unlock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERROR_INVALID;
-    if (sync->type != 1) return PPDB_ERROR_INVALID;
-    
-    if (pthread_rwlock_unlock(&sync->rwlock) != 0) {
-        return PPDB_ERROR_SYNC;
-    }
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_sync_write_lock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERROR_INVALID;
-    if (sync->type != 1) return PPDB_ERROR_INVALID;
-    
-    if (pthread_rwlock_wrlock(&sync->rwlock) != 0) {
-        return PPDB_ERROR_SYNC;
-    }
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_sync_write_unlock(ppdb_sync_t* sync) {
-    if (!sync) return PPDB_ERROR_INVALID;
-    if (sync->type != 1) return PPDB_ERROR_INVALID;
-    
-    if (pthread_rwlock_unlock(&sync->rwlock) != 0) {
-        return PPDB_ERROR_SYNC;
-    }
-    return PPDB_OK;
-} 
+#endif // PPDB_BASE_SYNC_INC_C 

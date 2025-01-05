@@ -1,127 +1,218 @@
-#include <cosmopolitan.h>
+#ifndef PPDB_BASE_SKIPLIST_INC_C
+#define PPDB_BASE_SKIPLIST_INC_C
 
-#define MAX_SKIPLIST_LEVEL 32
-#define SKIPLIST_P 0.25
+#define SKIPLIST_MAX_LEVEL 32
 
-typedef struct ppdb_node_s {
-    ppdb_key_t key;
-    ppdb_value_t value;
-    int height;
-    struct ppdb_node_s* next[0];  // flexible array member
-} ppdb_node_t;
+typedef struct skiplist_node {
+    ppdb_data_t key;
+    ppdb_data_t value;
+    struct skiplist_node* next[1];  // Variable length array
+} skiplist_node_t;
 
-static int random_level() {
+typedef struct skiplist {
+    int level;
+    size_t size;
+    skiplist_node_t* header;
+    ppdb_core_mutex_t* mutex;
+} skiplist_t;
+
+static int random_level(void) {
     int level = 1;
-    while ((rand() / (double)RAND_MAX) < SKIPLIST_P && level < MAX_SKIPLIST_LEVEL) {
+    while ((rand() & 0xFFFF) < (0xFFFF >> 1) && level < SKIPLIST_MAX_LEVEL) {
         level++;
     }
     return level;
 }
 
-ppdb_node_t* node_create(ppdb_base_t* base, ppdb_key_t* key, ppdb_value_t* value, int height) {
-    size_t node_size = sizeof(ppdb_node_t) + height * sizeof(ppdb_node_t*);
-    ppdb_node_t* node = PPDB_ALIGNED_ALLOC(node_size);
-    if (!node) return NULL;
-    
-    memset(node, 0, node_size);
-    node->height = height;
-    
-    if (key) {
-        node->key.size = key->size;
-        node->key.data = PPDB_ALIGNED_ALLOC(key->size);
-        if (!node->key.data) {
-            PPDB_ALIGNED_FREE(node);
-            return NULL;
+ppdb_error_t skiplist_create(skiplist_t** list) {
+    if (!list) return PPDB_ERR_NULL_POINTER;
+
+    // Allocate skiplist
+    skiplist_t* sl = (skiplist_t*)ppdb_aligned_alloc(sizeof(skiplist_t));
+    if (!sl) return PPDB_ERR_OUT_OF_MEMORY;
+
+    // Create mutex
+    ppdb_error_t err = ppdb_core_mutex_create(&sl->mutex);
+    if (err != PPDB_OK) {
+        ppdb_aligned_free(sl);
+        return err;
+    }
+
+    // Allocate header node
+    size_t node_size = sizeof(skiplist_node_t) + (SKIPLIST_MAX_LEVEL - 1) * sizeof(skiplist_node_t*);
+    sl->header = (skiplist_node_t*)ppdb_aligned_alloc(node_size);
+    if (!sl->header) {
+        ppdb_core_mutex_destroy(sl->mutex);
+        ppdb_aligned_free(sl);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // Initialize header
+    memset(sl->header, 0, node_size);
+    sl->level = 1;
+    sl->size = 0;
+
+    *list = sl;
+    return PPDB_OK;
+}
+
+void skiplist_destroy(skiplist_t* list) {
+    if (!list) return;
+
+    // Lock list
+    ppdb_core_mutex_lock(list->mutex);
+
+    // Free all nodes
+    skiplist_node_t* node = list->header->next[0];
+    while (node) {
+        skiplist_node_t* next = node->next[0];
+        ppdb_data_destroy(&node->key);
+        ppdb_data_destroy(&node->value);
+        ppdb_aligned_free(node);
+        node = next;
+    }
+
+    // Free header and list
+    ppdb_aligned_free(list->header);
+    ppdb_core_mutex_unlock(list->mutex);
+    ppdb_core_mutex_destroy(list->mutex);
+    ppdb_aligned_free(list);
+}
+
+ppdb_error_t skiplist_insert(skiplist_t* list, const ppdb_data_t* key, const ppdb_data_t* value) {
+    if (!list || !key || !value) return PPDB_ERR_NULL_POINTER;
+
+    ppdb_core_mutex_lock(list->mutex);
+
+    // Find position to insert
+    skiplist_node_t* update[SKIPLIST_MAX_LEVEL];
+    skiplist_node_t* x = list->header;
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (x->next[i] && memcmp(x->next[i]->key.inline_data, key->inline_data, key->size) < 0) {
+            x = x->next[i];
         }
-        memcpy(node->key.data, key->data, key->size);
+        update[i] = x;
     }
-    
-    if (value) {
-        node->value.size = value->size;
-        node->value.data = PPDB_ALIGNED_ALLOC(value->size);
-        if (!node->value.data) {
-            if (key) PPDB_ALIGNED_FREE(node->key.data);
-            PPDB_ALIGNED_FREE(node);
-            return NULL;
-        }
-        memcpy(node->value.data, value->data, value->size);
-    }
-    
-    return node;
-}
+    x = x->next[0];
 
-void node_destroy(ppdb_node_t* node) {
-    if (!node) return;
-    if (node->key.data) PPDB_ALIGNED_FREE(node->key.data);
-    if (node->value.data) PPDB_ALIGNED_FREE(node->value.data);
-    PPDB_ALIGNED_FREE(node);
-}
-
-int node_get_height(ppdb_node_t* node) {
-    return node ? node->height : 0;
-}
-
-ppdb_node_t* skiplist_find(ppdb_node_t* head, ppdb_key_t* key, ppdb_node_t** update) {
-    ppdb_node_t* current = head;
-    
-    for (int i = head->height - 1; i >= 0; i--) {
-        while (current->next[i] && 
-               memcmp(current->next[i]->key.data, key->data, 
-                     MIN(current->next[i]->key.size, key->size)) < 0) {
-            current = current->next[i];
-        }
-        if (update) update[i] = current;
+    // Key exists, update value
+    if (x && memcmp(x->key.inline_data, key->inline_data, key->size) == 0) {
+        ppdb_data_destroy(&x->value);
+        ppdb_error_t err = ppdb_data_create(&x->value, value->inline_data, value->size);
+        ppdb_core_mutex_unlock(list->mutex);
+        return err;
     }
-    
-    current = current->next[0];
-    
-    if (current && current->key.size == key->size && 
-        memcmp(current->key.data, key->data, key->size) == 0) {
-        return current;
-    }
-    
-    return NULL;
-}
 
-ppdb_error_t skiplist_insert(ppdb_base_t* base, ppdb_node_t* head, 
-                            ppdb_key_t* key, ppdb_value_t* value) {
-    ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
-    ppdb_node_t* node = skiplist_find(head, key, update);
-    
-    if (node) {
-        // Update existing node
-        uint8_t* new_value = PPDB_ALIGNED_ALLOC(value->size);
-        if (!new_value) return PPDB_ERROR_OOM;
-        
-        memcpy(new_value, value->data, value->size);
-        PPDB_ALIGNED_FREE(node->value.data);
-        node->value.data = new_value;
-        node->value.size = value->size;
-        return PPDB_OK;
-    }
-    
+    // Create new node
     int level = random_level();
-    node = node_create(base, key, value, level);
-    if (!node) return PPDB_ERROR_OOM;
-    
-    for (int i = 0; i < level; i++) {
-        node->next[i] = update[i]->next[i];
-        update[i]->next[i] = node;
+    if (level > list->level) {
+        for (int i = list->level; i < level; i++) {
+            update[i] = list->header;
+        }
+        list->level = level;
     }
-    
+
+    size_t node_size = sizeof(skiplist_node_t) + (level - 1) * sizeof(skiplist_node_t*);
+    skiplist_node_t* new_node = (skiplist_node_t*)ppdb_aligned_alloc(node_size);
+    if (!new_node) {
+        ppdb_core_mutex_unlock(list->mutex);
+        return PPDB_ERR_OUT_OF_MEMORY;
+    }
+
+    // Initialize new node
+    memset(new_node, 0, node_size);
+    ppdb_error_t err = ppdb_data_create(&new_node->key, key->inline_data, key->size);
+    if (err != PPDB_OK) {
+        ppdb_aligned_free(new_node);
+        ppdb_core_mutex_unlock(list->mutex);
+        return err;
+    }
+
+    err = ppdb_data_create(&new_node->value, value->inline_data, value->size);
+    if (err != PPDB_OK) {
+        ppdb_data_destroy(&new_node->key);
+        ppdb_aligned_free(new_node);
+        ppdb_core_mutex_unlock(list->mutex);
+        return err;
+    }
+
+    // Insert node
+    for (int i = 0; i < level; i++) {
+        new_node->next[i] = update[i]->next[i];
+        update[i]->next[i] = new_node;
+    }
+
+    list->size++;
+    ppdb_core_mutex_unlock(list->mutex);
     return PPDB_OK;
 }
 
-ppdb_error_t skiplist_delete(ppdb_node_t* head, ppdb_key_t* key) {
-    ppdb_node_t* update[MAX_SKIPLIST_LEVEL];
-    ppdb_node_t* node = skiplist_find(head, key, update);
-    
-    if (!node) return PPDB_ERROR_NOT_FOUND;
-    
-    for (int i = 0; i < node->height; i++) {
-        update[i]->next[i] = node->next[i];
+ppdb_error_t skiplist_delete(skiplist_t* list, const ppdb_data_t* key) {
+    if (!list || !key) return PPDB_ERR_NULL_POINTER;
+
+    ppdb_core_mutex_lock(list->mutex);
+
+    // Find node to delete
+    skiplist_node_t* update[SKIPLIST_MAX_LEVEL];
+    skiplist_node_t* x = list->header;
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (x->next[i] && memcmp(x->next[i]->key.inline_data, key->inline_data, key->size) < 0) {
+            x = x->next[i];
+        }
+        update[i] = x;
     }
-    
-    node_destroy(node);
+    x = x->next[0];
+
+    // Key not found
+    if (!x || memcmp(x->key.inline_data, key->inline_data, key->size) != 0) {
+        ppdb_core_mutex_unlock(list->mutex);
+        return PPDB_ERR_NOT_FOUND;
+    }
+
+    // Remove node from all levels
+    for (int i = 0; i < list->level; i++) {
+        if (update[i]->next[i] != x) break;
+        update[i]->next[i] = x->next[i];
+    }
+
+    // Update list level
+    while (list->level > 1 && list->header->next[list->level - 1] == NULL) {
+        list->level--;
+    }
+
+    // Free node
+    ppdb_data_destroy(&x->key);
+    ppdb_data_destroy(&x->value);
+    ppdb_aligned_free(x);
+
+    list->size--;
+    ppdb_core_mutex_unlock(list->mutex);
     return PPDB_OK;
-} 
+}
+
+ppdb_error_t skiplist_find(skiplist_t* list, const ppdb_data_t* key, ppdb_data_t* value) {
+    if (!list || !key || !value) return PPDB_ERR_NULL_POINTER;
+
+    ppdb_core_mutex_lock(list->mutex);
+
+    // Find node
+    skiplist_node_t* x = list->header;
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (x->next[i] && memcmp(x->next[i]->key.inline_data, key->inline_data, key->size) < 0) {
+            x = x->next[i];
+        }
+    }
+    x = x->next[0];
+
+    ppdb_error_t err;
+    if (x && memcmp(x->key.inline_data, key->inline_data, key->size) == 0) {
+        err = ppdb_data_create(value, x->value.inline_data, x->value.size);
+    } else {
+        err = PPDB_ERR_NOT_FOUND;
+    }
+
+    ppdb_core_mutex_unlock(list->mutex);
+    return err;
+}
+
+#endif // PPDB_BASE_SKIPLIST_INC_C 

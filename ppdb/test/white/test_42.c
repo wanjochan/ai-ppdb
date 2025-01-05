@@ -8,9 +8,7 @@ static int test_return_42(void) {
     return value;
 }
 
-int main(int argc, char* argv[]) {
-    (void)argc;
-    (void)argv;
+static int test_main(void) {
     printf("Running 42 test...\n");
     fflush(stdout);
     
@@ -19,4 +17,12 @@ int main(int argc, char* argv[]) {
     printf("Test %s\n", result == 42 ? "PASSED" : "FAILED");
     fflush(stdout);
     return result == 42 ? 0 : 1;
-} 
+}
+
+COSMOPOLITAN_C_START_
+int main(int argc, char* argv[]) {
+    (void)argc;
+    (void)argv;
+    return test_main();
+}
+COSMOPOLITAN_C_END_ 

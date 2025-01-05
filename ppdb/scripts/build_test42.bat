@@ -9,6 +9,9 @@ rem Load environment variables and common functions
 call "%~dp0\build_env.bat"
 if errorlevel 1 exit /b 1
 
+rem Create build directory if it doesn't exist
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
+
 rem Build test42
 echo Building test42...
 "%GCC%" %CFLAGS% "%PPDB_DIR%\test\white\test_42.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\42_test.exe.dbg"

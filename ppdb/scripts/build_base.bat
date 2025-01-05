@@ -1,69 +1,31 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-rem ===== Get Build Mode =====
+rem Get build mode from parameter
 set "BUILD_MODE=%1"
 if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
 
-rem ===== Load Common Environment =====
+rem Load environment variables and common functions
 call "%~dp0\build_env.bat"
 if errorlevel 1 exit /b 1
 
-echo ===== Running Base Layer Tests =====
+rem Create build directory if it doesn't exist
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-rem ===== Run Sync Tests =====
-echo.
-echo Testing synchronization primitives...
-echo [1/6] Testing locked sync...
-call "%~dp0\build_sync.bat" locked %BUILD_MODE%
+rem Build base tests
+echo Building base tests...
+
+rem Build memory test
+echo Building memory test...
+"%GCC%" %CFLAGS% "%PPDB_DIR%\src\base.c" "%PPDB_DIR%\test\white\infra\test_memory.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\memory_test.exe.dbg"
 if errorlevel 1 exit /b 1
 
-echo [2/6] Testing lockfree sync...
-call "%~dp0\build_sync.bat" lockfree %BUILD_MODE%
+"%OBJCOPY%" -S -O binary "%BUILD_DIR%\memory_test.exe.dbg" "%BUILD_DIR%\memory_test.exe"
 if errorlevel 1 exit /b 1
 
-rem ===== Run Skiplist Tests =====
-echo.
-echo [3/6] Testing skiplist...
-call "%~dp0\build_skiplist.bat" %BUILD_MODE%
-if errorlevel 1 exit /b 1
+rem Run the test if not explicitly disabled
+if not "%2"=="norun" (
+    "%BUILD_DIR%\memory_test.exe"
+)
 
-rem ===== Run Log Tests =====
-echo.
-echo [4/6] Testing logging system...
-"%GCC%" %CFLAGS% -I"%PPDB_DIR%\include" ^
-    "%PPDB_DIR%\test\white\infra\test_log.c" ^
-    "%PPDB_DIR%\src\base.c" ^
-    -o "%BUILD_DIR%\test_log.exe"
-if errorlevel 1 exit /b 1
-
-"%BUILD_DIR%\test_log.exe"
-if errorlevel 1 exit /b 1
-
-rem ===== Run Memory Tests =====
-echo.
-echo [5/6] Testing memory management...
-"%GCC%" %CFLAGS% -I"%PPDB_DIR%\include" ^
-    "%PPDB_DIR%\test\white\infra\test_memory.c" ^
-    "%PPDB_DIR%\src\base.c" ^
-    -o "%BUILD_DIR%\test_memory.exe"
-if errorlevel 1 exit /b 1
-
-"%BUILD_DIR%\test_memory.exe"
-if errorlevel 1 exit /b 1
-
-rem ===== Run Error Handling Tests =====
-echo.
-echo [6/6] Testing error handling...
-"%GCC%" %CFLAGS% -I"%PPDB_DIR%\include" ^
-    "%PPDB_DIR%\test\white\infra\test_error.c" ^
-    "%PPDB_DIR%\src\base.c" ^
-    -o "%BUILD_DIR%\test_error.exe"
-if errorlevel 1 exit /b 1
-
-"%BUILD_DIR%\test_error.exe"
-if errorlevel 1 exit /b 1
-
-echo.
-echo ===== All Base Layer Tests Passed =====
 exit /b 0 

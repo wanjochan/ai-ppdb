@@ -11,9 +11,7 @@
 #ifndef PPDB_H
 #define PPDB_H
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
+#include <cosmopolitan.h>
 
 //-----------------------------------------------------------------------------
 // 基础定义
