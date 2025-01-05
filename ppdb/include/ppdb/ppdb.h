@@ -4,6 +4,15 @@
 #include <cosmopolitan.h>
 
 //-----------------------------------------------------------------------------
+// 前向声明
+//-----------------------------------------------------------------------------
+
+typedef struct ppdb_node ppdb_node_t;
+typedef struct ppdb_sync ppdb_sync_t;
+typedef struct ppdb_metrics ppdb_metrics_t;
+typedef struct ppdb_shard ppdb_shard_t;
+
+//-----------------------------------------------------------------------------
 // 日志系统定义
 //-----------------------------------------------------------------------------
 
@@ -46,11 +55,11 @@ void ppdb_debug(const char* fmt, ...);
 //-----------------------------------------------------------------------------
 
 #define PPDB_ALIGNMENT 64
+
 #define PPDB_ALIGNED_ALLOC(size) \
     aligned_alloc(PPDB_ALIGNMENT, (((size) + PPDB_ALIGNMENT - 1) / PPDB_ALIGNMENT) * PPDB_ALIGNMENT)
-#define PPDB_ALIGNED_FREE(ptr) aligned_free(ptr)
+#define PPDB_ALIGNED_FREE(ptr) free(ptr)
 
-// 对齐宏
 #define PPDB_ALIGNED __attribute__((aligned(PPDB_ALIGNMENT)))
 #define PPDB_CACHELINE_ALIGNED __attribute__((aligned(64)))
 
@@ -205,6 +214,12 @@ typedef struct ppdb_metrics {
     ppdb_sync_counter_t get_hits PPDB_CACHELINE_ALIGNED;     // hit count
     ppdb_sync_counter_t put_count PPDB_CACHELINE_ALIGNED;    // put count
     ppdb_sync_counter_t remove_count PPDB_CACHELINE_ALIGNED; // remove count
+    ppdb_sync_counter_t total_nodes PPDB_CACHELINE_ALIGNED;  // total nodes
+    ppdb_sync_counter_t total_keys PPDB_CACHELINE_ALIGNED;   // total keys
+    ppdb_sync_counter_t total_bytes PPDB_CACHELINE_ALIGNED;  // total bytes
+    ppdb_sync_counter_t total_gets PPDB_CACHELINE_ALIGNED;   // total gets
+    ppdb_sync_counter_t total_puts PPDB_CACHELINE_ALIGNED;   // total puts
+    ppdb_sync_counter_t total_removes PPDB_CACHELINE_ALIGNED;// total removes
     char padding[64];  // 确保整个结构体64字节对齐
 } PPDB_CACHELINE_ALIGNED ppdb_metrics_t;
 
@@ -274,6 +289,10 @@ typedef struct ppdb_config {
     size_t memtable_size;           // memtable size
     uint32_t shard_count;           // shard count
     bool use_lockfree;              // use lockfree mode
+    size_t memory_limit;            // memory limit
+    size_t max_key_size;           // max key size
+    size_t max_value_size;         // max value size
+    uint32_t max_level;            // max level
 } PPDB_ALIGNED ppdb_config_t;
 
 struct ppdb_base {
@@ -285,6 +304,7 @@ struct ppdb_base {
     ppdb_metrics_t metrics;      // metrics
     ppdb_advance_ops_t* advance; // advanced operations
     ppdb_config_t config;        // configuration
+    ppdb_shard_t* shards;        // shard array
 } PPDB_ALIGNED;
 
 //-----------------------------------------------------------------------------
