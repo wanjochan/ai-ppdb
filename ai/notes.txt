@@ -2,7 +2,21 @@ as warm-up, read *.md in docs/;
 
 一些临时笔记
 
-主任务：执行构建命令并进行修复
+在修改任何文件之前：
+1. 先检查目标文件的完整内容
+2. 检查相关的依赖文件(特别是头文件)中是否已存在要添加的定义
+3. 确保理解文件之间的依赖关系和包含层次
+4. 避免在internal.h中重复定义ppdb.h中已有的内容
+5. 牢记我们用的是cosmopolitan跨平台底层，所以不需要适配windows和引用Libc头文件
+
+# windows:
+cd ppdb\scripts\
+.\build.bat test42
+.\build.bat sync_locked
+.\build.bat sync_lockfree
+.\build.bat skiplist_locked
+.\build.bat skiplist_lockfree
+
 
 # windows:
 执行 build_all.ps1

@@ -3,7 +3,7 @@
 
 ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     if (!base) {
-        return PPDB_ERR_INVALID_ARGUMENT;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
 
     // Validate and setup configuration
@@ -22,7 +22,7 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     // Allocate base structure
     ppdb_base_t* b = PPDB_ALIGNED_ALLOC(sizeof(ppdb_base_t));
     if (!b) {
-        return PPDB_ERR_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
     memset(b, 0, sizeof(ppdb_base_t));
 
@@ -33,7 +33,7 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
     b->shards = PPDB_ALIGNED_ALLOC(sizeof(ppdb_shard_t) * cfg.shard_count);
     if (!b->shards) {
         cleanup_base(b);
-        return PPDB_ERR_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
     memset(b->shards, 0, sizeof(ppdb_shard_t) * cfg.shard_count);
 
@@ -52,7 +52,7 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
         shard->head = node_create(b, NULL, NULL, MAX_SKIPLIST_LEVEL);
         if (!shard->head) {
             cleanup_base(b);
-            return PPDB_ERR_NO_MEMORY;
+            return PPDB_ERR_OUT_OF_MEMORY;
         }
 
         // Initialize shard lock
@@ -74,6 +74,34 @@ ppdb_error_t ppdb_create(ppdb_base_t** base, const ppdb_config_t* config) {
 }
 
 void ppdb_destroy(ppdb_base_t* base) {
+    if (!base) {
+        return;
+    }
+    
+    // 先锁定所有分片
+    for (uint32_t i = 0; i < base->config.shard_count; i++) {
+        if (base->shards[i].lock) {
+            ppdb_sync_write_lock(base->shards[i].lock);
+        }
+    }
+    
+    // 清理所有分片中的节点
+    for (uint32_t i = 0; i < base->config.shard_count; i++) {
+        ppdb_shard_t* shard = &base->shards[i];
+        if (shard->head) {
+            node_unref(shard->head);
+            shard->head = NULL;
+        }
+    }
+    
+    // 解锁并销毁所有分片锁
+    for (uint32_t i = 0; i < base->config.shard_count; i++) {
+        if (base->shards[i].lock) {
+            ppdb_sync_write_unlock(base->shards[i].lock);
+        }
+    }
+    
+    // 最后清理基础结构
     cleanup_base(base);
 }
 
@@ -119,7 +147,7 @@ ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value
             PPDB_ALIGNED_FREE(old_value);
             current->value = old_value;
             ppdb_sync_write_unlock(shard->lock);
-            return PPDB_ERR_NO_MEMORY;
+            return PPDB_ERR_OUT_OF_MEMORY;
         }
         
         memset(current->value, 0, sizeof(ppdb_value_t));
@@ -129,7 +157,7 @@ ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value
             PPDB_ALIGNED_FREE(current->value);
             current->value = old_value;
             ppdb_sync_write_unlock(shard->lock);
-            return PPDB_ERR_NO_MEMORY;
+            return PPDB_ERR_OUT_OF_MEMORY;
         }
 
         memcpy(current->value->data, value->data, value->size);
@@ -146,7 +174,7 @@ ppdb_error_t ppdb_put(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value
         ppdb_node_t* node = node_create(base, key, value, level);
         if (!node) {
             ppdb_sync_write_unlock(shard->lock);
-            return PPDB_ERR_NO_MEMORY;
+            return PPDB_ERR_OUT_OF_MEMORY;
         }
 
         // Update pointers
@@ -203,7 +231,7 @@ ppdb_error_t ppdb_get(ppdb_base_t* base, const ppdb_key_t* key, ppdb_value_t* va
         value->data = PPDB_ALIGNED_ALLOC(value->size);
         if (!value->data) {
             ppdb_sync_read_unlock(shard->lock);
-            return PPDB_ERR_NO_MEMORY;
+            return PPDB_ERR_OUT_OF_MEMORY;
         }
         memcpy(value->data, current->value->data, value->size);
         ppdb_sync_counter_inc(&shard->metrics.total_gets);

@@ -22,7 +22,7 @@ ppdb_error_t ppdb_iterator_init(ppdb_base_t* base, void** iter) {
     // Allocate iterator
     ppdb_iterator_t* it = PPDB_ALIGNED_ALLOC(sizeof(ppdb_iterator_t));
     if (!it) {
-        return PPDB_ERR_NO_MEMORY;
+        return PPDB_ERR_OUT_OF_MEMORY;
     }
     memset(it, 0, sizeof(ppdb_iterator_t));
 
@@ -69,7 +69,7 @@ ppdb_error_t ppdb_iterator_next(void* iter, ppdb_key_t* key, ppdb_value_t* value
         key->size = current->key->size;
         key->data = PPDB_ALIGNED_ALLOC(key->size);
         if (!key->data) {
-            return PPDB_ERR_NO_MEMORY;
+            return PPDB_ERR_OUT_OF_MEMORY;
         }
         memcpy(key->data, current->key->data, key->size);
 
@@ -77,7 +77,7 @@ ppdb_error_t ppdb_iterator_next(void* iter, ppdb_key_t* key, ppdb_value_t* value
         value->data = PPDB_ALIGNED_ALLOC(value->size);
         if (!value->data) {
             PPDB_ALIGNED_FREE(key->data);
-            return PPDB_ERR_NO_MEMORY;
+            return PPDB_ERR_OUT_OF_MEMORY;
         }
         memcpy(value->data, current->value->data, value->size);
 

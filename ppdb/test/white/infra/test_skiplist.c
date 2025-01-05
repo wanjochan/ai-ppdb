@@ -54,8 +54,8 @@ static void test_skiplist_basic() {
     assert(memcmp(node->value->data, value.data, value.size) == 0);
     
     // 清理
-    node_destroy(node);
-    node_destroy(head);
+    node_unref(node);
+    node_unref(head);
     ppdb_destroy(base);
 }
 
@@ -84,12 +84,17 @@ static void test_skiplist_atomic_ops() {
     assert(node != NULL);
 
     // Test reference counting
+    assert(ppdb_sync_counter_get(&node->ref_count) == 1);
     node_ref(node);  // ref_count = 2
+    assert(ppdb_sync_counter_get(&node->ref_count) == 2);
     node_ref(node);  // ref_count = 3
+    assert(ppdb_sync_counter_get(&node->ref_count) == 3);
     node_unref(node);  // ref_count = 2
+    assert(ppdb_sync_counter_get(&node->ref_count) == 2);
     node_unref(node);  // ref_count = 1
-    node_unref(node);  // ref_count = 0, node should be destroyed
-
+    assert(ppdb_sync_counter_get(&node->ref_count) == 1);
+    
+    // 在销毁base之前，确保node的引用计数不为0
     ppdb_destroy(base);
 }
 

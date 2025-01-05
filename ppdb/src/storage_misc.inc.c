@@ -2,7 +2,7 @@
 //
 
 ppdb_node_t* node_create(ppdb_base_t* base, const ppdb_key_t* key, const ppdb_value_t* value, uint32_t height) {
-    if (!base || height == 0 || height > PPDB_MAX_HEIGHT) {
+    if (!base || height == 0 || height > PPDB_MAX_LEVEL) {
         return NULL;
     }
 
@@ -178,11 +178,7 @@ void node_destroy(ppdb_node_t* node) {
         PPDB_ALIGNED_FREE(node->value);
     }
 
-    if (node->lock) {
-        ppdb_sync_destroy(node->lock);
-        PPDB_ALIGNED_FREE(node->lock);
-    }
-
+    // 锁的清理已经在node_unref中完成
     PPDB_ALIGNED_FREE(node);
 }
 
@@ -194,10 +190,15 @@ uint32_t node_get_height(ppdb_node_t* node) {
 }
 
 void node_ref(ppdb_node_t* node) {
-    if (!node) {
+    if (!node || !node->lock || ppdb_sync_counter_load(&node->is_garbage)) {
         return;
     }
-    ppdb_sync_counter_add(&node->ref_count, 1);
+    
+    ppdb_sync_lock(node->lock);
+    if (!ppdb_sync_counter_load(&node->is_garbage)) {
+        ppdb_sync_counter_add(&node->ref_count, 1);
+    }
+    ppdb_sync_unlock(node->lock);
 }
 
 void node_unref(ppdb_node_t* node) {
@@ -206,13 +207,23 @@ void node_unref(ppdb_node_t* node) {
     }
     
     // 先获取节点锁
+    if (!node->lock) {
+        // 如果锁已经被释放，说明节点正在被销毁
+        return;
+    }
+    
     ppdb_sync_lock(node->lock);
     
-    if (ppdb_sync_counter_sub(&node->ref_count, 1) == 0 && 
-        !ppdb_sync_counter_load(&node->is_garbage)) {
+    size_t ref_count = ppdb_sync_counter_sub(&node->ref_count, 1);
+    if (ref_count == 0 && !ppdb_sync_counter_load(&node->is_garbage)) {
         // 标记为垃圾，延迟删除
         ppdb_sync_counter_store(&node->is_garbage, 1);
-        ppdb_sync_unlock(node->lock);
+        // 在销毁节点之前释放锁
+        ppdb_sync_t* lock = node->lock;
+        node->lock = NULL;  // 防止node_destroy再次尝试释放锁
+        ppdb_sync_unlock(lock);
+        ppdb_sync_destroy(lock);
+        PPDB_ALIGNED_FREE(lock);
         node_destroy(node);
     } else {
         ppdb_sync_unlock(node->lock);

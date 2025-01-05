@@ -65,16 +65,25 @@ void cleanup_base(ppdb_base_t* base) {
     if (base->shards) {
         for (uint32_t i = 0; i < base->config.shard_count; i++) {
             ppdb_shard_t* shard = &base->shards[i];
+            
+            // 销毁头节点
             if (shard->head) {
                 node_unref(shard->head);
+                shard->head = NULL;
             }
+            
+            // 释放并销毁分片锁
             if (shard->lock) {
                 ppdb_sync_destroy(shard->lock);
                 PPDB_ALIGNED_FREE(shard->lock);
+                shard->lock = NULL;
             }
         }
         PPDB_ALIGNED_FREE(base->shards);
+        base->shards = NULL;
     }
+    
+    PPDB_ALIGNED_FREE(base);
 }
 
 //
@@ -83,5 +92,52 @@ void cleanup_base(ppdb_base_t* base) {
 #include "storage_iterator.inc.c"
 //
 #include "storage_misc.inc.c"
+
+void init_random(void) {
+    srand((unsigned int)time(NULL));
+}
+
+ppdb_error_t init_metrics(ppdb_metrics_t* metrics) {
+    if (!metrics) return PPDB_ERR_NULL_POINTER;
+    
+    ppdb_error_t err;
+    
+    err = ppdb_sync_counter_init(&metrics->ops_count, 0);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_sync_counter_init(&metrics->bytes_written, 0);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_sync_counter_init(&metrics->bytes_read, 0);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_sync_counter_init(&metrics->total_nodes, 0);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_sync_counter_init(&metrics->total_keys, 0);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_sync_counter_init(&metrics->total_bytes, 0);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_sync_counter_init(&metrics->total_gets, 0);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_sync_counter_init(&metrics->total_puts, 0);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_sync_counter_init(&metrics->total_removes, 0);
+    if (err != PPDB_OK) return err;
+    
+    return PPDB_OK;
+}
+
+uint32_t random_level(void) {
+    uint32_t level = 1;
+    while (level < PPDB_MAX_LEVEL && ((double)rand() / RAND_MAX) < PPDB_LEVEL_PROBABILITY) {
+        level++;
+    }
+    return level;
+}
 
 #endif // PPDB_STORAGE_C
