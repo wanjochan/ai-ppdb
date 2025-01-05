@@ -1,46 +1,46 @@
 /*
- * engine_core.inc.c - Core engine implementation for PPDB
- *
- * This file contains the core engine functionality for PPDB, including:
- * - Engine initialization and cleanup
- * - Core data processing operations
- * - Engine state management
- *
- * Dependencies:
- * - ppdb/base/common.h
- * - ppdb/base/errors.h
+ * engine_core.inc.c - Engine core functionality implementation
  */
 
-#include "ppdb/base/common.h"
-#include "ppdb/base/errors.h"
+#include <cosmopolitan.h>
+#include "internal/engine.h"
 
-// Engine context structure
-typedef struct ppdb_engine_ctx {
-    // ... existing context fields ...
-} ppdb_engine_ctx_t;
+// Core engine initialization
+static ppdb_error_t ppdb_engine_core_init(ppdb_engine_t* engine) {
+    ppdb_error_t err;
 
-// Initialize engine context
-ppdb_error_t ppdb_engine_init(ppdb_engine_ctx_t** ctx) {
-    if (!ctx) {
-        return PPDB_ERROR_INVALID_ARGUMENT;
-    }
-    // ... initialization logic ...
+    // Initialize statistics
+    err = ppdb_engine_stats_init(&engine->stats);
+    if (err != PPDB_OK) return err;
+
+    return PPDB_OK;
 }
 
-// Cleanup engine context
-void ppdb_engine_cleanup(ppdb_engine_ctx_t* ctx) {
-    if (!ctx) {
-        return;
-    }
-    // ... cleanup logic ...
+// Core engine cleanup
+static void ppdb_engine_core_cleanup(ppdb_engine_t* engine) {
+    if (!engine) return;
+
+    // Cleanup statistics
+    ppdb_engine_stats_cleanup(&engine->stats);
 }
 
-// Core processing functions
-ppdb_error_t ppdb_engine_process(ppdb_engine_ctx_t* ctx, const void* data) {
-    if (!ctx || !data) {
-        return PPDB_ERROR_INVALID_ARGUMENT;
+// Core engine operations
+static ppdb_error_t ppdb_engine_core_start(ppdb_engine_t* engine) {
+    if (!engine) return PPDB_ENGINE_ERR_PARAM;
+
+    // Start IO thread if needed
+    if (!engine->io_mgr.io_running) {
+        return ppdb_engine_io_init(engine);
     }
-    // ... processing logic ...
+
+    return PPDB_OK;
 }
 
-// ... existing helper functions with renamed prefixes ...
+static void ppdb_engine_core_stop(ppdb_engine_t* engine) {
+    if (!engine) return;
+
+    // Stop IO thread if running
+    if (engine->io_mgr.io_running) {
+        ppdb_engine_io_cleanup(engine);
+    }
+}

@@ -1,120 +1,89 @@
 /*
- * engine_txn.inc.c - 引擎层事务管理实现
+ * engine_txn.inc.c - Engine transaction management implementation
  */
 
 #include <cosmopolitan.h>
 #include "internal/engine.h"
 
-// Transaction structure
-typedef struct ppdb_engine_txn_s {
-    uint64_t txn_id;                  // 事务ID
-    ppdb_engine_t* engine;            // 所属引擎
-    struct ppdb_engine_txn_s* next;   // 活跃事务链表
-    bool is_active;                   // 事务是否活跃
-    
-    // 事务状态
-    struct {
-        atomic_bool is_committed;      // 是否已提交
-        atomic_bool is_rolledback;     // 是否已回滚
-    } state;
-    
-    // 事务统计
-    struct {
-        atomic_uint64_t reads;         // 读操作数
-        atomic_uint64_t writes;        // 写操作数
-    } stats;
-} ppdb_engine_txn_t;
-
-// Initialize transaction management
+// Transaction management initialization
 ppdb_error_t ppdb_engine_txn_init(ppdb_engine_t* engine) {
     ppdb_error_t err;
 
     if (!engine) return PPDB_ENGINE_ERR_PARAM;
 
-    // 创建事务统计计数器
-    err = ppdb_base_counter_create(&engine->stats.total_txns);
+    // Initialize transaction mutex
+    err = ppdb_base_mutex_create(&engine->txn_mgr.txn_mutex);
     if (err != PPDB_OK) return err;
 
-    err = ppdb_base_counter_create(&engine->stats.active_txns);
-    if (err != PPDB_OK) {
-        ppdb_base_counter_destroy(engine->stats.total_txns);
-        return err;
-    }
-
-    err = ppdb_base_counter_create(&engine->stats.total_reads);
-    if (err != PPDB_OK) {
-        ppdb_base_counter_destroy(engine->stats.total_txns);
-        ppdb_base_counter_destroy(engine->stats.active_txns);
-        return err;
-    }
-
-    err = ppdb_base_counter_create(&engine->stats.total_writes);
-    if (err != PPDB_OK) {
-        ppdb_base_counter_destroy(engine->stats.total_txns);
-        ppdb_base_counter_destroy(engine->stats.active_txns);
-        ppdb_base_counter_destroy(engine->stats.total_reads);
-        return err;
-    }
-
-    // 创建事务互斥锁
-    err = ppdb_base_mutex_create(&engine->txn_mutex);
-    if (err != PPDB_OK) {
-        ppdb_base_counter_destroy(engine->stats.total_txns);
-        ppdb_base_counter_destroy(engine->stats.active_txns);
-        ppdb_base_counter_destroy(engine->stats.total_reads);
-        ppdb_base_counter_destroy(engine->stats.total_writes);
-        return err;
-    }
+    // Initialize transaction list
+    engine->txn_mgr.next_txn_id = 1;
+    engine->txn_mgr.active_txns = NULL;
 
     return PPDB_OK;
 }
 
-// Cleanup transaction management
+// Transaction management cleanup
 void ppdb_engine_txn_cleanup(ppdb_engine_t* engine) {
     if (!engine) return;
 
-    if (engine->txn_mutex) {
-        ppdb_base_mutex_destroy(engine->txn_mutex);
+    // Cleanup active transactions
+    ppdb_engine_txn_t* txn = engine->txn_mgr.active_txns;
+    while (txn) {
+        ppdb_engine_txn_t* next = txn->next;
+        ppdb_engine_txn_stats_cleanup(&txn->stats);
+        ppdb_base_aligned_free(txn);
+        txn = next;
     }
 
-    ppdb_base_counter_destroy(engine->stats.total_txns);
-    ppdb_base_counter_destroy(engine->stats.active_txns);
-    ppdb_base_counter_destroy(engine->stats.total_reads);
-    ppdb_base_counter_destroy(engine->stats.total_writes);
+    // Cleanup transaction mutex
+    if (engine->txn_mgr.txn_mutex) {
+        ppdb_base_mutex_destroy(engine->txn_mgr.txn_mutex);
+        engine->txn_mgr.txn_mutex = NULL;
+    }
 }
 
 // Begin a new transaction
 ppdb_error_t ppdb_engine_txn_begin(ppdb_engine_t* engine, ppdb_engine_txn_t** txn) {
-    ppdb_engine_txn_t* new_txn;
     ppdb_error_t err;
+    ppdb_engine_txn_t* new_txn;
 
     if (!engine || !txn) return PPDB_ENGINE_ERR_PARAM;
 
+    // Create new transaction
     new_txn = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_engine_txn_t));
     if (!new_txn) return PPDB_ERR_MEMORY;
 
-    // 初始化事务统计
-    err = ppdb_base_counter_create(&new_txn->stats.reads);
+    // Initialize transaction
+    memset(new_txn, 0, sizeof(ppdb_engine_txn_t));
+    new_txn->engine = engine;
+    new_txn->is_active = true;
+
+    // Initialize transaction statistics
+    err = ppdb_engine_txn_stats_init(&new_txn->stats);
     if (err != PPDB_OK) {
         ppdb_base_aligned_free(new_txn);
         return err;
     }
 
-    err = ppdb_base_counter_create(&new_txn->stats.writes);
+    // Lock transaction manager
+    err = ppdb_base_mutex_lock(engine->txn_mgr.txn_mutex);
     if (err != PPDB_OK) {
-        ppdb_base_counter_destroy(new_txn->stats.reads);
+        ppdb_engine_txn_stats_cleanup(&new_txn->stats);
         ppdb_base_aligned_free(new_txn);
         return err;
     }
 
-    // 更新事务计数
+    // Assign transaction ID and add to list
+    new_txn->txn_id = engine->txn_mgr.next_txn_id++;
+    new_txn->next = engine->txn_mgr.active_txns;
+    engine->txn_mgr.active_txns = new_txn;
+
+    // Update statistics
     ppdb_base_counter_increment(engine->stats.total_txns);
     ppdb_base_counter_increment(engine->stats.active_txns);
 
-    // 设置事务状态
-    new_txn->stats.is_active = true;
-    new_txn->stats.is_committed = false;
-    new_txn->stats.is_rolledback = false;
+    // Unlock transaction manager
+    ppdb_base_mutex_unlock(engine->txn_mgr.txn_mutex);
 
     *txn = new_txn;
     return PPDB_OK;
@@ -122,28 +91,68 @@ ppdb_error_t ppdb_engine_txn_begin(ppdb_engine_t* engine, ppdb_engine_txn_t** tx
 
 // Commit a transaction
 ppdb_error_t ppdb_engine_txn_commit(ppdb_engine_txn_t* txn) {
-    if (!txn || !txn->stats.is_active) return PPDB_ENGINE_ERR_PARAM;
+    ppdb_error_t err;
+    ppdb_engine_t* engine;
 
-    // 更新事务状态
-    txn->stats.is_active = false;
+    if (!txn || !txn->engine) return PPDB_ENGINE_ERR_PARAM;
+    if (!txn->is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
+
+    engine = txn->engine;
+
+    // Lock transaction manager
+    err = ppdb_base_mutex_lock(engine->txn_mgr.txn_mutex);
+    if (err != PPDB_OK) return err;
+
+    // Remove from active transactions list
+    ppdb_engine_txn_t** curr = &engine->txn_mgr.active_txns;
+    while (*curr && *curr != txn) {
+        curr = &(*curr)->next;
+    }
+    if (*curr) {
+        *curr = txn->next;
+    }
+
+    // Update statistics
+    ppdb_base_counter_decrement(engine->stats.active_txns);
+    txn->is_active = false;
     txn->stats.is_committed = true;
 
-    // 更新引擎统计
-    ppdb_base_counter_decrement(txn->engine->stats.active_txns);
+    // Unlock transaction manager
+    ppdb_base_mutex_unlock(engine->txn_mgr.txn_mutex);
 
     return PPDB_OK;
 }
 
 // Rollback a transaction
 ppdb_error_t ppdb_engine_txn_rollback(ppdb_engine_txn_t* txn) {
-    if (!txn || !txn->stats.is_active) return PPDB_ENGINE_ERR_PARAM;
+    ppdb_error_t err;
+    ppdb_engine_t* engine;
 
-    // 更新事务状态
-    txn->stats.is_active = false;
+    if (!txn || !txn->engine) return PPDB_ENGINE_ERR_PARAM;
+    if (!txn->is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
+
+    engine = txn->engine;
+
+    // Lock transaction manager
+    err = ppdb_base_mutex_lock(engine->txn_mgr.txn_mutex);
+    if (err != PPDB_OK) return err;
+
+    // Remove from active transactions list
+    ppdb_engine_txn_t** curr = &engine->txn_mgr.active_txns;
+    while (*curr && *curr != txn) {
+        curr = &(*curr)->next;
+    }
+    if (*curr) {
+        *curr = txn->next;
+    }
+
+    // Update statistics
+    ppdb_base_counter_decrement(engine->stats.active_txns);
+    txn->is_active = false;
     txn->stats.is_rolledback = true;
 
-    // 更新引擎统计
-    ppdb_base_counter_decrement(txn->engine->stats.active_txns);
+    // Unlock transaction manager
+    ppdb_base_mutex_unlock(engine->txn_mgr.txn_mutex);
 
     return PPDB_OK;
 }
@@ -152,9 +161,6 @@ ppdb_error_t ppdb_engine_txn_rollback(ppdb_engine_txn_t* txn) {
 void ppdb_engine_txn_get_stats(ppdb_engine_txn_t* txn, ppdb_engine_txn_stats_t* stats) {
     if (!txn || !stats) return;
 
-    stats->reads = txn->stats.reads;
-    stats->writes = txn->stats.writes;
-    stats->is_active = txn->stats.is_active;
-    stats->is_committed = txn->stats.is_committed;
-    stats->is_rolledback = txn->stats.is_rolledback;
+    // Copy statistics
+    memcpy(stats, &txn->stats, sizeof(ppdb_engine_txn_stats_t));
 }

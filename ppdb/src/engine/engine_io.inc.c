@@ -1,44 +1,39 @@
 /*
- * engine_io.inc.c - PPDB Engine I/O Operations
- *
- * This file contains the I/O operations for the PPDB engine layer,
- * handling file reading, writing and buffer management.
- *
- * Dependencies:
- * - ppdb/base/io.h
- * - ppdb/base/error.h
+ * engine_io.inc.c - Engine IO management implementation
  */
 
-#include "ppdb/base/io.h"
-#include "ppdb/base/error.h"
+#include <cosmopolitan.h>
+#include "internal/engine.h"
 
-// ... existing code ...
+// IO management initialization
+ppdb_error_t ppdb_engine_io_init(ppdb_engine_t* engine) {
+    if (!engine) return PPDB_ENGINE_ERR_PARAM;
 
-// Rename from read_page to ppdb_engine_read_page
-static int ppdb_engine_read_page(PPDBFile *file, PageId page_id, char *buffer) {
-    if (!file || !buffer) {
-        return PPDB_ERROR_INVALID_ARGUMENT;
-    }
-    
-    // ... existing implementation ...
-}
-
-// Rename from write_page to ppdb_engine_write_page
-static int ppdb_engine_write_page(PPDBFile *file, PageId page_id, const char *buffer) {
-    if (!file || !buffer) {
-        return PPDB_ERROR_INVALID_ARGUMENT;
+    // Initialize IO manager if not already running
+    if (!engine->io_mgr.io_running) {
+        // Create IO manager
+        engine->io_mgr.io_mgr = NULL;  // TODO: Implement IO manager
+        engine->io_mgr.io_thread = NULL;
+        engine->io_mgr.io_running = true;
     }
 
-    // ... existing implementation ...
+    return PPDB_OK;
 }
 
-// Rename from flush_buffer to ppdb_engine_flush_buffer
-static int ppdb_engine_flush_buffer(PPDBFile *file) {
-    if (!file) {
-        return PPDB_ERROR_INVALID_ARGUMENT;
+// IO management cleanup
+void ppdb_engine_io_cleanup(ppdb_engine_t* engine) {
+    if (!engine) return;
+
+    // Stop IO thread if running
+    if (engine->io_mgr.io_running) {
+        engine->io_mgr.io_running = false;
+        // TODO: Wait for IO thread to finish
+        engine->io_mgr.io_thread = NULL;
     }
 
-    // ... existing implementation ...
+    // Cleanup IO manager
+    if (engine->io_mgr.io_mgr) {
+        // TODO: Cleanup IO manager
+        engine->io_mgr.io_mgr = NULL;
+    }
 }
-
-// ... existing code ...

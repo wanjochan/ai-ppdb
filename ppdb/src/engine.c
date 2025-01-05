@@ -14,30 +14,6 @@
 #include "internal/base.h"
 #include "internal/engine.h"
 
-// 引擎层结构定义
-struct ppdb_engine_s {
-    // 基础设施
-    ppdb_base_t* base;
-    ppdb_base_mutex_t* global_mutex;
-
-    // 事务管理
-    struct {
-        ppdb_base_mutex_t* txn_mutex;
-        uint64_t next_txn_id;
-        ppdb_engine_txn_t* active_txns;
-    } txn_mgr;
-
-    // IO管理
-    struct {
-        ppdb_base_io_manager_t* io_mgr;
-        ppdb_base_thread_t* io_thread;
-        bool io_running;
-    } io_mgr;
-
-    // 统计信息
-    ppdb_engine_stats_t stats;
-};
-
 // 包含各模块实现
 #include "engine/engine_error.inc.c"
 #include "engine/engine_struct.inc.c"
@@ -98,8 +74,6 @@ void ppdb_engine_destroy(ppdb_engine_t* engine) {
 void ppdb_engine_get_stats(ppdb_engine_t* engine, ppdb_engine_stats_t* stats) {
     if (!engine || !stats) return;
 
-    stats->total_txns = ppdb_base_counter_get(engine->stats.total_txns);
-    stats->active_txns = ppdb_base_counter_get(engine->stats.active_txns);
-    stats->total_reads = ppdb_base_counter_get(engine->stats.total_reads);
-    stats->total_writes = ppdb_base_counter_get(engine->stats.total_writes);
+    // Copy statistics
+    memcpy(stats, &engine->stats, sizeof(ppdb_engine_stats_t));
 }

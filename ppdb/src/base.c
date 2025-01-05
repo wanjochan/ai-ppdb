@@ -8,6 +8,7 @@
  * 4. 工具函数 (base_utils.inc.c)
  * 5. 跳表实现 (base_skiplist.inc.c)
  * 6. 错误处理 (base_error.inc.c)
+ * 7. 计数器实现 (base_counter.inc.c)
  */
 
 #include <cosmopolitan.h>
@@ -39,6 +40,7 @@ struct ppdb_base_s {
 #include "base/base_sync.inc.c"     // 同步原语实现
 #include "base/base_utils.inc.c"    // 工具函数实现
 #include "base/base_skiplist.inc.c" // 跳表实现
+#include "base/base_counter.inc.c"  // 计数器实现
 
 // Base layer initialization
 ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config) {
