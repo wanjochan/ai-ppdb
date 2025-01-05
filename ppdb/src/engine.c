@@ -39,12 +39,16 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     err = ppdb_base_mutex_create(&new_engine->global_mutex);
     if (err != PPDB_OK) goto error;
 
+    // 初始化核心功能
+    err = ppdb_engine_core_init(new_engine);
+    if (err != PPDB_OK) goto error;
+
     // 初始化事务管理
     err = ppdb_engine_txn_init(new_engine);
     if (err != PPDB_OK) goto error;
 
-    // 初始化IO管理
-    err = ppdb_engine_io_init(new_engine);
+    // 启动引擎核心
+    err = ppdb_engine_core_start(new_engine);
     if (err != PPDB_OK) goto error;
 
     *engine = new_engine;
@@ -59,9 +63,13 @@ error:
 void ppdb_engine_destroy(ppdb_engine_t* engine) {
     if (!engine) return;
 
+    // 停止引擎核心
+    ppdb_engine_core_stop(engine);
+
     // 按照依赖关系反序清理
     ppdb_engine_io_cleanup(engine);
     ppdb_engine_txn_cleanup(engine);
+    ppdb_engine_core_cleanup(engine);
 
     if (engine->global_mutex) {
         ppdb_base_mutex_destroy(engine->global_mutex);

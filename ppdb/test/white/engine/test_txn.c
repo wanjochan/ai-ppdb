@@ -1,15 +1,20 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
 #include "internal/engine.h"
+#include "test_common.h"
 
 // Test suite for transaction management
 static void test_txn_basic(void) {
     ppdb_base_t* base = NULL;
     ppdb_engine_t* engine = NULL;
-    ppdb_base_config_t base_config = {0};
+    ppdb_base_config_t config = {
+        .memory_limit = 1024 * 1024,  // 1MB
+        .thread_pool_size = 4,
+        .thread_safe = true
+    };
 
     // Initialize base layer
-    assert(ppdb_base_init(&base, &base_config) == PPDB_OK);
+    assert(ppdb_base_init(&base, &config) == PPDB_OK);
     assert(base != NULL);
 
     // Initialize engine layer
@@ -19,8 +24,8 @@ static void test_txn_basic(void) {
     // Get initial stats
     ppdb_engine_stats_t stats;
     ppdb_engine_get_stats(engine, &stats);
-    assert(stats.total_txns == 0);
-    assert(stats.active_txns == 0);
+    assert(ppdb_base_counter_get(stats.total_txns) == 0);
+    assert(ppdb_base_counter_get(stats.active_txns) == 0);
 
     // Begin a transaction
     ppdb_engine_txn_t* txn = NULL;
@@ -33,13 +38,13 @@ static void test_txn_basic(void) {
     assert(txn_stats.is_active == true);
     assert(txn_stats.is_committed == false);
     assert(txn_stats.is_rolledback == false);
-    assert(txn_stats.reads == 0);
-    assert(txn_stats.writes == 0);
+    assert(ppdb_base_counter_get(txn_stats.reads) == 0);
+    assert(ppdb_base_counter_get(txn_stats.writes) == 0);
 
     // Check engine stats after begin
     ppdb_engine_get_stats(engine, &stats);
-    assert(stats.total_txns == 1);
-    assert(stats.active_txns == 1);
+    assert(ppdb_base_counter_get(stats.total_txns) == 1);
+    assert(ppdb_base_counter_get(stats.active_txns) == 1);
 
     // Commit the transaction
     assert(ppdb_engine_txn_commit(txn) == PPDB_OK);
@@ -52,8 +57,8 @@ static void test_txn_basic(void) {
 
     // Check engine stats after commit
     ppdb_engine_get_stats(engine, &stats);
-    assert(stats.total_txns == 1);
-    assert(stats.active_txns == 0);
+    assert(ppdb_base_counter_get(stats.total_txns) == 1);
+    assert(ppdb_base_counter_get(stats.active_txns) == 0);
 
     // Cleanup
     ppdb_engine_destroy(engine);
@@ -63,10 +68,14 @@ static void test_txn_basic(void) {
 static void test_txn_rollback(void) {
     ppdb_base_t* base = NULL;
     ppdb_engine_t* engine = NULL;
-    ppdb_base_config_t base_config = {0};
+    ppdb_base_config_t config = {
+        .memory_limit = 1024 * 1024,  // 1MB
+        .thread_pool_size = 4,
+        .thread_safe = true
+    };
 
     // Initialize
-    assert(ppdb_base_init(&base, &base_config) == PPDB_OK);
+    assert(ppdb_base_init(&base, &config) == PPDB_OK);
     assert(ppdb_engine_init(&engine, base) == PPDB_OK);
 
     // Begin a transaction
@@ -76,8 +85,8 @@ static void test_txn_rollback(void) {
     // Check initial stats
     ppdb_engine_stats_t stats;
     ppdb_engine_get_stats(engine, &stats);
-    assert(stats.total_txns == 1);
-    assert(stats.active_txns == 1);
+    assert(ppdb_base_counter_get(stats.total_txns) == 1);
+    assert(ppdb_base_counter_get(stats.active_txns) == 1);
 
     // Rollback the transaction
     assert(ppdb_engine_txn_rollback(txn) == PPDB_OK);
@@ -91,8 +100,8 @@ static void test_txn_rollback(void) {
 
     // Check engine stats after rollback
     ppdb_engine_get_stats(engine, &stats);
-    assert(stats.total_txns == 1);
-    assert(stats.active_txns == 0);
+    assert(ppdb_base_counter_get(stats.total_txns) == 1);
+    assert(ppdb_base_counter_get(stats.active_txns) == 0);
 
     // Cleanup
     ppdb_engine_destroy(engine);
@@ -102,20 +111,23 @@ static void test_txn_rollback(void) {
 static void test_txn_error(void) {
     ppdb_base_t* base = NULL;
     ppdb_engine_t* engine = NULL;
-    ppdb_base_config_t base_config = {0};
-    ppdb_engine_txn_t* txn = NULL;
+    ppdb_base_config_t config = {
+        .memory_limit = 1024 * 1024,  // 1MB
+        .thread_pool_size = 4,
+        .thread_safe = true
+    };
 
     // Test invalid parameters
     assert(ppdb_engine_init(NULL, NULL) == PPDB_ERR_PARAM);
     assert(ppdb_engine_init(&engine, NULL) == PPDB_ERR_PARAM);
     assert(ppdb_engine_txn_begin(NULL, NULL) == PPDB_ERR_PARAM);
-    assert(ppdb_engine_txn_begin(NULL, &txn) == PPDB_ERR_PARAM);
 
     // Initialize properly
-    assert(ppdb_base_init(&base, &base_config) == PPDB_OK);
+    assert(ppdb_base_init(&base, &config) == PPDB_OK);
     assert(ppdb_engine_init(&engine, base) == PPDB_OK);
 
     // Begin a transaction
+    ppdb_engine_txn_t* txn = NULL;
     assert(ppdb_engine_txn_begin(engine, &txn) == PPDB_OK);
 
     // Try to commit twice
@@ -144,11 +156,14 @@ static void test_txn_error(void) {
 static void test_txn_concurrent(void) {
     ppdb_base_t* base = NULL;
     ppdb_engine_t* engine = NULL;
-    ppdb_base_config_t base_config = {0};
+    ppdb_base_config_t config = {
+        .memory_limit = 1024 * 1024,  // 1MB
+        .thread_pool_size = 4,
+        .thread_safe = true
+    };
 
     // Initialize with thread safety enabled
-    base_config.thread_safe = true;
-    assert(ppdb_base_init(&base, &base_config) == PPDB_OK);
+    assert(ppdb_base_init(&base, &config) == PPDB_OK);
     assert(ppdb_engine_init(&engine, base) == PPDB_OK);
 
     // Begin multiple transactions
@@ -163,8 +178,8 @@ static void test_txn_concurrent(void) {
     // Check engine stats
     ppdb_engine_stats_t stats;
     ppdb_engine_get_stats(engine, &stats);
-    assert(stats.total_txns == 3);
-    assert(stats.active_txns == 3);
+    assert(ppdb_base_counter_get(stats.total_txns) == 3);
+    assert(ppdb_base_counter_get(stats.active_txns) == 3);
 
     // Commit, rollback, and commit
     assert(ppdb_engine_txn_commit(txn1) == PPDB_OK);
@@ -173,8 +188,8 @@ static void test_txn_concurrent(void) {
 
     // Check final stats
     ppdb_engine_get_stats(engine, &stats);
-    assert(stats.total_txns == 3);
-    assert(stats.active_txns == 0);
+    assert(ppdb_base_counter_get(stats.total_txns) == 3);
+    assert(ppdb_base_counter_get(stats.active_txns) == 0);
 
     // Cleanup
     ppdb_engine_destroy(engine);

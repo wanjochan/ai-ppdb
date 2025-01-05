@@ -36,7 +36,11 @@ static void test_engine_init(void) {
 static void test_engine_stats(void) {
     ppdb_base_t* base = NULL;
     ppdb_engine_t* engine = NULL;
-    ppdb_base_config_t base_config = {0};
+    ppdb_base_config_t base_config = {
+        .memory_limit = 1024 * 1024,  // 1MB
+        .thread_pool_size = 4,
+        .thread_safe = true
+    };
     ppdb_engine_stats_t stats = {0};
     ppdb_error_t err;
 
@@ -50,10 +54,15 @@ static void test_engine_stats(void) {
 
     // Get initial statistics
     ppdb_engine_get_stats(engine, &stats);
-    ASSERT_EQUAL(0, stats.total_txns);
-    ASSERT_EQUAL(0, stats.active_txns);
-    ASSERT_EQUAL(0, stats.total_reads);
-    ASSERT_EQUAL(0, stats.total_writes);
+    ASSERT_NOT_NULL(stats.total_txns);
+    ASSERT_NOT_NULL(stats.active_txns);
+    ASSERT_NOT_NULL(stats.total_reads);
+    ASSERT_NOT_NULL(stats.total_writes);
+
+    ASSERT_EQUAL(0, ppdb_base_counter_get(stats.total_txns));
+    ASSERT_EQUAL(0, ppdb_base_counter_get(stats.active_txns));
+    ASSERT_EQUAL(0, ppdb_base_counter_get(stats.total_reads));
+    ASSERT_EQUAL(0, ppdb_base_counter_get(stats.total_writes));
 
     // Cleanup
     ppdb_engine_destroy(engine);
