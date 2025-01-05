@@ -2,6 +2,8 @@ as warm-up, read *.md in docs/;
 
 一些临时笔记
 
+阅读项目文档 ppdb/docs/*.md
+
 在修改任何文件之前：
 1. 先检查目标文件的完整内容
 2. 检查相关的依赖文件(特别是头文件)中是否已存在要添加的定义
@@ -16,6 +18,7 @@ cd ppdb\scripts\
 .\build.bat sync_lockfree
 .\build.bat skiplist_locked
 .\build.bat skiplist_lockfree
+
 
 
 # windows:
