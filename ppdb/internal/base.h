@@ -46,4 +46,20 @@ typedef struct ppdb_batch_pool_entry {
     bool used;
 } ppdb_batch_pool_entry_t;
 
+//-----------------------------------------------------------------------------
+// Internal Functions
+//-----------------------------------------------------------------------------
+// Initialize/Cleanup
+ppdb_error_t ppdb_base_init(void);
+void ppdb_base_cleanup(void);
+
+// Memory Pool Management
+void* ppdb_base_pool_alloc(size_t size);
+void ppdb_base_pool_free(void* ptr);
+
+// Internal Helpers
+ppdb_error_t ppdb_base_validate_context(ppdb_context_t ctx);
+ppdb_error_t ppdb_base_validate_cursor(ppdb_cursor_t cursor);
+ppdb_error_t ppdb_base_validate_batch(ppdb_batch_t batch);
+
 #endif // PPDB_INTERNAL_BASE_H

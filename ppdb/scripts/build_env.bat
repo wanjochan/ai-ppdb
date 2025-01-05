@@ -22,6 +22,7 @@ popd
 set "PPDB_DIR=%ROOT_DIR%"
 set "BUILD_DIR=%PPDB_DIR%\build"
 set "INCLUDE_DIR=%PPDB_DIR%\include"
+set "INTERNAL_DIR=%PPDB_DIR%\internal"
 set "TEST_DIR=%PPDB_DIR%\test"
 
 rem Set tool paths
@@ -57,7 +58,7 @@ if /i "%BUILD_MODE%"=="release" (
 )
 
 rem Set include paths
-set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
+set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%INTERNAL_DIR% -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
 
 rem Set final CFLAGS
 set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
@@ -98,4 +99,4 @@ for %%F in (%INCLUDE_DIR%\ppdb\*.h) do (
     )
 )
 
-exit /b 0 
+exit /b 0

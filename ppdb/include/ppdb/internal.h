@@ -1,7 +1,10 @@
 #ifndef PPDB_INTERNAL_H
 #define PPDB_INTERNAL_H
 
-#include "ppdb/ppdb.h"
+// Public API
+#include "ppdb.h"
+
+// Internal Headers
 #include "internal/core.h"
 #include "internal/base.h"
 #include "internal/storage.h"

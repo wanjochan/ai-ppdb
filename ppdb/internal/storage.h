@@ -1,46 +1,47 @@
 #ifndef PPDB_INTERNAL_STORAGE_H
 #define PPDB_INTERNAL_STORAGE_H
 
-#include "base.h"
+#include "core.h"
 
 //-----------------------------------------------------------------------------
-// Storage Engine Types
+// Storage Types
 //-----------------------------------------------------------------------------
-typedef enum ppdb_storage_type {
-    PPDB_STORAGE_MEMTABLE = 1,
-    PPDB_STORAGE_SSTABLE = 2,
-    PPDB_STORAGE_WAL = 3
-} ppdb_storage_type_t;
+typedef struct ppdb_storage_block {
+    uint64_t offset;
+    uint32_t size;
+    uint32_t flags;
+    void* data;
+    struct ppdb_storage_block* next;
+} ppdb_storage_block_t;
+
+typedef struct ppdb_storage_cache {
+    ppdb_core_mutex_t* mutex;
+    uint32_t size;
+    uint32_t capacity;
+    ppdb_storage_block_t* blocks;
+} ppdb_storage_cache_t;
+
+typedef struct ppdb_storage_internal {
+    ppdb_core_file_t* file;
+    ppdb_core_mutex_t* mutex;
+    ppdb_storage_cache_t* cache;
+    ppdb_storage_config_t config;
+} ppdb_storage_internal_t;
 
 //-----------------------------------------------------------------------------
-// Table Operations
+// Internal Functions
 //-----------------------------------------------------------------------------
-ppdb_error_t ppdb_table_create(ppdb_context_t ctx, const char* name);
-ppdb_error_t ppdb_table_drop(ppdb_context_t ctx, const char* name);
-ppdb_error_t ppdb_table_open(ppdb_context_t ctx, const char* name);
-ppdb_error_t ppdb_table_close(ppdb_context_t ctx);
+// Cache Management
+ppdb_error_t ppdb_storage_cache_create(uint32_t capacity, ppdb_storage_cache_t** cache);
+void ppdb_storage_cache_destroy(ppdb_storage_cache_t* cache);
+ppdb_error_t ppdb_storage_cache_get(ppdb_storage_cache_t* cache, uint64_t offset, ppdb_storage_block_t** block);
+ppdb_error_t ppdb_storage_cache_put(ppdb_storage_cache_t* cache, ppdb_storage_block_t* block);
+void ppdb_storage_cache_remove(ppdb_storage_cache_t* cache, uint64_t offset);
 
-//-----------------------------------------------------------------------------
-// Data Operations
-//-----------------------------------------------------------------------------
-ppdb_error_t ppdb_storage_put(ppdb_context_t ctx, const ppdb_data_t* key, const ppdb_data_t* value);
-ppdb_error_t ppdb_storage_get(ppdb_context_t ctx, const ppdb_data_t* key, ppdb_data_t* value);
-ppdb_error_t ppdb_storage_delete(ppdb_context_t ctx, const ppdb_data_t* key);
-
-//-----------------------------------------------------------------------------
-// Scan Operations
-//-----------------------------------------------------------------------------
-ppdb_error_t ppdb_storage_scan(ppdb_context_t ctx, ppdb_cursor_t* cursor);
-ppdb_error_t ppdb_storage_scan_range(ppdb_context_t ctx, 
-                                    const ppdb_data_t* start_key,
-                                    const ppdb_data_t* end_key,
-                                    ppdb_cursor_t* cursor);
-
-//-----------------------------------------------------------------------------
-// Maintenance Operations
-//-----------------------------------------------------------------------------
-ppdb_error_t ppdb_storage_compact(ppdb_context_t ctx);
-ppdb_error_t ppdb_storage_flush(ppdb_context_t ctx);
-ppdb_error_t ppdb_storage_checkpoint(ppdb_context_t ctx);
+// Block Management
+ppdb_error_t ppdb_storage_block_create(uint64_t offset, uint32_t size, ppdb_storage_block_t** block);
+void ppdb_storage_block_destroy(ppdb_storage_block_t* block);
+ppdb_error_t ppdb_storage_block_read(ppdb_storage_internal_t* storage, ppdb_storage_block_t* block);
+ppdb_error_t ppdb_storage_block_write(ppdb_storage_internal_t* storage, ppdb_storage_block_t* block);
 
 #endif // PPDB_INTERNAL_STORAGE_H
