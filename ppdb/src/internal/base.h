@@ -168,6 +168,12 @@ typedef struct ppdb_base_skiplist_node_s ppdb_base_skiplist_node_t;
 typedef struct ppdb_base_skiplist_s ppdb_base_skiplist_t;
 typedef int (*ppdb_base_compare_func_t)(void* a, void* b);
 
+// 原子计数器
+typedef struct ppdb_base_counter_s {
+    uint64_t value;
+    ppdb_base_mutex_t* mutex;
+} ppdb_base_counter_t;
+
 //-----------------------------------------------------------------------------
 // Base layer functions
 //-----------------------------------------------------------------------------
@@ -212,5 +218,13 @@ ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, vo
 void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key);
 ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, void* key);
 size_t ppdb_base_skiplist_size(ppdb_base_skiplist_t* list);
+
+// 原子计数器操作
+ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter);
+void ppdb_base_counter_destroy(ppdb_base_counter_t* counter);
+uint64_t ppdb_base_counter_increment(ppdb_base_counter_t* counter);
+uint64_t ppdb_base_counter_decrement(ppdb_base_counter_t* counter);
+uint64_t ppdb_base_counter_get(ppdb_base_counter_t* counter);
+void ppdb_base_counter_set(ppdb_base_counter_t* counter, uint64_t value);
 
 #endif // PPDB_INTERNAL_BASE_H_

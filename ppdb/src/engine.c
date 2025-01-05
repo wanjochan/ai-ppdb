@@ -11,8 +11,8 @@
  */
 
 #include <cosmopolitan.h>
-#include <ppdb/base.h>
-#include <ppdb/engine.h>
+#include "internal/base.h"
+#include "internal/engine.h"
 
 // 引擎层结构定义
 struct ppdb_engine_s {
@@ -35,12 +35,7 @@ struct ppdb_engine_s {
     } io_mgr;
 
     // 统计信息
-    struct {
-        atomic_uint64_t total_txns;
-        atomic_uint64_t active_txns;
-        atomic_uint64_t total_reads;
-        atomic_uint64_t total_writes;
-    } stats;
+    ppdb_engine_stats_t stats;
 };
 
 // 包含各模块实现
@@ -103,8 +98,8 @@ void ppdb_engine_destroy(ppdb_engine_t* engine) {
 void ppdb_engine_get_stats(ppdb_engine_t* engine, ppdb_engine_stats_t* stats) {
     if (!engine || !stats) return;
 
-    stats->total_txns = atomic_load(&engine->stats.total_txns);
-    stats->active_txns = atomic_load(&engine->stats.active_txns);
-    stats->total_reads = atomic_load(&engine->stats.total_reads);
-    stats->total_writes = atomic_load(&engine->stats.total_writes);
+    stats->total_txns = ppdb_base_counter_get(engine->stats.total_txns);
+    stats->active_txns = ppdb_base_counter_get(engine->stats.active_txns);
+    stats->total_reads = ppdb_base_counter_get(engine->stats.total_reads);
+    stats->total_writes = ppdb_base_counter_get(engine->stats.total_writes);
 }
