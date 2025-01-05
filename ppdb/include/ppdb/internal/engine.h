@@ -3,26 +3,18 @@
 
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
-#include <ppdb/internal/base_sync.h>
+#include <ppdb/internal/base.h>
 
-// Forward declarations
-typedef struct ppdb_base_s ppdb_base_t;
+// Forward declaration for engine only
 typedef struct ppdb_engine_s ppdb_engine_t;
-
-// Base type
-struct ppdb_base_s {
-    bool initialized;
-    void* reserved;
-    ppdb_base_mutex_t* mutex;
-};
 
 // Engine type
 struct ppdb_engine_s {
-    ppdb_base_t* base;
-    ppdb_base_mutex_t* txn_mutex;
+    ppdb_base_t* base;                // Using ppdb_base_t from base.h
+    ppdb_base_mutex_t* txn_mutex;     // Using ppdb_base_mutex_t from base.h
 };
 
-// Function declarations
+// Engine-specific function declarations
 ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base);
 void ppdb_engine_destroy(ppdb_engine_t* engine);
 

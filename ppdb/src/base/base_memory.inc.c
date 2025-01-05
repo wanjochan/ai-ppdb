@@ -1,6 +1,7 @@
 #ifndef PPDB_BASE_MEMORY_INC_C
 #define PPDB_BASE_MEMORY_INC_C
 
+// Core aligned memory allocation functions
 void* ppdb_aligned_alloc(size_t alignment, size_t size) {
     if (size == 0 || alignment == 0) return NULL;
     
@@ -22,6 +23,7 @@ void ppdb_aligned_free(void* ptr) {
     }
 }
 
+// Memory pool management implementation
 ppdb_error_t ppdb_mempool_create(ppdb_mempool_t** pool, size_t block_size, size_t alignment) {
     if (!pool) return PPDB_ERR_NULL_POINTER;
     if (*pool) return PPDB_ERR_EXISTS;
@@ -106,4 +108,4 @@ void ppdb_mempool_free(ppdb_mempool_t* pool, void* ptr) {
     }
 }
 
-#endif // PPDB_BASE_MEMORY_INC_C 
+#endif // PPDB_BASE_MEMORY_INC_C

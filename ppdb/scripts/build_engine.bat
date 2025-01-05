@@ -2,10 +2,10 @@
 setlocal
 
 set CC=gcc
-set CFLAGS=-Wall -Wextra -I../../include -g
-set LDFLAGS=-L../../lib
+set CFLAGS=-Wall -Wextra -I../../include/engine -I../../include/base -g
+set LDFLAGS=-L../../lib -lppdb_base
 
-cd ..\test\white\engine
+cd ..\test\engine
 
 echo Building engine tests...
 

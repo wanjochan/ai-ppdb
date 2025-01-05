@@ -34,17 +34,14 @@ ppdb_error_t ppdb_sync_create(ppdb_sync_t** sync, const ppdb_sync_config_t* conf
     if (!sync || !config) return PPDB_ERR_NULL_POINTER;
     if (*sync) return PPDB_ERR_EXISTS;
 
-    // Allocate sync object
     ppdb_sync_t* s = (ppdb_sync_t*)ppdb_aligned_alloc(SYNC_ALIGNMENT, sizeof(ppdb_sync_t));
     if (!s) return PPDB_ERR_OUT_OF_MEMORY;
 
-    // Initialize sync object
     memset(s, 0, sizeof(ppdb_sync_t));
     s->config = *config;
 
-    // Create mutex if thread safe
     if (config->thread_safe) {
-        ppdb_error_t err = ppdb_engine_mutex_create(&s->mutex);
+        ppdb_error_t err = ppdb_base_mutex_create(&s->mutex);
         if (err != PPDB_OK) {
             ppdb_aligned_free(s);
             return err;
@@ -60,7 +57,7 @@ void ppdb_sync_destroy(ppdb_sync_t* sync) {
     if (!sync) return;
 
     if (sync->mutex) {
-        ppdb_engine_mutex_destroy(sync->mutex);
+        ppdb_base_mutex_destroy(sync->mutex);
     }
 
     ppdb_aligned_free(sync);

@@ -28,6 +28,8 @@ ppdb/
 
 PPDB 采用清晰的分层架构设计，每一层都有其明确的职责和边界：
 
+base => engine => storage => peer => ppdb.exe + ppdb.h
+
 1. **公共 API 层** (`ppdb.h`)
    - 对外提供统一的接口
    - 这是用户唯一需要包含的头文件
