@@ -6,20 +6,20 @@
 #include "internal/base.h"
 
 // Skip list node structure
-typedef struct ppdb_base_skiplist_node {
+struct ppdb_base_skiplist_node_s {
     void* key;
     void* value;
-    struct ppdb_base_skiplist_node** forward;
+    struct ppdb_base_skiplist_node_s** forward;
     int level;
-} ppdb_base_skiplist_node_t;
+};
 
 // Skip list structure
-typedef struct ppdb_base_skiplist {
+struct ppdb_base_skiplist_s {
     ppdb_base_skiplist_node_t* header;
     int level;
     size_t size;
     ppdb_base_compare_func_t compare;
-} ppdb_base_skiplist_t;
+};
 
 // Create a new skip list
 ppdb_error_t ppdb_base_skiplist_create(ppdb_base_skiplist_t** list, ppdb_base_compare_func_t compare) {

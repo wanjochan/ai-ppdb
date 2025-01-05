@@ -187,6 +187,16 @@ void ppdb_base_mempool_destroy(ppdb_base_mempool_t* pool);
 void* ppdb_base_mempool_alloc(ppdb_base_mempool_t* pool);
 void ppdb_base_mempool_free(ppdb_base_mempool_t* pool, void* ptr);
 
+// Aligned memory operations
+void* ppdb_base_aligned_alloc(size_t alignment, size_t size);
+void ppdb_base_aligned_free(void* ptr);
+
+// Mutex operations
+ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex);
+void ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
+ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
+ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);
+
 // Sync initialization
 ppdb_error_t ppdb_base_sync_init(ppdb_base_t* base);
 void ppdb_base_sync_cleanup(ppdb_base_t* base);

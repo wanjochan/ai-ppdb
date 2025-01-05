@@ -3,8 +3,7 @@
 
 // Test suite for error handling
 static void test_error_basic(void) {
-    ppdb_error_t err = PPDB_OK;
-    assert(err == PPDB_OK);
+    assert(PPDB_ERR_MEMORY != PPDB_OK);
 }
 
 static void test_error_context(void) {
@@ -16,21 +15,17 @@ static void test_error_context(void) {
     snprintf(ctx.message, sizeof(ctx.message), "Test error message");
     
     ppdb_error_set_context(&ctx);
-    const ppdb_error_context_t* get_ctx = ppdb_error_get_context();
     
-    assert(get_ctx->code == ctx.code);
-    assert(strcmp(get_ctx->file, ctx.file) == 0);
-    assert(get_ctx->line == ctx.line);
-    assert(strcmp(get_ctx->func, ctx.func) == 0);
-    assert(strcmp(get_ctx->message, ctx.message) == 0);
+    assert(ppdb_error_get_context()->code == ctx.code);
+    assert(strcmp(ppdb_error_get_context()->file, ctx.file) == 0);
+    assert(ppdb_error_get_context()->line == ctx.line);
+    assert(strcmp(ppdb_error_get_context()->func, ctx.func) == 0);
+    assert(strcmp(ppdb_error_get_context()->message, ctx.message) == 0);
 }
 
 static void test_error_string(void) {
-    const char* ok_str = ppdb_error_to_string(PPDB_OK);
-    assert(strcmp(ok_str, "Success") == 0);
-    
-    const char* memory_str = ppdb_error_to_string(PPDB_ERR_MEMORY);
-    assert(strcmp(memory_str, "Memory allocation failed") == 0);
+    assert(strcmp(ppdb_error_to_string(PPDB_OK), "Success") == 0);
+    assert(strcmp(ppdb_error_to_string(PPDB_ERR_MEMORY), "Memory allocation failed") == 0);
 }
 
 int main(void) {

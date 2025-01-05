@@ -1,13 +1,13 @@
 /*
- * base.c - PPDB Base Infrastructure Layer Implementation
+ * base.c - PPDB基础设施层实现
  *
- * This file is the main entry point for PPDB's base infrastructure layer,
- * responsible for organizing and initializing all base modules.
- * Including:
- * 1. Memory Management (base_memory.inc.c)
- * 2. Synchronization Primitives (base_sync.inc.c)
- * 3. Data Structures (base_struct.inc.c)
- * 4. Utility Functions (base_utils.inc.c)
+ * 包含以下模块：
+ * 1. 内存管理 (base_memory.inc.c)
+ * 2. 数据结构 (base_struct.inc.c)
+ * 3. 同步原语 (base_sync.inc.c)
+ * 4. 工具函数 (base_utils.inc.c)
+ * 5. 跳表实现 (base_skiplist.inc.c)
+ * 6. 错误处理 (base_error.inc.c)
  */
 
 #include <cosmopolitan.h>
@@ -32,35 +32,35 @@ struct ppdb_base_s {
     } stats;
 };
 
-// Include module implementations
-#include "base/base_error.inc.c"
-#include "base/base_memory.inc.c"
-#include "base/base_sync.inc.c"
-#include "base/base_struct.inc.c"
-#include "base/base_utils.inc.c"
+// Include implementation files
+#include "base/base_error.inc.c"    // 错误处理实现
+#include "base/base_memory.inc.c"   // 内存管理实现
+#include "base/base_struct.inc.c"   // 数据结构实现
+#include "base/base_sync.inc.c"     // 同步原语实现
+#include "base/base_utils.inc.c"    // 工具函数实现
+#include "base/base_skiplist.inc.c" // 跳表实现
 
-// Base infrastructure layer initialization
+// Base layer initialization
 ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config) {
     ppdb_base_t* new_base;
     ppdb_error_t err;
 
-    if (!base || !config) return PPDB_ERR_PARAM;
+    PPDB_CHECK_NULL(base);
+    PPDB_CHECK_NULL(config);
 
     // Allocate base structure
     new_base = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_t));
-    if (!new_base) return PPDB_ERR_MEMORY;
+    if (!new_base) {
+        return PPDB_ERR_MEMORY;
+    }
 
-    memset(new_base, 0, sizeof(ppdb_base_t));
-
-    // Initialize memory management
+    // Initialize components
     err = ppdb_base_memory_init(new_base);
     if (err != PPDB_OK) goto error;
 
-    // Initialize synchronization primitives
     err = ppdb_base_sync_init(new_base);
     if (err != PPDB_OK) goto error;
 
-    // Initialize utility functions
     err = ppdb_base_utils_init(new_base);
     if (err != PPDB_OK) goto error;
 
@@ -72,11 +72,10 @@ error:
     return err;
 }
 
-// Base infrastructure layer cleanup
+// Base layer cleanup
 void ppdb_base_destroy(ppdb_base_t* base) {
     if (!base) return;
 
-    // Clean up in reverse order of dependencies
     ppdb_base_utils_cleanup(base);
     ppdb_base_sync_cleanup(base);
     ppdb_base_memory_cleanup(base);

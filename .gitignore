@@ -68,3 +68,4 @@ cosmo/test2.elf
 repos/
 agentic/venv/
 *.del
+*.un~
