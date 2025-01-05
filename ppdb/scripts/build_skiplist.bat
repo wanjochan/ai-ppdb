@@ -1,42 +1,46 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-rem Get sync mode and build mode from parameters
-set "SYNC_MODE=%1"
-set "BUILD_MODE=%2"
-if "%SYNC_MODE%"=="" set "SYNC_MODE=locked"
+rem ===== Get Build Mode =====
+set "BUILD_MODE=%1"
 if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
 
-rem Validate sync mode
-if /i not "%SYNC_MODE%"=="locked" if /i not "%SYNC_MODE%"=="lockfree" (
-    echo Invalid sync mode: %SYNC_MODE%
-    echo Valid modes are: locked, lockfree
+rem ===== Set Compiler Options =====
+set "CFLAGS=-Wall -Wextra"
+if /i "%BUILD_MODE%"=="debug" (
+    set "CFLAGS=!CFLAGS! -g -O0 -DDEBUG"
+) else (
+    set "CFLAGS=!CFLAGS! -O2 -DNDEBUG"
+)
+
+rem ===== Set Paths =====
+set "ROOT_DIR=%~dp0.."
+set "BUILD_DIR=!ROOT_DIR!\build\skiplist"
+set "TEST_DIR=!ROOT_DIR!\test\white\infra"
+set "SRC_DIR=!ROOT_DIR!\src"
+
+rem ===== Create Build Directory =====
+if not exist "!BUILD_DIR!" mkdir "!BUILD_DIR!"
+
+rem ===== Compile Test =====
+echo Building skiplist test...
+gcc !CFLAGS! -I"!ROOT_DIR!\include" ^
+    "!TEST_DIR!\test_skiplist.c" ^
+    "!SRC_DIR!\base.c" ^
+    -o "!BUILD_DIR!\test_skiplist.exe"
+
+if errorlevel 1 (
+    echo Failed to build skiplist test
     exit /b 1
 )
 
-rem Set PPDB sync mode
-set "PPDB_SYNC_MODE=%SYNC_MODE%"
-
-rem Load environment variables and common functions
-call "%~dp0\build_env.bat"
-if errorlevel 1 exit /b 1
-
-rem Build skiplist test
-echo Building skiplist %SYNC_MODE% test...
-"%GCC%" %CFLAGS% ^
-    "%PPDB_DIR%\src\base.c" ^
-    "%PPDB_DIR%\src\storage.c" ^
-    "%PPDB_DIR%\test\white\test_framework.c" ^
-    "%PPDB_DIR%\test\white\infra\test_skiplist.c" ^
-    %LDFLAGS% %LIBS% -o "%BUILD_DIR%\skiplist_%SYNC_MODE%_test.exe.dbg"
-if errorlevel 1 exit /b 1
-
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\skiplist_%SYNC_MODE%_test.exe.dbg" "%BUILD_DIR%\skiplist_%SYNC_MODE%_test.exe"
-if errorlevel 1 exit /b 1
-
-rem Run the test if not explicitly disabled
-if not "%3"=="norun" (
-    "%BUILD_DIR%\skiplist_%SYNC_MODE%_test.exe"
+rem ===== Run Test =====
+echo Running skiplist test...
+"!BUILD_DIR!\test_skiplist.exe"
+if errorlevel 1 (
+    echo Skiplist test failed
+    exit /b 1
 )
 
+echo Skiplist test completed successfully
 exit /b 0 
