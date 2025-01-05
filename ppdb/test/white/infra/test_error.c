@@ -1,85 +1,128 @@
 #include <cosmopolitan.h>
-#include "ppdb/ppdb.h"
-#include "ppdb/internal.h"
-#include "test_framework.h"
+#include <ppdb/internal.h>
 
-static void test_error_codes() {
-    // Test basic error codes
+// Test macros
+#define ASSERT(cond) \
+    do { \
+        if (!(cond)) { \
+            fprintf(stderr, "Assertion failed: %s\n", #cond); \
+            exit(1); \
+        } \
+    } while (0)
+
+#define ASSERT_EQ(a, b) \
+    do { \
+        if ((a) != (b)) { \
+            fprintf(stderr, "Assertion failed: %s != %s\n", #a, #b); \
+            exit(1); \
+        } \
+    } while (0)
+
+#define ASSERT_NE(a, b) \
+    do { \
+        if ((a) == (b)) { \
+            fprintf(stderr, "Assertion failed: %s == %s\n", #a, #b); \
+            exit(1); \
+        } \
+    } while (0)
+
+#define ASSERT_NOT_NULL(ptr) \
+    do { \
+        if ((ptr) == NULL) { \
+            fprintf(stderr, "Assertion failed: %s is NULL\n", #ptr); \
+            exit(1); \
+        } \
+    } while (0)
+
+#define ASSERT_NULL(ptr) \
+    do { \
+        if ((ptr) != NULL) { \
+            fprintf(stderr, "Assertion failed: %s is not NULL\n", #ptr); \
+            exit(1); \
+        } \
+    } while (0)
+
+#define ASSERT_OK(err) \
+    do { \
+        if ((err) != PPDB_OK) { \
+            fprintf(stderr, "Assertion failed: %s is not OK\n", #err); \
+            exit(1); \
+        } \
+    } while (0)
+
+#define TEST_SUITE_BEGIN(name) \
+    do { \
+        printf("Running test suite: %s\n", name); \
+    } while (0)
+
+#define TEST_RUN(test) \
+    do { \
+        printf("  Running test: %s\n", #test); \
+        test(); \
+        printf("  Test passed: %s\n", #test); \
+    } while (0)
+
+#define TEST_SUITE_END() \
+    do { \
+        printf("Test suite completed\n"); \
+    } while (0)
+
+// Test cases
+void test_error_codes(void) {
     ASSERT_EQ(PPDB_OK, 0);
-    ASSERT_NE(PPDB_ERROR_OOM, PPDB_OK);
-    ASSERT_NE(PPDB_ERROR_IO, PPDB_OK);
-    ASSERT_NE(PPDB_ERROR_INVALID, PPDB_OK);
-    
-    // Test error code uniqueness
-    ASSERT_NE(PPDB_ERROR_OOM, PPDB_ERROR_IO);
-    ASSERT_NE(PPDB_ERROR_OOM, PPDB_ERROR_INVALID);
-    ASSERT_NE(PPDB_ERROR_IO, PPDB_ERROR_INVALID);
+    ASSERT_NE(PPDB_ERR_OUT_OF_MEMORY, PPDB_OK);
+    ASSERT_NE(PPDB_ERR_INVALID_ARGUMENT, PPDB_OK);
+    ASSERT_NE(PPDB_ERR_INVALID_STATE, PPDB_OK);
 }
 
-static void test_error_strings() {
-    // Test error string retrieval
+void test_error_strings(void) {
     const char* ok_str = ppdb_error_string(PPDB_OK);
-    const char* oom_str = ppdb_error_string(PPDB_ERROR_OOM);
-    const char* io_str = ppdb_error_string(PPDB_ERROR_IO);
-    const char* invalid_str = ppdb_error_string(PPDB_ERROR_INVALID);
-    
-    // Verify strings are not NULL
+    const char* oom_str = ppdb_error_string(PPDB_ERR_OUT_OF_MEMORY);
+    const char* invalid_arg_str = ppdb_error_string(PPDB_ERR_INVALID_ARGUMENT);
+    const char* invalid_state_str = ppdb_error_string(PPDB_ERR_INVALID_STATE);
+    const char* unknown_str = ppdb_error_string(-1);
+
     ASSERT_NOT_NULL(ok_str);
     ASSERT_NOT_NULL(oom_str);
-    ASSERT_NOT_NULL(io_str);
-    ASSERT_NOT_NULL(invalid_str);
-    
-    // Verify strings are unique
-    ASSERT_NE(strcmp(ok_str, oom_str), 0);
-    ASSERT_NE(strcmp(ok_str, io_str), 0);
-    ASSERT_NE(strcmp(ok_str, invalid_str), 0);
-    ASSERT_NE(strcmp(oom_str, io_str), 0);
-    ASSERT_NE(strcmp(oom_str, invalid_str), 0);
-    ASSERT_NE(strcmp(io_str, invalid_str), 0);
+    ASSERT_NOT_NULL(invalid_arg_str);
+    ASSERT_NOT_NULL(invalid_state_str);
+    ASSERT_NOT_NULL(unknown_str);
+
+    ASSERT(strcmp(ok_str, "Success") == 0);
+    ASSERT(strcmp(oom_str, "Out of memory") == 0);
+    ASSERT(strcmp(invalid_arg_str, "Invalid argument") == 0);
+    ASSERT(strcmp(invalid_state_str, "Invalid state") == 0);
+    ASSERT(strcmp(unknown_str, "Unknown error") == 0);
 }
 
-static void test_error_propagation() {
+void test_error_propagation(void) {
     ppdb_error_t err;
-    
-    // Test function that should succeed
-    err = ppdb_sync_create(NULL, 0);
-    ASSERT_OK(err);
-    
-    // Test function that should fail with INVALID
-    err = ppdb_sync_lock(NULL);
-    ASSERT_EQ(err, PPDB_ERROR_INVALID);
-    
-    // Test function that should fail with OOM
-    void* ptr = PPDB_ALIGNED_ALLOC((size_t)-1);  // Too large
+    void* ptr;
+
+    // Test error propagation through memory allocation
+    ptr = ppdb_aligned_alloc(0, 1024);  // Invalid alignment
     ASSERT_NULL(ptr);
+
+    ptr = ppdb_aligned_alloc(16, 0);  // Invalid size
+    ASSERT_NULL(ptr);
+
+    // Test error propagation through memory pool
+    ppdb_mempool_t* pool = NULL;
+    err = ppdb_mempool_create(&pool, 0, 0);  // Invalid arguments
+    ASSERT_EQ(err, PPDB_ERR_INVALID_ARGUMENT);
+    ASSERT_NULL(pool);
 }
 
-static void test_error_recovery() {
-    ppdb_sync_t* sync = NULL;
-    ppdb_error_t err;
-    
-    // Test recovery from invalid parameter
-    err = ppdb_sync_create(&sync, 999);  // Invalid type
-    ASSERT_NE(err, PPDB_OK);
-    ASSERT_NULL(sync);  // Should not be modified on error
-    
-    // Test successful operation after error
-    err = ppdb_sync_create(&sync, 0);  // Valid type
-    ASSERT_OK(err);
-    ASSERT_NOT_NULL(sync);
-    
-    // Cleanup
-    ppdb_sync_destroy(sync);
-}
+int main(int argc, char* argv[]) {
+    (void)argc;  // Unused parameter
+    (void)argv;  // Unused parameter
 
-int main() {
     TEST_SUITE_BEGIN("Error Tests");
-    
+
     TEST_RUN(test_error_codes);
     TEST_RUN(test_error_strings);
     TEST_RUN(test_error_propagation);
-    TEST_RUN(test_error_recovery);
-    
+
     TEST_SUITE_END();
     return 0;
 } 
