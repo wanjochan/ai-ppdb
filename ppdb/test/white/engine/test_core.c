@@ -62,7 +62,6 @@ static void test_engine_stats(void) {
 
 // Test engine error handling
 static void test_engine_error(void) {
-    ppdb_base_t* base = NULL;
     ppdb_engine_t* engine = NULL;
     ppdb_error_t err;
 
