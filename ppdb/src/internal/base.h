@@ -4,12 +4,78 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
 
+//-----------------------------------------------------------------------------
+// Error handling
+//-----------------------------------------------------------------------------
+
+// Module error ranges
+#define PPDB_BASE_ERR_START    (PPDB_ERROR_START + 0x100)  // Base: 0x1100-0x11FF
+#define PPDB_ENGINE_ERR_START  (PPDB_ERROR_START + 0x200)  // Engine: 0x1200-0x12FF
+
+// Base layer error codes (0x1100-0x11FF)
+#define PPDB_BASE_ERR_MUTEX    (PPDB_BASE_ERR_START + 0x01)
+#define PPDB_BASE_ERR_RWLOCK   (PPDB_BASE_ERR_START + 0x02)
+#define PPDB_BASE_ERR_THREAD   (PPDB_BASE_ERR_START + 0x03)
+#define PPDB_BASE_ERR_SYNC     (PPDB_BASE_ERR_START + 0x04)
+#define PPDB_BASE_ERR_POOL     (PPDB_BASE_ERR_START + 0x05)
+#define PPDB_BASE_ERR_MEMORY   (PPDB_BASE_ERR_START + 0x06)
+#define PPDB_BASE_ERR_IO       (PPDB_BASE_ERR_START + 0x07)
+#define PPDB_BASE_ERR_PARAM    (PPDB_BASE_ERR_START + 0x08)
+
+// Error handling macros
+#define PPDB_RETURN_IF_ERROR(expr) \
+    do { \
+        ppdb_error_t _err = (expr); \
+        if (_err != PPDB_OK) return _err; \
+    } while (0)
+
+#define PPDB_GOTO_IF_ERROR(expr, label) \
+    do { \
+        ppdb_error_t _err = (expr); \
+        if (_err != PPDB_OK) goto label; \
+    } while (0)
+
+#define PPDB_CHECK_NULL(ptr) \
+    do { \
+        if ((ptr) == NULL) return PPDB_BASE_ERR_PARAM; \
+    } while (0)
+
+#define PPDB_CHECK_PARAM(cond) \
+    do { \
+        if (!(cond)) return PPDB_BASE_ERR_PARAM; \
+    } while (0)
+
+// Error context structure
+typedef struct ppdb_error_context_s {
+    ppdb_error_t code;           // Error code
+    const char* file;            // Source file where error occurred
+    int line;                    // Line number where error occurred
+    const char* func;            // Function name where error occurred
+    char message[256];           // Optional error message
+} ppdb_error_context_t;
+
+// Error handling functions
+void ppdb_error_init(void);
+void ppdb_error_set_context(ppdb_error_context_t* ctx);
+const ppdb_error_context_t* ppdb_error_get_context(void);
+const char* ppdb_error_to_string(ppdb_error_t err);
+
+//-----------------------------------------------------------------------------
 // Base layer constants
+//-----------------------------------------------------------------------------
+
 #define PPDB_LOG_DEBUG 0
 #define PPDB_LOG_INFO  1
 #define PPDB_LOG_WARN  2
 #define PPDB_LOG_ERROR 3
 #define MAX_SKIPLIST_LEVEL 32
+
+//-----------------------------------------------------------------------------
+// Base layer types
+//-----------------------------------------------------------------------------
+
+// Forward declarations
+typedef struct ppdb_base_s ppdb_base_t;
 
 // Extended base types
 typedef struct ppdb_base_mutex_s ppdb_base_mutex_t;

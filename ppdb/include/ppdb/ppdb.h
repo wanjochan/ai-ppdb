@@ -20,18 +20,25 @@
 // 错误码
 typedef int32_t ppdb_error_t;
 
-// 常见错误
-#define PPDB_OK                     0  // 成功
-#define PPDB_ERR_NULL_POINTER       1  // 空指针
-#define PPDB_ERR_INVALID_ARGUMENT   2  // 无效参数
-#define PPDB_ERR_INVALID_STATE      3  // 无效状态
-#define PPDB_ERR_NOT_IMPLEMENTED    4  // 未实现
-#define PPDB_ERR_OUT_OF_MEMORY     5  // 内存不足
-#define PPDB_ERR_TIMEOUT           6  // 超时
-#define PPDB_ERR_BUSY             7  // 忙
-#define PPDB_ERR_FULL             8  // 满
-#define PPDB_ERR_NOT_FOUND        9  // 未找到
-#define PPDB_ERR_EXISTS           10 // 已存在
+// Error codes
+#define PPDB_OK              0x0000
+#define PPDB_ERROR_START     0x1000
+
+// Common error codes (0x1000-0x1FFF)
+#define PPDB_ERR_MEMORY      (PPDB_ERROR_START + 0x001)
+#define PPDB_ERR_IO          (PPDB_ERROR_START + 0x002)
+#define PPDB_ERR_PARAM       (PPDB_ERROR_START + 0x003)
+#define PPDB_ERR_TIMEOUT     (PPDB_ERROR_START + 0x004)
+#define PPDB_ERR_BUSY        (PPDB_ERROR_START + 0x005)
+#define PPDB_ERR_NOT_FOUND   (PPDB_ERROR_START + 0x006)
+#define PPDB_ERR_EXISTS      (PPDB_ERROR_START + 0x007)
+
+// Error handling macros
+#define PPDB_RETURN_IF_ERROR(expr) \
+    do { \
+        ppdb_error_t _err = (expr); \
+        if (_err != PPDB_OK) return _err; \
+    } while (0)
 
 // 句柄类型
 typedef uint64_t ppdb_handle_t;    // 基础句柄类型

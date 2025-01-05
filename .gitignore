@@ -67,3 +67,4 @@ cosmo/test2.elf
 # Reference repos
 repos/
 agentic/venv/
+*.del

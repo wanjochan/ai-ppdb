@@ -1,8 +1,17 @@
-#ifndef PPDB_BASE_MEMORY_INC_C
-#define PPDB_BASE_MEMORY_INC_C
+/*
+ * PPDB Base Memory Management
+ * 
+ * This module provides core memory management functionality including:
+ * - Aligned memory allocation
+ * - Memory pool management
+ * - Thread-safe memory operations
+ */
 
-// Core aligned memory allocation functions
-void* ppdb_aligned_alloc(size_t alignment, size_t size) {
+// Core aligned memory allocation functions will be moved to base_mem.c
+// Removing header guards since this will be merged
+
+// Core aligned memory allocation functions remain the same
+void* ppdb_base_aligned_alloc(size_t alignment, size_t size) {
     if (size == 0 || alignment == 0) return NULL;
     
     // Round up size to multiple of alignment
@@ -17,20 +26,19 @@ void* ppdb_aligned_alloc(size_t alignment, size_t size) {
     return ptr;
 }
 
-void ppdb_aligned_free(void* ptr) {
+void ppdb_base_aligned_free(void* ptr) {
     if (ptr) {
         free(ptr);
     }
 }
 
-// Memory pool management implementation
-ppdb_error_t ppdb_mempool_create(ppdb_mempool_t** pool, size_t block_size, size_t alignment) {
+// Memory pool management implementation remains the same
+ppdb_error_t ppdb_base_mempool_create(ppdb_mempool_t** pool, size_t block_size, size_t alignment) {
     if (!pool) return PPDB_ERR_NULL_POINTER;
     if (*pool) return PPDB_ERR_EXISTS;
-    if (block_size == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    if (alignment == 0) return PPDB_ERR_INVALID_ARGUMENT;
+    if (block_size == 0 || alignment == 0) return PPDB_ERR_INVALID_ARGUMENT;
 
-    ppdb_mempool_t* p = (ppdb_mempool_t*)ppdb_aligned_alloc(alignment, sizeof(ppdb_mempool_t));
+    ppdb_mempool_t* p = (ppdb_mempool_t*)ppdb_base_aligned_alloc(alignment, sizeof(ppdb_mempool_t));
     if (!p) return PPDB_ERR_OUT_OF_MEMORY;
 
     p->head = NULL;
@@ -41,20 +49,20 @@ ppdb_error_t ppdb_mempool_create(ppdb_mempool_t** pool, size_t block_size, size_
     return PPDB_OK;
 }
 
-void ppdb_mempool_destroy(ppdb_mempool_t* pool) {
+void ppdb_base_mempool_destroy(ppdb_mempool_t* pool) {
     if (!pool) return;
 
     ppdb_mempool_block_t* block = pool->head;
     while (block) {
         ppdb_mempool_block_t* next = block->next;
-        ppdb_aligned_free(block);
+        ppdb_base_aligned_free(block);
         block = next;
     }
 
-    ppdb_aligned_free(pool);
+    ppdb_base_aligned_free(pool);
 }
 
-void* ppdb_mempool_alloc(ppdb_mempool_t* pool) {
+void* ppdb_base_mempool_alloc(ppdb_mempool_t* pool) {
     if (!pool) return NULL;
 
     // Find a block with enough space
@@ -77,7 +85,7 @@ void* ppdb_mempool_alloc(ppdb_mempool_t* pool) {
     size_t header_size = offsetof(ppdb_mempool_block_t, data);
     size_t total_size = header_size + block_size;
 
-    block = (ppdb_mempool_block_t*)ppdb_aligned_alloc(pool->alignment, total_size);
+    block = (ppdb_mempool_block_t*)ppdb_base_aligned_alloc(pool->alignment, total_size);
     if (!block) return NULL;
 
     block->next = pool->head;
@@ -92,7 +100,7 @@ void* ppdb_mempool_alloc(ppdb_mempool_t* pool) {
     return (void*)aligned;
 }
 
-void ppdb_mempool_free(ppdb_mempool_t* pool, void* ptr) {
+void ppdb_base_mempool_free(ppdb_mempool_t* pool, void* ptr) {
     if (!pool || !ptr) return;
 
     // Find the block containing ptr
@@ -107,5 +115,3 @@ void ppdb_mempool_free(ppdb_mempool_t* pool, void* ptr) {
         block = block->next;
     }
 }
-
-#endif // PPDB_BASE_MEMORY_INC_C
