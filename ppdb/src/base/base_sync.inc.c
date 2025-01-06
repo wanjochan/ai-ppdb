@@ -113,6 +113,10 @@ void ppdb_base_mutex_get_stats(ppdb_base_mutex_t* mutex, uint64_t* lock_count,
                               uint64_t* contention_count, uint64_t* total_wait_time_us,
                               uint64_t* max_wait_time_us) {
     if (!mutex) {
+        if (lock_count) *lock_count = 0;
+        if (contention_count) *contention_count = 0;
+        if (total_wait_time_us) *total_wait_time_us = 0;
+        if (max_wait_time_us) *max_wait_time_us = 0;
         return;
     }
 
@@ -202,4 +206,334 @@ ppdb_error_t ppdb_base_sync_init(ppdb_base_t* base) {
 void ppdb_base_sync_cleanup(ppdb_base_t* base) {
     // Nothing to clean up
     (void)base;
+}
+
+// Performance test implementation
+ppdb_error_t ppdb_base_sync_perf_test(ppdb_base_sync_t* sync, uint32_t num_threads, uint32_t iterations) {
+    if (!sync || num_threads == 0 || iterations == 0) {
+        return PPDB_ERR_PARAM;
+    }
+
+    pthread_t* threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
+    if (!threads) {
+        return PPDB_ERR_MEMORY;
+    }
+
+    struct thread_data {
+        ppdb_base_sync_t* sync;
+        uint32_t iterations;
+        uint64_t total_time;
+    };
+
+    struct thread_data* thread_data = (struct thread_data*)malloc(sizeof(struct thread_data) * num_threads);
+    if (!thread_data) {
+        free(threads);
+        return PPDB_ERR_MEMORY;
+    }
+
+    void* thread_func(void* arg) {
+        struct thread_data* data = (struct thread_data*)arg;
+        uint64_t start_time = get_time_us();
+        
+        for (uint32_t i = 0; i < data->iterations; i++) {
+            ppdb_base_sync_lock(data->sync);
+            // Simulate some work
+            usleep(1);
+            ppdb_base_sync_unlock(data->sync);
+        }
+        
+        data->total_time = get_time_us() - start_time;
+        return NULL;
+    }
+
+    // Initialize thread data
+    for (uint32_t i = 0; i < num_threads; i++) {
+        thread_data[i].sync = sync;
+        thread_data[i].iterations = iterations;
+        thread_data[i].total_time = 0;
+    }
+
+    // Start threads
+    for (uint32_t i = 0; i < num_threads; i++) {
+        if (pthread_create(&threads[i], NULL, thread_func, &thread_data[i]) != 0) {
+            free(threads);
+            free(thread_data);
+            return PPDB_BASE_ERR_THREAD;
+        }
+    }
+
+    // Wait for threads to complete
+    for (uint32_t i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    // Calculate and print performance statistics
+    uint64_t total_time = 0;
+    uint64_t max_time = 0;
+    for (uint32_t i = 0; i < num_threads; i++) {
+        total_time += thread_data[i].total_time;
+        if (thread_data[i].total_time > max_time) {
+            max_time = thread_data[i].total_time;
+        }
+    }
+
+    uint64_t avg_time = total_time / num_threads;
+    printf("Sync Performance Test Results:\n");
+    printf("  Number of threads: %u\n", num_threads);
+    printf("  Iterations per thread: %u\n", iterations);
+    printf("  Average time per thread: %lu us\n", avg_time);
+    printf("  Max time per thread: %lu us\n", max_time);
+    printf("  Total operations: %u\n", num_threads * iterations);
+    printf("  Operations per second: %.2f\n", 
+           (double)(num_threads * iterations) / ((double)max_time / 1000000.0));
+
+    uint64_t lock_count, contention_count, total_wait_time, max_wait_time;
+    ppdb_base_mutex_get_stats(sync->mutex, &lock_count, &contention_count, 
+                             &total_wait_time, &max_wait_time);
+
+    printf("\nMutex Statistics:\n");
+    printf("  Lock count: %lu\n", lock_count);
+    printf("  Contention count: %lu\n", contention_count);
+    printf("  Average wait time: %.2f us\n", 
+           contention_count > 0 ? (double)total_wait_time / contention_count : 0.0);
+    printf("  Max wait time: %lu us\n", max_wait_time);
+    printf("  Contention ratio: %.2f%%\n", 
+           lock_count > 0 ? ((double)contention_count / lock_count) * 100.0 : 0.0);
+
+    free(threads);
+    free(thread_data);
+    return PPDB_OK;
+}
+
+// Thread implementation
+struct ppdb_base_thread_s {
+    pthread_t thread;
+    ppdb_base_thread_func_t func;
+    void* arg;
+    bool detached;
+    uint64_t start_time;
+    uint64_t wall_time;
+    int state;
+};
+
+ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg) {
+    if (!thread || !func) {
+        return PPDB_ERR_PARAM;
+    }
+
+    ppdb_base_thread_t* t = (ppdb_base_thread_t*)malloc(sizeof(ppdb_base_thread_t));
+    if (!t) {
+        return PPDB_ERR_MEMORY;
+    }
+
+    t->func = func;
+    t->arg = arg;
+    t->detached = false;
+    t->start_time = get_time_us();
+    t->wall_time = 0;
+    t->state = 0;
+
+    // 包装函数，用于捕获执行时间
+    void* thread_wrapper(void* arg) {
+        ppdb_base_thread_t* t = (ppdb_base_thread_t*)arg;
+        t->func(t->arg);
+        t->wall_time = get_time_us() - t->start_time;
+        return NULL;
+    }
+
+    if (pthread_create(&t->thread, NULL, thread_wrapper, t) != 0) {
+        free(t);
+        return PPDB_BASE_ERR_THREAD;
+    }
+
+    *thread = t;
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread, void** retval) {
+    if (!thread) {
+        return PPDB_ERR_PARAM;
+    }
+
+    if (thread->detached) {
+        return PPDB_ERR_INVALID_STATE;
+    }
+
+    if (pthread_join(thread->thread, retval) != 0) {
+        return PPDB_BASE_ERR_THREAD;
+    }
+
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_thread_detach(ppdb_base_thread_t* thread) {
+    if (!thread) {
+        return PPDB_ERR_PARAM;
+    }
+
+    if (thread->detached) {
+        return PPDB_ERR_INVALID_STATE;
+    }
+
+    if (pthread_detach(thread->thread) != 0) {
+        return PPDB_BASE_ERR_THREAD;
+    }
+
+    thread->detached = true;
+    return PPDB_OK;
+}
+
+void ppdb_base_thread_destroy(ppdb_base_thread_t* thread) {
+    if (!thread) {
+        return;
+    }
+    free(thread);
+}
+
+int ppdb_base_thread_get_state(ppdb_base_thread_t* thread) {
+    if (!thread) {
+        return -1;
+    }
+    return thread->state;
+}
+
+uint64_t ppdb_base_thread_get_wall_time(ppdb_base_thread_t* thread) {
+    if (!thread) {
+        return 0;
+    }
+    if (thread->wall_time == 0) {
+        // 线程还在运行，返回当前运行时间
+        return get_time_us() - thread->start_time;
+    }
+    return thread->wall_time;
+}
+
+const char* ppdb_base_thread_get_error(ppdb_base_thread_t* thread) {
+    (void)thread; // Unused parameter
+    return strerror(errno);
+}
+
+// Spinlock implementation
+struct ppdb_base_spinlock_s {
+    _Atomic(int) lock;
+    uint64_t lock_count;
+    uint64_t contention_count;
+    uint64_t total_wait_time_us;
+    uint64_t max_wait_time_us;
+    uint32_t spin_count;
+};
+
+ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock) {
+    if (!spinlock) {
+        return PPDB_ERR_PARAM;
+    }
+
+    ppdb_base_spinlock_t* s = (ppdb_base_spinlock_t*)malloc(sizeof(ppdb_base_spinlock_t));
+    if (!s) {
+        return PPDB_ERR_MEMORY;
+    }
+
+    memset(s, 0, sizeof(ppdb_base_spinlock_t));
+    atomic_init(&s->lock, 0);
+    s->spin_count = 1000; // 默认自旋次数
+
+    *spinlock = s;
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) {
+        return PPDB_ERR_PARAM;
+    }
+
+    uint64_t start_time = get_time_us();
+    int expected = 0;
+    uint32_t spins = 0;
+    
+    while (!atomic_compare_exchange_weak(&spinlock->lock, &expected, 1)) {
+        expected = 0;
+        spins++;
+        
+        if (spins >= spinlock->spin_count) {
+            // 超过自旋次数，让出CPU
+            sched_yield();
+            spins = 0;
+        } else {
+            // 短暂延迟
+            __asm__ __volatile__("pause" ::: "memory");
+        }
+    }
+
+    uint64_t end_time = get_time_us();
+    uint64_t wait_time = end_time - start_time;
+
+    spinlock->lock_count++;
+    if (wait_time > 0) {
+        spinlock->contention_count++;
+        spinlock->total_wait_time_us += wait_time;
+        if (wait_time > spinlock->max_wait_time_us) {
+            spinlock->max_wait_time_us = wait_time;
+        }
+    }
+
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_spinlock_trylock(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) {
+        return PPDB_ERR_PARAM;
+    }
+
+    int expected = 0;
+    if (atomic_compare_exchange_strong(&spinlock->lock, &expected, 1)) {
+        spinlock->lock_count++;
+        return PPDB_OK;
+    }
+
+    return PPDB_ERR_BUSY;
+}
+
+ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) {
+        return PPDB_ERR_PARAM;
+    }
+
+    atomic_store(&spinlock->lock, 0);
+    return PPDB_OK;
+}
+
+void ppdb_base_spinlock_set_spin_count(ppdb_base_spinlock_t* spinlock, uint32_t count) {
+    if (!spinlock) {
+        return;
+    }
+    spinlock->spin_count = count;
+}
+
+void ppdb_base_spinlock_get_stats(ppdb_base_spinlock_t* spinlock, uint64_t* lock_count,
+                                 uint64_t* contention_count, uint64_t* total_wait_time_us,
+                                 uint64_t* max_wait_time_us) {
+    if (!spinlock) {
+        if (lock_count) *lock_count = 0;
+        if (contention_count) *contention_count = 0;
+        if (total_wait_time_us) *total_wait_time_us = 0;
+        if (max_wait_time_us) *max_wait_time_us = 0;
+        return;
+    }
+
+    if (lock_count) *lock_count = spinlock->lock_count;
+    if (contention_count) *contention_count = spinlock->contention_count;
+    if (total_wait_time_us) *total_wait_time_us = spinlock->total_wait_time_us;
+    if (max_wait_time_us) *max_wait_time_us = spinlock->max_wait_time_us;
+}
+
+const char* ppdb_base_spinlock_get_error(ppdb_base_spinlock_t* spinlock) {
+    (void)spinlock; // Unused parameter
+    return strerror(errno);
+}
+
+void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) {
+        return;
+    }
+    free(spinlock);
 }
