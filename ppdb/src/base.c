@@ -14,6 +14,19 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
+// Time utility functions
+uint64_t ppdb_base_get_current_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+uint64_t ppdb_base_get_time_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
+}
+
 // Base infrastructure layer structure definition
 struct ppdb_base_s {
     // Memory management

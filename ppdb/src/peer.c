@@ -1,10 +1,11 @@
 #include <cosmopolitan.h>
+#include <ppdb/ppdb.h>
+#include "internal/base.h"
 #include "internal/peer.h"
-#include "internal/peer_internal.h"
 
 // Include protocol adapter implementations
-#include "peer_memcached.inc.c"
-#include "peer_redis.inc.c"
+#include "peer/peer_memcached.inc.c"
+#include "peer/peer_redis.inc.c"
 
 // Peer context structure
 struct peer_ctx {
@@ -60,4 +61,4 @@ const peer_ops_t* peer_get_redis(void) {
         .get_name = redis_proto_get_name
     };
     return &ops;
-}
+} 

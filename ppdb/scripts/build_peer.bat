@@ -15,7 +15,7 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 rem Build peer library
 echo Building peer library...
-%GCC% %CFLAGS% -c "%PPDB_DIR%\src\peer.c" -o "%BUILD_DIR%\peer.o"
+%GCC% %CFLAGS% -I"%PPDB_DIR%\src" -c "%PPDB_DIR%\src\peer.c" -o "%BUILD_DIR%\peer.o"
 if errorlevel 1 exit /b 1
 
 if not "%TEST_MODE%"=="notest" (

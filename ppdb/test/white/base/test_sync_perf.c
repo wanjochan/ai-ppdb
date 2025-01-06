@@ -29,13 +29,6 @@ typedef struct test_context_s {
     ppdb_base_thread_t* threads[NUM_THREADS];
 } test_context_t;
 
-// 获取当前时间（微秒）
-static uint64_t get_time_us(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
-}
-
 // 使用互斥锁的线程函数
 static void __attribute__((used)) mutex_thread_func(void* arg) {
     thread_args_t* args = (thread_args_t*)arg;
@@ -44,12 +37,12 @@ static void __attribute__((used)) mutex_thread_func(void* arg) {
     uint64_t local_counter = 0;
     
     for (int i = 0; i < OPS_PER_THREAD; i++) {
-        start_time = get_time_us();
+        start_time = ppdb_base_get_time_us();
         
         // 加锁
         assert(ppdb_base_mutex_lock(ctx->mutex) == PPDB_OK);
         
-        end_time = get_time_us();
+        end_time = ppdb_base_get_time_us();
         args->total_time_us += (end_time - start_time);
         
         // 临界区操作 - 使用更轻量级的内存序
@@ -77,12 +70,12 @@ static void __attribute__((used)) spinlock_thread_func(void* arg) {
     uint64_t local_counter = 0;
     
     for (int i = 0; i < OPS_PER_THREAD; i++) {
-        start_time = get_time_us();
+        start_time = ppdb_base_get_time_us();
         
         // 加锁
         assert(ppdb_base_spinlock_lock(ctx->spinlock) == PPDB_OK);
         
-        end_time = get_time_us();
+        end_time = ppdb_base_get_time_us();
         args->total_time_us += (end_time - start_time);
         
         // 临界区操作 - 使用更轻量级的内存序
@@ -131,7 +124,7 @@ static void test_mutex_performance(void) {
     // 启动线程
     printf("Starting threads...\n");
     fflush(stdout);
-    uint64_t test_start_time = get_time_us();
+    uint64_t test_start_time = ppdb_base_get_time_us();
     
     for (int i = 0; i < NUM_THREADS; i++) {
         ctx->thread_args[i].ctx = ctx;
@@ -161,7 +154,7 @@ static void test_mutex_performance(void) {
         total_time_us += ctx->thread_args[i].total_time_us;
     }
     
-    uint64_t test_end_time = get_time_us();
+    uint64_t test_end_time = ppdb_base_get_time_us();
     uint64_t test_duration = test_end_time - test_start_time;
     
     // 输出统计信息
@@ -214,7 +207,7 @@ static void test_spinlock_performance(void) {
     // 启动线程
     printf("Starting threads...\n");
     fflush(stdout);
-    uint64_t test_start_time = get_time_us();
+    uint64_t test_start_time = ppdb_base_get_time_us();
     
     for (int i = 0; i < NUM_THREADS; i++) {
         ctx->thread_args[i].ctx = ctx;
@@ -244,7 +237,7 @@ static void test_spinlock_performance(void) {
         total_time_us += ctx->thread_args[i].total_time_us;
     }
     
-    uint64_t test_end_time = get_time_us();
+    uint64_t test_end_time = ppdb_base_get_time_us();
     uint64_t test_duration = test_end_time - test_start_time;
     
     // 输出统计信息

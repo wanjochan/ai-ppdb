@@ -5,13 +5,6 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
-// 时间相关函数
-static uint64_t get_time_us(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
-}
-
 // Mutex implementation
 struct ppdb_base_mutex_s {
     pthread_mutex_t mutex;
@@ -68,9 +61,9 @@ ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
         return PPDB_BASE_ERR_PARAM;
     }
 
-    uint64_t start_time = 0;
+    uint64_t start_time = ppdb_base_get_time_us();
     if (mutex->enable_stats) {
-        start_time = get_time_us();
+        start_time = ppdb_base_get_time_us();
     }
 
     int result = pthread_mutex_lock(&mutex->mutex);
@@ -79,7 +72,7 @@ ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
     }
 
     if (mutex->enable_stats) {
-        uint64_t end_time = get_time_us();
+        uint64_t end_time = ppdb_base_get_time_us();
         uint64_t wait_time = end_time - start_time;
 
         mutex->lock_count++;
@@ -262,7 +255,7 @@ ppdb_error_t ppdb_base_sync_perf_test(ppdb_base_sync_t* sync, uint32_t num_threa
 
     void* thread_func(void* arg) {
         struct thread_data* data = (struct thread_data*)arg;
-        uint64_t start_time = get_time_us();
+        uint64_t start_time = ppdb_base_get_time_us();
         
         for (uint32_t i = 0; i < data->iterations; i++) {
             ppdb_base_sync_lock(data->sync);
@@ -271,7 +264,7 @@ ppdb_error_t ppdb_base_sync_perf_test(ppdb_base_sync_t* sync, uint32_t num_threa
             ppdb_base_sync_unlock(data->sync);
         }
         
-        data->total_time = get_time_us() - start_time;
+        data->total_time = ppdb_base_get_time_us() - start_time;
         return NULL;
     }
 
@@ -335,7 +328,7 @@ struct ppdb_base_thread_s {
 static void* thread_wrapper(void* arg) {
     ppdb_base_thread_t* t = (ppdb_base_thread_t*)arg;
     t->func(t->arg);
-    t->wall_time = get_time_us() - t->start_time;
+    t->wall_time = ppdb_base_get_time_us() - t->start_time;
     return NULL;
 }
 
@@ -352,7 +345,7 @@ ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thre
     t->func = func;
     t->arg = arg;
     t->detached = false;
-    t->start_time = get_time_us();
+    t->start_time = ppdb_base_get_time_us();
     t->wall_time = 0;
     t->state = 0;
 
@@ -418,7 +411,7 @@ uint64_t ppdb_base_thread_get_wall_time(ppdb_base_thread_t* thread) {
     }
     if (thread->wall_time == 0) {
         // 线程还在运行，返回当前运行时间
-        return get_time_us() - thread->start_time;
+        return ppdb_base_get_time_us() - thread->start_time;
     }
     return thread->wall_time;
 }
@@ -466,9 +459,9 @@ ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
         return PPDB_BASE_ERR_PARAM;
     }
 
-    uint64_t start_time = 0;
+    uint64_t start_time = ppdb_base_get_time_us();
     if (spinlock->enable_stats) {
-        start_time = get_time_us();
+        start_time = ppdb_base_get_time_us();
     }
 
     int expected = 0;
@@ -489,7 +482,7 @@ ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
     }
 
     if (spinlock->enable_stats) {
-        uint64_t end_time = get_time_us();
+        uint64_t end_time = ppdb_base_get_time_us();
         uint64_t wait_time = end_time - start_time;
 
         spinlock->lock_count++;

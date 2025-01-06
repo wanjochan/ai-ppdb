@@ -12,13 +12,6 @@ struct ppdb_base_timer_s {
     uint64_t interval_ms;
 };
 
-// Get current timestamp in milliseconds
-static uint64_t get_current_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
-}
-
 // Create a new timer
 ppdb_error_t ppdb_base_timer_create(ppdb_base_async_loop_t* loop, ppdb_base_timer_t** timer) {
     if (!loop || !timer) return PPDB_ERR_PARAM;
