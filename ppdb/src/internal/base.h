@@ -223,6 +223,14 @@ void ppdb_base_mempool_free(ppdb_base_mempool_t* pool, void* ptr);
 void* ppdb_base_aligned_alloc(size_t alignment, size_t size);
 void ppdb_base_aligned_free(void* ptr);
 
+// Counter operations
+ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter);
+void ppdb_base_counter_destroy(ppdb_base_counter_t* counter);
+uint64_t ppdb_base_counter_increment(ppdb_base_counter_t* counter);
+uint64_t ppdb_base_counter_decrement(ppdb_base_counter_t* counter);
+uint64_t ppdb_base_counter_get(ppdb_base_counter_t* counter);
+void ppdb_base_counter_set(ppdb_base_counter_t* counter, uint64_t value);
+
 // Skip list operations
 ppdb_error_t ppdb_base_skiplist_create(ppdb_base_skiplist_t** list, ppdb_base_compare_func_t compare);
 void ppdb_base_skiplist_destroy(ppdb_base_skiplist_t* list);
