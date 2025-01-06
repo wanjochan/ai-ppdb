@@ -10,7 +10,10 @@ cd ../ppdb/scripts; .\build.bat test42
 特别注意：不要胡乱自己创建新文件（因为可能只是目录搞错了）、坚持用cosmopolitan标准；
 ## 任务
 cd ../ppdb/scripts; .\build.bat base
-cd ../ppdb/scripts; .\build.bat sync_perf
+cd ../ppdb/scripts; .\build.bat sync_perf 
+cd ../ppdb/scripts; .\build.bat engine
+cd ../ppdb/scripts; .\build.bat storage
+
 
 
 观察build.bat和build_test42.bat，分析下现在的构建目标"all"是否就是能产出 ppdb.exe？

@@ -429,16 +429,6 @@ const char* ppdb_base_thread_get_error(ppdb_base_thread_t* thread) {
 }
 
 // Spinlock implementation
-struct ppdb_base_spinlock_s {
-    _Atomic(int) lock;
-    bool enable_stats;         // 运行时控制统计
-    uint64_t lock_count;
-    uint64_t contention_count;
-    uint64_t total_wait_time_us;
-    uint64_t max_wait_time_us;
-    uint32_t spin_count;
-};
-
 ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock) {
     if (!spinlock) {
         return PPDB_ERR_PARAM;
@@ -566,5 +556,21 @@ ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock) {
     }
 
     atomic_store(&spinlock->lock, 0);
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_spinlock_init(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) {
+        return PPDB_ERR_PARAM;
+    }
+
+    atomic_init(&spinlock->lock, 0);
+    spinlock->enable_stats = false;
+    spinlock->lock_count = 0;
+    spinlock->contention_count = 0;
+    spinlock->total_wait_time_us = 0;
+    spinlock->max_wait_time_us = 0;
+    spinlock->spin_count = 1000;  // Default spin count
+
     return PPDB_OK;
 }

@@ -7,7 +7,7 @@
 
 // Skip list node structure
 struct ppdb_base_skiplist_node_s {
-    void* key;
+    const void* key;
     void* value;
     struct ppdb_base_skiplist_node_s** forward;
     int level;
@@ -68,7 +68,7 @@ void ppdb_base_skiplist_destroy(ppdb_base_skiplist_t* list) {
 }
 
 // Insert a key-value pair into the skip list
-ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, void* value) {
+ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, const void* key, void* value) {
     if (!list || !key) return PPDB_ERR_PARAM;
 
     ppdb_base_skiplist_node_t* update[MAX_SKIPLIST_LEVEL];
@@ -134,8 +134,8 @@ ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, vo
 }
 
 // Find a value by key in the skip list
-void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key) {
-    if (!list || !key || list->level < 1) return NULL;
+ppdb_error_t ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, const void* key, void** value) {
+    if (!list || !key || !value || list->level < 1) return PPDB_ERR_PARAM;
 
     ppdb_base_skiplist_node_t* current = list->header;
 
@@ -149,14 +149,16 @@ void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key) {
 
     // Found key
     if (current && list->compare(current->key, key) == 0) {
-        return current->value;
+        *value = current->value;
+        return PPDB_OK;
     }
 
-    return NULL;
+    *value = NULL;
+    return PPDB_ERR_NOT_FOUND;
 }
 
 // Remove a key-value pair from the skip list
-ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, void* key) {
+ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, const void* key) {
     if (!list || !key || list->level < 1) return PPDB_ERR_PARAM;
 
     ppdb_base_skiplist_node_t* update[MAX_SKIPLIST_LEVEL];

@@ -22,7 +22,7 @@ if not "%TEST_MODE%"=="notest" (
     echo Running storage tests...
     REM Build and run storage tests
     echo Building storage tests...
-    %GCC% %CFLAGS% "%BUILD_DIR%\storage.o" "%PPDB_DIR%\test\white\storage\test_storage.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\storage_test.exe.dbg"
+    %GCC% %CFLAGS% "%BUILD_DIR%\storage.o" "%BUILD_DIR%\base.o" "%PPDB_DIR%\test\white\storage\test_storage.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\storage_test.exe.dbg"
     if errorlevel 1 exit /b 1
     "%OBJCOPY%" -S -O binary "%BUILD_DIR%\storage_test.exe.dbg" "%BUILD_DIR%\storage_test.exe"
     if errorlevel 1 exit /b 1

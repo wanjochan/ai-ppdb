@@ -9,10 +9,35 @@
 // Storage layer types
 //-----------------------------------------------------------------------------
 
+// Error codes
+#define PPDB_STORAGE_ERR_START     (PPDB_ERROR_START + 0x300)  // Storage: 0x1300-0x13FF
+#define PPDB_ERR_TABLE_EXISTS      (PPDB_STORAGE_ERR_START + 0x01)
+#define PPDB_ERR_TABLE_NOT_FOUND   (PPDB_STORAGE_ERR_START + 0x02)
+
+// Default values
+#define PPDB_DEFAULT_DATA_DIR      "data"
+
 // Forward declarations
 typedef struct ppdb_storage_s ppdb_storage_t;
 typedef struct ppdb_storage_table_s ppdb_storage_table_t;
 typedef struct ppdb_storage_index_s ppdb_storage_index_t;
+
+// Table structure
+struct ppdb_storage_table_s {
+    char* name;                    // Table name
+    ppdb_base_skiplist_t* data;    // Table data
+    ppdb_base_skiplist_t* indexes; // Table indexes
+    ppdb_base_spinlock_t lock;     // Table lock
+    uint64_t size;                 // Number of records
+    bool is_open;                  // Table open state
+};
+
+// Cursor type
+typedef struct ppdb_storage_cursor_s {
+    ppdb_storage_table_t* table;
+    ppdb_base_skiplist_node_t* current;
+    bool valid;
+} ppdb_storage_cursor_t;
 
 // Storage statistics
 typedef struct ppdb_storage_stats_s {
@@ -63,14 +88,11 @@ void ppdb_storage_destroy(ppdb_storage_t* storage);
 void ppdb_storage_get_stats(ppdb_storage_t* storage, ppdb_storage_stats_t* stats);
 
 // Table operations
-ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const char* table_name, ppdb_storage_table_t** table);
-ppdb_error_t ppdb_storage_drop_table(ppdb_storage_t* storage, const char* table_name);
-ppdb_error_t ppdb_storage_get_table(ppdb_storage_t* storage, const char* table_name, ppdb_storage_table_t** table);
-
-// Index operations
-ppdb_error_t ppdb_storage_create_index(ppdb_storage_table_t* table, const char* index_name, ppdb_storage_index_t** index);
-ppdb_error_t ppdb_storage_drop_index(ppdb_storage_table_t* table, const char* index_name);
-ppdb_error_t ppdb_storage_get_index(ppdb_storage_table_t* table, const char* index_name, ppdb_storage_index_t** index);
+ppdb_error_t ppdb_table_create(ppdb_storage_t* storage, const char* name);
+ppdb_error_t ppdb_table_drop(ppdb_storage_t* storage, const char* name);
+ppdb_error_t ppdb_table_open(ppdb_storage_t* storage, const char* name);
+ppdb_error_t ppdb_table_close(ppdb_storage_t* storage);
+ppdb_error_t ppdb_storage_get_table(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table);
 
 // Data operations
 ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size_t key_size, const void* value, size_t value_size);

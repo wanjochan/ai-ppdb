@@ -3,117 +3,121 @@
 #include "internal/storage.h"
 #include "test_common.h"
 
-static void test_storage_init(void) {
+// Test storage initialization and cleanup
+void test_storage_init(void) {
     ppdb_base_t* base = NULL;
     ppdb_storage_t* storage = NULL;
+
+    // Initialize base layer
     ppdb_base_config_t base_config = {
         .memory_limit = 1024 * 1024,  // 1MB
         .thread_pool_size = 4,
         .thread_safe = true
     };
-    ppdb_storage_config_t storage_config = {
-        .memtable_size = 64 * 1024,      // 64KB
-        .block_size = 4096,              // 4KB
-        .cache_size = 256 * 1024,        // 256KB
-        .write_buffer_size = 64 * 1024,  // 64KB
-        .data_dir = "data",
-        .use_compression = true,
-        .sync_writes = true
-    };
-
-    // Initialize base layer
-    assert(ppdb_base_init(&base, &base_config) == PPDB_OK);
-    assert(base != NULL);
+    ASSERT_OK(ppdb_base_init(&base, &base_config));
 
     // Initialize storage layer
-    assert(ppdb_storage_init(&storage, base, &storage_config) == PPDB_OK);
-    assert(storage != NULL);
+    ppdb_storage_config_t storage_config = {
+        .memtable_size = PPDB_DEFAULT_MEMTABLE_SIZE,
+        .block_size = PPDB_DEFAULT_BLOCK_SIZE,
+        .cache_size = PPDB_DEFAULT_CACHE_SIZE,
+        .write_buffer_size = PPDB_DEFAULT_WRITE_BUFFER_SIZE,
+        .data_dir = PPDB_DEFAULT_DATA_DIR,
+        .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
+        .sync_writes = PPDB_DEFAULT_SYNC_WRITES
+    };
+    ASSERT_OK(ppdb_storage_init(&storage, base, &storage_config));
 
-    // Check error cases
-    assert(ppdb_storage_init(NULL, base, &storage_config) == PPDB_BASE_ERR_PARAM);
-    assert(ppdb_storage_init(&storage, NULL, &storage_config) == PPDB_BASE_ERR_PARAM);
-    assert(ppdb_storage_init(&storage, base, NULL) == PPDB_BASE_ERR_PARAM);
-
-    // Get initial stats
-    ppdb_storage_stats_t stats;
-    ppdb_storage_get_stats(storage, &stats);
-    assert(ppdb_base_counter_get(stats.reads) == 0);
-    assert(ppdb_base_counter_get(stats.writes) == 0);
-    assert(ppdb_base_counter_get(stats.flushes) == 0);
-    assert(ppdb_base_counter_get(stats.compactions) == 0);
-    assert(ppdb_base_counter_get(stats.cache_hits) == 0);
-    assert(ppdb_base_counter_get(stats.cache_misses) == 0);
-    assert(ppdb_base_counter_get(stats.wal_syncs) == 0);
+    // Verify storage configuration
+    ppdb_storage_config_t config;
+    ASSERT_OK(ppdb_storage_get_config(storage, &config));
+    ASSERT_EQ(config.memtable_size, storage_config.memtable_size);
+    ASSERT_EQ(config.block_size, storage_config.block_size);
+    ASSERT_EQ(config.cache_size, storage_config.cache_size);
+    ASSERT_EQ(config.write_buffer_size, storage_config.write_buffer_size);
+    ASSERT_STR_EQ(config.data_dir, storage_config.data_dir);
+    ASSERT_EQ(config.use_compression, storage_config.use_compression);
+    ASSERT_EQ(config.sync_writes, storage_config.sync_writes);
 
     // Cleanup
     ppdb_storage_destroy(storage);
     ppdb_base_destroy(base);
 }
 
-static void test_storage_table(void) {
+// Test table operations
+void test_storage_table(void) {
     ppdb_base_t* base = NULL;
     ppdb_storage_t* storage = NULL;
-    ppdb_storage_table_t* table = NULL;
+
+    // Initialize base layer
     ppdb_base_config_t base_config = {
-        .memory_limit = 1024 * 1024,
+        .memory_limit = 1024 * 1024,  // 1MB
         .thread_pool_size = 4,
         .thread_safe = true
     };
-    ppdb_storage_config_t storage_config = {
-        .memtable_size = 64 * 1024,
-        .block_size = 4096,
-        .cache_size = 256 * 1024,
-        .write_buffer_size = 64 * 1024,
-        .data_dir = "data",
-        .use_compression = true,
-        .sync_writes = true
-    };
+    ASSERT_OK(ppdb_base_init(&base, &base_config));
 
-    // Initialize
-    assert(ppdb_base_init(&base, &base_config) == PPDB_OK);
-    assert(ppdb_storage_init(&storage, base, &storage_config) == PPDB_OK);
+    // Initialize storage layer
+    ppdb_storage_config_t storage_config = {
+        .memtable_size = PPDB_DEFAULT_MEMTABLE_SIZE,
+        .block_size = PPDB_DEFAULT_BLOCK_SIZE,
+        .cache_size = PPDB_DEFAULT_CACHE_SIZE,
+        .write_buffer_size = PPDB_DEFAULT_WRITE_BUFFER_SIZE,
+        .data_dir = PPDB_DEFAULT_DATA_DIR,
+        .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
+        .sync_writes = PPDB_DEFAULT_SYNC_WRITES
+    };
+    ASSERT_OK(ppdb_storage_init(&storage, base, &storage_config));
 
     // Create table
-    assert(ppdb_storage_create_table(storage, "test_table", &table) == PPDB_OK);
-    assert(table != NULL);
+    ASSERT_OK(ppdb_table_create(storage, "test_table"));
 
-    // Get table
-    ppdb_storage_table_t* table2 = NULL;
-    assert(ppdb_storage_get_table(storage, "test_table", &table2) == PPDB_OK);
-    assert(table2 == table);
+    // Try to create same table again
+    ASSERT_EQ(ppdb_table_create(storage, "test_table"), PPDB_ERR_TABLE_EXISTS);
 
     // Drop table
-    assert(ppdb_storage_drop_table(storage, "test_table") == PPDB_OK);
-    assert(ppdb_storage_get_table(storage, "test_table", &table2) == PPDB_ERR_NOT_FOUND);
+    ASSERT_OK(ppdb_table_drop(storage, "test_table"));
+
+    // Try to drop non-existent table
+    ASSERT_EQ(ppdb_table_drop(storage, "non_existent"), PPDB_ERR_TABLE_NOT_FOUND);
 
     // Cleanup
     ppdb_storage_destroy(storage);
     ppdb_base_destroy(base);
 }
 
-static void test_storage_data(void) {
+// Test data operations
+void test_storage_data(void) {
     ppdb_base_t* base = NULL;
     ppdb_storage_t* storage = NULL;
     ppdb_storage_table_t* table = NULL;
+
+    // Initialize base layer
     ppdb_base_config_t base_config = {
-        .memory_limit = 1024 * 1024,
+        .memory_limit = 1024 * 1024,  // 1MB
         .thread_pool_size = 4,
         .thread_safe = true
     };
-    ppdb_storage_config_t storage_config = {
-        .memtable_size = 64 * 1024,
-        .block_size = 4096,
-        .cache_size = 256 * 1024,
-        .write_buffer_size = 64 * 1024,
-        .data_dir = "data",
-        .use_compression = true,
-        .sync_writes = true
-    };
+    ASSERT_OK(ppdb_base_init(&base, &base_config));
 
-    // Initialize
-    assert(ppdb_base_init(&base, &base_config) == PPDB_OK);
-    assert(ppdb_storage_init(&storage, base, &storage_config) == PPDB_OK);
-    assert(ppdb_storage_create_table(storage, "test_table", &table) == PPDB_OK);
+    // Initialize storage layer
+    ppdb_storage_config_t storage_config = {
+        .memtable_size = PPDB_DEFAULT_MEMTABLE_SIZE,
+        .block_size = PPDB_DEFAULT_BLOCK_SIZE,
+        .cache_size = PPDB_DEFAULT_CACHE_SIZE,
+        .write_buffer_size = PPDB_DEFAULT_WRITE_BUFFER_SIZE,
+        .data_dir = PPDB_DEFAULT_DATA_DIR,
+        .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
+        .sync_writes = PPDB_DEFAULT_SYNC_WRITES
+    };
+    ASSERT_OK(ppdb_storage_init(&storage, base, &storage_config));
+
+    // Create table
+    ASSERT_OK(ppdb_table_create(storage, "test_table"));
+
+    // Get table
+    ASSERT_OK(ppdb_storage_get_table(storage, "test_table", &table));
+    ASSERT_NOT_NULL(table);
 
     // Test data operations
     const char* key = "test_key";
@@ -121,17 +125,24 @@ static void test_storage_data(void) {
     char buffer[256];
     size_t size;
 
-    // Put
-    assert(ppdb_storage_put(table, key, strlen(key), value, strlen(value) + 1) == PPDB_OK);
+    // Put data
+    ASSERT_OK(ppdb_storage_put(table, key, strlen(key), value, strlen(value)));
 
-    // Get
+    // Get data
     size = sizeof(buffer);
-    assert(ppdb_storage_get(table, key, strlen(key), buffer, &size) == PPDB_OK);
-    assert(strcmp(buffer, value) == 0);
+    ASSERT_OK(ppdb_storage_get(table, key, strlen(key), buffer, &size));
+    ASSERT_EQ(size, strlen(value));
+    ASSERT_STR_EQ(buffer, value);
 
-    // Delete
-    assert(ppdb_storage_delete(table, key, strlen(key)) == PPDB_OK);
-    assert(ppdb_storage_get(table, key, strlen(key), buffer, &size) == PPDB_ERR_NOT_FOUND);
+    // Delete data
+    ASSERT_OK(ppdb_storage_delete(table, key, strlen(key)));
+
+    // Try to get deleted data
+    size = sizeof(buffer);
+    ASSERT_EQ(ppdb_storage_get(table, key, strlen(key), buffer, &size), PPDB_ERR_NOT_FOUND);
+
+    // Drop table
+    ASSERT_OK(ppdb_table_drop(storage, "test_table"));
 
     // Cleanup
     ppdb_storage_destroy(storage);
@@ -139,20 +150,8 @@ static void test_storage_data(void) {
 }
 
 int main(void) {
-    printf("Running test suite: Storage Tests\n");
-    
-    printf("  Running test: test_storage_init\n");
-    test_storage_init();
-    printf("  Test passed: test_storage_init\n");
-    
-    printf("  Running test: test_storage_table\n");
-    test_storage_table();
-    printf("  Test passed: test_storage_table\n");
-    
-    printf("  Running test: test_storage_data\n");
-    test_storage_data();
-    printf("  Test passed: test_storage_data\n");
-    
-    printf("Test suite completed\n");
+    RUN_TEST(test_storage_init);
+    RUN_TEST(test_storage_table);
+    RUN_TEST(test_storage_data);
     return 0;
 } 

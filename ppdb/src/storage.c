@@ -35,7 +35,7 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_base_t* base, cons
 
     // Initialize tables list
     ppdb_base_skiplist_t* tables_list;
-    PPDB_RETURN_IF_ERROR(ppdb_base_skiplist_create(&tables_list, NULL));
+    PPDB_RETURN_IF_ERROR(ppdb_base_skiplist_create(&tables_list, table_name_compare));
     s->tables = (ppdb_storage_table_t*)tables_list;
 
     // Initialize statistics
@@ -85,9 +85,9 @@ void ppdb_storage_get_stats(ppdb_storage_t* storage, ppdb_storage_stats_t* stats
 ppdb_error_t ppdb_storage_config_validate(const ppdb_storage_config_t* config) {
     if (!config) return PPDB_ERR_PARAM;
 
-    // Validate configuration parameters
     if (config->memtable_size == 0) return PPDB_ERR_CONFIG;
     if (config->block_size == 0) return PPDB_ERR_CONFIG;
+    if (config->cache_size == 0) return PPDB_ERR_CONFIG;
     if (config->write_buffer_size == 0) return PPDB_ERR_CONFIG;
     if (!config->data_dir) return PPDB_ERR_CONFIG;
 
@@ -98,7 +98,6 @@ ppdb_error_t ppdb_storage_config_validate(const ppdb_storage_config_t* config) {
 ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config) {
     if (!config) return PPDB_ERR_PARAM;
 
-    // Set default values
     config->memtable_size = PPDB_DEFAULT_MEMTABLE_SIZE;
     config->block_size = PPDB_DEFAULT_BLOCK_SIZE;
     config->cache_size = PPDB_DEFAULT_CACHE_SIZE;

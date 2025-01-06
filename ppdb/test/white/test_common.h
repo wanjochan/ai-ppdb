@@ -43,7 +43,7 @@
         } \
     } while (0)
 
-#define ASSERT_EQUAL(x, y) \
+#define ASSERT_EQ(x, y) \
     do { \
         if ((x) != (y)) { \
             printf("  Test failed: %s:%d: %s != %s\n", __FILE__, __LINE__, #x, #y); \
@@ -51,7 +51,7 @@
         } \
     } while (0)
 
-#define ASSERT_STR_EQUAL(x, y) \
+#define ASSERT_STR_EQ(x, y) \
     do { \
         if (strcmp((x), (y)) != 0) { \
             printf("  Test failed: %s:%d: %s != %s\n", __FILE__, __LINE__, #x, #y); \

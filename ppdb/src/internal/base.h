@@ -22,6 +22,7 @@
 #define PPDB_BASE_ERR_IO       (PPDB_BASE_ERR_START + 0x07)
 #define PPDB_BASE_ERR_PARAM    (PPDB_BASE_ERR_START + 0x08)
 #define PPDB_ERR_INVALID_STATE (PPDB_BASE_ERR_START + 0x09)
+#define PPDB_ERR_CONFIG        (PPDB_BASE_ERR_START + 0x0A)
 
 // Error handling macros
 #define PPDB_RETURN_IF_ERROR(expr) \
@@ -167,7 +168,7 @@ typedef struct ppdb_base_sync_s {
 // Skip list types
 typedef struct ppdb_base_skiplist_node_s ppdb_base_skiplist_node_t;
 typedef struct ppdb_base_skiplist_s ppdb_base_skiplist_t;
-typedef int (*ppdb_base_compare_func_t)(void* a, void* b);
+typedef int (*ppdb_base_compare_func_t)(const void* a, const void* b);
 
 // 原子计数器
 typedef struct ppdb_base_counter_s {
@@ -205,6 +206,7 @@ const char* ppdb_base_mutex_get_error(ppdb_base_mutex_t* mutex);
 
 // Spinlock operations
 ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock);
+ppdb_error_t ppdb_base_spinlock_init(ppdb_base_spinlock_t* spinlock);
 void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock);
 ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock);
 ppdb_error_t ppdb_base_spinlock_trylock(ppdb_base_spinlock_t* spinlock);
@@ -246,9 +248,9 @@ void ppdb_base_counter_set(ppdb_base_counter_t* counter, uint64_t value);
 // Skip list operations
 ppdb_error_t ppdb_base_skiplist_create(ppdb_base_skiplist_t** list, ppdb_base_compare_func_t compare);
 void ppdb_base_skiplist_destroy(ppdb_base_skiplist_t* list);
-ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, void* value);
-void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key);
-ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, void* key);
+ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, const void* key, void* value);
+ppdb_error_t ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, const void* key, void** value);
+ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, const void* key);
 size_t ppdb_base_skiplist_size(ppdb_base_skiplist_t* list);
 
 // Async operations
@@ -293,5 +295,16 @@ ppdb_os_type_t ppdb_base_get_os_type(void);
 const char* ppdb_base_get_os_name(void);
 bool ppdb_base_is_windows(void);
 bool ppdb_base_is_unix(void);
+
+// Spinlock structure
+struct ppdb_base_spinlock_s {
+    _Atomic(int) lock;
+    bool enable_stats;         // Runtime statistics control
+    uint64_t lock_count;
+    uint64_t contention_count;
+    uint64_t total_wait_time_us;
+    uint64_t max_wait_time_us;
+    uint32_t spin_count;
+};
 
 #endif // PPDB_INTERNAL_BASE_H_

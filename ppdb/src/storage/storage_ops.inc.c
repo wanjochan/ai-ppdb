@@ -2,125 +2,132 @@
 // Storage Operations Implementation
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_storage_put(ppdb_storage_t* storage, const ppdb_data_t* key, const ppdb_data_t* value) {
-    if (!storage || !key || !value) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size_t key_size,
+                             const void* value, size_t value_size) {
+    if (!table || !key || !value) return PPDB_ERR_PARAM;
+    
+    // Avoid unused parameter warnings
+    (void)key_size;
+    (void)value_size;
+    
+    // Lock table
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Lock storage
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+    // Insert into skiplist
+    ppdb_error_t err = ppdb_base_skiplist_insert(table->data, key, (void*)value);
+    if (err != PPDB_OK) {
+        ppdb_base_spinlock_unlock(&table->lock);
+        return err;
+    }
 
-    // TODO: Implement put operation
-    // 1. Find active table
-    // 2. Insert key-value pair
-    // 3. Update statistics
-
-    ppdb_base_spinlock_unlock(&storage->lock);
+    table->size++;
+    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_get(ppdb_storage_t* storage, const ppdb_data_t* key, ppdb_data_t* value) {
-    if (!storage || !key || !value) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size_t key_size,
+                             void* value, size_t* value_size) {
+    if (!table || !key || !value || !value_size) return PPDB_ERR_PARAM;
+    
+    // Avoid unused parameter warnings
+    (void)key_size;
+    
+    // Lock table
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Lock storage
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+    // Find in skiplist
+    void* found_value = NULL;
+    ppdb_error_t err = ppdb_base_skiplist_find(table->data, key, &found_value);
+    if (err != PPDB_OK || found_value == NULL) {
+        ppdb_base_spinlock_unlock(&table->lock);
+        return PPDB_ERR_NOT_FOUND;
+    }
 
-    // TODO: Implement get operation
-    // 1. Find active table
-    // 2. Search for key
-    // 3. Update statistics
+    // Copy value
+    size_t len = strlen((const char*)found_value);
+    if (len + 1 > *value_size) {  // +1 for null terminator
+        ppdb_base_spinlock_unlock(&table->lock);
+        return PPDB_ERR_BUFFER_TOO_SMALL;
+    }
 
-    ppdb_base_spinlock_unlock(&storage->lock);
+    memcpy(value, found_value, len);
+    ((char*)value)[len] = '\0';  // Add null terminator
+    *value_size = len;
+
+    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_delete(ppdb_storage_t* storage, const ppdb_data_t* key) {
-    if (!storage || !key) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, size_t key_size) {
+    if (!table || !key) return PPDB_ERR_PARAM;
+    
+    // Avoid unused parameter warnings
+    (void)key_size;
+    
+    // Lock table
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Lock storage
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+    // Remove from skiplist
+    ppdb_error_t err = ppdb_base_skiplist_remove(table->data, key);
+    if (err != PPDB_OK) {
+        ppdb_base_spinlock_unlock(&table->lock);
+        return err;
+    }
 
-    // TODO: Implement delete operation
-    // 1. Find active table
-    // 2. Delete key
-    // 3. Update statistics
-
-    ppdb_base_spinlock_unlock(&storage->lock);
+    table->size--;
+    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_scan(ppdb_storage_t* storage, ppdb_storage_cursor_t* cursor) {
-    if (!storage || !cursor) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_storage_scan(ppdb_storage_table_t* table, ppdb_storage_cursor_t* cursor) {
+    if (!table || !cursor) return PPDB_ERR_PARAM;
+    
+    // Lock table
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Lock storage
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+    // Initialize cursor
+    cursor->table = table;
+    cursor->current = NULL;
+    cursor->valid = false;
 
     // TODO: Implement scan operation
-    // 1. Find active table
-    // 2. Initialize cursor
-    // 3. Update statistics
 
-    ppdb_base_spinlock_unlock(&storage->lock);
+    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_scan_range(ppdb_storage_t* storage,
-                                   const ppdb_data_t* start_key,
-                                   const ppdb_data_t* end_key,
-                                   ppdb_storage_cursor_t* cursor) {
-    if (!storage || !start_key || !end_key || !cursor) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_storage_scan_next(ppdb_storage_table_t* table, ppdb_storage_cursor_t* cursor) {
+    if (!table || !cursor) return PPDB_ERR_PARAM;
+    
+    // Lock table
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Lock storage
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+    // TODO: Implement scan next operation
 
-    // TODO: Implement range scan operation
-    // 1. Find active table
-    // 2. Initialize cursor with range
-    // 3. Update statistics
-
-    ppdb_base_spinlock_unlock(&storage->lock);
+    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_compact(ppdb_storage_t* storage) {
-    if (!storage) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table) {
+    if (!table) return PPDB_ERR_PARAM;
+    
+    // Lock table
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Lock storage
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+    // TODO: Implement compaction operation
 
-    // TODO: Implement compaction
-    // 1. Find active table
-    // 2. Perform compaction
-    // 3. Update statistics
-
-    ppdb_base_spinlock_unlock(&storage->lock);
+    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_flush(ppdb_storage_t* storage) {
-    if (!storage) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table) {
+    if (!table) return PPDB_ERR_PARAM;
+    
+    // Lock table
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Lock storage
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+    // TODO: Implement flush operation
 
-    // TODO: Implement flush
-    // 1. Find active table
-    // 2. Flush data to disk
-    // 3. Update statistics
-
-    ppdb_base_spinlock_unlock(&storage->lock);
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_storage_checkpoint(ppdb_storage_t* storage) {
-    if (!storage) return PPDB_ERR_PARAM;
-
-    // Lock storage
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
-
-    // TODO: Implement checkpoint
-    // 1. Find active table
-    // 2. Create checkpoint
-    // 3. Update statistics
-
-    ppdb_base_spinlock_unlock(&storage->lock);
+    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }

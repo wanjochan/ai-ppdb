@@ -39,6 +39,8 @@ const char* ppdb_error_to_string(ppdb_error_t err) {
             return "Invalid state";
         case PPDB_ERR_BUSY:
             return "Resource busy";
+        case PPDB_ERR_BUFFER_TOO_SMALL:
+            return "Buffer too small";
         case PPDB_BASE_ERR_MUTEX:
             return "Mutex error";
         case PPDB_BASE_ERR_RWLOCK:

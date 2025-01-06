@@ -34,6 +34,7 @@ typedef int32_t ppdb_error_t;
 #define PPDB_ERR_EXISTS      (PPDB_ERROR_START + 0x007)
 #define PPDB_ERR_NETWORK     (PPDB_ERROR_START + 0x008)
 #define PPDB_ERR_PROTOCOL    (PPDB_ERROR_START + 0x009)
+#define PPDB_ERR_BUFFER_TOO_SMALL (PPDB_ERROR_START + 0x00A)
 
 // Error handling macros
 #define PPDB_RETURN_IF_ERROR(expr) \
