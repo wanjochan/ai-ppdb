@@ -17,6 +17,9 @@ rem Build target
 if "%TARGET%"=="test42" (
     call "%~dp0\build_test42.bat" %BUILD_MODE%
     exit /b !errorlevel!
+) else if "%TARGET%"=="sync_perf" (
+    call "%~dp0\build_sync_perf.bat" %BUILD_MODE%
+    exit /b !errorlevel!
 ) else if "%TARGET%"=="base" (
     call "%~dp0\build_base.bat" %BUILD_MODE%
     exit /b !errorlevel!
@@ -39,6 +42,6 @@ if "%TARGET%"=="test42" (
     exit /b !errorlevel!
 ) else (
     echo Error: Unknown target %TARGET%
-    echo Available targets: test42, base, engine, storage, all
+    echo Available targets: test42, sync_perf, base, engine, storage, all
     exit /b 1
 ) 

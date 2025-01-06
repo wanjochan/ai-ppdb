@@ -14,6 +14,17 @@ typedef struct ppdb_storage_s ppdb_storage_t;
 typedef struct ppdb_storage_table_s ppdb_storage_table_t;
 typedef struct ppdb_storage_index_s ppdb_storage_index_t;
 
+// Storage statistics
+typedef struct ppdb_storage_stats_s {
+    ppdb_base_counter_t* reads;           // Total read operations
+    ppdb_base_counter_t* writes;          // Total write operations
+    ppdb_base_counter_t* flushes;         // Total memtable flushes
+    ppdb_base_counter_t* compactions;     // Total compaction operations
+    ppdb_base_counter_t* cache_hits;      // Block cache hits
+    ppdb_base_counter_t* cache_misses;    // Block cache misses
+    ppdb_base_counter_t* wal_syncs;       // WAL sync operations
+} ppdb_storage_stats_t;
+
 // Storage configuration
 typedef struct ppdb_storage_config_s {
     size_t memtable_size;        // Size limit for memtable before flush
@@ -25,16 +36,22 @@ typedef struct ppdb_storage_config_s {
     bool sync_writes;            // Whether to sync writes to disk
 } ppdb_storage_config_t;
 
-// Storage statistics
-typedef struct ppdb_storage_stats_s {
-    ppdb_base_counter_t* reads;           // Total read operations
-    ppdb_base_counter_t* writes;          // Total write operations
-    ppdb_base_counter_t* flushes;         // Total memtable flushes
-    ppdb_base_counter_t* compactions;     // Total compaction operations
-    ppdb_base_counter_t* cache_hits;      // Block cache hits
-    ppdb_base_counter_t* cache_misses;    // Block cache misses
-    ppdb_base_counter_t* wal_syncs;       // WAL sync operations
-} ppdb_storage_stats_t;
+// Default configuration values
+#define PPDB_DEFAULT_MEMTABLE_SIZE      (16 * 1024 * 1024)  // 16MB
+#define PPDB_DEFAULT_BLOCK_SIZE         (4 * 1024)          // 4KB
+#define PPDB_DEFAULT_CACHE_SIZE         (64 * 1024 * 1024)  // 64MB
+#define PPDB_DEFAULT_WRITE_BUFFER_SIZE  (4 * 1024 * 1024)   // 4MB
+#define PPDB_DEFAULT_USE_COMPRESSION    true
+#define PPDB_DEFAULT_SYNC_WRITES        false
+
+// Internal storage structure
+struct ppdb_storage_s {
+    ppdb_base_t* base;                  // Base layer instance
+    ppdb_storage_config_t config;       // Storage configuration
+    ppdb_storage_stats_t stats;         // Storage statistics
+    ppdb_storage_table_t* tables;       // List of tables
+    ppdb_base_spinlock_t lock;          // Global storage lock
+};
 
 //-----------------------------------------------------------------------------
 // Storage layer functions
@@ -65,5 +82,11 @@ ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table);
 ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table);
 ppdb_error_t ppdb_storage_backup(ppdb_storage_t* storage, const char* backup_dir);
 ppdb_error_t ppdb_storage_restore(ppdb_storage_t* storage, const char* backup_dir);
+
+// Configuration management
+ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config);
+ppdb_error_t ppdb_storage_config_validate(const ppdb_storage_config_t* config);
+ppdb_error_t ppdb_storage_get_config(ppdb_storage_t* storage, ppdb_storage_config_t* config);
+ppdb_error_t ppdb_storage_update_config(ppdb_storage_t* storage, const ppdb_storage_config_t* config);
 
 #endif // PPDB_INTERNAL_STORAGE_H_ 

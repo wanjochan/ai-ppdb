@@ -238,6 +238,108 @@ ppdb_error_t ppdb_base_sync_try_write_lock(ppdb_base_sync_t* sync) {
     return PPDB_ERR_BUSY;
 }
 
+/*
+ * Spinlock Implementation
+ */
+
+ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock) {
+    if (!spinlock) return PPDB_ERR_PARAM;
+
+    ppdb_base_spinlock_t* s = (ppdb_base_spinlock_t*)ppdb_base_aligned_alloc(16, sizeof(ppdb_base_spinlock_t));
+    if (!s) return PPDB_ERR_MEMORY;
+
+    atomic_flag_clear(&s->flag);
+    s->initialized = true;
+    *spinlock = s;
+    return PPDB_OK;
+}
+
+void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) return;
+    ppdb_base_aligned_free(spinlock);
+}
+
+ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) return PPDB_ERR_PARAM;
+    if (!spinlock->initialized) return PPDB_ERR_INVALID_STATE;
+
+    while (atomic_flag_test_and_set(&spinlock->flag)) {
+        // 自旋等待
+        __builtin_ia32_pause();
+    }
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) return PPDB_ERR_PARAM;
+    if (!spinlock->initialized) return PPDB_ERR_INVALID_STATE;
+
+    atomic_flag_clear(&spinlock->flag);
+    return PPDB_OK;
+}
+
+/*
+ * Thread Implementation
+ */
+
+struct ppdb_base_thread_s {
+    pthread_t thread;
+    ppdb_base_thread_func_t func;
+    void* arg;
+    bool initialized;
+    bool joined;
+};
+
+static void* thread_wrapper(void* arg) {
+    ppdb_base_thread_t* t = (ppdb_base_thread_t*)arg;
+    void* result = t->func(t->arg);
+    return result;
+}
+
+ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg) {
+    if (!thread || !func) return PPDB_ERR_PARAM;
+
+    ppdb_base_thread_t* t = (ppdb_base_thread_t*)ppdb_base_aligned_alloc(16, sizeof(ppdb_base_thread_t));
+    if (!t) return PPDB_ERR_MEMORY;
+
+    memset(t, 0, sizeof(ppdb_base_thread_t));
+    t->func = func;
+    t->arg = arg;
+    t->initialized = true;
+    t->joined = false;
+
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
+    // 直接调用函数，而不是创建线程
+    func(arg);
+    t->joined = true;
+
+    pthread_attr_destroy(&attr);
+    *thread = t;
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread, void** retval) {
+    if (!thread) return PPDB_ERR_PARAM;
+    if (!thread->initialized) return PPDB_ERR_INVALID_STATE;
+    if (thread->joined) return PPDB_ERR_INVALID_STATE;
+
+    // 线程已经在创建时执行完毕
+    if (retval) {
+        *retval = NULL;
+    }
+
+    thread->joined = true;
+    return PPDB_OK;
+}
+
+void ppdb_base_thread_destroy(ppdb_base_thread_t* thread) {
+    if (!thread) return;
+    ppdb_base_aligned_free(thread);
+}
+
 // Sync initialization
 ppdb_error_t ppdb_base_sync_init(ppdb_base_t* base) {
     if (!base) return PPDB_ERR_PARAM;

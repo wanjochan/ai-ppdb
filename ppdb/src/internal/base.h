@@ -98,6 +98,13 @@ struct ppdb_base_mutex_s {
     bool initialized;
 };
 typedef struct ppdb_base_mutex_s ppdb_base_mutex_t;
+
+// 自旋锁类型
+typedef struct ppdb_base_spinlock_s {
+    atomic_flag flag;
+    bool initialized;
+} ppdb_base_spinlock_t;
+
 typedef struct ppdb_base_rwlock_s ppdb_base_rwlock_t;
 typedef struct ppdb_base_cond_s ppdb_base_cond_t;
 typedef struct ppdb_base_thread_s ppdb_base_thread_t;
@@ -174,6 +181,14 @@ typedef struct ppdb_base_counter_s {
     ppdb_base_mutex_t* mutex;
 } ppdb_base_counter_t;
 
+// 线程函数类型
+typedef void* (*ppdb_base_thread_func_t)(void*);
+
+// Thread operations
+ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg);
+ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread, void** retval);
+void ppdb_base_thread_destroy(ppdb_base_thread_t* thread);
+
 //-----------------------------------------------------------------------------
 // Base layer functions
 //-----------------------------------------------------------------------------
@@ -202,6 +217,12 @@ ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex);
 void ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);
+
+// 自旋锁操作
+ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock);
+void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock);
+ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock);
+ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock);
 
 // Sync initialization
 ppdb_error_t ppdb_base_sync_init(ppdb_base_t* base);
