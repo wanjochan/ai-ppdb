@@ -2,6 +2,9 @@
 #include "peer.h"
 #include "peer_internal.h"
 
+// Include protocol adapter implementations
+#include "peer_memcached.inc.c"
+#include "peer_redis.inc.c"
 
 // Peer context structure
 struct peer_ctx {
@@ -31,4 +34,30 @@ void peer_cleanup(void) {
 // Check if peer subsystem is initialized
 int peer_is_initialized(void) {
     return g_peer_ctx.initialized;
+}
+
+// Get memcached protocol adapter
+const peer_ops_t* peer_get_memcached(void) {
+    static const peer_ops_t ops = {
+        .create = memcached_proto_create,
+        .destroy = memcached_proto_destroy,
+        .on_connect = memcached_proto_on_connect,
+        .on_disconnect = memcached_proto_on_disconnect,
+        .on_data = memcached_proto_on_data,
+        .get_name = memcached_proto_get_name
+    };
+    return &ops;
+}
+
+// Get redis protocol adapter
+const peer_ops_t* peer_get_redis(void) {
+    static const peer_ops_t ops = {
+        .create = redis_proto_create,
+        .destroy = redis_proto_destroy,
+        .on_connect = redis_proto_on_connect,
+        .on_disconnect = redis_proto_on_disconnect,
+        .on_data = redis_proto_on_data,
+        .get_name = redis_proto_get_name
+    };
+    return &ops;
 }

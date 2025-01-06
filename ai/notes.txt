@@ -14,12 +14,10 @@ cd ../ppdb/scripts; .\build.bat base
 cd ../ppdb/scripts; .\build.bat sync_perf 
 cd ../ppdb/scripts; .\build.bat engine
 cd ../ppdb/scripts; .\build.bat storage
-
-
-
-观察build.bat和build_test42.bat，分析下现在的构建目标"all"是否就是能产出 ppdb.exe？
-
+cd ../ppdb/scripts; .\build.bat ppdb
 
 # 其他临时笔记
 
 #include <cosmopolitan.h>
+
+#include "internal/base.h"

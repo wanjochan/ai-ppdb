@@ -69,6 +69,7 @@ typedef struct ppdb_options {
     uint32_t max_readers;        // 最大读取器数量
     bool sync_writes;           // 同步写入
     uint32_t flush_period_ms;   // 刷新周期
+    const char* mode;           // 运行模式 (memkv, ...)
 } ppdb_options_t;
 
 // 网络配置
@@ -79,6 +80,7 @@ typedef struct ppdb_net_config {
     uint32_t max_connections;  // 最大连接数
     uint32_t io_threads;       // IO线程数
     bool use_tcp_nodelay;      // TCP_NODELAY选项
+    const char* protocol;      // 协议类型 (memcached, redis, binary)
 } ppdb_net_config_t;
 
 //-----------------------------------------------------------------------------

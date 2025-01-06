@@ -60,9 +60,126 @@ static void print_usage(void) {
 // Command Handlers
 //-----------------------------------------------------------------------------
 
+static void print_server_usage(void) {
+    printf("Usage: ppdb server [options]\n");
+    printf("\n");
+    printf("Options:\n");
+    printf("  --mode=<type>      Server mode (default: memkv)\n");
+    printf("  --protocol=<type>  Protocol type (default: memcached)\n");
+    printf("                     Supported: memcached, redis, binary\n");
+    printf("  --host=<addr>      Host address (default: 127.0.0.1)\n");
+    printf("  --port=<port>      Port number (default: 11211)\n");
+    printf("  --threads=<num>    IO thread count (default: 4)\n");
+    printf("  --max-conn=<num>   Max connections (default: 1000)\n");
+    printf("  --help            Show this help message\n");
+}
+
 static ppdb_error_t cmd_server(int argc, char** argv) {
-    // TODO: Implement server command
-    return PPDB_OK;
+    // 默认配置
+    const char* mode = "memkv";
+    const char* protocol = "memcached";
+    const char* host = "127.0.0.1";
+    uint16_t port = 11211;
+    uint32_t threads = 4;
+    uint32_t max_conn = 1000;
+    
+    // 解析参数
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
+            print_server_usage();
+            return PPDB_OK;
+        }
+        
+        if (strncmp(argv[i], "--mode=", 7) == 0) {
+            mode = argv[i] + 7;
+        } else if (strncmp(argv[i], "--protocol=", 11) == 0) {
+            protocol = argv[i] + 11;
+            // 根据协议自动设置默认端口
+            if (strcmp(protocol, "redis") == 0) {
+                port = 6379;
+            } else if (strcmp(protocol, "memcached") == 0) {
+                port = 11211;
+            }
+        } else if (strncmp(argv[i], "--host=", 7) == 0) {
+            host = argv[i] + 7;
+        } else if (strncmp(argv[i], "--port=", 7) == 0) {
+            port = atoi(argv[i] + 7);
+        } else if (strncmp(argv[i], "--threads=", 10) == 0) {
+            threads = atoi(argv[i] + 10);
+        } else if (strncmp(argv[i], "--max-conn=", 11) == 0) {
+            max_conn = atoi(argv[i] + 11);
+        } else {
+            fprintf(stderr, "Unknown option: %s\n\n", argv[i]);
+            print_server_usage();
+            return PPDB_ERR_PARAM;
+        }
+    }
+    
+    // 验证mode类型
+    if (strcmp(mode, "memkv") != 0) {
+        fprintf(stderr, "Unsupported mode: %s\n", mode);
+        return PPDB_ERR_PARAM;
+    }
+    
+    // 验证protocol类型
+    if (strcmp(protocol, "memcached") != 0 && 
+        strcmp(protocol, "redis") != 0 && 
+        strcmp(protocol, "binary") != 0) {
+        fprintf(stderr, "Unsupported protocol: %s\n", protocol);
+        return PPDB_ERR_PARAM;
+    }
+    
+    // 配置服务器
+    ppdb_net_config_t config = {
+        .host = host,
+        .port = port,
+        .timeout_ms = 30000,
+        .max_connections = max_conn,
+        .io_threads = threads,
+        .use_tcp_nodelay = true,
+        .protocol = protocol  // 需要在ppdb.h中添加此字段
+    };
+    
+    // 创建数据库上下文
+    ppdb_ctx_t ctx;
+    ppdb_options_t options = {
+        .db_path = NULL,  // memkv模式下不需要持久化
+        .cache_size = 1024 * 1024 * 1024,  // 1GB缓存
+        .max_readers = max_conn,
+        .sync_writes = false,  // memkv模式下不需要同步写入
+        .flush_period_ms = 0,  // memkv模式下不需要定期刷新
+        .mode = mode  // 需要在ppdb.h中添加此字段
+    };
+    
+    ppdb_error_t err = ppdb_create(&ctx, &options);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to create database context: %d\n", err);
+        return err;
+    }
+    
+    // 启动服务器
+    printf("Starting %s server with %s protocol on %s:%d...\n", 
+           mode, protocol, host, port);
+    err = ppdb_server_start(ctx, &config);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to start server: %d\n", err);
+        ppdb_destroy(ctx);
+        return err;
+    }
+    
+    // 等待中断信号
+    printf("Server is running. Press Ctrl+C to stop.\n");
+    getchar();
+    
+    // 停止服务器
+    printf("Stopping server...\n");
+    err = ppdb_server_stop(ctx);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to stop server: %d\n", err);
+    }
+    
+    ppdb_destroy(ctx);
+    return err;
 }
 
 static ppdb_error_t cmd_client(int argc, char** argv) {
