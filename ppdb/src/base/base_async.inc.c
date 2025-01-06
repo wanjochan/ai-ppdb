@@ -432,3 +432,30 @@ ppdb_error_t ppdb_base_async_write(ppdb_base_async_handle_t* handle,
 
     return PPDB_OK;
 }
+
+ppdb_error_t ppdb_base_async_create(ppdb_base_async_loop_t** loop) {
+    const char* impl_name = getenv("PPDB_ASYNC_IMPL");
+    const ppdb_base_async_impl_t* impl = NULL;
+
+    if (impl_name) {
+        // User explicitly specified implementation
+        if (strcmp(impl_name, "iocp") == 0) {
+            impl = ppdb_base_async_get_iocp_impl();
+        } else if (strcmp(impl_name, "epoll") == 0) {
+            impl = ppdb_base_async_get_epoll_impl();
+        }
+    } else {
+        // Auto-select implementation based on OS
+        if (ppdb_base_is_windows()) {
+            impl = ppdb_base_async_get_iocp_impl();
+        } else if (ppdb_base_is_unix()) {
+            impl = ppdb_base_async_get_epoll_impl();
+        }
+    }
+
+    if (!impl) {
+        return PPDB_ERR_NOT_SUPPORTED;
+    }
+
+    return ppdb_base_async_create_with_impl(impl, loop);
+}

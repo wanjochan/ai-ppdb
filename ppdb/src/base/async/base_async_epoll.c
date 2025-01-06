@@ -1,8 +1,8 @@
 #include "base_async_impl.h"
 #include "base_async_common.h"
-#include <sys/epoll.h>
-#include <unistd.h>
-#include <errno.h>
+#include "cosmopolitan.h"
+
+#if defined(__COSMOPOLITAN__)
 
 //-----------------------------------------------------------------------------
 // Epoll Implementation
@@ -34,7 +34,6 @@ static ppdb_error_t epoll_init(void** context) {
     memset(ctx, 0, sizeof(epoll_context_t));
     ctx->initialized = true;
     *context = ctx;
-    
     return PPDB_OK;
 }
 
@@ -246,3 +245,5 @@ static ppdb_base_async_impl_t epoll_impl = {
 const ppdb_base_async_impl_t* ppdb_base_async_get_epoll_impl(void) {
     return &epoll_impl;
 }
+
+#endif // __COSMOPOLITAN__

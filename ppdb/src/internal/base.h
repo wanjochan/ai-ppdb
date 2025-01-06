@@ -339,4 +339,19 @@ ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer, uint64_t timeout_ms
 ppdb_error_t ppdb_base_timer_stop(ppdb_base_timer_t* timer);
 ppdb_error_t ppdb_base_timer_reset(ppdb_base_timer_t* timer);
 
+// Operating System Type Definitions
+typedef enum ppdb_os_type {
+    PPDB_OS_UNKNOWN = 0,
+    PPDB_OS_WINDOWS,
+    PPDB_OS_LINUX,
+    PPDB_OS_MACOS,
+    PPDB_OS_BSD
+} ppdb_os_type_t;
+
+// Operating System Detection Functions
+ppdb_os_type_t ppdb_base_get_os_type(void);
+const char* ppdb_base_get_os_name(void);
+bool ppdb_base_is_windows(void);
+bool ppdb_base_is_unix(void);
+
 #endif // PPDB_INTERNAL_BASE_H_
