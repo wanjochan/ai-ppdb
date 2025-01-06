@@ -1,5 +1,5 @@
 #include <cosmopolitan.h>
-#include "../internal/base.h"
+#include "internal/base.h"
 
 // Timer structure definition
 struct ppdb_base_timer {

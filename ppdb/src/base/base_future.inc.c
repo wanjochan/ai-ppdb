@@ -1,5 +1,4 @@
-#include "base.h"
-#include "base_internal.h"
+#include "internal/base.h"
 
 // Future state definitions
 typedef enum {

@@ -2,7 +2,7 @@
 #include "test_framework.h"
 #include "test_plan.h"
 #include "ppdb/ppdb.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 #include "kvstore/internal/kvstore_internal.h"
 #include "kvstore/internal/kvstore_fs.h"
 #include "kvstore/internal/kvstore_memtable.h"

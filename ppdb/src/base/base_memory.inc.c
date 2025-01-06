@@ -3,7 +3,7 @@
  */
 
 #include <cosmopolitan.h>
-#include "../internal/base.h"
+#include "internal/base.h"
 
 // Core aligned memory allocation functions
 void* ppdb_base_aligned_alloc(size_t alignment, size_t size) {

@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
 #include "kvstore/internal/metrics.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 
 // 计数器测试
 void test_counter(void) {

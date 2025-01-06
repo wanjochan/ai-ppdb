@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb.h"
 #include "ppdb/kvstore/skiplist.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 #include "test/white/test_framework.h"
 #include "test/white/test_macros.h"
 

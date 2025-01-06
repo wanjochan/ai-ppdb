@@ -1,7 +1,7 @@
-#include "../../white/test_framework.h"
+#include "internal/test_framework.h"
 #include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_internal.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 #include <time.h>
 #include <sys/time.h>
 

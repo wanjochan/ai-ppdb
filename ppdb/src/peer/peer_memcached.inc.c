@@ -1,4 +1,4 @@
-#include "peer.h"
+#include "internal/peer.h"
 
 // Memcached command types
 typedef enum {
@@ -109,48 +109,85 @@ static ppdb_error_t parse_command(memcached_proto_t* p, char* line) {
 
 // Handle GET command
 static ppdb_error_t handle_get(memcached_proto_t* p, ppdb_conn_t conn) {
-    // TODO: Get value from storage
-    const char* value = "test_value";
-    size_t value_len = strlen(value);
+    ppdb_data_t key = {
+        .data = (uint8_t*)p->parser.key,
+        .size = strlen(p->parser.key)
+    };
     
-    // Send response
-    char header[256];
-    int header_len = snprintf(header, sizeof(header),
-                            "VALUE %s %u %zu\r\n",
-                            p->parser.key, p->parser.flags, value_len);
+    ppdb_data_t value;
+    ppdb_error_t err = ppdb_storage_get(conn->storage, &key, &value);
     
-    ppdb_error_t err = ppdb_conn_send(conn, header, header_len);
-    if (err != PPDB_OK) return err;
+    if (err == PPDB_OK) {
+        // VALUE <key> <flags> <bytes>\r\n
+        char header[1024];
+        snprintf(header, sizeof(header), "VALUE %s %u %u\r\n",
+                p->parser.key, p->parser.flags, (uint32_t)value.size);
+        ppdb_conn_write(conn, (uint8_t*)header, strlen(header));
+        
+        // <data>\r\n
+        ppdb_conn_write(conn, value.data, value.size);
+        ppdb_conn_write(conn, (uint8_t*)"\r\n", 2);
+        
+        // END\r\n
+        ppdb_conn_write(conn, (uint8_t*)"END\r\n", 5);
+        return PPDB_OK;
+    } else if (err == PPDB_ERR_NOT_FOUND) {
+        ppdb_conn_write(conn, (uint8_t*)"END\r\n", 5);
+        return PPDB_OK;
+    }
     
-    err = ppdb_conn_send(conn, value, value_len);
-    if (err != PPDB_OK) return err;
-    
-    err = ppdb_conn_send(conn, "\r\n", 2);
-    if (err != PPDB_OK) return err;
-    
-    return ppdb_conn_send(conn, "END\r\n", 5);
+    return err;
 }
 
 // Handle SET command
 static ppdb_error_t handle_set(memcached_proto_t* p, ppdb_conn_t conn) {
-    // TODO: Store value in storage
-    
-    // Send response
-    if (!p->parser.noreply) {
-        return ppdb_conn_send(conn, "STORED\r\n", 8);
+    if (!p->parser.value || p->parser.bytes == 0) {
+        return PPDB_ERR_PROTOCOL;
     }
-    return PPDB_OK;
+    
+    ppdb_data_t key = {
+        .data = (uint8_t*)p->parser.key,
+        .size = strlen(p->parser.key)
+    };
+    
+    ppdb_data_t value = {
+        .data = (uint8_t*)p->parser.value,
+        .size = p->parser.bytes
+    };
+    
+    ppdb_error_t err = ppdb_storage_put(conn->storage, &key, &value);
+    
+    if (!p->parser.noreply) {
+        if (err == PPDB_OK) {
+            ppdb_conn_write(conn, (uint8_t*)"STORED\r\n", 8);
+        } else {
+            ppdb_conn_write(conn, (uint8_t*)"NOT_STORED\r\n", 12);
+        }
+    }
+    
+    return err;
 }
 
 // Handle DELETE command
 static ppdb_error_t handle_delete(memcached_proto_t* p, ppdb_conn_t conn) {
-    // TODO: Delete value from storage
+    ppdb_data_t key = {
+        .data = (uint8_t*)p->parser.key,
+        .size = strlen(p->parser.key)
+    };
     
-    // Send response
+    ppdb_error_t err = ppdb_storage_delete(conn->storage, &key);
+    
     if (!p->parser.noreply) {
-        return ppdb_conn_send(conn, "DELETED\r\n", 9);
+        if (err == PPDB_OK) {
+            ppdb_conn_write(conn, (uint8_t*)"DELETED\r\n", 9);
+        } else if (err == PPDB_ERR_NOT_FOUND) {
+            ppdb_conn_write(conn, (uint8_t*)"NOT_FOUND\r\n", 11);
+        } else {
+            ppdb_conn_write(conn, (uint8_t*)"ERROR\r\n", 7);
+        }
     }
-    return PPDB_OK;
+    
+    return err;
 }
 
 // Handle incoming data

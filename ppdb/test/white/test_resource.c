@@ -6,7 +6,7 @@
 #include "test_framework.h"
 #include "test_plan.h"
 #include "ppdb/ppdb.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 
 #define TEST_DIR "./tmp_test_resource"
 #define NUM_THREADS 4

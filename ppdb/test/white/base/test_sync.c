@@ -1,5 +1,5 @@
 #include <cosmopolitan.h>
-#include "../../../src/internal/base.h"
+#include "internal/base.h"
 #include "../test_macros.h"
 
 // 线程函数声明

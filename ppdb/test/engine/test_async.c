@@ -1,5 +1,5 @@
 #include "test_common.h"
-#include "../../internal/engine.h"
+#include "internal/engine.h"
 
 static void test_async_loop_basic(void) {
     ppdb_engine_async_loop_t* loop;

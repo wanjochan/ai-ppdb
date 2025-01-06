@@ -1,6 +1,6 @@
 #include <cosmopolitan.h>
-#include "../../../src/internal/base.h"
-#include "../../../src/internal/engine.h"
+#include "internal/base.h"
+#include "internal/engine.h"
 #include "../test_macros.h"
 
 // 测试引擎初始化和销毁

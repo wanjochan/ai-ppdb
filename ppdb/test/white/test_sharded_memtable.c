@@ -2,7 +2,7 @@
 #include "test_framework.h"
 #include "test_plan.h"
 #include "kvstore/internal/kvstore_memtable.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 
 #define NUM_THREADS 4
 #define NUM_OPS 1000

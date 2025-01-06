@@ -1,4 +1,4 @@
-#include "peer.h"
+#include "internal/peer.h"
 
 // Connection state
 typedef struct {

@@ -3,7 +3,7 @@
  */
 
 #include <cosmopolitan.h>
-#include "../internal/base.h"
+#include "internal/base.h"
 
 // Global error context
 static ppdb_error_context_t g_error_context;

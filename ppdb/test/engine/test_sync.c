@@ -1,5 +1,5 @@
 #include "test_common.h"
-#include "../../internal/engine.h"
+#include "internal/engine.h"
 
 static void test_mutex_basic(void) {
     ppdb_engine_mutex_t* mutex;

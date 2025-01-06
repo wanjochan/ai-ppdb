@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
 #include "ppdb/ppdb.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 #include "kvstore/internal/kvstore_wal.h"
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_fs.h"

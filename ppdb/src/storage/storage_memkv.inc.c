@@ -105,10 +105,18 @@ static ppdb_error_t memkv_put(void* ctx, const ppdb_data_t* key, const ppdb_data
         return err;
     }
     
+    // 检查内存限制
+    size_t required_memory = key->size + value->size;
+    if (kv->stats.total_memory + required_memory > kv->base->config.memory_limit) {
+        // 需要进行内存清理
+        kv->stats.evictions++;
+        // TODO: 实现LRU淘汰策略
+    }
+    
     err = ppdb_base_skiplist_put(kv->data, key, value);
     if (err == PPDB_OK) {
         kv->stats.total_items++;
-        kv->stats.total_memory += key->size + value->size;
+        kv->stats.total_memory += required_memory;
     }
     
     ppdb_base_mutex_unlock(kv->global_lock);
@@ -127,10 +135,13 @@ static ppdb_error_t memkv_delete(void* ctx, const ppdb_data_t* key) {
     }
     
     ppdb_data_t old_value;
-    err = ppdb_base_skiplist_delete(kv->data, key, &old_value);
+    err = ppdb_base_skiplist_get(kv->data, key, &old_value);
     if (err == PPDB_OK) {
-        kv->stats.total_items--;
-        kv->stats.total_memory -= key->size + old_value.size;
+        err = ppdb_base_skiplist_delete(kv->data, key);
+        if (err == PPDB_OK) {
+            kv->stats.total_items--;
+            kv->stats.total_memory -= (key->size + old_value.size);
+        }
     }
     
     ppdb_base_mutex_unlock(kv->global_lock);
@@ -150,7 +161,8 @@ static ppdb_error_t memkv_clear(void* ctx) {
     
     err = ppdb_base_skiplist_clear(kv->data);
     if (err == PPDB_OK) {
-        memset(&kv->stats, 0, sizeof(kv->stats));
+        kv->stats.total_items = 0;
+        kv->stats.total_memory = 0;
     }
     
     ppdb_base_mutex_unlock(kv->global_lock);
@@ -168,23 +180,24 @@ static ppdb_error_t memkv_get_stats(void* ctx, char* buffer, size_t size) {
         return err;
     }
     
-    int len = snprintf(buffer, size,
-                      "MemKV Stats:\n"
-                      "  Total Items: %lu\n"
-                      "  Total Memory: %lu bytes\n"
-                      "  Cache Hits: %lu\n"
-                      "  Cache Misses: %lu\n"
-                      "  Evictions: %lu\n",
-                      kv->stats.total_items,
-                      kv->stats.total_memory,
-                      kv->stats.hits,
-                      kv->stats.misses,
-                      kv->stats.evictions);
+    int written = snprintf(buffer, size,
+        "STAT curr_items %lu\r\n"
+        "STAT bytes %lu\r\n"
+        "STAT get_hits %lu\r\n"
+        "STAT get_misses %lu\r\n"
+        "STAT evictions %lu\r\n"
+        "END\r\n",
+        kv->stats.total_items,
+        kv->stats.total_memory,
+        kv->stats.hits,
+        kv->stats.misses,
+        kv->stats.evictions
+    );
     
     ppdb_base_mutex_unlock(kv->global_lock);
     
-    if (len >= size) {
-        return PPDB_ERR_BUFFER_TOO_SMALL;
+    if (written >= size) {
+        return PPDB_ERR_BUFFER_FULL;
     }
     
     return PPDB_OK;

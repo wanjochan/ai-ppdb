@@ -3,7 +3,6 @@
 
 #include <cosmopolitan.h>
 #include "internal/base.h"
-#include "base.h"
 
 // Forward declarations
 typedef struct ppdb_engine_s ppdb_engine_t;

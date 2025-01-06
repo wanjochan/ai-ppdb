@@ -1,4 +1,4 @@
-#include "peer.h"
+#include "internal/peer.h"
 
 // Redis command types
 typedef enum {

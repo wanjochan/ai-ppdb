@@ -1,4 +1,4 @@
-#include "base.h"
+#include "internal/base.h"
 #include "cosmopolitan.h"
 
 static ppdb_os_type_t g_os_type = PPDB_OS_UNKNOWN;

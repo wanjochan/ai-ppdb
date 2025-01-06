@@ -1,6 +1,6 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 #include "test_framework.h"
 #include "test_plan.h"
 

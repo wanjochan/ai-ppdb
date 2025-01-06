@@ -7,7 +7,7 @@
 
 #include <cosmopolitan.h>
 #include "../test_framework.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 #include "ppdb/ppdb.h"
 
 // 测试配置

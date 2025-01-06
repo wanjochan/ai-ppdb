@@ -3,7 +3,7 @@
  */
 
 #include <cosmopolitan.h>
-#include "../internal/base.h"
+#include "internal/base.h"
 
 // 时间相关函数
 static uint64_t get_time_us(void) {

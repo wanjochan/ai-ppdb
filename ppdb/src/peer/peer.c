@@ -1,6 +1,6 @@
 #include <cosmopolitan.h>
-#include "peer.h"
-#include "peer_internal.h"
+#include "internal/peer.h"
+#include "internal/peer_internal.h"
 
 // Include protocol adapter implementations
 #include "peer_memcached.inc.c"

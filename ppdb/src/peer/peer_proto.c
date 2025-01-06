@@ -4,9 +4,9 @@
 
 #include <cosmopolitan.h>
 
-#include "peer.h"
-#include "peer_internal.h"
-#include "peer_proto.h"
+#include "internal/peer.h"
+#include "internal/peer_internal.h"
+#include "internal/peer_proto.h"
 
 /* Protocol parsing states */
 typedef enum {

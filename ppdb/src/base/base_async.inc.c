@@ -1,5 +1,5 @@
 #include <cosmopolitan.h>
-#include "../internal/base.h"
+#include "internal/base.h"
 
 // Internal async context structure
 struct ppdb_base_async_ctx {

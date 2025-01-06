@@ -3,7 +3,7 @@
 #include "kvstore/internal/kvstore_wal.h"
 #include "kvstore/internal/kvstore_wal_types.h"
 #include "test/test_utils.h"
-#include "../../src/internal/base.h"
+#include "internal/base.h"
 
 // 测试并发写入
 void test_concurrent_write(void) {
