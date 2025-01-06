@@ -56,7 +56,6 @@ ppdb_error_t ppdb_engine_txn_begin(ppdb_engine_t* engine, ppdb_engine_txn_t** tx
     // Initialize transaction
     memset(new_txn, 0, sizeof(ppdb_engine_txn_t));
     new_txn->engine = engine;
-    new_txn->is_active = true;
 
     // Initialize transaction statistics
     err = ppdb_engine_txn_stats_init(&new_txn->stats);
@@ -64,6 +63,11 @@ ppdb_error_t ppdb_engine_txn_begin(ppdb_engine_t* engine, ppdb_engine_txn_t** tx
         ppdb_base_aligned_free(new_txn);
         return err;
     }
+
+    // Set transaction state
+    new_txn->stats.is_active = true;
+    new_txn->stats.is_committed = false;
+    new_txn->stats.is_rolledback = false;
 
     // Lock transaction manager
     err = ppdb_base_mutex_lock(engine->txn_mgr.txn_mutex);
@@ -95,7 +99,7 @@ ppdb_error_t ppdb_engine_txn_commit(ppdb_engine_txn_t* txn) {
     ppdb_engine_t* engine;
 
     if (!txn || !txn->engine) return PPDB_ENGINE_ERR_PARAM;
-    if (!txn->is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
+    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
 
     engine = txn->engine;
 
@@ -114,7 +118,7 @@ ppdb_error_t ppdb_engine_txn_commit(ppdb_engine_txn_t* txn) {
 
     // Update statistics
     ppdb_base_counter_decrement(engine->stats.active_txns);
-    txn->is_active = false;
+    txn->stats.is_active = false;
     txn->stats.is_committed = true;
 
     // Unlock transaction manager
@@ -129,7 +133,7 @@ ppdb_error_t ppdb_engine_txn_rollback(ppdb_engine_txn_t* txn) {
     ppdb_engine_t* engine;
 
     if (!txn || !txn->engine) return PPDB_ENGINE_ERR_PARAM;
-    if (!txn->is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
+    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
 
     engine = txn->engine;
 
@@ -148,7 +152,7 @@ ppdb_error_t ppdb_engine_txn_rollback(ppdb_engine_txn_t* txn) {
 
     // Update statistics
     ppdb_base_counter_decrement(engine->stats.active_txns);
-    txn->is_active = false;
+    txn->stats.is_active = false;
     txn->stats.is_rolledback = true;
 
     // Unlock transaction manager
@@ -162,5 +166,9 @@ void ppdb_engine_txn_get_stats(ppdb_engine_txn_t* txn, ppdb_engine_txn_stats_t* 
     if (!txn || !stats) return;
 
     // Copy statistics
-    memcpy(stats, &txn->stats, sizeof(ppdb_engine_txn_stats_t));
+    stats->reads = txn->stats.reads;
+    stats->writes = txn->stats.writes;
+    stats->is_active = txn->stats.is_active;
+    stats->is_committed = txn->stats.is_committed;
+    stats->is_rolledback = txn->stats.is_rolledback;
 }

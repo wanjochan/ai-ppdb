@@ -28,7 +28,7 @@ if not "%BUILD_MODE%"=="notest" (
     echo Running engine tests...
     REM Build and run engine tests
     echo Building engine tests...
-    %GCC% %CFLAGS% -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%SRC_DIR%\internal" "%TEST_DIR%\white\engine\test_engine.c" "%BUILD_DIR%\base.o" "%BUILD_DIR%\engine.o" -lpthread %LDFLAGS% %LIBS% -o "%BUILD_DIR%\engine_test.exe.dbg"
+    %GCC% %CFLAGS% -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%SRC_DIR%\internal" "%TEST_DIR%\white\engine\test_engine.c" "%BUILD_DIR%\base.o" "%BUILD_DIR%\engine.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\engine_test.exe.dbg"
     if errorlevel 1 exit /b 1
     "%OBJCOPY%" -S -O binary "%BUILD_DIR%\engine_test.exe.dbg" "%BUILD_DIR%\engine_test.exe"
     if errorlevel 1 exit /b 1

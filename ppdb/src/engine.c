@@ -26,11 +26,11 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     ppdb_engine_t* new_engine;
     ppdb_error_t err;
 
-    if (!engine || !base) return PPDB_ERR_PARAM;
+    if (!engine || !base) return PPDB_ENGINE_ERR_PARAM;
 
     // 分配引擎结构
     new_engine = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_engine_t));
-    if (!new_engine) return PPDB_ERR_MEMORY;
+    if (!new_engine) return PPDB_ENGINE_ERR_INIT;
 
     memset(new_engine, 0, sizeof(ppdb_engine_t));
     new_engine->base = base;
