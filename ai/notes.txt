@@ -1,7 +1,8 @@
-# 热身（通过最简单例子先确认构建工具都在的）
-cd ../ppdb/scripts; .\build.bat test42
+# 常用模板
 
-# 任务模板
+## 热身（通过最简单例子先确认构建工具都在的，否则停下来讨论）
+cd ppdb/scripts; .\build.bat test42
+
 
 ## 注意事项
 遇到问题先重读 AGENT_RULES.md 和 ppdb/中的项目文档，

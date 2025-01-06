@@ -37,7 +37,7 @@ static uint64_t get_time_us(void) {
 }
 
 // 使用互斥锁的线程函数
-static void mutex_thread_func(void* arg) {
+static void __attribute__((used)) mutex_thread_func(void* arg) {
     thread_args_t* args = (thread_args_t*)arg;
     test_context_t* ctx = args->ctx;
     uint64_t start_time, end_time;
@@ -70,7 +70,7 @@ static void mutex_thread_func(void* arg) {
 }
 
 // 使用自旋锁的线程函数
-static void spinlock_thread_func(void* arg) {
+static void __attribute__((used)) spinlock_thread_func(void* arg) {
     thread_args_t* args = (thread_args_t*)arg;
     test_context_t* ctx = args->ctx;
     uint64_t start_time, end_time;

@@ -1,6 +1,43 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
-#include "cmd/cmd_internal.h"
+
+//-----------------------------------------------------------------------------
+// Forward Declarations
+//-----------------------------------------------------------------------------
+
+static ppdb_error_t cmd_server(int argc, char** argv);
+static ppdb_error_t cmd_client(int argc, char** argv);
+static ppdb_error_t cmd_status(int argc, char** argv);
+
+//-----------------------------------------------------------------------------
+// Global State
+//-----------------------------------------------------------------------------
+
+static bool g_initialized = false;
+
+//-----------------------------------------------------------------------------
+// Initialization
+//-----------------------------------------------------------------------------
+
+ppdb_error_t ppdb_init(void) {
+    if (g_initialized) {
+        return PPDB_OK;
+    }
+    
+    // TODO: Add initialization logic
+    g_initialized = true;
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_cleanup(void) {
+    if (!g_initialized) {
+        return PPDB_OK;
+    }
+    
+    // TODO: Add cleanup logic
+    g_initialized = false;
+    return PPDB_OK;
+}
 
 //-----------------------------------------------------------------------------
 // Command Line Help
@@ -17,6 +54,25 @@ static void print_usage(void) {
     printf("\n");
     printf("For command-specific help, run:\n");
     printf("  ppdb <command> --help\n");
+}
+
+//-----------------------------------------------------------------------------
+// Command Handlers
+//-----------------------------------------------------------------------------
+
+static ppdb_error_t cmd_server(int argc, char** argv) {
+    // TODO: Implement server command
+    return PPDB_OK;
+}
+
+static ppdb_error_t cmd_client(int argc, char** argv) {
+    // TODO: Implement client command
+    return PPDB_OK;
+}
+
+static ppdb_error_t cmd_status(int argc, char** argv) {
+    // TODO: Implement status command
+    return PPDB_OK;
 }
 
 //-----------------------------------------------------------------------------

@@ -80,7 +80,6 @@ int test_engine_transaction(void) {
 int test_engine_errors(void) {
     ppdb_base_t* base = NULL;
     ppdb_engine_t* engine = NULL;
-    ppdb_engine_txn_t* txn = NULL;
     
     // 测试空指针
     ASSERT_ERR(ppdb_engine_init(NULL, base), PPDB_ENGINE_ERR_PARAM);
