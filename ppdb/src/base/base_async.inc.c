@@ -1,17 +1,9 @@
-#include "base.h"
-#include <errno.h>
-#include <string.h>
-
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <sys/epoll.h>
-#include <unistd.h>
-#endif
+#include <cosmopolitan.h>
+#include "../internal/base.h"
 
 // Internal async context structure
 struct ppdb_base_async_ctx {
-    int epoll_fd;  // epoll descriptor for Linux
+    int io_handle;  // unified I/O handle for async operations
     bool is_running;
     ppdb_base_error_t last_error;
 };
@@ -23,16 +15,11 @@ ppdb_base_error_t ppdb_base_async_init(ppdb_base_async_ctx_t* ctx) {
     }
 
     memset(ctx, 0, sizeof(ppdb_base_async_ctx_t));
-
-#ifdef _WIN32
-    // Windows-specific initialization
-    // TODO: Implement IOCP initialization
-#else
-    ctx->epoll_fd = epoll_create1(0);
-    if (ctx->epoll_fd < 0) {
+    
+    ctx->io_handle = kCreateIoHandle();
+    if (ctx->io_handle < 0) {
         return PPDB_BASE_ERROR_SYSTEM;
     }
-#endif
 
     ctx->is_running = true;
     return PPDB_BASE_ERROR_OK;
@@ -44,27 +31,22 @@ ppdb_base_error_t ppdb_base_async_run(ppdb_base_async_ctx_t* ctx) {
         return PPDB_BASE_ERROR_INVALID_PARAM;
     }
 
-#ifdef _WIN32
-    // Windows event loop implementation
-    // TODO: Implement Windows event loop
-#else
-    struct epoll_event events[32];
+    struct IoEvent events[32];
     
     while (ctx->is_running) {
-        int nfds = epoll_wait(ctx->epoll_fd, events, 32, -1);
-        if (nfds < 0) {
-            if (errno == EINTR) continue;
+        int nevents = WaitForIoEvents(ctx->io_handle, events, 32, -1);
+        if (nevents < 0) {
+            if (IsInterrupted()) continue;
             ctx->last_error = PPDB_BASE_ERROR_SYSTEM;
             return PPDB_BASE_ERROR_SYSTEM;
         }
 
-        for (int i = 0; i < nfds; i++) {
+        for (int i = 0; i < nevents; i++) {
             ppdb_base_event_handler_t* handler = 
-                (ppdb_base_event_handler_t*)events[i].data.ptr;
+                (ppdb_base_event_handler_t*)events[i].data;
             handler->callback(handler->data);
         }
     }
-#endif
 
     return PPDB_BASE_ERROR_OK;
 }
@@ -80,14 +62,10 @@ void ppdb_base_async_stop(ppdb_base_async_ctx_t* ctx) {
 void ppdb_base_async_cleanup(ppdb_base_async_ctx_t* ctx) {
     if (!ctx) return;
 
-#ifdef _WIN32
-    // Windows cleanup
-#else
-    if (ctx->epoll_fd >= 0) {
-        close(ctx->epoll_fd);
-        ctx->epoll_fd = -1;
+    if (ctx->io_handle >= 0) {
+        CloseIoHandle(ctx->io_handle);
+        ctx->io_handle = -1;
     }
-#endif
 }
 
 // ... additional async utility functions ...

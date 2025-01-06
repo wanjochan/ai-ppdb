@@ -3,12 +3,9 @@
  */
 
 #include <cosmopolitan.h>
-#include "internal/base.h"
+#include "../internal/base.h"
 
-// Core aligned memory allocation functions will be moved to base_mem.c
-// Removing header guards since this will be merged
-
-// Core aligned memory allocation functions remain the same
+// Core aligned memory allocation functions
 void* ppdb_base_aligned_alloc(size_t alignment, size_t size) {
     if (size == 0 || alignment == 0) return NULL;
     
@@ -112,26 +109,23 @@ void ppdb_base_mempool_free(ppdb_base_mempool_t* pool, void* ptr) {
     }
 }
 
-// Memory management initialization
+// Memory management functions
 ppdb_error_t ppdb_base_memory_init(ppdb_base_t* base) {
     if (!base) return PPDB_ERR_PARAM;
 
     // Create global memory pool
-    ppdb_error_t err = ppdb_base_mempool_create(&base->global_pool, 4096, 16);
-    if (err != PPDB_OK) return err;
+    base->global_pool = malloc(sizeof(ppdb_base_mempool_t));
+    if (!base->global_pool) return PPDB_ERR_MEMORY;
 
-    // Create memory mutex
-    err = ppdb_base_mutex_create(&base->mem_mutex);
+    memset(base->global_pool, 0, sizeof(ppdb_base_mempool_t));
+
+    // Create mutex for memory operations
+    ppdb_error_t err = ppdb_base_mutex_create(&base->mem_mutex);
     if (err != PPDB_OK) {
-        ppdb_base_mempool_destroy(base->global_pool);
+        free(base->global_pool);
+        base->global_pool = NULL;
         return err;
     }
-
-    // Initialize statistics
-    atomic_init(&base->stats.total_allocs, 0);
-    atomic_init(&base->stats.total_frees, 0);
-    atomic_init(&base->stats.current_memory, 0);
-    atomic_init(&base->stats.peak_memory, 0);
 
     return PPDB_OK;
 }
@@ -145,7 +139,22 @@ void ppdb_base_memory_cleanup(ppdb_base_t* base) {
     }
 
     if (base->global_pool) {
-        ppdb_base_mempool_destroy(base->global_pool);
+        ppdb_base_mempool_block_t* block = base->global_pool->head;
+        while (block) {
+            ppdb_base_mempool_block_t* next = block->next;
+            free(block);
+            block = next;
+        }
+        free(base->global_pool);
         base->global_pool = NULL;
     }
+}
+
+void ppdb_base_memory_get_stats(ppdb_base_t* base, ppdb_base_stats_t* stats) {
+    if (!base || !stats) return;
+
+    stats->total_allocs = atomic_load_explicit(&base->stats.total_allocs, memory_order_relaxed);
+    stats->total_frees = atomic_load_explicit(&base->stats.total_frees, memory_order_relaxed);
+    stats->current_memory = atomic_load_explicit(&base->stats.current_memory, memory_order_relaxed);
+    stats->peak_memory = atomic_load_explicit(&base->stats.peak_memory, memory_order_relaxed);
 }

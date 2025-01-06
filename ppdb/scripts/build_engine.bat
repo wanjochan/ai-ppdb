@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-rem Get build mode from parameter
+rem Get build mode and test mode from parameters
 set "BUILD_MODE=%1"
 if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
 
@@ -12,61 +12,32 @@ if errorlevel 1 exit /b 1
 rem Create build directory if it doesn't exist
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-echo Building engine tests...
+rem Build base library if not exists
+if not exist "%BUILD_DIR%\base.o" (
+    echo Building base library...
+    call "%~dp0\build_base.bat" %BUILD_MODE%
+    if errorlevel 1 exit /b 1
+)
 
-REM Build base library first
-echo Building base library...
-%GCC% %CFLAGS% -c "%PPDB_DIR%\src\base.c" -o "%BUILD_DIR%\base.o"
-if errorlevel 1 exit /b 1
-
-REM Build engine library
+rem Build engine library
 echo Building engine library...
-%GCC% %CFLAGS% -c "%PPDB_DIR%\src\engine.c" -o "%BUILD_DIR%\engine.o"
+%GCC% %CFLAGS% -c "%SRC_DIR%\engine.c" -o "%BUILD_DIR%\engine.o"
 if errorlevel 1 exit /b 1
 
-REM Build and run transaction test
-echo Building transaction test...
-%GCC% %CFLAGS% ^
-    "%BUILD_DIR%\base.o" ^
-    "%BUILD_DIR%\engine.o" ^
-    "%PPDB_DIR%\test\white\engine\test_txn.c" ^
-    %LDFLAGS% %LIBS% -o "%BUILD_DIR%\txn_test.exe.dbg"
-if errorlevel 1 exit /b 1
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\txn_test.exe.dbg" "%BUILD_DIR%\txn_test.exe"
-if errorlevel 1 exit /b 1
+if not "%BUILD_MODE%"=="notest" (
+    echo Running engine tests...
+    REM Build and run engine tests
+    echo Building engine tests...
+    %GCC% %CFLAGS% -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%SRC_DIR%\internal" "%TEST_DIR%\white\engine\test_engine.c" "%BUILD_DIR%\base.o" "%BUILD_DIR%\engine.o" -lpthread %LDFLAGS% %LIBS% -o "%BUILD_DIR%\engine_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\engine_test.exe.dbg" "%BUILD_DIR%\engine_test.exe"
+    if errorlevel 1 exit /b 1
 
-echo Running transaction test...
-"%BUILD_DIR%\txn_test.exe"
-if errorlevel 1 exit /b 1
+    echo Running engine tests...
+    "%BUILD_DIR%\engine_test.exe"
+    if errorlevel 1 exit /b 1
 
-REM Build and run IO test
-echo Building IO test...
-%GCC% %CFLAGS% ^
-    "%BUILD_DIR%\base.o" ^
-    "%BUILD_DIR%\engine.o" ^
-    "%PPDB_DIR%\test\white\engine\test_io.c" ^
-    %LDFLAGS% %LIBS% -o "%BUILD_DIR%\io_test.exe.dbg"
-if errorlevel 1 exit /b 1
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\io_test.exe.dbg" "%BUILD_DIR%\io_test.exe"
-if errorlevel 1 exit /b 1
+    echo All engine tests passed!
+)
 
-echo Running IO test...
-"%BUILD_DIR%\io_test.exe"
-if errorlevel 1 exit /b 1
-
-REM Build and run core test
-echo Building core test...
-%GCC% %CFLAGS% ^
-    "%BUILD_DIR%\base.o" ^
-    "%BUILD_DIR%\engine.o" ^
-    "%PPDB_DIR%\test\white\engine\test_core.c" ^
-    %LDFLAGS% %LIBS% -o "%BUILD_DIR%\core_test.exe.dbg"
-if errorlevel 1 exit /b 1
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\core_test.exe.dbg" "%BUILD_DIR%\core_test.exe"
-if errorlevel 1 exit /b 1
-
-echo Running core test...
-"%BUILD_DIR%\core_test.exe"
-if errorlevel 1 exit /b 1
-
-echo All engine tests passed!
+exit /b 0

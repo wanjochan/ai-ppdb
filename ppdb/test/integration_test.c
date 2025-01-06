@@ -12,31 +12,25 @@
 #define TEST_ITERATIONS 1000
 
 typedef struct {
-    ppdb_peer_t peer;
+    ppdb_ctx_t ctx;
+    ppdb_conn_t conn;
     int id;
     int success;
     int failure;
-} peer_context_t;
+} client_context_t;
 
 //-----------------------------------------------------------------------------
 // Test Callbacks
 //-----------------------------------------------------------------------------
 
-static void on_peer_event(ppdb_peer_event_t event, void* user_data) {
-    peer_context_t* ctx = user_data;
-    switch(event.type) {
-        case PPDB_EVENT_CONNECTED:
-            ctx->success++;
-            break;
-        case PPDB_EVENT_ERROR:
-            ctx->failure++;
-            break;
-    }
+static void on_connection(ppdb_conn_t conn, ppdb_error_t error, void* user_data) {
+    bool* connected = user_data;
+    *connected = (error == PPDB_OK);
 }
 
-static void on_operation_complete(ppdb_result_t result, void* user_data) {
-    peer_context_t* ctx = user_data;
-    if (result.status == PPDB_OK) {
+static void on_operation_complete(ppdb_error_t error, void* result, void* user_data) {
+    client_context_t* ctx = user_data;
+    if (error == PPDB_OK) {
         ctx->success++;
     } else {
         ctx->failure++;
@@ -48,36 +42,61 @@ static void on_operation_complete(ppdb_result_t result, void* user_data) {
 //-----------------------------------------------------------------------------
 
 static void test_concurrent_operations(void) {
-    // Create server peer
-    ppdb_peer_config_t server_config = {
-        .mode = PPDB_PEER_SERVER,
+    // Create server context
+    ppdb_ctx_t server_ctx;
+    ppdb_options_t server_options = {
         .db_path = "test_data",
         .cache_size = 1024 * 1024 * 1024,
-        .max_connections = TEST_CONNECTIONS,
-        .io_threads = TEST_THREADS,
-        .host = "127.0.0.1",
-        .port = TEST_PORT,
-        .on_event = on_peer_event
+        .max_readers = TEST_CONNECTIONS,
+        .sync_writes = true,
+        .flush_period_ms = 1000
     };
 
-    ppdb_peer_t server;
-    TEST_ASSERT(ppdb_peer_create(&server, &server_config) == PPDB_OK);
+    TEST_ASSERT(ppdb_create(&server_ctx, &server_options) == PPDB_OK);
 
-    // Create client peers
-    peer_context_t peers[TEST_CONNECTIONS];
-    memset(peers, 0, sizeof(peers));
+    // Configure server
+    ppdb_net_config_t server_config = {
+        .host = "127.0.0.1",
+        .port = TEST_PORT,
+        .timeout_ms = 1000,
+        .max_connections = TEST_CONNECTIONS,
+        .io_threads = TEST_THREADS,
+        .use_tcp_nodelay = true
+    };
+
+    // Start server
+    TEST_ASSERT(ppdb_server_start(server_ctx, &server_config) == PPDB_OK);
+
+    // Create clients
+    client_context_t clients[TEST_CONNECTIONS];
+    memset(clients, 0, sizeof(clients));
 
     for (int i = 0; i < TEST_CONNECTIONS; i++) {
-        ppdb_peer_config_t peer_config = {
-            .mode = PPDB_PEER_CLIENT,
-            .host = "127.0.0.1", 
-            .port = TEST_PORT,
-            .io_threads = 1,
-            .on_event = on_peer_event
+        // Create client context
+        ppdb_options_t client_options = {
+            .db_path = NULL,
+            .cache_size = 0,
+            .max_readers = 1,
+            .sync_writes = false,
+            .flush_period_ms = 0
         };
 
-        TEST_ASSERT(ppdb_peer_create(&peers[i].peer, &peer_config) == PPDB_OK);
-        peers[i].id = i;
+        TEST_ASSERT(ppdb_create(&clients[i].ctx, &client_options) == PPDB_OK);
+
+        // Configure client
+        ppdb_net_config_t client_config = {
+            .host = "127.0.0.1",
+            .port = TEST_PORT,
+            .timeout_ms = 1000,
+            .max_connections = 1,
+            .io_threads = 1,
+            .use_tcp_nodelay = true
+        };
+
+        // Connect client
+        TEST_ASSERT(ppdb_client_connect(clients[i].ctx, &client_config, &clients[i].conn) == PPDB_OK);
+
+        clients[i].id = i;
     }
 
     // Run concurrent operations
@@ -101,34 +120,40 @@ static void test_concurrent_operations(void) {
             };
             memcpy(value.inline_data, value_buf, value.size);
 
-            // Operations using peer interface
-            TEST_ASSERT(ppdb_peer_put(peers[j].peer, &key, &value,
-                                    on_operation_complete, &peers[j]) == PPDB_OK);
+            // Put value
+            TEST_ASSERT(ppdb_client_put(clients[j].conn, &key, &value,
+                                      on_operation_complete, &clients[j]) == PPDB_OK);
 
-            TEST_ASSERT(ppdb_peer_get(peers[j].peer, &key,
-                                    on_operation_complete, &peers[j]) == PPDB_OK);
+            // Get value
+            TEST_ASSERT(ppdb_client_get(clients[j].conn, &key,
+                                      on_operation_complete, &clients[j]) == PPDB_OK);
 
-            TEST_ASSERT(ppdb_peer_delete(peers[j].peer, &key,
-                                       on_operation_complete, &peers[j]) == PPDB_OK);
+            // Delete value
+            TEST_ASSERT(ppdb_client_delete(clients[j].conn, &key,
+                                         on_operation_complete, &clients[j]) == PPDB_OK);
         }
     }
 
-    // Check results and cleanup
+    // Check results
     for (int i = 0; i < TEST_CONNECTIONS; i++) {
-        printf("Peer %d: %d success, %d failure\n",
-               i, peers[i].success, peers[i].failure);
-        TEST_ASSERT(peers[i].success > 0);
-        TEST_ASSERT(peers[i].failure == 0);
+        printf("Client %d: %d success, %d failure\n",
+               i, clients[i].success, clients[i].failure);
+        TEST_ASSERT(clients[i].success > 0);
+        TEST_ASSERT(clients[i].failure == 0);
 
-        TEST_ASSERT(ppdb_peer_destroy(peers[i].peer) == PPDB_OK);
+        // Disconnect client
+        TEST_ASSERT(ppdb_client_disconnect(clients[i].conn) == PPDB_OK);
+        TEST_ASSERT(ppdb_destroy(clients[i].ctx) == PPDB_OK);
     }
 
-    // Get stats and cleanup server
+    // Get server stats
     char stats[1024];
-    TEST_ASSERT(ppdb_peer_get_stats(server, stats, sizeof(stats)) == PPDB_OK);
+    TEST_ASSERT(ppdb_server_get_stats(server_ctx, stats, sizeof(stats)) == PPDB_OK);
     printf("Server Stats:\n%s\n", stats);
 
-    TEST_ASSERT(ppdb_peer_destroy(server) == PPDB_OK);
+    // Stop server
+    TEST_ASSERT(ppdb_server_stop(server_ctx) == PPDB_OK);
+    TEST_ASSERT(ppdb_destroy(server_ctx) == PPDB_OK);
 }
 
 //-----------------------------------------------------------------------------

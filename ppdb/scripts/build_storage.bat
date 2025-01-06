@@ -1,62 +1,37 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal EnableDelayedExpansion
 
-REM Set paths
-set ROOT_DIR=%~dp0..
-set SRC_DIR=%ROOT_DIR%\src
-set TEST_DIR=%ROOT_DIR%\test\white\storage
-set BUILD_DIR=%ROOT_DIR%\build
-set BIN_DIR=%BUILD_DIR%\bin
-set OBJ_DIR=%BUILD_DIR%\obj
+rem Get build mode and test mode from parameters
+set "TEST_MODE=%1"
+set "BUILD_MODE=%2"
+if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
 
-REM Create directories if they don't exist
-if not exist %BUILD_DIR% mkdir %BUILD_DIR%
-if not exist %BIN_DIR% mkdir %BIN_DIR%
-if not exist %OBJ_DIR% mkdir %OBJ_DIR%
+rem Load environment variables and common functions
+call "%~dp0\build_env.bat"
+if errorlevel 1 exit /b 1
 
-REM Set compiler flags
-set CFLAGS=-O2 -g -Wall -Wextra -I%SRC_DIR% -I%ROOT_DIR%\include
+rem Create build directory if it doesn't exist
+if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-REM Build storage module
-echo Building storage module...
-gcc %CFLAGS% -c %SRC_DIR%\storage\*.c -o %OBJ_DIR%\storage.o
+rem Build storage library
+echo Building storage library...
+%GCC% %CFLAGS% -c "%PPDB_DIR%\src\storage.c" -o "%BUILD_DIR%\storage.o"
+if errorlevel 1 exit /b 1
 
-REM Build and run tests
-echo Building and running storage tests...
+if not "%TEST_MODE%"=="notest" (
+    echo Running storage tests...
+    REM Build and run storage tests
+    echo Building storage tests...
+    %GCC% %CFLAGS% "%BUILD_DIR%\storage.o" "%PPDB_DIR%\test\white\storage\test_storage.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\storage_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\storage_test.exe.dbg" "%BUILD_DIR%\storage_test.exe"
+    if errorlevel 1 exit /b 1
 
-REM Build and run initialization tests
-echo Running storage initialization tests...
-gcc %CFLAGS% %TEST_DIR%\test_storage_init.c %OBJ_DIR%\storage.o -o %BIN_DIR%\test_storage_init
-%BIN_DIR%\test_storage_init
-if errorlevel 1 goto :error
+    echo Running storage tests...
+    "%BUILD_DIR%\storage_test.exe"
+    if errorlevel 1 exit /b 1
 
-REM Build and run table tests
-echo Running storage table tests...
-gcc %CFLAGS% %TEST_DIR%\test_storage_table.c %OBJ_DIR%\storage.o -o %BIN_DIR%\test_storage_table
-%BIN_DIR%\test_storage_table
-if errorlevel 1 goto :error
+    echo All storage tests passed!
+)
 
-REM Build and run index tests
-echo Running storage index tests...
-gcc %CFLAGS% %TEST_DIR%\test_storage_index.c %OBJ_DIR%\storage.o -o %BIN_DIR%\test_storage_index
-%BIN_DIR%\test_storage_index
-if errorlevel 1 goto :error
-
-REM Build and run data tests
-echo Running storage data tests...
-gcc %CFLAGS% %TEST_DIR%\test_storage_data.c %OBJ_DIR%\storage.o -o %BIN_DIR%\test_storage_data
-%BIN_DIR%\test_storage_data
-if errorlevel 1 goto :error
-
-REM Build and run maintenance tests
-echo Running storage maintenance tests...
-gcc %CFLAGS% %TEST_DIR%\test_storage_maintain.c %OBJ_DIR%\storage.o -o %BIN_DIR%\test_storage_maintain
-%BIN_DIR%\test_storage_maintain
-if errorlevel 1 goto :error
-
-echo All storage tests completed successfully
 exit /b 0
-
-:error
-echo Error occurred during build or test
-exit /b 1

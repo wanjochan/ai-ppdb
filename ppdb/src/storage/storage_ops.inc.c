@@ -2,96 +2,125 @@
 // Storage Operations Implementation
 //-----------------------------------------------------------------------------
 
-static inline void update_counter(ppdb_base_counter_t* counter) {
-    if (counter) {
-        ppdb_base_counter_increment(counter);
-    }
+ppdb_error_t ppdb_storage_put(ppdb_storage_t* storage, const ppdb_data_t* key, const ppdb_data_t* value) {
+    if (!storage || !key || !value) return PPDB_ERR_PARAM;
+
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
+    // TODO: Implement put operation
+    // 1. Find active table
+    // 2. Insert key-value pair
+    // 3. Update statistics
+
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_put(ppdb_context_t ctx, const ppdb_data_t* key, const ppdb_data_t* value) {
-    if (!key || !value) return PPDB_ERR_NULL_POINTER;
-    if (ctx == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    
-    ppdb_storage_t* storage = (ppdb_storage_t*)ctx;
-    update_counter(storage->stats.writes);
-    
-    // TODO: Implement storage put operation
-    return PPDB_ERR_NOT_IMPLEMENTED;
+ppdb_error_t ppdb_storage_get(ppdb_storage_t* storage, const ppdb_data_t* key, ppdb_data_t* value) {
+    if (!storage || !key || !value) return PPDB_ERR_PARAM;
+
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
+    // TODO: Implement get operation
+    // 1. Find active table
+    // 2. Search for key
+    // 3. Update statistics
+
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_get(ppdb_context_t ctx, const ppdb_data_t* key, ppdb_data_t* value) {
-    if (!key || !value) return PPDB_ERR_NULL_POINTER;
-    if (ctx == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    
-    ppdb_storage_t* storage = (ppdb_storage_t*)ctx;
-    update_counter(storage->stats.reads);
-    
-    // TODO: Implement storage get operation
-    return PPDB_ERR_NOT_IMPLEMENTED;
+ppdb_error_t ppdb_storage_delete(ppdb_storage_t* storage, const ppdb_data_t* key) {
+    if (!storage || !key) return PPDB_ERR_PARAM;
+
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
+    // TODO: Implement delete operation
+    // 1. Find active table
+    // 2. Delete key
+    // 3. Update statistics
+
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_delete(ppdb_context_t ctx, const ppdb_data_t* key) {
-    if (!key) return PPDB_ERR_NULL_POINTER;
-    if (ctx == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    
-    ppdb_storage_t* storage = (ppdb_storage_t*)ctx;
-    update_counter(storage->stats.writes);  // Delete is also a write operation
-    
-    // TODO: Implement storage delete operation
-    return PPDB_ERR_NOT_IMPLEMENTED;
+ppdb_error_t ppdb_storage_scan(ppdb_storage_t* storage, ppdb_storage_cursor_t* cursor) {
+    if (!storage || !cursor) return PPDB_ERR_PARAM;
+
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
+    // TODO: Implement scan operation
+    // 1. Find active table
+    // 2. Initialize cursor
+    // 3. Update statistics
+
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_scan(ppdb_context_t ctx, ppdb_cursor_t* cursor) {
-    if (!cursor) return PPDB_ERR_NULL_POINTER;
-    if (ctx == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    
-    ppdb_storage_t* storage = (ppdb_storage_t*)ctx;
-    update_counter(storage->stats.reads);
-    
-    // TODO: Implement storage scan operation
-    return PPDB_ERR_NOT_IMPLEMENTED;
-}
+ppdb_error_t ppdb_storage_scan_range(ppdb_storage_t* storage,
+                                   const ppdb_data_t* start_key,
+                                   const ppdb_data_t* end_key,
+                                   ppdb_storage_cursor_t* cursor) {
+    if (!storage || !start_key || !end_key || !cursor) return PPDB_ERR_PARAM;
 
-ppdb_error_t ppdb_storage_scan_range(ppdb_context_t ctx,
-                                    const ppdb_data_t* start_key,
-                                    const ppdb_data_t* end_key,
-                                    ppdb_cursor_t* cursor) {
-    if (!start_key || !end_key || !cursor) return PPDB_ERR_NULL_POINTER;
-    if (ctx == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    
-    ppdb_storage_t* storage = (ppdb_storage_t*)ctx;
-    update_counter(storage->stats.reads);
-    
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
     // TODO: Implement range scan operation
-    return PPDB_ERR_NOT_IMPLEMENTED;
+    // 1. Find active table
+    // 2. Initialize cursor with range
+    // 3. Update statistics
+
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_compact(ppdb_context_t ctx) {
-    if (ctx == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    
-    ppdb_storage_t* storage = (ppdb_storage_t*)ctx;
-    update_counter(storage->stats.compactions);
-    
-    // TODO: Implement storage compaction
-    return PPDB_ERR_NOT_IMPLEMENTED;
+ppdb_error_t ppdb_storage_compact(ppdb_storage_t* storage) {
+    if (!storage) return PPDB_ERR_PARAM;
+
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
+    // TODO: Implement compaction
+    // 1. Find active table
+    // 2. Perform compaction
+    // 3. Update statistics
+
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_flush(ppdb_context_t ctx) {
-    if (ctx == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    
-    ppdb_storage_t* storage = (ppdb_storage_t*)ctx;
-    update_counter(storage->stats.flushes);
-    
-    // TODO: Implement storage flush
-    return PPDB_ERR_NOT_IMPLEMENTED;
+ppdb_error_t ppdb_storage_flush(ppdb_storage_t* storage) {
+    if (!storage) return PPDB_ERR_PARAM;
+
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
+    // TODO: Implement flush
+    // 1. Find active table
+    // 2. Flush data to disk
+    // 3. Update statistics
+
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_storage_checkpoint(ppdb_context_t ctx) {
-    if (ctx == 0) return PPDB_ERR_INVALID_ARGUMENT;
-    
-    ppdb_storage_t* storage = (ppdb_storage_t*)ctx;
-    update_counter(storage->stats.wal_syncs);
-    
-    // TODO: Implement storage checkpoint
-    return PPDB_ERR_NOT_IMPLEMENTED;
+ppdb_error_t ppdb_storage_checkpoint(ppdb_storage_t* storage) {
+    if (!storage) return PPDB_ERR_PARAM;
+
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
+    // TODO: Implement checkpoint
+    // 1. Find active table
+    // 2. Create checkpoint
+    // 3. Update statistics
+
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
 }

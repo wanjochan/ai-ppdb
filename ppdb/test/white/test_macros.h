@@ -1,144 +1,85 @@
 #ifndef PPDB_TEST_MACROS_H
 #define PPDB_TEST_MACROS_H
 
-#include "test_framework.h"
+#include <cosmopolitan.h>
+#include "test_plan.h"
 
-// 测试初始化宏
-#define TEST_INIT() do { \
-    test_framework_init(); \
-    printf("\nStarting test suite...\n"); \
-} while(0)
+// 测试结果
+static int g_test_count = 0;
+static int g_test_passed = 0;
+static int g_test_failed = 0;
 
-// 测试清理宏
-#define TEST_CLEANUP() do { \
-    test_framework_cleanup(); \
-} while(0)
+// 测试宏
+#define TEST_CASE(func) \
+    do { \
+        printf("Running test: %s\n", #func); \
+        g_test_count++; \
+        int result = func(); \
+        if (result == 0) { \
+            g_test_passed++; \
+            printf("  Test passed: %s\n", #func); \
+        } else { \
+            g_test_failed++; \
+            printf("  Test failed: %s (error: %d)\n", #func, result); \
+        } \
+    } while (0)
 
-// 测试总结宏
-#define TEST_SUMMARY() test_print_stats()
+#define ASSERT_OK(expr) \
+    do { \
+        ppdb_error_t _err = (expr); \
+        if (_err != PPDB_OK) { \
+            printf("  Assert failed: %s (error: %d)\n", #expr, _err); \
+            return _err; \
+        } \
+    } while (0)
 
-// 测试结果宏
-#define TEST_RESULT() test_get_result()
+#define ASSERT_ERR(expr, expected_err) \
+    do { \
+        ppdb_error_t _err = (expr); \
+        if (_err != expected_err) { \
+            printf("  Assert failed: %s (expected: %d, got: %d)\n", #expr, expected_err, _err); \
+            return -1; \
+        } \
+    } while (0)
 
-// 断言宏
-#define TEST_ASSERT(condition, message) do { \
-    if (!(condition)) { \
-        printf("Assertion failed: %s\n", message); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
+#define ASSERT_NOT_NULL(ptr) \
+    do { \
+        if ((ptr) == NULL) { \
+            printf("  Assert failed: %s is NULL\n", #ptr); \
+            return -1; \
+        } \
+    } while (0)
 
-#define ASSERT_TRUE(condition) do { \
-    if (!(condition)) { \
-        printf("Assertion failed: %s should be true\n", #condition); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
+#define ASSERT_TRUE(expr) \
+    do { \
+        if (!(expr)) { \
+            printf("  Assert failed: %s is false\n", #expr); \
+            return -1; \
+        } \
+    } while (0)
 
-#define ASSERT_FALSE(condition) do { \
-    if (condition) { \
-        printf("Assertion failed: %s should be false\n", #condition); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
+#define ASSERT_FALSE(expr) \
+    do { \
+        if (expr) { \
+            printf("  Assert failed: %s is true\n", #expr); \
+            return -1; \
+        } \
+    } while (0)
 
-#define ASSERT_EQ(actual, expected) do { \
-    if ((actual) != (expected)) { \
-        printf("Assertion failed: %s == %s\n", #actual, #expected); \
-        printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
+#define ASSERT_EQ(a, b) \
+    do { \
+        if ((a) != (b)) { \
+            printf("  Assert failed: %s != %s (%d != %d)\n", #a, #b, (int)(a), (int)(b)); \
+            return -1; \
+        } \
+    } while (0)
 
-#define ASSERT_NE(actual, expected) do { \
-    if ((actual) == (expected)) { \
-        printf("Assertion failed: %s != %s\n", #actual, #expected); \
-        printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_GT(actual, expected) do { \
-    if ((actual) <= (expected)) { \
-        printf("Assertion failed: %s > %s\n", #actual, #expected); \
-        printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_GE(actual, expected) do { \
-    if ((actual) < (expected)) { \
-        printf("Assertion failed: %s >= %s\n", #actual, #expected); \
-        printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_LT(actual, expected) do { \
-    if ((actual) >= (expected)) { \
-        printf("Assertion failed: %s < %s\n", #actual, #expected); \
-        printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_LE(actual, expected) do { \
-    if ((actual) > (expected)) { \
-        printf("Assertion failed: %s <= %s\n", #actual, #expected); \
-        printf("  actual: %ld, expected: %ld\n", (long)(actual), (long)(expected)); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_NULL(ptr) do { \
-    if ((ptr) != NULL) { \
-        printf("Assertion failed: %s is not NULL\n", #ptr); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_NOT_NULL(ptr) do { \
-    if ((ptr) == NULL) { \
-        printf("Assertion failed: %s is NULL\n", #ptr); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_STR_EQ(actual, expected) do { \
-    if (strcmp((actual), (expected)) != 0) { \
-        printf("Assertion failed: strcmp(%s, %s) == 0\n", #actual, #expected); \
-        printf("  actual: \"%s\"\n  expected: \"%s\"\n", (actual), (expected)); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_STR_NE(actual, expected) do { \
-    if (strcmp((actual), (expected)) == 0) { \
-        printf("Assertion failed: strcmp(%s, %s) != 0\n", #actual, #expected); \
-        printf("  actual: \"%s\"\n  expected: \"%s\"\n", (actual), (expected)); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
-
-#define ASSERT_MEM_EQ(actual, expected, size) do { \
-    if (memcmp((actual), (expected), (size)) != 0) { \
-        printf("Assertion failed: memcmp(%s, %s, %s) == 0\n", #actual, #expected, #size); \
-        printf("  at %s:%d\n", __FILE__, __LINE__); \
-        exit(1); \
-    } \
-} while(0)
+#define ASSERT_NE(a, b) \
+    do { \
+        if ((a) == (b)) { \
+            printf("  Assert failed: %s == %s (%d)\n", #a, #b, (int)(a)); \
+            return -1; \
+        } \
+    } while (0)
 
 #endif // PPDB_TEST_MACROS_H 

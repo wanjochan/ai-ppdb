@@ -6,62 +6,39 @@
 
 #include <cosmopolitan.h>
 #include "internal/base.h"
-#include "internal/engine.h"
 #include "internal/storage.h"
 
-// Internal storage structures
-struct ppdb_storage_s {
-    ppdb_base_t* base;                    // Base layer instance
-    ppdb_storage_config_t config;         // Storage configuration
-    ppdb_storage_stats_t stats;           // Storage statistics
-    ppdb_base_mutex_t* mutex;             // Global storage mutex
-    ppdb_base_skiplist_t* tables;         // Table metadata index
-};
-
-struct ppdb_storage_table_s {
-    char* name;                           // Table name
-    ppdb_storage_t* storage;              // Parent storage instance
-    ppdb_base_skiplist_t* memtable;       // In-memory table
-    ppdb_base_skiplist_t* indexes;        // Index metadata
-    ppdb_base_mutex_t* mutex;             // Table-level mutex
-};
-
-struct ppdb_storage_index_s {
-    char* name;                           // Index name
-    ppdb_storage_table_t* table;          // Parent table
-    ppdb_base_skiplist_t* index;          // Index data structure
-    ppdb_base_mutex_t* mutex;             // Index-level mutex
-};
-
-// Include storage implementation files
+// Include implementation files
 #include "storage/storage_table.inc.c"
 #include "storage/storage_index.inc.c"
 #include "storage/storage_ops.inc.c"
 
-//-----------------------------------------------------------------------------
-// Storage initialization and cleanup
-//-----------------------------------------------------------------------------
-
+// Storage initialization
 ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_base_t* base, const ppdb_storage_config_t* config) {
-    PPDB_CHECK_NULL(storage);
-    PPDB_CHECK_NULL(base);
-    PPDB_CHECK_NULL(config);
+    if (!storage || !base || !config) return PPDB_ERR_PARAM;
+    if (*storage) return PPDB_ERR_PARAM;
+
+    // Validate configuration
+    PPDB_RETURN_IF_ERROR(ppdb_storage_config_validate(config));
 
     // Allocate storage structure
-    ppdb_storage_t* s = ppdb_base_aligned_alloc(sizeof(ppdb_storage_t));
-    if (!s) return PPDB_BASE_ERR_MEMORY;
+    ppdb_storage_t* s = ppdb_base_aligned_alloc(16, sizeof(ppdb_storage_t));
+    if (!s) return PPDB_ERR_MEMORY;
 
-    // Initialize storage
+    // Initialize storage structure
+    memset(s, 0, sizeof(ppdb_storage_t));
     s->base = base;
     s->config = *config;
-    
-    // Create mutex
-    PPDB_RETURN_IF_ERROR(ppdb_base_mutex_create(&s->mutex));
 
-    // Create table index
-    PPDB_RETURN_IF_ERROR(ppdb_base_skiplist_create(&s->tables, NULL));
+    // Initialize lock
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_init(&s->lock));
 
-    // Initialize statistics counters
+    // Initialize tables list
+    ppdb_base_skiplist_t* tables_list;
+    PPDB_RETURN_IF_ERROR(ppdb_base_skiplist_create(&tables_list, NULL));
+    s->tables = (ppdb_storage_table_t*)tables_list;
+
+    // Initialize statistics
     PPDB_RETURN_IF_ERROR(ppdb_base_counter_create(&s->stats.reads));
     PPDB_RETURN_IF_ERROR(ppdb_base_counter_create(&s->stats.writes));
     PPDB_RETURN_IF_ERROR(ppdb_base_counter_create(&s->stats.flushes));
@@ -74,10 +51,14 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_base_t* base, cons
     return PPDB_OK;
 }
 
+// Storage cleanup
 void ppdb_storage_destroy(ppdb_storage_t* storage) {
     if (!storage) return;
 
-    // Cleanup statistics counters
+    // Destroy tables
+    ppdb_base_skiplist_destroy((ppdb_base_skiplist_t*)storage->tables);
+
+    // Destroy statistics
     ppdb_base_counter_destroy(storage->stats.reads);
     ppdb_base_counter_destroy(storage->stats.writes);
     ppdb_base_counter_destroy(storage->stats.flushes);
@@ -86,17 +67,65 @@ void ppdb_storage_destroy(ppdb_storage_t* storage) {
     ppdb_base_counter_destroy(storage->stats.cache_misses);
     ppdb_base_counter_destroy(storage->stats.wal_syncs);
 
-    // Cleanup table index
-    ppdb_base_skiplist_destroy(storage->tables);
-
-    // Cleanup mutex
-    ppdb_base_mutex_destroy(storage->mutex);
+    // Destroy lock
+    ppdb_base_spinlock_destroy(&storage->lock);
 
     // Free storage structure
     ppdb_base_aligned_free(storage);
 }
 
+// Get storage statistics
 void ppdb_storage_get_stats(ppdb_storage_t* storage, ppdb_storage_stats_t* stats) {
     if (!storage || !stats) return;
+
     *stats = storage->stats;
+}
+
+// Configuration validation
+ppdb_error_t ppdb_storage_config_validate(const ppdb_storage_config_t* config) {
+    if (!config) return PPDB_ERR_PARAM;
+
+    // Validate configuration parameters
+    if (config->memtable_size == 0) return PPDB_ERR_CONFIG;
+    if (config->block_size == 0) return PPDB_ERR_CONFIG;
+    if (config->write_buffer_size == 0) return PPDB_ERR_CONFIG;
+    if (!config->data_dir) return PPDB_ERR_CONFIG;
+
+    return PPDB_OK;
+}
+
+// Configuration initialization
+ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config) {
+    if (!config) return PPDB_ERR_PARAM;
+
+    // Set default values
+    config->memtable_size = PPDB_DEFAULT_MEMTABLE_SIZE;
+    config->block_size = PPDB_DEFAULT_BLOCK_SIZE;
+    config->cache_size = PPDB_DEFAULT_CACHE_SIZE;
+    config->write_buffer_size = PPDB_DEFAULT_WRITE_BUFFER_SIZE;
+    config->data_dir = PPDB_DEFAULT_DATA_DIR;
+    config->use_compression = PPDB_DEFAULT_USE_COMPRESSION;
+    config->sync_writes = PPDB_DEFAULT_SYNC_WRITES;
+
+    return PPDB_OK;
+}
+
+// Get storage configuration
+ppdb_error_t ppdb_storage_get_config(ppdb_storage_t* storage, ppdb_storage_config_t* config) {
+    if (!storage || !config) return PPDB_ERR_PARAM;
+
+    *config = storage->config;
+    return PPDB_OK;
+}
+
+// Update storage configuration
+ppdb_error_t ppdb_storage_update_config(ppdb_storage_t* storage, const ppdb_storage_config_t* config) {
+    if (!storage || !config) return PPDB_ERR_PARAM;
+
+    // Validate new configuration
+    PPDB_RETURN_IF_ERROR(ppdb_storage_config_validate(config));
+
+    // Update configuration
+    storage->config = *config;
+    return PPDB_OK;
 }
