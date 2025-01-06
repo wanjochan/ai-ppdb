@@ -239,4 +239,104 @@ void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key);
 ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, void* key);
 size_t ppdb_base_skiplist_size(ppdb_base_skiplist_t* list);
 
+//-----------------------------------------------------------------------------
+// Async types and functions
+//-----------------------------------------------------------------------------
+
+// Async types
+typedef struct ppdb_base_future_s ppdb_base_future_t;
+typedef struct ppdb_base_event_loop_s ppdb_base_event_loop_t;
+typedef struct ppdb_base_timer_s ppdb_base_timer_t;
+
+// Callback types
+typedef void (*ppdb_base_future_callback_t)(ppdb_base_future_t* future, void* data);
+typedef void (*ppdb_base_timer_callback_t)(ppdb_base_timer_t* timer, void* data);
+typedef void (*ppdb_base_io_callback_t)(ppdb_error_t status, void* data);
+
+// Future operations
+ppdb_error_t ppdb_base_future_create(ppdb_base_future_t** future);
+void ppdb_base_future_destroy(ppdb_base_future_t* future);
+ppdb_error_t ppdb_base_future_set_callback(ppdb_base_future_t* future, 
+                                          ppdb_base_future_callback_t callback,
+                                          void* data);
+ppdb_error_t ppdb_base_future_complete(ppdb_base_future_t* future);
+bool ppdb_base_future_is_completed(ppdb_base_future_t* future);
+ppdb_error_t ppdb_base_future_wait(ppdb_base_future_t* future);
+
+// Event loop operations
+ppdb_error_t ppdb_base_event_loop_create(ppdb_base_event_loop_t** loop);
+void ppdb_base_event_loop_destroy(ppdb_base_event_loop_t* loop);
+ppdb_error_t ppdb_base_event_loop_run(ppdb_base_event_loop_t* loop);
+ppdb_error_t ppdb_base_event_loop_stop(ppdb_base_event_loop_t* loop);
+ppdb_error_t ppdb_base_event_loop_post(ppdb_base_event_loop_t* loop,
+                                      ppdb_base_future_callback_t callback,
+                                      void* data);
+
+// Timer operations
+ppdb_error_t ppdb_base_timer_create(ppdb_base_timer_t** timer,
+                                   ppdb_base_event_loop_t* loop);
+void ppdb_base_timer_destroy(ppdb_base_timer_t* timer);
+ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer,
+                                  uint64_t timeout_ms,
+                                  ppdb_base_timer_callback_t callback,
+                                  void* data);
+ppdb_error_t ppdb_base_timer_stop(ppdb_base_timer_t* timer);
+bool ppdb_base_timer_is_active(ppdb_base_timer_t* timer);
+
+// Async IO operations
+ppdb_error_t ppdb_base_async_read(ppdb_base_file_t* file,
+                                 void* buffer,
+                                 size_t size,
+                                 uint64_t offset,
+                                 ppdb_base_io_callback_t callback,
+                                 void* data);
+ppdb_error_t ppdb_base_async_write(ppdb_base_file_t* file,
+                                  const void* buffer,
+                                  size_t size,
+                                  uint64_t offset,
+                                  ppdb_base_io_callback_t callback,
+                                  void* data);
+
+//-----------------------------------------------------------------------------
+// Asynchronous Operations
+//-----------------------------------------------------------------------------
+
+// Forward declarations
+typedef struct ppdb_base_async_loop ppdb_base_async_loop_t;
+typedef struct ppdb_base_async_handle ppdb_base_async_handle_t;
+typedef struct ppdb_base_async_future ppdb_base_async_future_t;
+typedef struct ppdb_base_timer ppdb_base_timer_t;
+
+// Callback type for async operations
+typedef void (*ppdb_base_async_cb)(ppdb_base_async_handle_t* handle, int status);
+
+// Event loop operations
+ppdb_error_t ppdb_base_async_loop_create(ppdb_base_async_loop_t** loop);
+ppdb_error_t ppdb_base_async_loop_destroy(ppdb_base_async_loop_t* loop);
+ppdb_error_t ppdb_base_async_loop_run(ppdb_base_async_loop_t* loop, int timeout_ms);
+
+// Async IO operations
+ppdb_error_t ppdb_base_async_handle_create(ppdb_base_async_loop_t* loop, int fd, ppdb_base_async_handle_t** handle);
+ppdb_error_t ppdb_base_async_handle_destroy(ppdb_base_async_handle_t* handle);
+ppdb_error_t ppdb_base_async_read(ppdb_base_async_handle_t* handle, void* buf, size_t len, ppdb_base_async_cb cb);
+ppdb_error_t ppdb_base_async_write(ppdb_base_async_handle_t* handle, const void* buf, size_t len, ppdb_base_async_cb cb);
+
+// Future operations
+ppdb_error_t ppdb_base_future_create(ppdb_base_async_loop_t* loop, ppdb_base_async_future_t** future);
+ppdb_error_t ppdb_base_future_destroy(ppdb_base_async_future_t* future);
+ppdb_error_t ppdb_base_future_set_callback(ppdb_base_async_future_t* future, ppdb_base_async_cb cb, void* user_data);
+ppdb_error_t ppdb_base_future_set_result(ppdb_base_async_future_t* future, void* result, size_t size);
+ppdb_error_t ppdb_base_future_set_error(ppdb_base_async_future_t* future, ppdb_error_t error);
+ppdb_error_t ppdb_base_future_wait(ppdb_base_async_future_t* future);
+ppdb_error_t ppdb_base_future_wait_timeout(ppdb_base_async_future_t* future, uint32_t timeout_ms);
+ppdb_error_t ppdb_base_future_is_ready(ppdb_base_async_future_t* future, bool* ready);
+ppdb_error_t ppdb_base_future_get_result(ppdb_base_async_future_t* future, void* result, size_t size, size_t* actual_size);
+
+// Timer operations
+ppdb_error_t ppdb_base_timer_create(ppdb_base_async_loop_t* loop, ppdb_base_timer_t** timer);
+ppdb_error_t ppdb_base_timer_destroy(ppdb_base_timer_t* timer);
+ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer, uint64_t timeout_ms, bool repeat, ppdb_base_async_cb cb, void* user_data);
+ppdb_error_t ppdb_base_timer_stop(ppdb_base_timer_t* timer);
+ppdb_error_t ppdb_base_timer_reset(ppdb_base_timer_t* timer);
+
 #endif // PPDB_INTERNAL_BASE_H_
