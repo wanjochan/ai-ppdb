@@ -3,6 +3,11 @@
 
 #include <cosmopolitan.h>
 
+// Test macros
+#define TEST_INIT() test_framework_init()
+#define TEST_CLEANUP() test_framework_cleanup()
+#define TEST_RUN(test_fn) run_test_case(&(test_case_t){.name = #test_fn, .fn = test_fn})
+
 // Test assertion macros
 #define TEST_ASSERT(condition) \
     do { \

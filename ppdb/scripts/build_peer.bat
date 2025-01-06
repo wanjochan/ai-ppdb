@@ -13,13 +13,25 @@ if errorlevel 1 exit /b 1
 rem Create build directory if it doesn't exist
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
+rem Build dependencies
+call "%~dp0\build_base.bat"
+if errorlevel 1 exit /b 1
+
+call "%~dp0\build_storage.bat"
+if errorlevel 1 exit /b 1
+
 rem Build peer library
 echo Building peer library...
-%GCC% %CFLAGS% -I"%PPDB_DIR%\src" -c "%PPDB_DIR%\src\peer.c" -o "%BUILD_DIR%\peer.o"
+%GCC% %CFLAGS% -I"%PPDB_DIR%\src\peer" -c "%PPDB_DIR%\src\peer.c" -o "%BUILD_DIR%\peer.o"
 if errorlevel 1 exit /b 1
 
 if not "%TEST_MODE%"=="notest" (
     echo Running peer tests...
+    REM Build test framework
+    echo Building test framework...
+    %GCC% %CFLAGS% -c "%PPDB_DIR%\test\white\test_framework.c" -o "%BUILD_DIR%\test_framework.o"
+    if errorlevel 1 exit /b 1
+
     REM Build and run peer tests
     echo Building peer tests...
 
@@ -29,9 +41,10 @@ if not "%TEST_MODE%"=="notest" (
         test_peer_conn.c
         test_peer_proto.c
         test_peer_memcached.c
+        test_peer_server.c
     ) do (
         echo Building %%f...
-        %GCC% %CFLAGS% "%BUILD_DIR%\peer.o" "%BUILD_DIR%\base.o" "%BUILD_DIR%\storage.o" "%PPDB_DIR%\test\white\peer\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
+        %GCC% %CFLAGS% -I"%PPDB_DIR%\src\peer" "%BUILD_DIR%\peer.o" "%BUILD_DIR%\base.o" "%BUILD_DIR%\storage.o" "%BUILD_DIR%\test_framework.o" "%PPDB_DIR%\test\white\peer\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
         if errorlevel 1 exit /b 1
         "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%%~nf.exe.dbg" "%BUILD_DIR%\%%~nf.exe"
         if errorlevel 1 exit /b 1

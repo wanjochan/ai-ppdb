@@ -9,6 +9,9 @@
 // Macro for unused parameters
 #define PPDB_UNUSED(x) ((void)(x))
 
+// Macro for unused functions
+#define PPDB_UNUSED_FUNCTION __attribute__((unused))
+
 // Function declarations
 ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size_t key_size, void* value, size_t* value_size);
 ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size_t key_size, const void* value, size_t value_size);
@@ -130,5 +133,18 @@ ppdb_error_t ppdb_conn_recv(ppdb_handle_t conn, void* data, size_t size);
 void ppdb_conn_close(ppdb_handle_t conn);
 bool ppdb_conn_is_connected(ppdb_handle_t conn);
 const char* ppdb_conn_get_proto_name(ppdb_handle_t conn);
+
+//-----------------------------------------------------------------------------
+// Server Management
+//-----------------------------------------------------------------------------
+
+// Forward declaration
+struct ppdb_server_s;
+
+// Server management functions
+ppdb_error_t ppdb_server_create(ppdb_server_t* server, ppdb_ctx_t ctx, const ppdb_net_config_t* config);
+ppdb_error_t ppdb_server_start(ppdb_server_t server);
+ppdb_error_t ppdb_server_stop(ppdb_server_t server);
+ppdb_error_t ppdb_server_destroy(ppdb_server_t server);
 
 #endif // PPDB_INTERNAL_PEER_H_ 

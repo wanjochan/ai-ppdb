@@ -1,5 +1,6 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
+#include "internal/peer.h"
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
@@ -14,6 +15,30 @@ static ppdb_error_t cmd_status(int argc, char** argv);
 //-----------------------------------------------------------------------------
 
 static bool g_initialized = false;
+static volatile sig_atomic_t g_running = 1;
+
+//-----------------------------------------------------------------------------
+// Signal Handling
+//-----------------------------------------------------------------------------
+
+static void OnSignal(int sig) {
+    write(1, "\nShutting down...\n", 17);
+    g_running = 0;
+}
+
+static void SetupSignalHandlers(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = OnSignal;
+    sa.sa_flags = SA_RESTART;
+    sigfillset(&sa.sa_mask);
+    
+    // 注册多个信号
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGQUIT, &sa, NULL);
+    sigaction(SIGHUP, &sa, NULL);
+}
 
 //-----------------------------------------------------------------------------
 // Initialization
@@ -129,21 +154,10 @@ static ppdb_error_t cmd_server(int argc, char** argv) {
         return PPDB_ERR_PARAM;
     }
     
-    // 配置服务器
-    ppdb_net_config_t config = {
-        .host = host,
-        .port = port,
-        .timeout_ms = 30000,
-        .max_connections = max_conn,
-        .io_threads = threads,
-        .use_tcp_nodelay = true,
-        .protocol = protocol  // 需要在ppdb.h中添加此字段
-    };
-    
     // 创建数据库上下文
     ppdb_ctx_t ctx;
     ppdb_options_t options = {
-        .db_path = NULL,  // memkv模式下不需要持久化
+        .db_path = "./tmp",  // 使用临时目录
         .cache_size = 1024 * 1024 * 1024,  // 1GB缓存
         .max_readers = max_conn,
         .sync_writes = false,  // memkv模式下不需要同步写入
@@ -157,37 +171,76 @@ static ppdb_error_t cmd_server(int argc, char** argv) {
         return err;
     }
     
+    // 配置服务器
+    ppdb_net_config_t config = {
+        .host = host,
+        .port = port,
+        .timeout_ms = 30000,
+        .max_connections = max_conn,
+        .io_threads = threads,
+        .use_tcp_nodelay = true,
+        .protocol = protocol
+    };
+    
+    // 创建并启动服务器
+    ppdb_server_t server = NULL;
+    err = ppdb_server_create(&server, ctx, &config);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to create server: %d\n", err);
+        ppdb_destroy(ctx);
+        return err;
+    }
+    
+    // 设置信号处理
+    g_running = 1;
+    SetupSignalHandlers();
+    
     // 启动服务器
     printf("Starting %s server with %s protocol on %s:%d...\n", 
            mode, protocol, host, port);
-    err = ppdb_server_start(ctx, &config);
+    err = ppdb_server_start(server);
     if (err != PPDB_OK) {
         fprintf(stderr, "Failed to start server: %d\n", err);
+        ppdb_server_destroy(server);
         ppdb_destroy(ctx);
         return err;
     }
     
     // 等待中断信号
     printf("Server is running. Press Ctrl+C to stop.\n");
-    getchar();
+    fflush(stdout);
+    
+    while (g_running) {
+        if (write(1, ".", 1) == 1) {  // 每秒打印一个点表示程序还在运行
+            fflush(stdout);
+        }
+        Sleep(1000);
+    }
+    
+    printf("\n");  // 换行
     
     // 停止服务器
     printf("Stopping server...\n");
-    err = ppdb_server_stop(ctx);
+    err = ppdb_server_stop(server);
     if (err != PPDB_OK) {
         fprintf(stderr, "Failed to stop server: %d\n", err);
     }
     
+    ppdb_server_destroy(server);
     ppdb_destroy(ctx);
     return err;
 }
 
 static ppdb_error_t cmd_client(int argc, char** argv) {
+    PPDB_UNUSED(argc);
+    PPDB_UNUSED(argv);
     // TODO: Implement client command
     return PPDB_OK;
 }
 
 static ppdb_error_t cmd_status(int argc, char** argv) {
+    PPDB_UNUSED(argc);
+    PPDB_UNUSED(argv);
     // TODO: Implement status command
     return PPDB_OK;
 }

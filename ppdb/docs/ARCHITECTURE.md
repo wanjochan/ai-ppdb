@@ -1,27 +1,32 @@
 ﻿# PPDB 架构设计
 
+中级目标：分布式去中心数据库
+
 ## 项目结构
 
 ```
 ppdb/
 ├── include/
-│   └── ppdb.h         # 唯一的公共头文件
+│   └── ppdb.h         # 唯一公共头文件
+├── scripts/           # 构建脚本
 ├── test/              # 测试目录
 ├── src/
-│   ├── internal/      # 内部实现头文件
-│   │   ├── base.h     # 基础设施
-│   │   ├── engine.h   # 引擎核心
-│   │   ├── storage.h  # 存储系统
-│   │   └── peer.h     # 节点管理
-│   ├── base/          # 基础设施实现
-│   ├── base.c
-│   ├── engine/        # 引擎核心实现
-│   ├── engine.c
-│   ├── storage/       # 存储系统实现（libppdb）
-│   ├── storage.c
-│   ├── peer/         # 各种服务端/客户端实现
-│   └── peer.c
-└── ppdb.c            # 主程序入口（启动 Server、CLI、网络接口、分布式网络与节点）
+    ├── internal/      # 内部实现头文件
+    │   ├── base.h     # 基础设施：内存、线程、同步、异步、日志、错误、常见工具
+    │   ├── engine.h   # 引擎核心：事务、并发控制、MVCC等
+    │   ├── storage.h  # 存储：数据组织、持久化、缓存等
+    │   └── peer.h     # 节点应用层：服务器、客户端、查询语言、API、接口、集群、节点通信、一致性协议等等
+    ├── base/
+    ├── base.c
+    ├── engine/
+    ├── engine.c
+    ├── storage/
+    ├── storage.c
+    ├── peer/
+    ├── peer.c
+    ├── libppdb.c         # 动态库(配合ppdb.h)
+    └── ppdb.c            # 主程序入口
+
 ```
 
 ## 分层架构
@@ -29,6 +34,10 @@ ppdb/
 PPDB 采用清晰的分层架构设计，每一层都有其明确的职责和边界：
 
 base => engine => storage => peer => [ppdb.exe] + [ppdb.h,libppdb]
+
+然后模式上来看 memkv 类似 memcached， diskv 类似 redis，
+后面还会支持更多模式（比如关系数据库、图数据库、列数据库、时序数据等）
+在去中心化分布式还会持续演化。
 
 1. **基础层** (`base.h/c`)
    - 内存管理

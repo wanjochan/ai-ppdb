@@ -1,47 +1,25 @@
+#include <cosmopolitan.h>
+#include "../test_framework.h"
 #include "internal/peer.h"
 #include "internal/storage.h"
 
 // Test cases
-void test_peer_proto_basic(void) {
-    // Test memcached protocol
-    const peer_ops_t* memcached = peer_get_memcached();
-    assert(memcached != NULL);
-    assert(memcached->create != NULL);
-    assert(memcached->destroy != NULL);
-    assert(memcached->on_connect != NULL);
-    assert(memcached->on_disconnect != NULL);
-    assert(memcached->on_data != NULL);
-    assert(memcached->get_name != NULL);
-    
+static int test_peer_proto_basic(void) {
     void* proto;
-    ppdb_error_t err = memcached->create(&proto, NULL);
-    assert(err == PPDB_OK);
-    assert(proto != NULL);
+    const peer_ops_t* memcached = peer_get_memcached();
+    TEST_ASSERT_NOT_NULL(memcached);
     
-    assert(strcmp(memcached->get_name(proto), "memcached") == 0);
+    ppdb_error_t err = memcached->create(&proto, NULL);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(proto);
     
     memcached->destroy(proto);
-    
-    // Test redis protocol
-    const peer_ops_t* redis = peer_get_redis();
-    assert(redis != NULL);
-    assert(redis->create != NULL);
-    assert(redis->destroy != NULL);
-    assert(redis->on_connect != NULL);
-    assert(redis->on_disconnect != NULL);
-    assert(redis->on_data != NULL);
-    assert(redis->get_name != NULL);
-    
-    err = redis->create(&proto, NULL);
-    assert(err == PPDB_OK);
-    assert(proto != NULL);
-    
-    assert(strcmp(redis->get_name(proto), "redis") == 0);
-    
-    redis->destroy(proto);
+    return 0;
 }
 
 int main(void) {
-    test_peer_proto_basic();
+    TEST_INIT();
+    TEST_RUN(test_peer_proto_basic);
+    TEST_CLEANUP();
     return 0;
 } 

@@ -140,17 +140,25 @@ ppdb_error_t ppdb_client_delete(ppdb_conn_t conn, const ppdb_data_t* key,
 // 服务器接口
 //-----------------------------------------------------------------------------
 
+// 服务器上下文
+typedef struct ppdb_server_s* ppdb_server_t;
+
+// 创建服务器
+ppdb_error_t ppdb_server_create(ppdb_server_t* server, ppdb_ctx_t ctx, const ppdb_net_config_t* config);
+
 // 启动服务器
-ppdb_error_t ppdb_server_start(ppdb_ctx_t ctx, const ppdb_net_config_t* config);
+ppdb_error_t ppdb_server_start(ppdb_server_t server);
 
 // 停止服务器
-ppdb_error_t ppdb_server_stop(ppdb_ctx_t ctx);
+ppdb_error_t ppdb_server_stop(ppdb_server_t server);
+
+// 销毁服务器
+ppdb_error_t ppdb_server_destroy(ppdb_server_t server);
 
 // 设置连接回调
-ppdb_error_t ppdb_server_set_conn_callback(ppdb_ctx_t ctx, ppdb_conn_callback cb, 
-                                          void* user_data);
+ppdb_error_t ppdb_server_set_conn_callback(ppdb_server_t server, ppdb_conn_callback cb, void* user_data);
 
 // 获取统计信息
-ppdb_error_t ppdb_server_get_stats(ppdb_ctx_t ctx, char* buffer, size_t size);
+ppdb_error_t ppdb_server_get_stats(ppdb_server_t server, char* buffer, size_t size);
 
 #endif // PPDB_H

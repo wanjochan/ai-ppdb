@@ -42,7 +42,7 @@ static ppdb_error_t memcached_handle_delete(memcached_proto_t* p, ppdb_handle_t 
 static ppdb_error_t memcached_parse_command(memcached_proto_t* p, char* line);
 
 // Protocol operations
-static ppdb_error_t memcached_send_error(ppdb_handle_t conn, const char* msg) {
+static PPDB_UNUSED_FUNCTION ppdb_error_t memcached_send_error(ppdb_handle_t conn, const char* msg) {
     char buf[MEMCACHED_RESPONSE_BUFFER_SIZE];
     int len = snprintf(buf, sizeof(buf), "ERROR %s\r\n", msg);
     return ppdb_conn_send(conn, buf, len);
@@ -52,7 +52,7 @@ static ppdb_error_t memcached_send_stored(ppdb_handle_t conn) {
     return ppdb_conn_send(conn, "STORED\r\n", 8);
 }
 
-static ppdb_error_t memcached_send_not_stored(ppdb_handle_t conn) {
+static PPDB_UNUSED_FUNCTION ppdb_error_t memcached_send_not_stored(ppdb_handle_t conn) {
     return ppdb_conn_send(conn, "NOT_STORED\r\n", 12);
 }
 

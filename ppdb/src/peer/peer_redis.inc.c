@@ -41,7 +41,7 @@ static ppdb_error_t redis_handle_del(redis_proto_t* p, ppdb_handle_t conn);
 static ppdb_error_t redis_parse_command(redis_proto_t* p, char* line);
 
 // Protocol operations
-static ppdb_error_t redis_send_error(ppdb_handle_t conn, const char* msg) {
+static PPDB_UNUSED_FUNCTION ppdb_error_t redis_send_error(ppdb_handle_t conn, const char* msg) {
     char buf[REDIS_RESPONSE_BUFFER_SIZE];
     int len = snprintf(buf, sizeof(buf), "-ERR %s\r\n", msg);
     return ppdb_conn_send(conn, buf, len);

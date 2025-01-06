@@ -73,7 +73,7 @@ static void test_basic_ops(void) {
         .thread_pool_size = 4,
         .thread_safe = true
     };
-    ASSERT_EQ(ppdb_base_init(&base, &base_config), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_base_init(&base, &base_config), PPDB_OK);
 
     // 初始化存储层
     ppdb_storage_config_t storage_config = {
@@ -85,20 +85,20 @@ static void test_basic_ops(void) {
         .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
         .sync_writes = PPDB_DEFAULT_SYNC_WRITES
     };
-    ASSERT_EQ(ppdb_storage_init(&storage, base, &storage_config), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_storage_init(&storage, base, &storage_config), PPDB_OK);
 
     // 创建表
-    ASSERT_EQ(ppdb_storage_table_create(storage, "test_table", &table), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_storage_table_create(storage, "test_table", &table), PPDB_OK);
 
     // 基本操作测试
     const char* key = "test_key";
     const char* value = "test_value";
-    ASSERT_EQ(ppdb_storage_put(table, key, strlen(key), value, strlen(value)), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_storage_put(table, key, strlen(key), value, strlen(value)), PPDB_OK);
 
     char result[256];
     size_t size = sizeof(result);
-    ASSERT_EQ(ppdb_storage_get(table, key, strlen(key), result, &size), PPDB_OK);
-    ASSERT_EQ(memcmp(result, value, strlen(value)), 0);
+    TEST_ASSERT_EQUALS(ppdb_storage_get(table, key, strlen(key), result, &size), PPDB_OK);
+    TEST_ASSERT_EQUALS(memcmp(result, value, strlen(value)), 0);
 
     // 清理
     ppdb_storage_table_destroy(table);
@@ -120,7 +120,7 @@ static void test_concurrent_ops(void) {
         .thread_pool_size = 4,
         .thread_safe = true
     };
-    ASSERT_EQ(ppdb_base_init(&base, &base_config), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_base_init(&base, &base_config), PPDB_OK);
 
     // 初始化存储层
     ppdb_storage_config_t storage_config = {
@@ -132,22 +132,22 @@ static void test_concurrent_ops(void) {
         .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
         .sync_writes = PPDB_DEFAULT_SYNC_WRITES
     };
-    ASSERT_EQ(ppdb_storage_init(&storage, base, &storage_config), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_storage_init(&storage, base, &storage_config), PPDB_OK);
 
     // 创建表
-    ASSERT_EQ(ppdb_storage_table_create(storage, "test_table", &table), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_storage_table_create(storage, "test_table", &table), PPDB_OK);
 
     // 创建线程
     for (int i = 0; i < NUM_THREADS; i++) {
         args[i].table = table;
         args[i].thread_id = i;
         args[i].num_ops = OPS_PER_THREAD;
-        ASSERT_EQ(ppdb_base_thread_create(&threads[i], concurrent_worker, &args[i]), PPDB_OK);
+        TEST_ASSERT_EQUALS(ppdb_base_thread_create(&threads[i], concurrent_worker, &args[i]), PPDB_OK);
     }
 
     // 等待线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
-        ASSERT_EQ(ppdb_base_thread_join(threads[i], NULL), PPDB_OK);
+        TEST_ASSERT_EQUALS(ppdb_base_thread_join(threads[i], NULL), PPDB_OK);
     }
 
     // 清理
