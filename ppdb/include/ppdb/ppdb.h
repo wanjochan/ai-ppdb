@@ -32,6 +32,8 @@ typedef int32_t ppdb_error_t;
 #define PPDB_ERR_BUSY        (PPDB_ERROR_START + 0x005)
 #define PPDB_ERR_NOT_FOUND   (PPDB_ERROR_START + 0x006)
 #define PPDB_ERR_EXISTS      (PPDB_ERROR_START + 0x007)
+#define PPDB_ERR_NETWORK     (PPDB_ERROR_START + 0x008)
+#define PPDB_ERR_PROTOCOL    (PPDB_ERROR_START + 0x009)
 
 // Error handling macros
 #define PPDB_RETURN_IF_ERROR(expr) \
@@ -41,10 +43,11 @@ typedef int32_t ppdb_error_t;
     } while (0)
 
 // 句柄类型
-typedef uint64_t ppdb_handle_t;    // 基础句柄类型
-typedef ppdb_handle_t ppdb_ctx_t;  // 上下文句柄
-typedef ppdb_handle_t ppdb_db_t;   // 数据库句柄
-typedef ppdb_handle_t ppdb_tx_t;   // 事务句柄
+typedef uint64_t ppdb_handle_t;     // 基础句柄类型
+typedef ppdb_handle_t ppdb_ctx_t;   // 上下文句柄
+typedef ppdb_handle_t ppdb_db_t;    // 数据库句柄
+typedef ppdb_handle_t ppdb_tx_t;    // 事务句柄
+typedef ppdb_handle_t ppdb_conn_t;  // 连接句柄
 
 // 数据缓冲区
 typedef struct ppdb_data {
@@ -55,9 +58,10 @@ typedef struct ppdb_data {
 } ppdb_data_t;
 
 //-----------------------------------------------------------------------------
-// 数据库配置
+// 配置结构
 //-----------------------------------------------------------------------------
 
+// 数据库配置
 typedef struct ppdb_options {
     const char* db_path;          // 数据库路径
     uint64_t cache_size;         // 缓存大小
@@ -66,44 +70,84 @@ typedef struct ppdb_options {
     uint32_t flush_period_ms;   // 刷新周期
 } ppdb_options_t;
 
+// 网络配置
+typedef struct ppdb_net_config {
+    const char* host;           // 主机地址
+    uint16_t port;             // 端口
+    uint32_t timeout_ms;       // 超时时间
+    uint32_t max_connections;  // 最大连接数
+    uint32_t io_threads;       // IO线程数
+    bool use_tcp_nodelay;      // TCP_NODELAY选项
+} ppdb_net_config_t;
+
+//-----------------------------------------------------------------------------
+// 回调函数类型
+//-----------------------------------------------------------------------------
+
+// 连接事件回调
+typedef void (*ppdb_conn_callback)(ppdb_conn_t conn, ppdb_error_t error, void* user_data);
+
+// 操作完成回调
+typedef void (*ppdb_complete_callback)(ppdb_error_t error, void* result, void* user_data);
+
 //-----------------------------------------------------------------------------
 // 数据库接口
 //-----------------------------------------------------------------------------
 
-// 创建数据库上下文
+// 创建/销毁上下文
 ppdb_error_t ppdb_create(ppdb_ctx_t* ctx, const ppdb_options_t* options);
-
-// 销毁数据库上下文
 ppdb_error_t ppdb_destroy(ppdb_ctx_t ctx);
 
-// 打开数据库
+// 数据库操作
 ppdb_error_t ppdb_open(ppdb_ctx_t ctx, ppdb_db_t* db, const char* name);
-
-// 关闭数据库
 ppdb_error_t ppdb_close(ppdb_db_t db);
 
-// 开始事务
+// 事务操作
 ppdb_error_t ppdb_begin_tx(ppdb_db_t db, ppdb_tx_t* tx, bool read_only);
-
-// 提交事务
 ppdb_error_t ppdb_commit_tx(ppdb_tx_t tx);
-
-// 回滚事务
 ppdb_error_t ppdb_rollback_tx(ppdb_tx_t tx);
 
-// 写入数据
+// 同步数据操作
 ppdb_error_t ppdb_put(ppdb_tx_t tx, const ppdb_data_t* key, const ppdb_data_t* value);
-
-// 读取数据
 ppdb_error_t ppdb_get(ppdb_tx_t tx, const ppdb_data_t* key, ppdb_data_t* value);
-
-// 删除数据
 ppdb_error_t ppdb_delete(ppdb_tx_t tx, const ppdb_data_t* key);
-
-// 清空数据库
 ppdb_error_t ppdb_clear(ppdb_tx_t tx);
 
+//-----------------------------------------------------------------------------
+// 客户端接口
+//-----------------------------------------------------------------------------
+
+// 连接服务器
+ppdb_error_t ppdb_client_connect(ppdb_ctx_t ctx, const ppdb_net_config_t* config, 
+                                ppdb_conn_t* conn);
+
+// 断开连接
+ppdb_error_t ppdb_client_disconnect(ppdb_conn_t conn);
+
+// 异步数据操作
+ppdb_error_t ppdb_client_get(ppdb_conn_t conn, const ppdb_data_t* key,
+                            ppdb_complete_callback cb, void* user_data);
+ppdb_error_t ppdb_client_put(ppdb_conn_t conn, const ppdb_data_t* key, 
+                            const ppdb_data_t* value,
+                            ppdb_complete_callback cb, void* user_data);
+ppdb_error_t ppdb_client_delete(ppdb_conn_t conn, const ppdb_data_t* key,
+                               ppdb_complete_callback cb, void* user_data);
+
+//-----------------------------------------------------------------------------
+// 服务器接口
+//-----------------------------------------------------------------------------
+
+// 启动服务器
+ppdb_error_t ppdb_server_start(ppdb_ctx_t ctx, const ppdb_net_config_t* config);
+
+// 停止服务器
+ppdb_error_t ppdb_server_stop(ppdb_ctx_t ctx);
+
+// 设置连接回调
+ppdb_error_t ppdb_server_set_conn_callback(ppdb_ctx_t ctx, ppdb_conn_callback cb, 
+                                          void* user_data);
+
 // 获取统计信息
-ppdb_error_t ppdb_get_stats(ppdb_db_t db, char* buffer, size_t size);
+ppdb_error_t ppdb_server_get_stats(ppdb_ctx_t ctx, char* buffer, size_t size);
 
 #endif // PPDB_H
