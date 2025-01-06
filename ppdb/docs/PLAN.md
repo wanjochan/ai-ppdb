@@ -1,219 +1,219 @@
-# PPDB Development Plan
+# PPDB 开发计划
 
-## Guidelines for AI Engineers
-> These are critical guidelines that must be followed for every change
+## AI工程师指南
+> 这些是每次修改必须遵循的关键指南
 
-### Pre-modification Checklist
-- [x] **File Content Check**
-  - Always check complete content of target files before modification
-  - Understand the file's purpose and structure
-  - Review recent changes and their rationale
+### 修改前检查清单
+- [x] **文件内容检查**
+  - 修改前检查目标文件的完整内容
+  - 理解文件的目的和结构
+  - 回顾最近的变更及其原因
 
-- [x] **Dependency Analysis**
-  - Check related header files for existing definitions
-  - Verify include hierarchy and dependencies
-  - Avoid duplicate definitions between ppdb.h and internal.h
-  - Remember we're using Cosmopolitan libc - don't include standard libc headers
+- [x] **依赖分析**
+  - 检查相关头文件中的现有定义
+  - 验证包含层次结构和依赖关系
+  - 避免在ppdb.h和internal.h之间重复定义
+  - 记住我们使用Cosmopolitan libc - 不要包含标准libc头文件
 
-- [x] **Architecture Principles**
-  - Maintain clear separation between public and internal APIs
-  - Follow existing patterns and naming conventions
-  - Consider impact on other components
-  - Think about future extensibility
+- [x] **架构原则**
+  - 保持公共和内部API的清晰分离
+  - 遵循现有的模式和命名约定
+  - 考虑对其他组件的影响
+  - 考虑未来的可扩展性
 
-- [x] **Cross-platform Considerations**
-  - Remember we use Cosmopolitan for cross-platform support
-  - Don't add platform-specific adaptations unnecessarily
-  - Don't include Windows-specific headers or libc headers
-  - Use Cosmopolitan's provided functionality
+- [x] **跨平台考虑**
+  - 记住我们使用Cosmopolitan实现跨平台支持
+  - 不要随意添加平台特定的适配
+  - 不要包含Windows特定头文件或libc头文件
+  - 使用Cosmopolitan提供的功能
 
-### Development Standards
-- [x] **Code Quality**
-  - Follow C11 standard
-  - Maintain consistent style
-  - Write clear comments
-  - Include error handling
+### 开发标准
+- [x] **代码质量**
+  - 遵循C11标准
+  - 保持一致的代码风格
+  - 编写清晰的注释
+  - 包含错误处理
 
-- [x] **Testing**
-  - Write tests first
-  - Cover edge cases
-  - Include benchmarks
-  - Test failure modes
+- [x] **测试**
+  - 先写测试
+  - 覆盖边缘情况
+  - 包含基准测试
+  - 测试失败模式
 
-- [x] **Documentation**
-  - Document as you code
-  - Include examples
-  - Explain design choices
-  - Keep docs updated
+- [x] **文档**
+  - 编码时同步写文档
+  - 包含示例
+  - 解释设计选择
+  - 保持文档更新
 
-- [x] **Performance**
-  - Profile regularly
-  - Set benchmarks
-  - Optimize carefully
-  - Document tradeoffs
+- [x] **性能**
+  - 定期进行性能分析
+  - 设置基准
+  - 谨慎优化
+  - 记录权衡取舍
 
-## Phase 1: Memory KV Store (Current)
+## 第一阶段：内存KV存储（当前）
 
-### engine layer
-> Focus on building a robust foundation with proper abstractions
+### 引擎层
+> 专注于构建具有适当抽象的稳固基础
 
-#### 1.1 Synchronization Primitives
-- [x] **Guideline**: Implement both locked and lock-free versions for comparison
-- [x] Mutex and RWLock implementation
-- [x] Atomic operations
-- [x] Condition variables
-- [x] Semaphores
-- [x] Performance benchmarking (test_sync_perf.c)
+#### 1.1 同步原语
+- [x] **指导原则**：实现锁定和无锁版本以进行比较
+- [x] 互斥锁和读写锁实现
+- [x] 原子操作
+- [x] 条件变量
+- [x] 信号量
+- [x] 性能基准测试（test_sync_perf.c）
 
-#### 1.2 Memory Management
-- [x] **Guideline**: Focus on safety and performance
-- [x] Custom allocator implementation
-- [x] Memory pool
-- [x] Reference counting
-- [x] Leak detection
+#### 1.2 内存管理
+- [x] **指导原则**：注重安全性和性能
+- [x] 自定义分配器实现
+- [x] 内存池
+- [x] 引用计数
+- [x] 内存泄漏检测
 
-#### 1.3 Async I/O
-- [x] **Guideline**: Platform-specific optimizations with unified API
-- [x] Event loop (epoll/IOCP)
-- [x] Timer implementation
-- [x] Future/Promise pattern
-- [x] Async primitives
+#### 1.3 异步I/O
+- [x] **指导原则**：平台特定优化与统一API
+- [x] 事件循环（epoll/IOCP）
+- [x] 定时器实现
+- [x] Future/Promise模式
+- [x] 异步原语
 
-### Storage Layer
-> Build efficient in-memory data structures
+### 存储层
+> 构建高效的内存数据结构
 
-#### 2.1 Skip List
-- [x] **Guideline**: Balance between complexity and performance
-- [x] Basic implementation
-- [x] Concurrent access
-- [x] Memory layout optimization
-- [x] Iterator support
+#### 2.1 跳表
+- [x] **指导原则**：平衡复杂性和性能
+- [x] 基本实现
+- [x] 并发访问
+- [x] 内存布局优化
+- [x] 迭代器支持
 
-#### 2.2 Memory Table
-- [x] **Guideline**: Focus on write amplification and read performance
-- [x] Basic table structure
-- [x] Concurrent operations
-- [x] Compaction strategy
-- [x] Bloom filter
+#### 2.2 内存表
+- [x] **指导原则**：关注写放大和读性能
+- [x] 基本表结构
+- [x] 并发操作
+- [x] 压缩策略
+- [x] 布隆过滤器
 
-#### 2.3 Storage Interface
-- [x] **Guideline**: Design clean and extensible API
-- [x] Storage instance management
-- [x] Table operations interface
-- [x] Index operations interface
-- [x] Basic data operations (put/get/delete)
-- [x] Statistics collection
-- [x] Configuration management
+#### 2.3 存储接口
+- [x] **指导原则**：设计清晰可扩展的API
+- [x] 存储实例管理
+- [x] 表操作接口
+- [x] 索引操作接口
+- [x] 基本数据操作（增删改查）
+- [x] 统计信息收集
+- [x] 配置管理
 
-#### 2.4 Sharding
-- [x] **Guideline**: Consider future distributed deployment
-- [x] Sharding strategy (test_sharded_memtable.c)
-- [x] Data distribution
-- [ ] Cross-shard operations
-- [ ] Rebalancing support
+#### 2.4 分片
+- [x] **指导原则**：考虑未来的分布式部署
+- [x] 分片策略（test_sharded_memtable.c）
+- [x] 数据分布
+- [ ] 跨分片操作
+- [ ] 重平衡支持
 
-## Phase 2: Persistence Layer (In Progress)
+## 第二阶段：持久化层（进行中）
 
-### WAL (Write-Ahead Log)
-> Ensure durability without sacrificing performance
+### WAL（预写日志）
+> 确保持久性而不牺牲性能
 
-#### 3.1 Basic WAL
-- [x] **Guideline**: Focus on write performance and recovery time
-- [x] Log format design (test_wal_func.c)
-- [x] Write path optimization
-- [x] Recovery mechanism (test_wal_advanced.c)
-- [ ] Log cleaning
+#### 3.1 基本WAL
+- [x] **指导原则**：关注写入性能和恢复时间
+- [x] 日志格式设计（test_wal_func.c）
+- [x] 写入路径优化
+- [x] 恢复机制（test_wal_advanced.c）
+- [ ] 日志清理
 
 #### 3.2 SSTable
-- [ ] **Guideline**: Consider read amplification and space efficiency
-- [ ] File format design
-- [ ] Compaction strategy
-- [ ] Bloom filter
-- [ ] Cache management
+- [ ] **指导原则**：考虑读放大和空间效率
+- [ ] 文件格式设计
+- [ ] 压缩策略
+- [ ] 布隆过滤器
+- [ ] 缓存管理
 
-## Phase 3: Distribution Layer
+## 第三阶段：分布式层
 
-### Cluster Management
-> Build for reliability and scalability
+### 集群管理
+> 构建可靠性和可扩展性
 
-#### 4.1 Node Management
-- [ ] **Guideline**: Design for failure scenarios
-- [ ] Node discovery
-- [ ] Health checking
-- [ ] Load balancing
-- [ ] Failure detection
+#### 4.1 节点管理
+- [ ] **指导原则**：设计故障场景
+- [ ] 节点发现
+- [ ] 健康检查
+- [ ] 负载均衡
+- [ ] 故障检测
 
-#### 4.2 Data Distribution
-- [ ] **Guideline**: Balance between consistency and availability
-- [ ] Partitioning strategy
-- [ ] Replication protocol
-- [ ] Consistency protocol
-- [ ] Recovery mechanism
+#### 4.2 数据分布
+- [ ] **指导原则**：平衡一致性和可用性
+- [ ] 分区策略
+- [ ] 复制协议
+- [ ] 一致性协议
+- [ ] 恢复机制
 
-## Testing Strategy
+## 测试策略
 
-### Unit Tests
-- [x] **Guideline**: Test each component in isolation
-- [x] Core primitives
-- [x] Data structures
-- [x] Storage operations
-- [x] Async operations
+### 单元测试
+- [x] **指导原则**：独立测试每个组件
+- [x] 核心原语
+- [x] 数据结构
+- [x] 存储操作
+- [x] 异步操作
 
-### Integration Tests
-- [x] **Guideline**: Test component interactions
-- [x] End-to-end workflows
-- [x] Failure scenarios
-- [x] Performance benchmarks
-- [ ] Stress tests
+### 集成测试
+- [x] **指导原则**：测试组件交互
+- [x] 端到端工作流
+- [x] 故障场景
+- [x] 性能基准
+- [ ] 压力测试
 
-### Performance Tests
-- [x] **Guideline**: Establish performance baselines
-- [x] Latency measurements (test_sync_perf.c)
-- [x] Throughput tests
-- [x] Resource utilization
-- [ ] Scalability tests
+### 性能测试
+- [x] **指导原则**：建立性能基线
+- [x] 延迟测量（test_sync_perf.c）
+- [x] 吞吐量测试
+- [x] 资源利用率
+- [ ] 可扩展性测试
 
-## Documentation
+## 文档
 
-### Technical Docs
-- [x] **Guideline**: Keep documentation close to code
-- [x] API documentation
-- [x] Design documents
-- [x] Performance guides
-- [ ] Troubleshooting guides
+### 技术文档
+- [x] **指导原则**：文档靠近代码
+- [x] API文档
+- [x] 设计文档
+- [x] 性能指南
+- [ ] 故障排除指南
 
-### User Docs
-- [ ] **Guideline**: Focus on usability
-- [ ] Getting started
-- [ ] Configuration guide
-- [ ] Best practices
-- [ ] API reference
+### 用户文档
+- [ ] **指导原则**：注重可用性
+- [ ] 入门指南
+- [ ] 配置指南
+- [ ] 最佳实践
+- [ ] API参考
 
-## Development Process
+## 开发流程
 
-### For Each Component
-1. **Research Phase**
-   - Review existing solutions
-   - Identify key requirements
-   - Design API interface
+### 每个组件的流程
+1. **研究阶段**
+   - 回顾现有解决方案
+   - 确定关键需求
+   - 设计API接口
 
-2. **Implementation Phase**
-   - Write core functionality
-   - Add tests
-   - Document design decisions
+2. **实现阶段**
+   - 编写核心功能
+   - 添加测试
+   - 记录设计决策
 
-3. **Optimization Phase**
-   - Profile performance
-   - Identify bottlenecks
-   - Implement improvements
+3. **优化阶段**
+   - 性能分析
+   - 识别瓶颈
+   - 实施改进
 
-4. **Review Phase**
-   - Code review
-   - Documentation review
-   - Performance review
+4. **审查阶段**
+   - 代码审查
+   - 文档审查
+   - 性能审查
 
-### Progress Tracking
-- Use RUNNING.md for session progress
-- Update CHANGELOG.md for releases
-- Track issues in GitHub
-- Regular performance benchmarking
+### 进度跟踪
+- 使用RUNNING.md记录会话进度
+- 更新CHANGELOG.md用于发布
+- 在GitHub上跟踪问题
+- 定期进行性能基准测试
