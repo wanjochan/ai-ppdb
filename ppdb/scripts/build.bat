@@ -33,6 +33,11 @@ if "%TARGET%"=="test42" (
     if errorlevel 1 exit /b 1
     call "%~dp0\build_storage.bat" %BUILD_MODE%
     exit /b !errorlevel!
+) else if "%TARGET%"=="peer" (
+    call "%~dp0\build_base.bat" %BUILD_MODE%
+    if errorlevel 1 exit /b 1
+    call "%~dp0\build_peer.bat" %BUILD_MODE%
+    exit /b !errorlevel!
 ) else if "%TARGET%"=="ppdb" (
     echo Building ppdb...
     if not exist "%BUILD_DIR%\base.o" (
@@ -59,12 +64,14 @@ if "%TARGET%"=="test42" (
     if errorlevel 1 exit /b 1
     call "%~dp0\build_storage.bat" notest %BUILD_MODE%
     if errorlevel 1 exit /b 1
+    call "%~dp0\build_peer.bat" notest %BUILD_MODE%
+    if errorlevel 1 exit /b 1
     call "%~dp0\build_ppdb.bat" %BUILD_MODE%
     if errorlevel 1 exit /b 1
     echo Build completed successfully
     exit /b !errorlevel!
 ) else (
     echo Error: Unknown target %TARGET%
-    echo Available targets: test42, sync_perf, base, engine, storage, ppdb, all
+    echo Available targets: test42, sync_perf, base, engine, storage, peer, ppdb, all
     exit /b 1
 ) 

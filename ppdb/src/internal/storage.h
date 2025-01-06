@@ -11,8 +11,16 @@
 
 // Error codes
 #define PPDB_STORAGE_ERR_START     (PPDB_ERROR_START + 0x300)  // Storage: 0x1300-0x13FF
-#define PPDB_ERR_TABLE_EXISTS      (PPDB_STORAGE_ERR_START + 0x01)
-#define PPDB_ERR_TABLE_NOT_FOUND   (PPDB_STORAGE_ERR_START + 0x02)
+#define PPDB_STORAGE_ERR_PARAM     (PPDB_STORAGE_ERR_START + 0x01)
+#define PPDB_STORAGE_ERR_TABLE     (PPDB_STORAGE_ERR_START + 0x02)
+#define PPDB_STORAGE_ERR_INDEX     (PPDB_STORAGE_ERR_START + 0x03)
+#define PPDB_STORAGE_ERR_WAL       (PPDB_STORAGE_ERR_START + 0x04)
+#define PPDB_STORAGE_ERR_IO        (PPDB_STORAGE_ERR_START + 0x05)
+#define PPDB_STORAGE_ERR_ALREADY_RUNNING (PPDB_STORAGE_ERR_START + 0x06)
+#define PPDB_STORAGE_ERR_NOT_RUNNING     (PPDB_STORAGE_ERR_START + 0x07)
+#define PPDB_ERR_TABLE_EXISTS      (PPDB_STORAGE_ERR_START + 0x08)
+#define PPDB_ERR_TABLE_NOT_FOUND   (PPDB_STORAGE_ERR_START + 0x09)
+#define PPDB_ERR_CONFIG           (PPDB_STORAGE_ERR_START + 0x0A)
 
 // Default values
 #define PPDB_DEFAULT_DATA_DIR      "data"
@@ -21,6 +29,14 @@
 typedef struct ppdb_storage_s ppdb_storage_t;
 typedef struct ppdb_storage_table_s ppdb_storage_table_t;
 typedef struct ppdb_storage_index_s ppdb_storage_index_t;
+
+// Maintenance structure
+typedef struct ppdb_storage_maintain_s {
+    ppdb_base_mutex_t* mutex;      // Maintenance mutex
+    ppdb_base_thread_t* thread;    // Maintenance thread
+    bool is_running;               // Maintenance thread state
+    bool should_stop;              // Stop flag
+} ppdb_storage_maintain_t;
 
 // Table structure
 struct ppdb_storage_table_s {
@@ -76,6 +92,7 @@ struct ppdb_storage_s {
     ppdb_storage_stats_t stats;         // Storage statistics
     ppdb_storage_table_t* tables;       // List of tables
     ppdb_base_spinlock_t lock;          // Global storage lock
+    ppdb_storage_maintain_t maintain;    // Maintenance structure
 };
 
 //-----------------------------------------------------------------------------
@@ -104,6 +121,10 @@ ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table);
 ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table);
 ppdb_error_t ppdb_storage_backup(ppdb_storage_t* storage, const char* backup_dir);
 ppdb_error_t ppdb_storage_restore(ppdb_storage_t* storage, const char* backup_dir);
+
+// Table management functions
+ppdb_error_t ppdb_storage_table_create(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table);
+void ppdb_storage_table_destroy(ppdb_storage_table_t* table);
 
 // Configuration management
 ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config);

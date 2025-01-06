@@ -24,12 +24,12 @@ struct ppdb_base_mutex_s {
 
 ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     ppdb_base_mutex_t* m = (ppdb_base_mutex_t*)malloc(sizeof(ppdb_base_mutex_t));
     if (!m) {
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     memset(m, 0, sizeof(ppdb_base_mutex_t));
@@ -65,7 +65,7 @@ void ppdb_base_mutex_enable_stats(ppdb_base_mutex_t* mutex, bool enable) {
 
 ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     uint64_t start_time = 0;
@@ -97,7 +97,7 @@ ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
 
 ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     int result = pthread_mutex_trylock(&mutex->mutex);
@@ -115,7 +115,7 @@ ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex) {
 
 ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     if (pthread_mutex_unlock(&mutex->mutex) != 0) {
@@ -149,7 +149,7 @@ const char* ppdb_base_mutex_get_error(ppdb_base_mutex_t* mutex) {
 
 ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     if (pthread_mutex_destroy(&mutex->mutex) != 0) {
@@ -163,12 +163,12 @@ ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex) {
 // Sync implementation
 ppdb_error_t ppdb_base_sync_create(ppdb_base_sync_t** sync, const ppdb_base_sync_config_t* config) {
     if (!sync || !config) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     ppdb_base_sync_t* s = (ppdb_base_sync_t*)malloc(sizeof(ppdb_base_sync_t));
     if (!s) {
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     memset(s, 0, sizeof(ppdb_base_sync_t));
@@ -186,7 +186,7 @@ ppdb_error_t ppdb_base_sync_create(ppdb_base_sync_t** sync, const ppdb_base_sync
 
 ppdb_error_t ppdb_base_sync_destroy(ppdb_base_sync_t* sync) {
     if (!sync) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     if (sync->mutex) {
@@ -198,7 +198,7 @@ ppdb_error_t ppdb_base_sync_destroy(ppdb_base_sync_t* sync) {
 
 ppdb_error_t ppdb_base_sync_lock(ppdb_base_sync_t* sync) {
     if (!sync) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     if (!sync->config.thread_safe) {
@@ -210,7 +210,7 @@ ppdb_error_t ppdb_base_sync_lock(ppdb_base_sync_t* sync) {
 
 ppdb_error_t ppdb_base_sync_unlock(ppdb_base_sync_t* sync) {
     if (!sync) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     if (!sync->config.thread_safe) {
@@ -222,7 +222,7 @@ ppdb_error_t ppdb_base_sync_unlock(ppdb_base_sync_t* sync) {
 
 ppdb_error_t ppdb_base_sync_init(ppdb_base_t* base) {
     if (!base) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     base->sync_config.thread_safe = true;
@@ -240,12 +240,12 @@ void ppdb_base_sync_cleanup(ppdb_base_t* base) {
 // Performance test implementation
 ppdb_error_t ppdb_base_sync_perf_test(ppdb_base_sync_t* sync, uint32_t num_threads, uint32_t iterations) {
     if (!sync || num_threads == 0 || iterations == 0) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     pthread_t* threads = (pthread_t*)malloc(sizeof(pthread_t) * num_threads);
     if (!threads) {
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     struct thread_data {
@@ -257,7 +257,7 @@ ppdb_error_t ppdb_base_sync_perf_test(ppdb_base_sync_t* sync, uint32_t num_threa
     struct thread_data* thread_data = (struct thread_data*)malloc(sizeof(struct thread_data) * num_threads);
     if (!thread_data) {
         free(threads);
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     void* thread_func(void* arg) {
@@ -341,12 +341,12 @@ static void* thread_wrapper(void* arg) {
 
 ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg) {
     if (!thread || !func) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     ppdb_base_thread_t* t = (ppdb_base_thread_t*)malloc(sizeof(ppdb_base_thread_t));
     if (!t) {
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     t->func = func;
@@ -367,11 +367,11 @@ ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thre
 
 ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread, void** retval) {
     if (!thread) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     if (thread->detached) {
-        return PPDB_ERR_INVALID_STATE;
+        return PPDB_BASE_ERR_INVALID_STATE;
     }
 
     if (pthread_join(thread->thread, retval) != 0) {
@@ -383,11 +383,11 @@ ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread, void** retval) {
 
 ppdb_error_t ppdb_base_thread_detach(ppdb_base_thread_t* thread) {
     if (!thread) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     if (thread->detached) {
-        return PPDB_ERR_INVALID_STATE;
+        return PPDB_BASE_ERR_INVALID_STATE;
     }
 
     if (pthread_detach(thread->thread) != 0) {
@@ -431,12 +431,12 @@ const char* ppdb_base_thread_get_error(ppdb_base_thread_t* thread) {
 // Spinlock implementation
 ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock) {
     if (!spinlock) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     ppdb_base_spinlock_t* s = (ppdb_base_spinlock_t*)malloc(sizeof(ppdb_base_spinlock_t));
     if (!s) {
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     memset(s, 0, sizeof(ppdb_base_spinlock_t));
@@ -463,7 +463,7 @@ void ppdb_base_spinlock_enable_stats(ppdb_base_spinlock_t* spinlock, bool enable
 
 ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
     if (!spinlock) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     uint64_t start_time = 0;
@@ -507,7 +507,7 @@ ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
 
 ppdb_error_t ppdb_base_spinlock_trylock(ppdb_base_spinlock_t* spinlock) {
     if (!spinlock) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     int expected = 0;
@@ -552,7 +552,7 @@ void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock) {
 
 ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock) {
     if (!spinlock) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     atomic_store(&spinlock->lock, 0);
@@ -561,7 +561,7 @@ ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock) {
 
 ppdb_error_t ppdb_base_spinlock_init(ppdb_base_spinlock_t* spinlock) {
     if (!spinlock) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
 
     atomic_init(&spinlock->lock, 0);

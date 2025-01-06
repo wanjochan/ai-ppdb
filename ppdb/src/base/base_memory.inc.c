@@ -27,12 +27,12 @@ void ppdb_base_aligned_free(void* ptr) {
 
 // Memory pool management implementation
 ppdb_error_t ppdb_base_mempool_create(ppdb_base_mempool_t** pool, size_t block_size, size_t alignment) {
-    if (!pool) return PPDB_ERR_PARAM;
-    if (*pool) return PPDB_ERR_PARAM;
-    if (block_size == 0 || alignment == 0) return PPDB_ERR_PARAM;
+    if (!pool) return PPDB_BASE_ERR_PARAM;
+    if (*pool) return PPDB_BASE_ERR_PARAM;
+    if (block_size == 0 || alignment == 0) return PPDB_BASE_ERR_PARAM;
 
-    ppdb_base_mempool_t* p = (ppdb_base_mempool_t*)ppdb_base_aligned_alloc(alignment, sizeof(ppdb_base_mempool_t));
-    if (!p) return PPDB_ERR_MEMORY;
+    ppdb_base_mempool_t* p = (ppdb_base_mempool_t*)malloc(sizeof(ppdb_base_mempool_t));
+    if (!p) return PPDB_BASE_ERR_MEMORY;
 
     p->head = NULL;
     p->block_size = block_size;
@@ -111,11 +111,11 @@ void ppdb_base_mempool_free(ppdb_base_mempool_t* pool, void* ptr) {
 
 // Memory management functions
 ppdb_error_t ppdb_base_memory_init(ppdb_base_t* base) {
-    if (!base) return PPDB_ERR_PARAM;
+    if (!base) return PPDB_BASE_ERR_PARAM;
 
     // Create global memory pool
-    base->global_pool = malloc(sizeof(ppdb_base_mempool_t));
-    if (!base->global_pool) return PPDB_ERR_MEMORY;
+    base->global_pool = (ppdb_base_mempool_t*)malloc(sizeof(ppdb_base_mempool_t));
+    if (!base->global_pool) return PPDB_BASE_ERR_MEMORY;
 
     memset(base->global_pool, 0, sizeof(ppdb_base_mempool_t));
 

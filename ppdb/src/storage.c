@@ -12,6 +12,8 @@
 #include "storage/storage_table.inc.c"
 #include "storage/storage_index.inc.c"
 #include "storage/storage_ops.inc.c"
+#include "storage/storage_maintain.inc.c"
+#include "storage/wal.inc.c"
 
 // Storage initialization
 ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_base_t* base, const ppdb_storage_config_t* config) {

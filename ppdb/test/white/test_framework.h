@@ -67,6 +67,16 @@ extern int test_case_failed;
         } \
     } while (0)
 
+// Assert macro for equality testing
+#define ASSERT_EQ(actual, expected) \
+    do { \
+        if ((actual) != (expected)) { \
+            fprintf(stderr, "Assertion failed: %s != %s\n", #actual, #expected); \
+            fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
+            exit(1); \
+        } \
+    } while (0)
+
 // Test framework functions
 void test_framework_init(void);
 void test_framework_cleanup(void);

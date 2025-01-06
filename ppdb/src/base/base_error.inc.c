@@ -28,33 +28,37 @@ const char* ppdb_error_to_string(ppdb_error_t err) {
         case PPDB_OK:
             return "Success";
         case PPDB_ERR_MEMORY:
-            return "Memory allocation failed";
+            return "Memory error";
         case PPDB_ERR_PARAM:
             return "Invalid parameter";
         case PPDB_ERR_EXISTS:
-            return "Object already exists";
+            return "Already exists";
         case PPDB_ERR_NOT_FOUND:
-            return "Object not found";
-        case PPDB_ERR_INVALID_STATE:
-            return "Invalid state";
+            return "Not found";
         case PPDB_ERR_BUSY:
             return "Resource busy";
         case PPDB_ERR_BUFFER_TOO_SMALL:
             return "Buffer too small";
         case PPDB_BASE_ERR_MUTEX:
-            return "Mutex error";
+            return "Base mutex error";
         case PPDB_BASE_ERR_RWLOCK:
-            return "Read-write lock error";
+            return "Base read-write lock error";
         case PPDB_BASE_ERR_THREAD:
-            return "Thread error";
+            return "Base thread error";
         case PPDB_BASE_ERR_SYNC:
-            return "Synchronization error";
+            return "Base synchronization error";
         case PPDB_BASE_ERR_POOL:
-            return "Memory pool error";
+            return "Base memory pool error";
         case PPDB_BASE_ERR_MEMORY:
-            return "Memory error";
+            return "Base memory error";
         case PPDB_BASE_ERR_IO:
-            return "I/O error";
+            return "Base I/O error";
+        case PPDB_BASE_ERR_PARAM:
+            return "Base invalid parameter";
+        case PPDB_BASE_ERR_INVALID_STATE:
+            return "Base invalid state";
+        case PPDB_BASE_ERR_CONFIG:
+            return "Base configuration error";
         default:
             return "Unknown error";
     }

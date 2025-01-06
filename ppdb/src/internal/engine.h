@@ -25,6 +25,7 @@ typedef struct ppdb_engine_txn_stats_s {
 } ppdb_engine_txn_stats_t;
 
 // Engine layer error codes (0x1200-0x12FF)
+#define PPDB_ENGINE_ERR_START   (PPDB_ERROR_START + 0x200)  // Engine: 0x1200-0x12FF
 #define PPDB_ENGINE_ERR_INIT       (PPDB_ENGINE_ERR_START + 0x001)
 #define PPDB_ENGINE_ERR_PARAM      (PPDB_ENGINE_ERR_START + 0x002)
 #define PPDB_ENGINE_ERR_MUTEX      (PPDB_ENGINE_ERR_START + 0x003)

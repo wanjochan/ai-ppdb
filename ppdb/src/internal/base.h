@@ -8,21 +8,18 @@
 // Error handling
 //-----------------------------------------------------------------------------
 
-// Module error ranges
-#define PPDB_BASE_ERR_START    (PPDB_ERROR_START + 0x100)  // Base: 0x1100-0x11FF
-#define PPDB_ENGINE_ERR_START  (PPDB_ERROR_START + 0x200)  // Engine: 0x1200-0x12FF
-
-// Base layer error codes (0x1100-0x11FF)
-#define PPDB_BASE_ERR_MUTEX    (PPDB_BASE_ERR_START + 0x01)
-#define PPDB_BASE_ERR_RWLOCK   (PPDB_BASE_ERR_START + 0x02)
-#define PPDB_BASE_ERR_THREAD   (PPDB_BASE_ERR_START + 0x03)
-#define PPDB_BASE_ERR_SYNC     (PPDB_BASE_ERR_START + 0x04)
-#define PPDB_BASE_ERR_POOL     (PPDB_BASE_ERR_START + 0x05)
-#define PPDB_BASE_ERR_MEMORY   (PPDB_BASE_ERR_START + 0x06)
-#define PPDB_BASE_ERR_IO       (PPDB_BASE_ERR_START + 0x07)
-#define PPDB_BASE_ERR_PARAM    (PPDB_BASE_ERR_START + 0x08)
-#define PPDB_ERR_INVALID_STATE (PPDB_BASE_ERR_START + 0x09)
-#define PPDB_ERR_CONFIG        (PPDB_BASE_ERR_START + 0x0A)
+// Base layer error codes
+#define PPDB_BASE_ERR_START     (PPDB_ERROR_START + 0x100)  // Base: 0x1100-0x11FF
+#define PPDB_BASE_ERR_MUTEX     (PPDB_BASE_ERR_START + 0x01)
+#define PPDB_BASE_ERR_RWLOCK    (PPDB_BASE_ERR_START + 0x02)
+#define PPDB_BASE_ERR_THREAD    (PPDB_BASE_ERR_START + 0x03)
+#define PPDB_BASE_ERR_SYNC      (PPDB_BASE_ERR_START + 0x04)
+#define PPDB_BASE_ERR_POOL      (PPDB_BASE_ERR_START + 0x05)
+#define PPDB_BASE_ERR_MEMORY    (PPDB_BASE_ERR_START + 0x06)
+#define PPDB_BASE_ERR_IO        (PPDB_BASE_ERR_START + 0x07)
+#define PPDB_BASE_ERR_PARAM     (PPDB_BASE_ERR_START + 0x08)
+#define PPDB_BASE_ERR_INVALID_STATE (PPDB_BASE_ERR_START + 0x09)
+#define PPDB_BASE_ERR_CONFIG    (PPDB_BASE_ERR_START + 0x0A)
 
 // Error handling macros
 #define PPDB_RETURN_IF_ERROR(expr) \

@@ -160,3 +160,83 @@ ppdb_error_t ppdb_storage_get_table(ppdb_storage_t* storage, const char* name, p
     ppdb_base_spinlock_unlock(&storage->lock);
     return PPDB_OK;
 }
+
+ppdb_error_t ppdb_storage_table_create(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table) {
+    if (!storage || !name || !table) return PPDB_ERR_PARAM;
+    
+    // Lock storage
+    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&storage->lock));
+
+    // Check if table already exists
+    ppdb_storage_table_t* existing_table = NULL;
+    ppdb_error_t err = ppdb_base_skiplist_find((ppdb_base_skiplist_t*)storage->tables, name, (void**)&existing_table);
+    if (err == PPDB_OK && existing_table != NULL) {
+        ppdb_base_spinlock_unlock(&storage->lock);
+        return PPDB_ERR_TABLE_EXISTS;
+    }
+
+    // Create new table
+    ppdb_storage_table_t* new_table = malloc(sizeof(ppdb_storage_table_t));
+    if (!new_table) {
+        ppdb_base_spinlock_unlock(&storage->lock);
+        return PPDB_ERR_MEMORY;
+    }
+
+    // Initialize table
+    memset(new_table, 0, sizeof(ppdb_storage_table_t));
+    new_table->name = strdup(name);
+    if (!new_table->name) {
+        free(new_table);
+        ppdb_base_spinlock_unlock(&storage->lock);
+        return PPDB_ERR_MEMORY;
+    }
+
+    // Initialize table lock
+    err = ppdb_base_spinlock_init(&new_table->lock);
+    if (err != PPDB_OK) {
+        free(new_table->name);
+        free(new_table);
+        ppdb_base_spinlock_unlock(&storage->lock);
+        return err;
+    }
+
+    // Initialize table data
+    err = ppdb_base_skiplist_create(&new_table->data, table_name_compare);
+    if (err != PPDB_OK) {
+        ppdb_base_spinlock_destroy(&new_table->lock);
+        free(new_table->name);
+        free(new_table);
+        ppdb_base_spinlock_unlock(&storage->lock);
+        return err;
+    }
+
+    // Add table to storage
+    err = ppdb_base_skiplist_insert((ppdb_base_skiplist_t*)storage->tables, new_table->name, new_table);
+    if (err != PPDB_OK) {
+        ppdb_base_skiplist_destroy(new_table->data);
+        ppdb_base_spinlock_destroy(&new_table->lock);
+        free(new_table->name);
+        free(new_table);
+        ppdb_base_spinlock_unlock(&storage->lock);
+        return err;
+    }
+
+    new_table->is_open = true;
+    *table = new_table;
+    ppdb_base_spinlock_unlock(&storage->lock);
+    return PPDB_OK;
+}
+
+void ppdb_storage_table_destroy(ppdb_storage_table_t* table) {
+    if (!table) return;
+
+    if (table->data) {
+        ppdb_base_skiplist_destroy(table->data);
+    }
+    if (table->indexes) {
+        ppdb_base_skiplist_destroy(table->indexes);
+    }
+    ppdb_base_spinlock_destroy(&table->lock);
+    free(table->name);
+    free(table);
+}

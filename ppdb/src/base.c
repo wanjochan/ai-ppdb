@@ -44,6 +44,7 @@ struct ppdb_base_s {
 #include "base/base_utils.inc.c"
 #include "base/base_skiplist.inc.c"
 #include "base/base_counter.inc.c"
+#include "base/base_timer.inc.c"
 
 // Base layer initialization
 ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config) {

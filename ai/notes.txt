@@ -8,14 +8,10 @@ cd ppdb/scripts; .\build.bat test42
 遇到问题先重读 AGENT_RULES.md 和 ppdb/中的项目文档，
 然后分析问题制定可以利用平行处理（parallel_apply）的修复方案，
 重复这个过程直到没有新问题（包括警告类）。
-特别注意：不要胡乱自己创建新文件（因为可能只是目录搞错了）、坚持用cosmopolitan标准；
+特别注意：不要胡乱自己创建新文件（因为可能只是目录和文件搞错了）、坚持用cosmopolitan标准、新增加函数时先考虑在base.h和engine.h看看是不是已经有封装好的；
 
 ## 任务
-我们目前的主要工作位置在 ppdb.exe这里，要把 memkv 的协议做完（memcahced, redis, binary）
-现在你要：
-实现存储引擎接口 (storage_memkv.inc.c)
-完善协议适配器中的存储操作
-添加单元测试
+
 
 
 cd ../ppdb/scripts; .\build.bat base

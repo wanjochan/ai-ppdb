@@ -6,16 +6,29 @@ ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size
                              const void* value, size_t value_size) {
     if (!table || !key || !value) return PPDB_ERR_PARAM;
     
-    // Avoid unused parameter warnings
-    (void)key_size;
-    (void)value_size;
-    
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
+    // Create copies of key and value
+    char* key_copy = malloc(key_size + 1);
+    char* value_copy = malloc(value_size + 1);
+    if (!key_copy || !value_copy) {
+        free(key_copy);
+        free(value_copy);
+        ppdb_base_spinlock_unlock(&table->lock);
+        return PPDB_ERR_MEMORY;
+    }
+
+    memcpy(key_copy, key, key_size);
+    memcpy(value_copy, value, value_size);
+    key_copy[key_size] = '\0';
+    value_copy[value_size] = '\0';
+
     // Insert into skiplist
-    ppdb_error_t err = ppdb_base_skiplist_insert(table->data, key, (void*)value);
+    ppdb_error_t err = ppdb_base_skiplist_insert(table->data, key_copy, value_copy);
     if (err != PPDB_OK) {
+        free(key_copy);
+        free(value_copy);
         ppdb_base_spinlock_unlock(&table->lock);
         return err;
     }
@@ -29,15 +42,23 @@ ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size
                              void* value, size_t* value_size) {
     if (!table || !key || !value || !value_size) return PPDB_ERR_PARAM;
     
-    // Avoid unused parameter warnings
-    (void)key_size;
-    
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
+    // Create temporary key copy for lookup
+    char* key_copy = malloc(key_size + 1);
+    if (!key_copy) {
+        ppdb_base_spinlock_unlock(&table->lock);
+        return PPDB_ERR_MEMORY;
+    }
+    memcpy(key_copy, key, key_size);
+    key_copy[key_size] = '\0';
+
     // Find in skiplist
     void* found_value = NULL;
-    ppdb_error_t err = ppdb_base_skiplist_find(table->data, key, &found_value);
+    ppdb_error_t err = ppdb_base_skiplist_find(table->data, key_copy, &found_value);
+    free(key_copy);
+
     if (err != PPDB_OK || found_value == NULL) {
         ppdb_base_spinlock_unlock(&table->lock);
         return PPDB_ERR_NOT_FOUND;
@@ -50,8 +71,7 @@ ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size
         return PPDB_ERR_BUFFER_TOO_SMALL;
     }
 
-    memcpy(value, found_value, len);
-    ((char*)value)[len] = '\0';  // Add null terminator
+    memcpy(value, found_value, len + 1);  // Include null terminator
     *value_size = len;
 
     ppdb_base_spinlock_unlock(&table->lock);
