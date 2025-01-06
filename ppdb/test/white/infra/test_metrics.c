@@ -1,6 +1,7 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
 #include "kvstore/internal/metrics.h"
+#include "../../src/internal/base.h"
 
 // 计数器测试
 void test_counter(void) {
@@ -43,14 +44,14 @@ void test_histogram(void) {
     ppdb_metrics_init(&metrics);
 
     // 创建4个线程并发写入
-    pthread_t threads[4];
+    ppdb_base_thread_t* threads[4];
     for (int i = 0; i < 4; i++) {
-        pthread_create(&threads[i], NULL, concurrent_worker, &metrics);
+        threads[i] = ppdb_base_thread_create(concurrent_worker, &metrics);
     }
 
     // 等待所有线程完成
     for (int i = 0; i < 4; i++) {
-        pthread_join(threads[i], NULL);
+        ppdb_base_thread_join(threads[i]);
     }
 
     // 验证结果

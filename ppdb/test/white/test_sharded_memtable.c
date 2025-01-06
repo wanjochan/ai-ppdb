@@ -2,6 +2,7 @@
 #include "test_framework.h"
 #include "test_plan.h"
 #include "kvstore/internal/kvstore_memtable.h"
+#include "../../src/internal/base.h"
 
 #define NUM_THREADS 4
 #define NUM_OPS 1000
@@ -151,13 +152,14 @@ static int test_concurrent_ops(void) {
     TEST_ASSERT(table != NULL, "Memtable pointer is NULL");
 
     // 创建线程
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     thread_arg_t thread_args[NUM_THREADS];
 
     for (int i = 0; i < NUM_THREADS; i++) {
         thread_args[i].table = table;
         thread_args[i].thread_id = i;
-        if (pthread_create(&threads[i], NULL, concurrent_worker, &thread_args[i]) != 0) {
+        err = ppdb_base_thread_create(&threads[i], concurrent_worker, &thread_args[i]);
+        if (err != PPDB_OK) {
             TEST_ASSERT(0, "Failed to create thread %d", i);
         }
     }
@@ -165,7 +167,8 @@ static int test_concurrent_ops(void) {
     // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
         void* result;
-        if (pthread_join(threads[i], &result) != 0) {
+        err = ppdb_base_thread_join(threads[i], &result);
+        if (err != PPDB_OK) {
             TEST_ASSERT(0, "Failed to join thread %d", i);
         }
         TEST_ASSERT(result == NULL, "Thread %d failed", i);

@@ -121,7 +121,7 @@ void test_memory_pool(void) {
 #define ALLOC_SIZE 1024
 #define NUM_ALLOCS 100
 
-static void* thread_func(void* arg) {
+static void thread_func(void* arg) {
     (void)arg;  // Unused parameter
     void* ptrs[NUM_ALLOCS];
 
@@ -135,21 +135,22 @@ static void* thread_func(void* arg) {
     for (int i = 0; i < NUM_ALLOCS; i++) {
         ppdb_base_aligned_free(ptrs[i]);
     }
-
-    return NULL;
 }
 
 void test_memory_concurrent(void) {
-    pthread_t threads[4];
+    ppdb_base_thread_t* threads[4];
+    ppdb_error_t err;
 
     // Create threads
     for (int i = 0; i < 4; i++) {
-        pthread_create(&threads[i], NULL, thread_func, NULL);
+        err = ppdb_base_thread_create(&threads[i], thread_func, NULL);
+        ASSERT_OK(err);
     }
 
     // Wait for threads
     for (int i = 0; i < 4; i++) {
-        pthread_join(threads[i], NULL);
+        err = ppdb_base_thread_join(threads[i], NULL);
+        ASSERT_OK(err);
     }
 }
 

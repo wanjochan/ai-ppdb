@@ -1,4 +1,5 @@
 #include "test_framework.h"
+#include "../../src/internal/base.h"
 #include "ppdb/ppdb.h"
 #include <cosmopolitan.h>
 
@@ -102,20 +103,19 @@ static int test_memtable_concurrent(void) {
     printf("Memtable created successfully\n");
 
     // Create worker threads
-    pthread_t threads[TEST_THREAD_COUNT];
+    ppdb_base_thread_t* threads[TEST_THREAD_COUNT];
     int thread_created = 0;
     
     printf("Creating worker threads...\n");
     for (int i = 0; i < TEST_THREAD_COUNT; i++) {
-        err = pthread_create(&threads[i], NULL, worker_thread, base);
+        err = ppdb_base_thread_create(&threads[i], worker_thread, base);
         if (err == 0) {
             thread_created++;
-            printf("Thread %d created successfully (tid: %lu)\n", i, (unsigned long)threads[i]);
+            printf("Thread %d created successfully\n", i);
         } else {
             printf("Failed to create thread %d: %s (error: %d)\n", i, strerror(err), err);
             break;
         }
-        // 添加短暂延迟，避免线程同时启动
         usleep(100000);  // 100ms delay
     }
 
@@ -136,37 +136,16 @@ static int test_memtable_concurrent(void) {
     printf("Waiting for threads to complete...\n");
     
     for (int i = 0; i < thread_created; i++) {
-        printf("Waiting for thread %d (tid: %lu)...\n", i, (unsigned long)threads[i]);
+        printf("Waiting for thread %d...\n", i);
         void* thread_result;
-        err = pthread_timedjoin_np(threads[i], &thread_result, &ts);
+        err = ppdb_base_thread_join(threads[i], &thread_result);
         
         if (err != 0) {
             printf("Thread %d join error: %s (error: %d)\n", i, strerror(err), err);
             all_threads_completed = false;
-            
-            // 尝试正常终止线程
-            printf("Attempting to cancel thread %d...\n", i);
-            if (pthread_cancel(threads[i]) != 0) {
-                printf("Failed to cancel thread %d\n", i);
-            }
-            
-            // 等待线程结束，但设置较短的超时
-            struct timespec short_ts;
-            clock_gettime(CLOCK_REALTIME, &short_ts);
-            short_ts.tv_sec += 2;
-            
-            if (pthread_timedjoin_np(threads[i], NULL, &short_ts) != 0) {
-                printf("Failed to join thread %d after cancellation\n", i);
-            } else {
-                printf("Thread %d terminated after cancellation\n", i);
-            }
         } else {
             printf("Thread %d completed successfully\n", i);
         }
-        
-        // 更新下一个线程的超时时间
-        clock_gettime(CLOCK_REALTIME, &ts);
-        ts.tv_sec += 10;
     }
 
     if (!all_threads_completed) {
@@ -266,6 +245,9 @@ static void* worker_thread(void* arg) {
     ppdb_value_t get_value = {0};
     ppdb_error_t err;
     
+    // Get thread ID for logging
+    ppdb_base_thread_id_t tid = ppdb_base_thread_get_id();
+
     // 本地计数器
     size_t local_put_count = 0;
     size_t local_get_count = 0;
@@ -281,8 +263,8 @@ static void* worker_thread(void* arg) {
         // 准备数据
         memset(key_data, 0, TEST_KEY_SIZE);
         memset(value_data, 0, TEST_VALUE_SIZE);
-        snprintf(key_data, TEST_KEY_SIZE - 1, "key_%lu_%d", (unsigned long)pthread_self(), i);
-        snprintf(value_data, TEST_VALUE_SIZE - 1, "value_%lu_%d", (unsigned long)pthread_self(), i);
+        snprintf(key_data, TEST_KEY_SIZE - 1, "key_%lu_%d", tid, i);
+        snprintf(value_data, TEST_VALUE_SIZE - 1, "value_%lu_%d", tid, i);
 
         key.data = key_data;
         key.size = strlen(key_data);
@@ -297,7 +279,7 @@ static void* worker_thread(void* arg) {
                 if (err == PPDB_OK) {
                     local_put_count++;
                 } else {
-                    printf("Thread %lu: Put failed with error %d\n", (unsigned long)pthread_self(), err);
+                    printf("Thread %lu: Put failed with error %d\n", tid, err);
                 }
                 break;
             }
@@ -318,7 +300,7 @@ static void* worker_thread(void* arg) {
                 if (err == PPDB_OK) {
                     local_remove_count++;
                 } else if (err != PPDB_ERR_NOT_FOUND) {
-                    printf("Thread %lu: Remove failed with error %d\n", (unsigned long)pthread_self(), err);
+                    printf("Thread %lu: Remove failed with error %d\n", tid, err);
                 }
                 break;
             }

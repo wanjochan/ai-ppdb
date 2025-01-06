@@ -2,12 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include <pthread.h>
 #include <sys/resource.h>
 #include "test_framework.h"
 #include "test_plan.h"
 #include "ppdb/ppdb.h"
-#include "ppdb/ppdb_sync.h"
+#include "../../src/internal/base.h"
 
 #define TEST_DIR "./tmp_test_resource"
 #define NUM_THREADS 4
@@ -177,17 +176,19 @@ void test_thread_resources(void) {
     ppdb_error_t err = ppdb_kvstore_open(TEST_DIR, &store);
     assert(err == PPDB_OK);
     
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     
     // 创建多个工作线程
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_create(&threads[i], NULL, 
-            (void *(*)(void *))update_resource_stats, &stats);
+        err = ppdb_base_thread_create(&threads[i], 
+            (ppdb_base_thread_func_t)update_resource_stats, &stats);
+        assert(err == PPDB_OK);
     }
     
     // 等待线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        err = ppdb_base_thread_join(threads[i], NULL);
+        assert(err == PPDB_OK);
     }
     
     ppdb_kvstore_close(store);

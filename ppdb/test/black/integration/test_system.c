@@ -1,7 +1,7 @@
 #include "../../white/test_framework.h"
 #include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_internal.h"
-#include <pthread.h>
+#include "../../src/internal/base.h"
 
 #define NUM_THREADS 4
 #define NUM_OPERATIONS 1000
@@ -59,20 +59,20 @@ static int test_full_workflow(void) {
     TEST_ASSERT(err == PPDB_NOT_FOUND, "Key should not exist after deletion");
 
     // 4. 批量操作测试
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     test_context_t contexts[NUM_THREADS];
 
     for (int i = 0; i < NUM_THREADS; i++) {
         contexts[i].store = store;
         contexts[i].thread_id = i;
         contexts[i].success_count = 0;
-        err = pthread_create(&threads[i], NULL, batch_worker, &contexts[i]);
+        err = ppdb_base_thread_create(&threads[i], batch_worker, &contexts[i]);
         TEST_ASSERT(err == 0, "Failed to create thread");
     }
 
     // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        ppdb_base_thread_join(threads[i], NULL);
         TEST_ASSERT(contexts[i].success_count > 0, 
                    "Thread %d had no successful operations", i);
     }

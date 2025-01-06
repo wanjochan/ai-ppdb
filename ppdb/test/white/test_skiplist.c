@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb.h"
-#include "ppdb/ppdb_sync.h"
 #include "ppdb/kvstore/skiplist.h"
+#include "../../src/internal/base.h"
 #include "test/white/test_framework.h"
 #include "test/white/test_macros.h"
 
@@ -26,29 +26,37 @@ static void test_skiplist_concurrent(bool use_lockfree);
 static void test_skiplist_iterator(bool use_lockfree);
 
 // 线程局部存储的随机数生成器状态
-static pthread_key_t rand_key;
-static pthread_once_t rand_key_once = PTHREAD_ONCE_INIT;
+static ppdb_base_tls_key_t rand_key;
+static bool rand_key_initialized = false;
+static ppdb_base_mutex_t rand_init_mutex;
 
 // 初始化线程局部存储键
 static void init_rand_key(void) {
-    pthread_key_create(&rand_key, free);
+    ppdb_base_mutex_lock(&rand_init_mutex);
+    if (!rand_key_initialized) {
+        ppdb_base_tls_create(&rand_key, free);
+        rand_key_initialized = true;
+    }
+    ppdb_base_mutex_unlock(&rand_init_mutex);
 }
 
 // 初始化线程局部随机数生成器
 static void init_rand_state(void) {
-    uint32_t* state = pthread_getspecific(rand_key);
+    uint32_t* state = ppdb_base_tls_get(rand_key);
     if (state == NULL) {
         state = malloc(sizeof(uint32_t));
-        *state = (uint32_t)time(NULL) ^ (uint32_t)pthread_self();
-        pthread_setspecific(rand_key, state);
+        *state = (uint32_t)time(NULL) ^ (uint32_t)ppdb_base_thread_get_id();
+        ppdb_base_tls_set(rand_key, state);
     }
 }
 
 // 线程安全的随机数生成
 static uint32_t thread_safe_rand(void) {
-    pthread_once(&rand_key_once, init_rand_key);
+    if (!rand_key_initialized) {
+        init_rand_key();
+    }
     init_rand_state();
-    uint32_t* state = pthread_getspecific(rand_key);
+    uint32_t* state = ppdb_base_tls_get(rand_key);
     uint32_t x = *state;
     x ^= x << 13;
     x ^= x >> 17;

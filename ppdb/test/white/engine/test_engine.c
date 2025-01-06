@@ -1,122 +1,102 @@
+#include <cosmopolitan.h>
 #include "../../../src/internal/base.h"
 #include "../../../src/internal/engine.h"
 #include "../test_macros.h"
 
-// 测试同步原语的基本功能
-int test_engine_sync_basic(void) {
-    ppdb_base_sync_t* sync = NULL;
-    ppdb_base_sync_config_t config = {
-        .thread_safe = true,
-        .spin_count = 1000,
-        .backoff_us = 1
+// 测试引擎初始化和销毁
+int test_engine_init_destroy(void) {
+    ppdb_base_t* base = NULL;
+    ppdb_engine_t* engine = NULL;
+    
+    // 初始化base
+    ppdb_base_config_t base_config = {
+        .memory_limit = 1024 * 1024,  // 1MB
+        .thread_pool_size = 4,
+        .thread_safe = true
     };
+    ASSERT_OK(ppdb_base_init(&base, &base_config));
     
-    // 测试创建
-    ASSERT_OK(ppdb_base_sync_create(&sync, &config));
-    ASSERT_NOT_NULL(sync);
+    // 初始化engine
+    ASSERT_OK(ppdb_engine_init(&engine, base));
+    ASSERT_NOT_NULL(engine);
     
-    // 测试加锁解锁
-    ASSERT_OK(ppdb_base_sync_lock(sync));
-    ASSERT_OK(ppdb_base_sync_unlock(sync));
+    // 检查统计信息
+    ppdb_engine_stats_t stats;
+    ppdb_engine_get_stats(engine, &stats);
+    ASSERT_EQ(ppdb_base_counter_get(stats.total_txns), 0);
+    ASSERT_EQ(ppdb_base_counter_get(stats.active_txns), 0);
     
-    // 测试销毁
-    ASSERT_OK(ppdb_base_sync_destroy(sync));
+    // 销毁
+    ppdb_engine_destroy(engine);
+    ppdb_base_destroy(base);
     return 0;
 }
 
-// 测试无锁模式
-int test_engine_sync_lockfree(void) {
-    ppdb_base_sync_t* sync = NULL;
-    ppdb_base_sync_config_t config = {
-        .thread_safe = false,
-        .spin_count = 1000,
-        .backoff_us = 1
+// 测试事务管理
+int test_engine_transaction(void) {
+    ppdb_base_t* base = NULL;
+    ppdb_engine_t* engine = NULL;
+    ppdb_engine_txn_t* txn = NULL;
+    
+    // 初始化
+    ppdb_base_config_t base_config = {
+        .memory_limit = 1024 * 1024,
+        .thread_pool_size = 4,
+        .thread_safe = true
     };
+    ASSERT_OK(ppdb_base_init(&base, &base_config));
+    ASSERT_OK(ppdb_engine_init(&engine, base));
     
-    // 测试创建
-    ASSERT_OK(ppdb_base_sync_create(&sync, &config));
-    ASSERT_NOT_NULL(sync);
+    // 开始事务
+    ASSERT_OK(ppdb_engine_txn_begin(engine, &txn));
+    ASSERT_NOT_NULL(txn);
     
-    // 测试加锁解锁
-    ASSERT_OK(ppdb_base_sync_lock(sync));
-    ASSERT_OK(ppdb_base_sync_unlock(sync));
+    // 检查事务状态
+    ppdb_engine_txn_stats_t txn_stats;
+    ppdb_engine_txn_get_stats(txn, &txn_stats);
+    ASSERT_TRUE(txn_stats.is_active);
+    ASSERT_FALSE(txn_stats.is_committed);
+    ASSERT_FALSE(txn_stats.is_rolledback);
     
-    // 测试销毁
-    ASSERT_OK(ppdb_base_sync_destroy(sync));
-    return 0;
-}
-
-// 测试并发性能
-int test_engine_sync_concurrent(void) {
-    ppdb_base_sync_t* sync = NULL;
-    ppdb_base_sync_config_t config = {
-        .thread_safe = true,
-        .spin_count = 1000,
-        .backoff_us = 1
-    };
+    // 提交事务
+    ASSERT_OK(ppdb_engine_txn_commit(txn));
+    ppdb_engine_txn_get_stats(txn, &txn_stats);
+    ASSERT_FALSE(txn_stats.is_active);
+    ASSERT_TRUE(txn_stats.is_committed);
     
-    // 创建同步原语
-    ASSERT_OK(ppdb_base_sync_create(&sync, &config));
-    
-    // 创建多个线程进行并发测试
-    #define NUM_THREADS 8
-    #define OPS_PER_THREAD 1000
-    
-    pthread_t threads[NUM_THREADS];
-    
-    // 线程函数
-    void* thread_func(void* arg) {
-        ppdb_base_sync_t* sync = (ppdb_base_sync_t*)arg;
-        for (int i = 0; i < OPS_PER_THREAD; i++) {
-            ASSERT_OK(ppdb_base_sync_lock(sync));
-            // 模拟临界区操作
-            usleep(1);
-            ASSERT_OK(ppdb_base_sync_unlock(sync));
-        }
-        return NULL;
-    }
-    
-    // 启动线程
-    for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_create(&threads[i], NULL, thread_func, sync);
-    }
-    
-    // 等待线程完成
-    for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
-    }
+    // 检查引擎统计信息
+    ppdb_engine_stats_t stats;
+    ppdb_engine_get_stats(engine, &stats);
+    ASSERT_EQ(ppdb_base_counter_get(stats.total_txns), 1);
+    ASSERT_EQ(ppdb_base_counter_get(stats.active_txns), 0);
     
     // 清理
-    ASSERT_OK(ppdb_base_sync_destroy(sync));
+    ppdb_engine_destroy(engine);
+    ppdb_base_destroy(base);
     return 0;
 }
 
 // 测试错误处理
-int test_engine_sync_errors(void) {
-    ppdb_base_sync_t* sync = NULL;
-    ppdb_base_sync_config_t config = {
-        .thread_safe = true,
-        .spin_count = 1000,
-        .backoff_us = 1
-    };
+int test_engine_errors(void) {
+    ppdb_base_t* base = NULL;
+    ppdb_engine_t* engine = NULL;
+    ppdb_engine_txn_t* txn = NULL;
     
     // 测试空指针
-    ASSERT_ERR(ppdb_base_sync_create(NULL, &config), PPDB_BASE_ERR_PARAM);
-    ASSERT_ERR(ppdb_base_sync_create(&sync, NULL), PPDB_BASE_ERR_PARAM);
+    ASSERT_ERR(ppdb_engine_init(NULL, base), PPDB_ENGINE_ERR_PARAM);
+    ASSERT_ERR(ppdb_engine_init(&engine, NULL), PPDB_ENGINE_ERR_PARAM);
     
-    // 测试未初始化的同步原语
-    ASSERT_ERR(ppdb_base_sync_lock(NULL), PPDB_BASE_ERR_PARAM);
-    ASSERT_ERR(ppdb_base_sync_unlock(NULL), PPDB_BASE_ERR_PARAM);
-    ASSERT_ERR(ppdb_base_sync_destroy(NULL), PPDB_BASE_ERR_PARAM);
+    // 测试未初始化的事务
+    ASSERT_ERR(ppdb_engine_txn_commit(NULL), PPDB_ENGINE_ERR_PARAM);
+    ASSERT_ERR(ppdb_engine_txn_rollback(NULL), PPDB_ENGINE_ERR_PARAM);
     
     return 0;
 }
 
 int main(void) {
-    TEST_CASE(test_engine_sync_basic);
-    TEST_CASE(test_engine_sync_lockfree);
-    TEST_CASE(test_engine_sync_concurrent);
-    TEST_CASE(test_engine_sync_errors);
+    TEST_CASE(test_engine_init_destroy);
+    TEST_CASE(test_engine_transaction);
+    TEST_CASE(test_engine_errors);
     printf("\nTest summary:\n");
     printf("  Total: %d\n", g_test_count);
     printf("  Passed: %d\n", g_test_passed);

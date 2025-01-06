@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "test_framework.h"
 #include "ppdb/ppdb.h"
-#include "ppdb/ppdb_sync.h"
+#include "../../src/internal/base.h"
 #include "kvstore/internal/kvstore_wal.h"
 #include "kvstore/internal/kvstore_memtable.h"
 #include "kvstore/internal/kvstore_fs.h"
@@ -67,18 +67,19 @@ static int test_wal_concurrent_write(void) {
     TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
     
     // Create and start threads
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     thread_args_t thread_args[NUM_THREADS];
     
     for (int i = 0; i < NUM_THREADS; i++) {
         thread_args[i].wal = wal;
         thread_args[i].thread_id = i;
-        pthread_create(&threads[i], NULL, worker_thread, &thread_args[i]);
+        err = ppdb_base_thread_create(&threads[i], worker_thread, &thread_args[i]);
+        TEST_ASSERT(err == PPDB_OK, "Failed to create thread");
     }
     
     // Wait for all threads to complete
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        ppdb_base_thread_join(threads[i], NULL);
     }
     
     // Verify data through recovery
@@ -144,13 +145,14 @@ static int test_wal_concurrent_write_archive(void) {
     TEST_ASSERT(err == PPDB_OK, "Failed to create WAL");
     
     // Create and start writer threads
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     thread_args_t thread_args[NUM_THREADS];
     
     for (int i = 0; i < NUM_THREADS; i++) {
         thread_args[i].wal = wal;
         thread_args[i].thread_id = i;
-        pthread_create(&threads[i], NULL, worker_thread, &thread_args[i]);
+        err = ppdb_base_thread_create(&threads[i], worker_thread, &thread_args[i]);
+        TEST_ASSERT(err == PPDB_OK, "Failed to create thread");
     }
     
     // Perform periodic archiving while threads are writing
@@ -162,7 +164,7 @@ static int test_wal_concurrent_write_archive(void) {
     
     // Wait for all threads to complete
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        ppdb_base_thread_join(threads[i], NULL);
     }
     
     // Final archive

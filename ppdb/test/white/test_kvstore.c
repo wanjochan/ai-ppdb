@@ -2,7 +2,7 @@
 #include "test_framework.h"
 #include "test_plan.h"
 #include "ppdb/ppdb.h"
-#include "ppdb/ppdb_sync.h"
+#include "../../src/internal/base.h"
 #include "kvstore/internal/kvstore_internal.h"
 #include "kvstore/internal/kvstore_fs.h"
 #include "kvstore/internal/kvstore_memtable.h"
@@ -286,20 +286,21 @@ static int test_kvstore_concurrent_ops(void) {
     TEST_ASSERT(store != NULL, "Failed to create KVStore");
 
     // 创建线程
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     thread_args_t args[NUM_THREADS];
 
     for (int i = 0; i < NUM_THREADS; i++) {
         args[i].store = store;
         args[i].thread_id = i;
         args[i].num_ops = NUM_OPS;
-        int ret = pthread_create(&threads[i], NULL, concurrent_worker, &args[i]);
-        TEST_ASSERT(ret == 0, "Failed to create thread");
+        ppdb_error_t ret = ppdb_base_thread_create(&threads[i], concurrent_worker, &args[i]);
+        TEST_ASSERT(ret == PPDB_OK, "Failed to create thread");
     }
 
     // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        ppdb_error_t ret = ppdb_base_thread_join(threads[i], NULL);
+        TEST_ASSERT(ret == PPDB_OK, "Failed to join thread");
     }
 
     // 关闭 KVStore

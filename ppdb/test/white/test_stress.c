@@ -1,6 +1,6 @@
 #include <cosmopolitan.h>
 #include "ppdb/ppdb.h"
-#include "ppdb/ppdb_sync.h"
+#include "../../src/internal/base.h"
 #include "test_framework.h"
 #include "test_plan.h"
 
@@ -124,7 +124,7 @@ static void run_stress_test(test_mode_t mode, const char* mode_name,
     assert(err == PPDB_OK);
     
     // 创建线程
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     thread_args_t thread_args[NUM_THREADS];
     time_t end_time = time(NULL) + duration_seconds;
     
@@ -136,13 +136,15 @@ static void run_stress_test(test_mode_t mode, const char* mode_name,
         thread_args[i].success_ops = 0;
         thread_args[i].end_time = end_time;
         
-        pthread_create(&threads[i], NULL, stress_test_thread, &thread_args[i]);
+        err = ppdb_base_thread_create(&threads[i], stress_test_thread, &thread_args[i]);
+        assert(err == PPDB_OK);
     }
     
     // 等待所有线程完成
     int total_ops = 0;
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        err = ppdb_base_thread_join(threads[i], NULL);
+        assert(err == PPDB_OK);
         total_ops += thread_args[i].success_ops;
     }
     

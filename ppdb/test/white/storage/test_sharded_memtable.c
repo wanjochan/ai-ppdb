@@ -7,6 +7,7 @@
 
 #include <cosmopolitan.h>
 #include "../test_framework.h"
+#include "../../src/internal/base.h"
 #include "ppdb/ppdb.h"
 
 // 测试配置
@@ -171,7 +172,7 @@ static int test_concurrent_ops(void) {
     ASSERT(err == PPDB_OK, "Failed to create sharded memtable");
     
     // 创建线程
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     thread_args_t args[NUM_THREADS];
     
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -179,13 +180,13 @@ static int test_concurrent_ops(void) {
         args[i].thread_id = i;
         args[i].num_ops = OPS_PER_THREAD;
         
-        err = pthread_create(&threads[i], NULL, concurrent_worker, &args[i]);
-        ASSERT(err == 0, "Failed to create thread %d", i);
+        err = ppdb_base_thread_create(&threads[i], concurrent_worker, &args[i]);
+        ASSERT(err == PPDB_OK, "Failed to create thread %d", i);
     }
     
     // 等待线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        ppdb_base_thread_join(threads[i], NULL);
     }
     
     ppdb_destroy(base);

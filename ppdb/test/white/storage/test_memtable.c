@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "../test_framework.h"
 #include "ppdb/ppdb.h"
-#include "ppdb/ppdb_sync.h"
+#include "../../src/internal/base.h"
 #include "kvstore/internal/kvstore_memtable.h"
 
 // 测试配置
@@ -204,7 +204,7 @@ static int test_concurrent_ops(void) {
     ppdb_error_t err = ppdb_memtable_create_with_config(&table, &g_memtable_config);
     TEST_ASSERT(err == PPDB_OK, "Create memtable failed");
 
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     thread_args_t thread_args[NUM_THREADS];
 
     // 创建线程进行并发操作
@@ -212,12 +212,14 @@ static int test_concurrent_ops(void) {
         thread_args[i].table = table;
         thread_args[i].thread_id = i;
         thread_args[i].success = false;
-        pthread_create(&threads[i], NULL, concurrent_worker, &thread_args[i]);
+        err = ppdb_base_thread_create(&threads[i], concurrent_worker, &thread_args[i]);
+        TEST_ASSERT(err == PPDB_OK, "Thread creation failed");
     }
 
     // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        err = ppdb_base_thread_join(threads[i], NULL);
+        TEST_ASSERT(err == PPDB_OK, "Thread join failed");
         TEST_ASSERT(thread_args[i].success, "Thread operation failed");
     }
 

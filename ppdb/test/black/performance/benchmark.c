@@ -1,9 +1,9 @@
 #include "../../white/test_framework.h"
 #include "ppdb/ppdb_kvstore.h"
 #include "kvstore/internal/kvstore_internal.h"
+#include "../../src/internal/base.h"
 #include <time.h>
 #include <sys/time.h>
-#include <pthread.h>
 
 // 性能测试配置
 #define WARM_UP_COUNT 1000            // 预热操作数
@@ -463,7 +463,7 @@ static void* concurrent_worker(void* arg) {
 static int benchmark_concurrent_ops(void) {
     ppdb_kvstore_t* store = NULL;
     int err;
-    pthread_t threads[NUM_THREADS];
+    ppdb_base_thread_t* threads[NUM_THREADS];
     thread_context_t contexts[NUM_THREADS];
     size_t ops_per_thread = TEST_COUNT / NUM_THREADS;
 
@@ -492,13 +492,14 @@ static int benchmark_concurrent_ops(void) {
         TEST_ASSERT_NOT_NULL(contexts[i].latencies, 
                            "Failed to allocate latencies for thread %d", i);
         
-        err = pthread_create(&threads[i], NULL, concurrent_worker, &contexts[i]);
+        err = ppdb_base_thread_create(&threads[i], concurrent_worker, &contexts[i]);
         TEST_ASSERT(err == 0, "Failed to create thread %d", i);
     }
 
     // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+        err = ppdb_base_thread_join(threads[i], NULL);
+        TEST_ASSERT(err == 0, "Failed to join thread %d", i);
     }
 
     // 合并所有线程的统计信息
