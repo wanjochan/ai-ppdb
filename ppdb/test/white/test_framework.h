@@ -3,81 +3,81 @@
 
 #include <cosmopolitan.h>
 
-// 测试类型
-typedef enum {
-    TEST_TYPE_UNIT = 1,    // 单元测试
-    TEST_TYPE_PERF = 2,    // 性能测试
-    TEST_TYPE_STRESS = 4,  // 压力测试
-    TEST_TYPE_ALL = 7      // 所有类型
-} test_type_t;
-
-// 测试配置
-typedef struct {
-    test_type_t type;      // 测试类型
-} test_config_t;
-
-// 测试统计
-typedef struct {
-    clock_t start_time;    // 开始时间
-    clock_t end_time;      // 结束时间
-    size_t peak_memory;    // 峰值内存
-} test_stats_t;
-
-// 测试状态
-typedef struct {
-    bool initialized;      // 是否已初始化
-    test_config_t config;  // 测试配置
-    test_stats_t stats;    // 测试统计
-    jmp_buf timeout_jmp;   // 超时跳转点
-} test_state_t;
-
-// 测试用例
-typedef struct {
-    const char* name;           // 测试名称
-    const char* description;    // 测试描述
-    int (*fn)(void);           // 测试函数
-    int timeout_seconds;        // 超时时间
-    bool skip;                  // 是否跳过
-} test_case_t;
-
-// 测试套件
-typedef struct {
-    const char* name;           // 套件名称
-    void (*setup)(void);       // 套件初始化
-    void (*teardown)(void);    // 套件清理
-    const test_case_t* cases;  // 测试用例数组
-    size_t num_cases;          // 测试用例数量
-} test_suite_t;
-
-// 全局变量声明
-extern test_state_t g_test_state;
-extern char current_test_name[256];
-extern char current_test_result[32];
-extern int test_case_count;
-extern int test_case_failed;
-
-
-// Assert macro for testing
-#define ASSERT(condition, format, ...) \
+// Test assertion macros
+#define TEST_ASSERT(condition) \
     do { \
         if (!(condition)) { \
-            fprintf(stderr, "Assertion failed: " format "\n", ##__VA_ARGS__); \
+            fprintf(stderr, "Assertion failed: %s\n", #condition); \
             fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
             exit(1); \
         } \
     } while (0)
 
-// Assert macro for equality testing
-#define ASSERT_EQ(actual, expected) \
+#define TEST_ASSERT_EQUALS(expected, actual) \
     do { \
-        if ((actual) != (expected)) { \
-            fprintf(stderr, "Assertion failed: %s != %s\n", #actual, #expected); \
+        if ((expected) != (actual)) { \
+            fprintf(stderr, "Assertion failed: %s != %s\n", #expected, #actual); \
             fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
             exit(1); \
         } \
     } while (0)
 
-// Test framework functions
+#define TEST_ASSERT_NOT_NULL(ptr) \
+    do { \
+        if ((ptr) == NULL) { \
+            fprintf(stderr, "Assertion failed: %s is NULL\n", #ptr); \
+            fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
+            exit(1); \
+        } \
+    } while (0)
+
+// Test types
+typedef enum {
+    TEST_TYPE_UNIT = 1,    // Unit test
+    TEST_TYPE_PERF = 2,    // Performance test
+    TEST_TYPE_STRESS = 4,  // Stress test
+    TEST_TYPE_ALL = 7      // All types
+} test_type_t;
+
+// Test configuration
+typedef struct {
+    test_type_t type;      // Test type
+} test_config_t;
+
+// Test statistics
+typedef struct {
+    clock_t start_time;    // Start time
+    clock_t end_time;      // End time
+    size_t peak_memory;    // Peak memory usage
+} test_stats_t;
+
+// Test state
+typedef struct {
+    bool initialized;      // Whether initialized
+    test_config_t config;  // Test configuration
+    test_stats_t stats;    // Test statistics
+    jmp_buf timeout_jmp;   // Timeout jump point
+} test_state_t;
+
+// Test case
+typedef struct {
+    const char* name;           // Test name
+    const char* description;    // Test description
+    int (*fn)(void);           // Test function
+    int timeout_seconds;        // Timeout in seconds
+    bool skip;                  // Whether to skip
+} test_case_t;
+
+// Test suite
+typedef struct {
+    const char* name;           // Suite name
+    void (*setup)(void);       // Suite setup
+    void (*teardown)(void);    // Suite teardown
+    const test_case_t* cases;  // Test cases array
+    size_t num_cases;          // Number of test cases
+} test_suite_t;
+
+// Framework functions
 void test_framework_init(void);
 void test_framework_cleanup(void);
 int run_test_case(const test_case_t* test_case);

@@ -1,32 +1,34 @@
-#include "../../../src/peer.h"
-#include "../../../src/internal/peer.h"
-#include "../test.h"
+#include "internal/peer.h"
+#include "internal/storage.h"
+
+// Test cases
+void test_peer_conn_basic(void) {
+    ppdb_handle_t conn;
+    const peer_ops_t* ops = peer_get_memcached();
+    
+    // Create connection
+    ppdb_error_t err = ppdb_conn_create(&conn, ops, NULL);
+    assert(err == PPDB_OK);
+    assert(conn != NULL);
+    
+    // Check initial state
+    assert(!ppdb_conn_is_connected(conn));
+    assert(strcmp(ppdb_conn_get_proto_name(conn), "memcached") == 0);
+    
+    // Set socket
+    err = ppdb_conn_set_socket(conn, 1);
+    assert(err == PPDB_OK);
+    assert(ppdb_conn_is_connected(conn));
+    
+    // Close connection
+    ppdb_conn_close(conn);
+    assert(!ppdb_conn_is_connected(conn));
+    
+    // Cleanup
+    ppdb_conn_destroy(conn);
+}
 
 int main(void) {
-    ppdb_peer_t peer;
-    ppdb_peer_config_t config = {
-        .max_connections = 10,
-        .connect_timeout_ms = 1000,
-        .read_timeout_ms = 2000,
-        .write_timeout_ms = 2000
-    };
-
-    // Initialize peer
-    TEST_ASSERT(ppdb_peer_init(&peer, &config) == PPDB_OK);
-
-    // Test invalid parameters
-    TEST_ASSERT(ppdb_peer_connect(NULL, "localhost", 8080) == PPDB_ERR_INVALID_PARAM);
-    TEST_ASSERT(ppdb_peer_connect(&peer, NULL, 8080) == PPDB_ERR_INVALID_PARAM);
-
-    // Test successful connection
-    TEST_ASSERT(ppdb_peer_connect(&peer, "localhost", 8080) == PPDB_OK);
-
-    // Test disconnect
-    TEST_ASSERT(ppdb_peer_disconnect(NULL) == PPDB_ERR_INVALID_PARAM);
-    TEST_ASSERT(ppdb_peer_disconnect(&peer) == PPDB_OK);
-
-    // Cleanup
-    TEST_ASSERT(ppdb_peer_cleanup(&peer) == PPDB_OK);
-
+    test_peer_conn_basic();
     return 0;
 } 

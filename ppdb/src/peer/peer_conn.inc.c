@@ -1,98 +1,108 @@
-#include "internal/peer.h"
-
-// Connection state
-typedef struct {
-    void* proto;              // Protocol instance
-    const peer_ops_t* ops;    // Protocol operations
-    void* user_data;          // User data
-    bool connected;           // Connection status
-    int fd;                   // Socket file descriptor
-} ppdb_conn_state_t;
-
-// Connection handle
-struct ppdb_conn_s {
-    ppdb_conn_state_t state;  // Connection state
-    char read_buf[4096];      // Read buffer
-    size_t read_pos;          // Read position
-    char write_buf[4096];     // Write buffer
-    size_t write_pos;         // Write position
-};
+#include "../internal/peer.h"
+#include "../internal/storage.h"
+#include <cosmopolitan.h>
 
 // Create connection
-ppdb_error_t ppdb_conn_create(ppdb_conn_t* conn, const peer_ops_t* ops, void* user_data) {
+ppdb_error_t ppdb_conn_create(ppdb_handle_t* conn, const peer_ops_t* ops, void* user_data) {
+    PPDB_UNUSED(user_data);
+
     if (!conn || !ops) {
         return PPDB_ERR_PARAM;
     }
 
-    *conn = calloc(1, sizeof(struct ppdb_conn_s));
-    if (!*conn) {
+    ppdb_conn_state_t* state = calloc(1, sizeof(ppdb_conn_state_t));
+    if (!state) {
         return PPDB_ERR_MEMORY;
     }
 
     // Initialize protocol instance
-    ppdb_error_t err = ops->create(&(*conn)->state.proto, user_data);
+    ppdb_error_t err = ops->create(&state->proto, user_data);
     if (err != PPDB_OK) {
-        free(*conn);
+        free(state);
         return err;
     }
 
-    (*conn)->state.ops = ops;
-    (*conn)->state.user_data = user_data;
+    state->ops = ops;
+    state->user_data = user_data;
+    *conn = (ppdb_handle_t)state;
     return PPDB_OK;
 }
 
 // Destroy connection
-void ppdb_conn_destroy(ppdb_conn_t conn) {
-    if (!conn) {
+void ppdb_conn_destroy(ppdb_handle_t conn) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    if (!state) {
         return;
     }
 
-    if (conn->state.proto && conn->state.ops) {
-        conn->state.ops->destroy(conn->state.proto);
+    if (state->proto && state->ops) {
+        state->ops->destroy(state->proto);
     }
 
-    if (conn->state.connected) {
-        close(conn->state.fd);
+    if (state->connected) {
+        close(state->fd);
     }
 
-    free(conn);
+    free(state);
 }
 
 // Set connection socket
-ppdb_error_t ppdb_conn_set_socket(ppdb_conn_t conn, int fd) {
-    if (!conn) {
+ppdb_error_t ppdb_conn_set_socket(ppdb_handle_t conn, int fd) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    if (!state) {
         return PPDB_ERR_PARAM;
     }
 
-    conn->state.fd = fd;
-    conn->state.connected = true;
+    state->fd = fd;
+    state->connected = true;
 
     // Notify protocol
-    return conn->state.ops->on_connect(conn->state.proto, conn);
+    return state->ops->on_connect(state->proto, conn);
 }
 
 // Close connection
-void ppdb_conn_close(ppdb_conn_t conn) {
-    if (!conn || !conn->state.connected) {
+void ppdb_conn_close(ppdb_handle_t conn) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    if (!state || !state->connected) {
         return;
     }
 
     // Notify protocol
-    conn->state.ops->on_disconnect(conn->state.proto, conn);
+    state->ops->on_disconnect(state->proto, conn);
 
-    close(conn->state.fd);
-    conn->state.fd = -1;
-    conn->state.connected = false;
+    close(state->fd);
+    state->fd = -1;
+    state->connected = false;
 }
 
 // Send data
-ppdb_error_t ppdb_conn_send(ppdb_conn_t conn, const void* data, size_t size) {
-    if (!conn || !conn->state.connected) {
+ppdb_error_t ppdb_conn_send(ppdb_handle_t conn, const void* data, size_t size) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    if (!state || !state->connected) {
         return PPDB_ERR_INVALID_STATE;
     }
 
     // Write to socket
-    ssize_t written = write(conn->state.fd, data, size);
+    ssize_t written = write(state->fd, data, size);
+    if (written < 0) {
+        return PPDB_ERR_IO;
+    }
+    if ((size_t)written < size) {
+        return PPDB_ERR_PARTIAL_WRITE;
+    }
+
+    return PPDB_OK;
+}
+
+// Write data
+ppdb_error_t ppdb_conn_write(ppdb_handle_t conn, const uint8_t* data, size_t size) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    if (!state || !state->connected) {
+        return PPDB_ERR_INVALID_STATE;
+    }
+
+    // Write to socket
+    ssize_t written = write(state->fd, data, size);
     if (written < 0) {
         return PPDB_ERR_IO;
     }
@@ -104,13 +114,14 @@ ppdb_error_t ppdb_conn_send(ppdb_conn_t conn, const void* data, size_t size) {
 }
 
 // Receive data
-ppdb_error_t ppdb_conn_recv(ppdb_conn_t conn, void* data, size_t size) {
-    if (!conn || !conn->state.connected) {
+ppdb_error_t ppdb_conn_recv(ppdb_handle_t conn, void* data, size_t size) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    if (!state || !state->connected) {
         return PPDB_ERR_INVALID_STATE;
     }
 
     // Read from socket
-    ssize_t nread = read(conn->state.fd, data, size);
+    ssize_t nread = read(state->fd, data, size);
     if (nread < 0) {
         return PPDB_ERR_IO;
     }
@@ -122,18 +133,20 @@ ppdb_error_t ppdb_conn_recv(ppdb_conn_t conn, void* data, size_t size) {
     }
 
     // Process data through protocol
-    return conn->state.ops->on_data(conn->state.proto, conn, data, nread);
+    return state->ops->on_data(state->proto, conn, data, nread);
 }
 
 // Get connection state
-bool ppdb_conn_is_connected(ppdb_conn_t conn) {
-    return conn && conn->state.connected;
+bool ppdb_conn_is_connected(ppdb_handle_t conn) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    return state && state->connected;
 }
 
 // Get protocol name
-const char* ppdb_conn_get_proto_name(ppdb_conn_t conn) {
-    if (!conn || !conn->state.proto || !conn->state.ops) {
+const char* ppdb_conn_get_proto_name(ppdb_handle_t conn) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    if (!state || !state->proto || !state->ops) {
         return NULL;
     }
-    return conn->state.ops->get_name(conn->state.proto);
+    return state->ops->get_name(state->proto);
 } 

@@ -31,7 +31,7 @@ if not "%TEST_MODE%"=="notest" (
         test_peer_memcached.c
     ) do (
         echo Building %%f...
-        %GCC% %CFLAGS% "%BUILD_DIR%\peer.o" "%BUILD_DIR%\base.o" "%PPDB_DIR%\test\white\peer\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
+        %GCC% %CFLAGS% "%BUILD_DIR%\peer.o" "%BUILD_DIR%\base.o" "%BUILD_DIR%\storage.o" "%PPDB_DIR%\test\white\peer\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
         if errorlevel 1 exit /b 1
         "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%%~nf.exe.dbg" "%BUILD_DIR%\%%~nf.exe"
         if errorlevel 1 exit /b 1

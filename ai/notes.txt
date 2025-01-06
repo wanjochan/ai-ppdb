@@ -6,22 +6,25 @@ cd ppdb/scripts; .\build.bat test42
 
 ## 注意事项
 遇到问题先重读 AGENT_RULES.md 和 ppdb/中的项目文档，
-然后分析问题制定可以利用平行处理（parallel_apply）的修复方案，
-重复这个过程直到没有新问题（包括警告类）。
-特别注意：不要胡乱自己创建新文件（因为可能只是目录和文件搞错了）、坚持用cosmopolitan标准、新增加函数时先考虑在base.h和engine.h看看是不是已经有封装好的；
+然后分析所有问题并制定尽量利用平行处理（parallel_apply）的修复方案，
+重复这个过程直到没有新问题（包括警告类问题）。
+特别注意：不要胡乱自己创建新文件（因为可能只是目录和文件搞错了）、本项目坚持用cosmopolitan标准、代码中的注释用英文、新增加函数时要先在现有头文件看看是不是已经有封装好的；
+常用头文件引用形式:
+#include <cosmopolitan.h>
+#include "internal/base.h"
+#include "internal/engine.h"
+#include "internal/storage.h"
+#include "internal/peer.h"
 
 ## 任务
-
-
-
 cd ../ppdb/scripts; .\build.bat base
 cd ../ppdb/scripts; .\build.bat sync_perf 
 cd ../ppdb/scripts; .\build.bat engine
 cd ../ppdb/scripts; .\build.bat storage
+cd ../ppdb/scripts; .\build.bat peer
 cd ../ppdb/scripts; .\build.bat ppdb
 
 # 其他临时笔记
 
-#include <cosmopolitan.h>
 
-#include "internal/base.h"
+

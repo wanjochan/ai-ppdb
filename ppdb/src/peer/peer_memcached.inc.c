@@ -1,4 +1,12 @@
-#include "internal/peer.h"
+#ifndef PPDB_PEER_MEMCACHED_INC_C_
+#define PPDB_PEER_MEMCACHED_INC_C_
+
+#include <cosmopolitan.h>
+#include "../internal/peer.h"
+#include "../internal/storage.h"
+
+// Buffer size for responses
+#define MEMCACHED_RESPONSE_BUFFER_SIZE 1024
 
 // Memcached command types
 typedef enum {
@@ -6,28 +14,74 @@ typedef enum {
     MEMCACHED_CMD_SET,
     MEMCACHED_CMD_DELETE,
     MEMCACHED_CMD_UNKNOWN
-} memcached_cmd_t;
+} memcached_cmd_type_t;
 
-// Memcached command parser
+// Memcached protocol parser
 typedef struct {
-    memcached_cmd_t type;
-    char key[256];
+    memcached_cmd_type_t type;
+    char* key;
+    size_t key_size;
+    char* value;
+    size_t value_size;
     uint32_t flags;
     uint32_t exptime;
-    uint32_t bytes;
-    char noreply;
-    char* value;
+    bool noreply;
 } memcached_parser_t;
 
-// Protocol instance data
+// Memcached protocol handler
 typedef struct {
     memcached_parser_t parser;
-    char buffer[4096];
-    size_t buffer_used;
+    char buffer[MEMCACHED_RESPONSE_BUFFER_SIZE];
+    size_t buffer_size;
 } memcached_proto_t;
+
+// Forward declarations
+static ppdb_error_t memcached_handle_get(memcached_proto_t* p, ppdb_handle_t conn);
+static ppdb_error_t memcached_handle_set(memcached_proto_t* p, ppdb_handle_t conn);
+static ppdb_error_t memcached_handle_delete(memcached_proto_t* p, ppdb_handle_t conn);
+static ppdb_error_t memcached_parse_command(memcached_proto_t* p, char* line);
+
+// Protocol operations
+static ppdb_error_t memcached_send_error(ppdb_handle_t conn, const char* msg) {
+    char buf[MEMCACHED_RESPONSE_BUFFER_SIZE];
+    int len = snprintf(buf, sizeof(buf), "ERROR %s\r\n", msg);
+    return ppdb_conn_send(conn, buf, len);
+}
+
+static ppdb_error_t memcached_send_stored(ppdb_handle_t conn) {
+    return ppdb_conn_send(conn, "STORED\r\n", 8);
+}
+
+static ppdb_error_t memcached_send_not_stored(ppdb_handle_t conn) {
+    return ppdb_conn_send(conn, "NOT_STORED\r\n", 12);
+}
+
+static ppdb_error_t memcached_send_deleted(ppdb_handle_t conn) {
+    return ppdb_conn_send(conn, "DELETED\r\n", 9);
+}
+
+static ppdb_error_t memcached_send_not_found(ppdb_handle_t conn) {
+    return ppdb_conn_send(conn, "NOT_FOUND\r\n", 11);
+}
+
+static ppdb_error_t memcached_send_value(ppdb_handle_t conn, const char* key, size_t key_size,
+                                     const void* value, size_t value_size, uint32_t flags) {
+    char header[MEMCACHED_RESPONSE_BUFFER_SIZE];
+    int header_len = snprintf(header, sizeof(header), "VALUE %.*s %u %zu\r\n",
+                            (int)key_size, key, flags, value_size);
+    
+    ppdb_error_t err = ppdb_conn_send(conn, header, header_len);
+    if (err != PPDB_OK) return err;
+    
+    err = ppdb_conn_send(conn, value, value_size);
+    if (err != PPDB_OK) return err;
+    
+    return ppdb_conn_send(conn, "\r\nEND\r\n", 7);
+}
 
 // Create protocol instance
 static ppdb_error_t memcached_proto_create(void** proto, void* user_data) {
+    PPDB_UNUSED(user_data);
     memcached_proto_t* p = calloc(1, sizeof(memcached_proto_t));
     if (!p) {
         return PPDB_ERR_MEMORY;
@@ -38,24 +92,27 @@ static ppdb_error_t memcached_proto_create(void** proto, void* user_data) {
 
 // Destroy protocol instance
 static void memcached_proto_destroy(void* proto) {
+    PPDB_UNUSED(proto);
     free(proto);
 }
 
 // Handle connection established
-static ppdb_error_t memcached_proto_on_connect(void* proto, ppdb_conn_t conn) {
+static ppdb_error_t memcached_proto_on_connect(void* proto, ppdb_handle_t conn) {
+    PPDB_UNUSED(conn);
     memcached_proto_t* p = proto;
-    p->buffer_used = 0;
+    p->buffer_size = 0;
     return PPDB_OK;
 }
 
 // Handle connection closed
-static void memcached_proto_on_disconnect(void* proto, ppdb_conn_t conn) {
+static void memcached_proto_on_disconnect(void* proto, ppdb_handle_t conn) {
+    PPDB_UNUSED(conn);
     memcached_proto_t* p = proto;
-    p->buffer_used = 0;
+    p->buffer_size = 0;
 }
 
 // Parse command line
-static ppdb_error_t parse_command(memcached_proto_t* p, char* line) {
+static ppdb_error_t memcached_parse_command(memcached_proto_t* p, char* line) {
     char* cmd = strtok(line, " ");
     if (!cmd) {
         return PPDB_ERR_PROTOCOL;
@@ -67,11 +124,11 @@ static ppdb_error_t parse_command(memcached_proto_t* p, char* line) {
         if (!key) {
             return PPDB_ERR_PROTOCOL;
         }
-        strncpy(p->parser.key, key, sizeof(p->parser.key) - 1);
+        p->parser.key = key;
+        p->parser.key_size = strlen(key);
     }
     else if (strcmp(cmd, "set") == 0) {
         p->parser.type = MEMCACHED_CMD_SET;
-        // Parse: <key> <flags> <exptime> <bytes> [noreply]
         char* key = strtok(NULL, " ");
         char* flags = strtok(NULL, " ");
         char* exptime = strtok(NULL, " ");
@@ -82,11 +139,12 @@ static ppdb_error_t parse_command(memcached_proto_t* p, char* line) {
             return PPDB_ERR_PROTOCOL;
         }
         
-        strncpy(p->parser.key, key, sizeof(p->parser.key) - 1);
+        p->parser.key = key;
+        p->parser.key_size = strlen(key);
         p->parser.flags = atoi(flags);
         p->parser.exptime = atoi(exptime);
-        p->parser.bytes = atoi(bytes);
-        p->parser.noreply = noreply ? 1 : 0;
+        p->parser.value_size = atoi(bytes);
+        p->parser.noreply = noreply ? true : false;
     }
     else if (strcmp(cmd, "delete") == 0) {
         p->parser.type = MEMCACHED_CMD_DELETE;
@@ -97,120 +155,98 @@ static ppdb_error_t parse_command(memcached_proto_t* p, char* line) {
             return PPDB_ERR_PROTOCOL;
         }
         
-        strncpy(p->parser.key, key, sizeof(p->parser.key) - 1);
-        p->parser.noreply = noreply ? 1 : 0;
+        p->parser.key = key;
+        p->parser.key_size = strlen(key);
+        p->parser.noreply = noreply ? true : false;
     }
     else {
         p->parser.type = MEMCACHED_CMD_UNKNOWN;
+        return PPDB_ERR_PROTOCOL;
     }
-
+    
     return PPDB_OK;
 }
 
 // Handle GET command
-static ppdb_error_t handle_get(memcached_proto_t* p, ppdb_conn_t conn) {
-    ppdb_data_t key = {
-        .data = (uint8_t*)p->parser.key,
-        .size = strlen(p->parser.key)
-    };
+static ppdb_error_t memcached_handle_get(memcached_proto_t* p, ppdb_handle_t conn) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    size_t value_size = 0;
+    char value_buffer[MEMCACHED_RESPONSE_BUFFER_SIZE];
     
-    ppdb_data_t value;
-    ppdb_error_t err = ppdb_storage_get(conn->storage, &key, &value);
-    
-    if (err == PPDB_OK) {
-        // VALUE <key> <flags> <bytes>\r\n
-        char header[1024];
-        snprintf(header, sizeof(header), "VALUE %s %u %u\r\n",
-                p->parser.key, p->parser.flags, (uint32_t)value.size);
-        ppdb_conn_write(conn, (uint8_t*)header, strlen(header));
-        
-        // <data>\r\n
-        ppdb_conn_write(conn, value.data, value.size);
-        ppdb_conn_write(conn, (uint8_t*)"\r\n", 2);
-        
-        // END\r\n
-        ppdb_conn_write(conn, (uint8_t*)"END\r\n", 5);
-        return PPDB_OK;
-    } else if (err == PPDB_ERR_NOT_FOUND) {
-        ppdb_conn_write(conn, (uint8_t*)"END\r\n", 5);
-        return PPDB_OK;
+    // Get value from storage
+    ppdb_error_t err = ppdb_storage_get(state->storage, p->parser.key, p->parser.key_size,
+                                      value_buffer, &value_size);
+    if (err != PPDB_OK) {
+        if (err == PPDB_ERR_NOT_FOUND) {
+            return ppdb_conn_send(conn, "END\r\n", 5);
+        }
+        return err;
     }
-    
-    return err;
+
+    return memcached_send_value(conn, p->parser.key, p->parser.key_size, value_buffer, value_size, p->parser.flags);
 }
 
 // Handle SET command
-static ppdb_error_t handle_set(memcached_proto_t* p, ppdb_conn_t conn) {
-    if (!p->parser.value || p->parser.bytes == 0) {
-        return PPDB_ERR_PROTOCOL;
+static ppdb_error_t memcached_handle_set(memcached_proto_t* p, ppdb_handle_t conn) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    
+    // Store value in storage
+    ppdb_error_t err = ppdb_storage_put(state->storage, p->parser.key, p->parser.key_size,
+                                      p->parser.value, p->parser.value_size);
+    if (err != PPDB_OK) {
+        return err;
     }
-    
-    ppdb_data_t key = {
-        .data = (uint8_t*)p->parser.key,
-        .size = strlen(p->parser.key)
-    };
-    
-    ppdb_data_t value = {
-        .data = (uint8_t*)p->parser.value,
-        .size = p->parser.bytes
-    };
-    
-    ppdb_error_t err = ppdb_storage_put(conn->storage, &key, &value);
-    
+
+    // Send response
     if (!p->parser.noreply) {
-        if (err == PPDB_OK) {
-            ppdb_conn_write(conn, (uint8_t*)"STORED\r\n", 8);
-        } else {
-            ppdb_conn_write(conn, (uint8_t*)"NOT_STORED\r\n", 12);
-        }
+        return memcached_send_stored(conn);
     }
-    
-    return err;
+    return PPDB_OK;
 }
 
 // Handle DELETE command
-static ppdb_error_t handle_delete(memcached_proto_t* p, ppdb_conn_t conn) {
-    ppdb_data_t key = {
-        .data = (uint8_t*)p->parser.key,
-        .size = strlen(p->parser.key)
-    };
+static ppdb_error_t memcached_handle_delete(memcached_proto_t* p, ppdb_handle_t conn) {
+    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
     
-    ppdb_error_t err = ppdb_storage_delete(conn->storage, &key);
-    
-    if (!p->parser.noreply) {
-        if (err == PPDB_OK) {
-            ppdb_conn_write(conn, (uint8_t*)"DELETED\r\n", 9);
-        } else if (err == PPDB_ERR_NOT_FOUND) {
-            ppdb_conn_write(conn, (uint8_t*)"NOT_FOUND\r\n", 11);
-        } else {
-            ppdb_conn_write(conn, (uint8_t*)"ERROR\r\n", 7);
+    // Delete value from storage
+    ppdb_error_t err = ppdb_storage_delete(state->storage, p->parser.key, p->parser.key_size);
+    if (err != PPDB_OK) {
+        if (err == PPDB_ERR_NOT_FOUND) {
+            if (!p->parser.noreply) {
+                return memcached_send_not_found(conn);
+            }
+            return PPDB_OK;
         }
+        return err;
     }
-    
-    return err;
+
+    if (!p->parser.noreply) {
+        return memcached_send_deleted(conn);
+    }
+    return PPDB_OK;
 }
 
 // Handle incoming data
-static ppdb_error_t memcached_proto_on_data(void* proto, ppdb_conn_t conn,
+static ppdb_error_t memcached_proto_on_data(void* proto, ppdb_handle_t conn,
                                           const uint8_t* data, size_t size) {
     memcached_proto_t* p = proto;
     
     // Append to buffer
-    if (p->buffer_used + size > sizeof(p->buffer)) {
+    if (p->buffer_size + size > sizeof(p->buffer)) {
         return PPDB_ERR_BUFFER_FULL;
     }
-    memcpy(p->buffer + p->buffer_used, data, size);
-    p->buffer_used += size;
+    memcpy(p->buffer + p->buffer_size, data, size);
+    p->buffer_size += size;
     
     // Find command line
-    char* newline = memchr(p->buffer, '\n', p->buffer_used);
+    char* newline = memchr(p->buffer, '\n', p->buffer_size);
     if (!newline) {
         return PPDB_OK; // Need more data
     }
     
     // Parse command
     *newline = '\0';
-    ppdb_error_t err = parse_command(p, p->buffer);
+    ppdb_error_t err = memcached_parse_command(p, p->buffer);
     if (err != PPDB_OK) {
         return err;
     }
@@ -218,15 +254,15 @@ static ppdb_error_t memcached_proto_on_data(void* proto, ppdb_conn_t conn,
     // Handle command
     switch (p->parser.type) {
         case MEMCACHED_CMD_GET:
-            err = handle_get(p, conn);
+            err = memcached_handle_get(p, conn);
             break;
             
         case MEMCACHED_CMD_SET:
-            err = handle_set(p, conn);
+            err = memcached_handle_set(p, conn);
             break;
             
         case MEMCACHED_CMD_DELETE:
-            err = handle_delete(p, conn);
+            err = memcached_handle_delete(p, conn);
             break;
             
         default:
@@ -235,26 +271,34 @@ static ppdb_error_t memcached_proto_on_data(void* proto, ppdb_conn_t conn,
     }
     
     // Reset buffer
-    size_t remaining = p->buffer_used - (newline - p->buffer + 1);
+    size_t remaining = p->buffer_size - (newline - p->buffer + 1);
     if (remaining > 0) {
         memmove(p->buffer, newline + 1, remaining);
     }
-    p->buffer_used = remaining;
+    p->buffer_size = remaining;
     
     return err;
 }
 
 // Get protocol name
 static const char* memcached_proto_get_name(void* proto) {
+    PPDB_UNUSED(proto);
     return "memcached";
 }
 
-// Protocol operations
-const peer_ops_t peer_memcached_ops = {
+// Protocol operations table
+static const peer_ops_t peer_memcached_ops = {
     .create = memcached_proto_create,
     .destroy = memcached_proto_destroy,
     .on_connect = memcached_proto_on_connect,
     .on_disconnect = memcached_proto_on_disconnect,
     .on_data = memcached_proto_on_data,
     .get_name = memcached_proto_get_name
-}; 
+};
+
+// Protocol adapter getter
+const peer_ops_t* peer_get_memcached(void) {
+    return &peer_memcached_ops;
+}
+
+#endif // PPDB_PEER_MEMCACHED_INC_C_ 
