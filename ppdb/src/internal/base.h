@@ -197,6 +197,7 @@ ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);
+void ppdb_base_mutex_enable_stats(ppdb_base_mutex_t* mutex, bool enable);
 void ppdb_base_mutex_get_stats(ppdb_base_mutex_t* mutex, uint64_t* lock_count,
                               uint64_t* contention_count, uint64_t* total_wait_time_us,
                               uint64_t* max_wait_time_us);
@@ -208,6 +209,7 @@ void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock);
 ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock);
 ppdb_error_t ppdb_base_spinlock_trylock(ppdb_base_spinlock_t* spinlock);
 ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock);
+void ppdb_base_spinlock_enable_stats(ppdb_base_spinlock_t* spinlock, bool enable);
 void ppdb_base_spinlock_set_spin_count(ppdb_base_spinlock_t* spinlock, uint32_t count);
 void ppdb_base_spinlock_get_stats(ppdb_base_spinlock_t* spinlock, uint64_t* lock_count,
                                  uint64_t* contention_count, uint64_t* total_wait_time_us,

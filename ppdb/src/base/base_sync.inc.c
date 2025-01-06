@@ -559,3 +559,12 @@ void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock) {
     }
     free(spinlock);
 }
+
+ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock) {
+    if (!spinlock) {
+        return PPDB_ERR_PARAM;
+    }
+
+    atomic_store(&spinlock->lock, 0);
+    return PPDB_OK;
+}
