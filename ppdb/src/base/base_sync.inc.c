@@ -516,26 +516,22 @@ struct ppdb_base_thread_s {
 
 static void* thread_wrapper(void* arg) {
     ppdb_base_thread_t* t = (ppdb_base_thread_t*)arg;
-    void* result = NULL;
     uint64_t start_time = time_now_us();
     
     // 设置线程状态为运行中
     atomic_store_explicit(&t->state, 1, memory_order_release);
     
     // 执行用户函数
-    result = t->func(t->arg);
+    t->func(t->arg);
     
     // 更新统计信息
     uint64_t end_time = time_now_us();
     atomic_store_explicit(&t->wall_time_us, end_time - start_time, memory_order_release);
     
-    // 保存结果
-    t->result = result;
-    
     // 设置线程状态为已完成
     atomic_store_explicit(&t->state, 2, memory_order_release);
     
-    return result;
+    return NULL;
 }
 
 ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg) {
