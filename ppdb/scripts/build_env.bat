@@ -24,7 +24,7 @@ set "BUILD_DIR=%PPDB_DIR%\build"
 set "BIN_DIR=%PPDB_DIR%\bin"
 set "SRC_DIR=%PPDB_DIR%\src"
 set "INCLUDE_DIR=%PPDB_DIR%\include"
-set "INTERNAL_DIR=%PPDB_DIR%\internal"
+set "INTERNAL_DIR=%PPDB_DIR%\src\internal"
 set "TEST_DIR=%PPDB_DIR%\test"
 
 rem Set tool paths

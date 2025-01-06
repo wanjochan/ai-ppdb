@@ -60,10 +60,13 @@ ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config
     err = ppdb_base_memory_init(new_base);
     if (err != PPDB_OK) goto error;
 
-    err = ppdb_base_sync_init(new_base);
-    if (err != PPDB_OK) goto error;
+    // Initialize sync configuration
+    new_base->sync_config.thread_safe = config->thread_safe;
+    new_base->sync_config.spin_count = 1000;
+    new_base->sync_config.backoff_us = 1;
 
-    err = ppdb_base_utils_init(new_base);
+    // Create global mutex
+    err = ppdb_base_mutex_create(&new_base->global_mutex);
     if (err != PPDB_OK) goto error;
 
     *base = new_base;
@@ -78,10 +81,12 @@ error:
 void ppdb_base_destroy(ppdb_base_t* base) {
     if (!base) return;
 
-    ppdb_base_utils_cleanup(base);
-    ppdb_base_sync_cleanup(base);
-    ppdb_base_memory_cleanup(base);
+    if (base->global_mutex) {
+        ppdb_base_mutex_destroy(base->global_mutex);
+        base->global_mutex = NULL;
+    }
 
+    ppdb_base_memory_cleanup(base);
     ppdb_base_aligned_free(base);
 }
 

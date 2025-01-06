@@ -77,37 +77,11 @@ const char* ppdb_error_to_string(ppdb_error_t err);
 
 // Forward declarations
 typedef struct ppdb_base_s ppdb_base_t;
-
-// Configuration types
-typedef struct ppdb_base_config_s {
-    size_t memory_limit;
-    size_t thread_pool_size;
-    bool thread_safe;
-} ppdb_base_config_t;
-
-typedef struct ppdb_base_stats_s {
-    uint64_t total_allocs;
-    uint64_t total_frees;
-    uint64_t current_memory;
-    uint64_t peak_memory;
-} ppdb_base_stats_t;
-
-// Extended base types
-struct ppdb_base_mutex_s {
-    pthread_mutex_t mutex;
-    bool initialized;
-};
 typedef struct ppdb_base_mutex_s ppdb_base_mutex_t;
-
-// 自旋锁类型
-typedef struct ppdb_base_spinlock_s {
-    atomic_flag flag;
-    bool initialized;
-} ppdb_base_spinlock_t;
-
+typedef struct ppdb_base_spinlock_s ppdb_base_spinlock_t;
+typedef struct ppdb_base_thread_s ppdb_base_thread_t;
 typedef struct ppdb_base_rwlock_s ppdb_base_rwlock_t;
 typedef struct ppdb_base_cond_s ppdb_base_cond_t;
-typedef struct ppdb_base_thread_s ppdb_base_thread_t;
 typedef struct ppdb_base_file_s ppdb_base_file_t;
 typedef struct ppdb_base_io_manager_s ppdb_base_io_manager_t;
 
@@ -124,6 +98,20 @@ typedef struct ppdb_base_mempool_s {
     size_t block_size;
     size_t alignment;
 } ppdb_base_mempool_t;
+
+// Configuration types
+typedef struct ppdb_base_config_s {
+    size_t memory_limit;
+    size_t thread_pool_size;
+    bool thread_safe;
+} ppdb_base_config_t;
+
+typedef struct ppdb_base_stats_s {
+    uint64_t total_allocs;
+    uint64_t total_frees;
+    uint64_t current_memory;
+    uint64_t peak_memory;
+} ppdb_base_stats_t;
 
 // IO structures
 typedef struct ppdb_base_io_request_s {
@@ -187,11 +175,34 @@ typedef void* (*ppdb_base_thread_func_t)(void*);
 // Thread operations
 ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg);
 ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread, void** retval);
+ppdb_error_t ppdb_base_thread_detach(ppdb_base_thread_t* thread);
 void ppdb_base_thread_destroy(ppdb_base_thread_t* thread);
+int ppdb_base_thread_get_state(ppdb_base_thread_t* thread);
+uint64_t ppdb_base_thread_get_wall_time(ppdb_base_thread_t* thread);
+const char* ppdb_base_thread_get_error(ppdb_base_thread_t* thread);
 
-//-----------------------------------------------------------------------------
-// Base layer functions
-//-----------------------------------------------------------------------------
+// Mutex operations
+ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex);
+void ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
+ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
+ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex);
+ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);
+void ppdb_base_mutex_get_stats(ppdb_base_mutex_t* mutex, uint64_t* lock_count,
+                              uint64_t* contention_count, uint64_t* total_wait_time_us,
+                              uint64_t* max_wait_time_us);
+const char* ppdb_base_mutex_get_error(ppdb_base_mutex_t* mutex);
+
+// Spinlock operations
+ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock);
+void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock);
+ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock);
+ppdb_error_t ppdb_base_spinlock_trylock(ppdb_base_spinlock_t* spinlock);
+ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock);
+void ppdb_base_spinlock_set_spin_count(ppdb_base_spinlock_t* spinlock, uint32_t count);
+void ppdb_base_spinlock_get_stats(ppdb_base_spinlock_t* spinlock, uint64_t* lock_count,
+                                 uint64_t* contention_count, uint64_t* total_wait_time_us,
+                                 uint64_t* max_wait_time_us);
+const char* ppdb_base_spinlock_get_error(ppdb_base_spinlock_t* spinlock);
 
 // Base initialization and cleanup
 ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config);
@@ -212,26 +223,6 @@ void ppdb_base_mempool_free(ppdb_base_mempool_t* pool, void* ptr);
 void* ppdb_base_aligned_alloc(size_t alignment, size_t size);
 void ppdb_base_aligned_free(void* ptr);
 
-// Mutex operations
-ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex);
-void ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
-ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
-ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);
-
-// 自旋锁操作
-ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock);
-void ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock);
-ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock);
-ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock);
-
-// Sync initialization
-ppdb_error_t ppdb_base_sync_init(ppdb_base_t* base);
-void ppdb_base_sync_cleanup(ppdb_base_t* base);
-
-// Utils initialization
-ppdb_error_t ppdb_base_utils_init(ppdb_base_t* base);
-void ppdb_base_utils_cleanup(ppdb_base_t* base);
-
 // Skip list operations
 ppdb_error_t ppdb_base_skiplist_create(ppdb_base_skiplist_t** list, ppdb_base_compare_func_t compare);
 void ppdb_base_skiplist_destroy(ppdb_base_skiplist_t* list);
@@ -239,13 +230,5 @@ ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, vo
 void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key);
 ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, void* key);
 size_t ppdb_base_skiplist_size(ppdb_base_skiplist_t* list);
-
-// 原子计数器操作
-ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter);
-void ppdb_base_counter_destroy(ppdb_base_counter_t* counter);
-uint64_t ppdb_base_counter_increment(ppdb_base_counter_t* counter);
-uint64_t ppdb_base_counter_decrement(ppdb_base_counter_t* counter);
-uint64_t ppdb_base_counter_get(ppdb_base_counter_t* counter);
-void ppdb_base_counter_set(ppdb_base_counter_t* counter, uint64_t value);
 
 #endif // PPDB_INTERNAL_BASE_H_
