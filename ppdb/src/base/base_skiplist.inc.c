@@ -42,7 +42,7 @@ ppdb_error_t ppdb_base_skiplist_create(ppdb_base_skiplist_t** list, ppdb_base_co
     }
 
     memset(new_list->header->forward, 0, sizeof(ppdb_base_skiplist_node_t*) * MAX_SKIPLIST_LEVEL);
-    new_list->level = 0;
+    new_list->level = 1;  // Start from level 1
     new_list->size = 0;
     new_list->compare = compare;
 
@@ -74,14 +74,21 @@ ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, vo
     ppdb_base_skiplist_node_t* update[MAX_SKIPLIST_LEVEL];
     ppdb_base_skiplist_node_t* current = list->header;
 
-    // Find position to insert
-    for (int i = list->level - 1; i >= 0; i--) {
-        while (current->forward[i] && list->compare(current->forward[i]->key, key) < 0) {
-            current = current->forward[i];
-        }
-        update[i] = current;
+    // Initialize update array
+    for (int i = 0; i < MAX_SKIPLIST_LEVEL; i++) {
+        update[i] = list->header;
     }
-    current = current->forward[0];
+
+    // Find position to insert
+    if (list->level > 0) {
+        for (int i = list->level - 1; i >= 0; i--) {
+            while (current->forward[i] && list->compare(current->forward[i]->key, key) < 0) {
+                current = current->forward[i];
+            }
+            update[i] = current;
+        }
+        current = current->forward[0];
+    }
 
     // Key already exists
     if (current && list->compare(current->key, key) == 0) {
@@ -90,15 +97,12 @@ ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, vo
     }
 
     // Generate random level
-    int new_level = 0;
+    int new_level = 1;  // Start from level 1
     while (new_level < MAX_SKIPLIST_LEVEL - 1 && (rand() & 1)) {
         new_level++;
     }
 
     if (new_level > list->level) {
-        for (int i = list->level; i < new_level; i++) {
-            update[i] = list->header;
-        }
         list->level = new_level;
     }
 
@@ -111,6 +115,9 @@ ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, vo
         ppdb_base_aligned_free(new_node);
         return PPDB_ERR_MEMORY;
     }
+
+    // Initialize forward array
+    memset(new_node->forward, 0, sizeof(ppdb_base_skiplist_node_t*) * MAX_SKIPLIST_LEVEL);
 
     new_node->key = key;
     new_node->value = value;
@@ -128,7 +135,7 @@ ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, void* key, vo
 
 // Find a value by key in the skip list
 void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key) {
-    if (!list || !key) return NULL;
+    if (!list || !key || list->level < 1) return NULL;
 
     ppdb_base_skiplist_node_t* current = list->header;
 
@@ -150,7 +157,7 @@ void* ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, void* key) {
 
 // Remove a key-value pair from the skip list
 ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, void* key) {
-    if (!list || !key) return PPDB_ERR_PARAM;
+    if (!list || !key || list->level < 1) return PPDB_ERR_PARAM;
 
     ppdb_base_skiplist_node_t* update[MAX_SKIPLIST_LEVEL];
     ppdb_base_skiplist_node_t* current = list->header;
@@ -178,7 +185,7 @@ ppdb_error_t ppdb_base_skiplist_remove(ppdb_base_skiplist_t* list, void* key) {
     }
 
     // Update level
-    while (list->level > 0 && list->header->forward[list->level - 1] == NULL) {
+    while (list->level > 1 && list->header->forward[list->level - 1] == NULL) {
         list->level--;
     }
 

@@ -193,7 +193,7 @@ const char* ppdb_base_thread_get_error(ppdb_base_thread_t* thread);
 
 // Mutex operations
 ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex);
-void ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
+ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);

@@ -3,9 +3,9 @@
 #include "test_common.h"
 
 // 测试配置
-#define NUM_THREADS 2
-#define OPS_PER_THREAD 1000
-#define VALUE_SIZE 100
+#define NUM_THREADS 4
+#define OPS_PER_THREAD 100000
+#define VALUE_SIZE 8
 
 // 前向声明
 struct test_context_s;
@@ -23,8 +23,8 @@ typedef struct test_context_s {
     ppdb_base_t* base;
     ppdb_base_mutex_t* mutex;
     ppdb_base_spinlock_t* spinlock;
-    _Atomic(size_t) counter;
-    char* shared_buffer;
+    _Atomic(uint64_t) counter;
+    uint64_t shared_buffer[1];
     thread_args_t thread_args[NUM_THREADS];
     ppdb_base_thread_t* threads[NUM_THREADS];
 } test_context_t;
@@ -37,14 +37,11 @@ static uint64_t get_time_us(void) {
 }
 
 // 使用互斥锁的线程函数
-static void* __attribute__((used)) mutex_thread_func(void* arg) {
+static void mutex_thread_func(void* arg) {
     thread_args_t* args = (thread_args_t*)arg;
     test_context_t* ctx = args->ctx;
     uint64_t start_time, end_time;
-    size_t local_counter = 0;
-    
-    printf("Thread %d started\n", args->thread_id);
-    fflush(stdout);
+    uint64_t local_counter = 0;
     
     for (int i = 0; i < OPS_PER_THREAD; i++) {
         start_time = get_time_us();
@@ -55,41 +52,29 @@ static void* __attribute__((used)) mutex_thread_func(void* arg) {
         end_time = get_time_us();
         args->total_time_us += (end_time - start_time);
         
-        // 临界区操作
-        size_t old_value = atomic_load_explicit(&ctx->counter, memory_order_seq_cst);
-        atomic_store_explicit(&ctx->counter, old_value + 1, memory_order_seq_cst);
+        // 临界区操作 - 使用更轻量级的内存序
+        uint64_t old_value = atomic_load_explicit(&ctx->counter, memory_order_relaxed);
+        atomic_store_explicit(&ctx->counter, old_value + 1, memory_order_relaxed);
         local_counter++;
-        memset(ctx->shared_buffer, (char)i, VALUE_SIZE);
+        ctx->shared_buffer[0]++;  // 简单的内存操作
         
         // 解锁
         assert(ppdb_base_mutex_unlock(ctx->mutex) == PPDB_OK);
         
-        // 模拟其他工作
-        if (i % 100 == 0) {
-            usleep(1);
-            printf("Thread %d completed %d operations, local_counter: %zu, global_counter: %zu\n", 
-                args->thread_id, i, local_counter, 
-                atomic_load_explicit(&ctx->counter, memory_order_seq_cst));
+        // 减少日志输出频率
+        if (i % 10000 == 0) {
+            printf("Thread %d completed %d operations\n", args->thread_id, i);
             fflush(stdout);
         }
     }
-    
-    printf("Thread %d completed all operations, local_counter: %zu, global_counter: %zu\n", 
-        args->thread_id, local_counter,
-        atomic_load_explicit(&ctx->counter, memory_order_seq_cst));
-    fflush(stdout);
-    return NULL;
 }
 
 // 使用自旋锁的线程函数
-static void* __attribute__((used)) spinlock_thread_func(void* arg) {
+static void spinlock_thread_func(void* arg) {
     thread_args_t* args = (thread_args_t*)arg;
     test_context_t* ctx = args->ctx;
     uint64_t start_time, end_time;
-    size_t local_counter = 0;
-    
-    printf("Thread %d started\n", args->thread_id);
-    fflush(stdout);
+    uint64_t local_counter = 0;
     
     for (int i = 0; i < OPS_PER_THREAD; i++) {
         start_time = get_time_us();
@@ -100,30 +85,21 @@ static void* __attribute__((used)) spinlock_thread_func(void* arg) {
         end_time = get_time_us();
         args->total_time_us += (end_time - start_time);
         
-        // 临界区操作
-        size_t old_value = atomic_load_explicit(&ctx->counter, memory_order_seq_cst);
-        atomic_store_explicit(&ctx->counter, old_value + 1, memory_order_seq_cst);
+        // 临界区操作 - 使用更轻量级的内存序
+        uint64_t old_value = atomic_load_explicit(&ctx->counter, memory_order_relaxed);
+        atomic_store_explicit(&ctx->counter, old_value + 1, memory_order_relaxed);
         local_counter++;
-        memset(ctx->shared_buffer, (char)i, VALUE_SIZE);
+        ctx->shared_buffer[0]++;  // 简单的内存操作
         
         // 解锁
         assert(ppdb_base_spinlock_unlock(ctx->spinlock) == PPDB_OK);
         
-        // 模拟其他工作
-        if (i % 100 == 0) {
-            usleep(1);
-            printf("Thread %d completed %d operations, local_counter: %zu, global_counter: %zu\n", 
-                args->thread_id, i, local_counter,
-                atomic_load_explicit(&ctx->counter, memory_order_seq_cst));
+        // 减少日志输出频率
+        if (i % 10000 == 0) {
+            printf("Thread %d completed %d operations\n", args->thread_id, i);
             fflush(stdout);
         }
     }
-    
-    printf("Thread %d completed all operations, local_counter: %zu, global_counter: %zu\n", 
-        args->thread_id, local_counter,
-        atomic_load_explicit(&ctx->counter, memory_order_seq_cst));
-    fflush(stdout);
-    return NULL;
 }
 
 // 测试互斥锁性能
@@ -148,9 +124,9 @@ static void test_mutex_performance(void) {
     printf("Creating mutex...\n");
     fflush(stdout);
     assert(ppdb_base_mutex_create(&ctx->mutex) == PPDB_OK);
-    ctx->shared_buffer = malloc(VALUE_SIZE);
-    assert(ctx->shared_buffer != NULL);
-    atomic_store_explicit(&ctx->counter, 0, memory_order_seq_cst);
+    ppdb_base_mutex_enable_stats(ctx->mutex, true);  // 启用统计
+    ctx->shared_buffer[0] = 0;
+    atomic_store_explicit(&ctx->counter, 0, memory_order_relaxed);
     
     // 启动线程
     printf("Starting threads...\n");
@@ -198,13 +174,12 @@ static void test_mutex_performance(void) {
     printf("  Total Time: %.2f seconds\n", test_duration / 1000000.0);
     printf("  Average Lock Latency: %.2f microseconds\n", avg_latency_us);
     printf("  Operations/Second: %.2f\n", ops_per_sec);
-    printf("  Final Counter: %zu\n", atomic_load_explicit(&ctx->counter, memory_order_seq_cst));
+    printf("  Final Counter: %zu\n", atomic_load_explicit(&ctx->counter, memory_order_relaxed));
     fflush(stdout);
     
     // 清理资源
     printf("Cleaning up mutex test resources...\n");
     fflush(stdout);
-    free(ctx->shared_buffer);
     ppdb_base_mutex_destroy(ctx->mutex);
     ppdb_base_destroy(ctx->base);
     free(ctx);
@@ -232,9 +207,9 @@ static void test_spinlock_performance(void) {
     printf("Creating spinlock...\n");
     fflush(stdout);
     assert(ppdb_base_spinlock_create(&ctx->spinlock) == PPDB_OK);
-    ctx->shared_buffer = malloc(VALUE_SIZE);
-    assert(ctx->shared_buffer != NULL);
-    atomic_store_explicit(&ctx->counter, 0, memory_order_seq_cst);
+    ppdb_base_spinlock_enable_stats(ctx->spinlock, true);  // 启用统计
+    ctx->shared_buffer[0] = 0;
+    atomic_store_explicit(&ctx->counter, 0, memory_order_relaxed);
     
     // 启动线程
     printf("Starting threads...\n");
@@ -282,13 +257,12 @@ static void test_spinlock_performance(void) {
     printf("  Total Time: %.2f seconds\n", test_duration / 1000000.0);
     printf("  Average Lock Latency: %.2f microseconds\n", avg_latency_us);
     printf("  Operations/Second: %.2f\n", ops_per_sec);
-    printf("  Final Counter: %zu\n", atomic_load_explicit(&ctx->counter, memory_order_seq_cst));
+    printf("  Final Counter: %zu\n", atomic_load_explicit(&ctx->counter, memory_order_relaxed));
     fflush(stdout);
     
     // 清理资源
     printf("Cleaning up spinlock test resources...\n");
     fflush(stdout);
-    free(ctx->shared_buffer);
     ppdb_base_spinlock_destroy(ctx->spinlock);
     ppdb_base_destroy(ctx->base);
     free(ctx);

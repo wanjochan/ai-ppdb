@@ -5,20 +5,22 @@
 #include <cosmopolitan.h>
 #include "../internal/base.h"
 
-// Mutex implementation
-struct ppdb_base_mutex_s {
-    pthread_mutex_t mutex;
-    uint64_t lock_count;
-    uint64_t contention_count;
-    uint64_t total_wait_time_us;
-    uint64_t max_wait_time_us;
-};
-
+// 时间相关函数
 static uint64_t get_time_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
 }
+
+// Mutex implementation
+struct ppdb_base_mutex_s {
+    pthread_mutex_t mutex;
+    bool enable_stats;         // 运行时控制统计
+    uint64_t lock_count;
+    uint64_t contention_count;
+    uint64_t total_wait_time_us;
+    uint64_t max_wait_time_us;
+};
 
 ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex) {
     if (!mutex) {
@@ -31,10 +33,11 @@ ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex) {
     }
 
     memset(m, 0, sizeof(ppdb_base_mutex_t));
+    m->enable_stats = false;  // 默认禁用统计
     
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);
     
     if (pthread_mutex_init(&m->mutex, &attr) != 0) {
         pthread_mutexattr_destroy(&attr);
@@ -47,12 +50,17 @@ ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex) {
     return PPDB_OK;
 }
 
-void ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex) {
-    if (!mutex) {
-        return;
+void ppdb_base_mutex_enable_stats(ppdb_base_mutex_t* mutex, bool enable) {
+    if (mutex) {
+        mutex->enable_stats = enable;
+        if (!enable) {
+            // 重置统计数据
+            mutex->lock_count = 0;
+            mutex->contention_count = 0;
+            mutex->total_wait_time_us = 0;
+            mutex->max_wait_time_us = 0;
+        }
     }
-    pthread_mutex_destroy(&mutex->mutex);
-    free(mutex);
 }
 
 ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
@@ -60,21 +68,27 @@ ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
         return PPDB_ERR_PARAM;
     }
 
-    uint64_t start_time = get_time_us();
-    int result = pthread_mutex_lock(&mutex->mutex);
-    uint64_t end_time = get_time_us();
-    uint64_t wait_time = end_time - start_time;
+    uint64_t start_time = 0;
+    if (mutex->enable_stats) {
+        start_time = get_time_us();
+    }
 
+    int result = pthread_mutex_lock(&mutex->mutex);
     if (result != 0) {
         return PPDB_BASE_ERR_MUTEX;
     }
 
-    mutex->lock_count++;
-    if (wait_time > 0) {
-        mutex->contention_count++;
-        mutex->total_wait_time_us += wait_time;
-        if (wait_time > mutex->max_wait_time_us) {
-            mutex->max_wait_time_us = wait_time;
+    if (mutex->enable_stats) {
+        uint64_t end_time = get_time_us();
+        uint64_t wait_time = end_time - start_time;
+
+        mutex->lock_count++;
+        if (wait_time > 0) {
+            mutex->contention_count++;
+            mutex->total_wait_time_us += wait_time;
+            if (wait_time > mutex->max_wait_time_us) {
+                mutex->max_wait_time_us = wait_time;
+            }
         }
     }
 
@@ -88,7 +102,9 @@ ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex) {
 
     int result = pthread_mutex_trylock(&mutex->mutex);
     if (result == 0) {
-        mutex->lock_count++;
+        if (mutex->enable_stats) {
+            mutex->lock_count++;
+        }
         return PPDB_OK;
     } else if (result == EBUSY) {
         return PPDB_ERR_BUSY;
@@ -112,7 +128,7 @@ ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex) {
 void ppdb_base_mutex_get_stats(ppdb_base_mutex_t* mutex, uint64_t* lock_count,
                               uint64_t* contention_count, uint64_t* total_wait_time_us,
                               uint64_t* max_wait_time_us) {
-    if (!mutex) {
+    if (!mutex || !mutex->enable_stats) {
         if (lock_count) *lock_count = 0;
         if (contention_count) *contention_count = 0;
         if (total_wait_time_us) *total_wait_time_us = 0;
@@ -129,6 +145,19 @@ void ppdb_base_mutex_get_stats(ppdb_base_mutex_t* mutex, uint64_t* lock_count,
 const char* ppdb_base_mutex_get_error(ppdb_base_mutex_t* mutex) {
     (void)mutex; // Unused parameter
     return strerror(errno);
+}
+
+ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex) {
+    if (!mutex) {
+        return PPDB_ERR_PARAM;
+    }
+
+    if (pthread_mutex_destroy(&mutex->mutex) != 0) {
+        return PPDB_BASE_ERR_MUTEX;
+    }
+
+    free(mutex);
+    return PPDB_OK;
 }
 
 // Sync implementation
@@ -287,19 +316,6 @@ ppdb_error_t ppdb_base_sync_perf_test(ppdb_base_sync_t* sync, uint32_t num_threa
     printf("  Operations per second: %.2f\n", 
            (double)(num_threads * iterations) / ((double)max_time / 1000000.0));
 
-    uint64_t lock_count, contention_count, total_wait_time, max_wait_time;
-    ppdb_base_mutex_get_stats(sync->mutex, &lock_count, &contention_count, 
-                             &total_wait_time, &max_wait_time);
-
-    printf("\nMutex Statistics:\n");
-    printf("  Lock count: %lu\n", lock_count);
-    printf("  Contention count: %lu\n", contention_count);
-    printf("  Average wait time: %.2f us\n", 
-           contention_count > 0 ? (double)total_wait_time / contention_count : 0.0);
-    printf("  Max wait time: %lu us\n", max_wait_time);
-    printf("  Contention ratio: %.2f%%\n", 
-           lock_count > 0 ? ((double)contention_count / lock_count) * 100.0 : 0.0);
-
     free(threads);
     free(thread_data);
     return PPDB_OK;
@@ -315,6 +331,13 @@ struct ppdb_base_thread_s {
     uint64_t wall_time;
     int state;
 };
+
+static void* thread_wrapper(void* arg) {
+    ppdb_base_thread_t* t = (ppdb_base_thread_t*)arg;
+    t->func(t->arg);
+    t->wall_time = get_time_us() - t->start_time;
+    return NULL;
+}
 
 ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg) {
     if (!thread || !func) {
@@ -332,14 +355,6 @@ ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thre
     t->start_time = get_time_us();
     t->wall_time = 0;
     t->state = 0;
-
-    // 包装函数，用于捕获执行时间
-    void* thread_wrapper(void* arg) {
-        ppdb_base_thread_t* t = (ppdb_base_thread_t*)arg;
-        t->func(t->arg);
-        t->wall_time = get_time_us() - t->start_time;
-        return NULL;
-    }
 
     if (pthread_create(&t->thread, NULL, thread_wrapper, t) != 0) {
         free(t);
@@ -416,6 +431,7 @@ const char* ppdb_base_thread_get_error(ppdb_base_thread_t* thread) {
 // Spinlock implementation
 struct ppdb_base_spinlock_s {
     _Atomic(int) lock;
+    bool enable_stats;         // 运行时控制统计
     uint64_t lock_count;
     uint64_t contention_count;
     uint64_t total_wait_time_us;
@@ -435,10 +451,24 @@ ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock) {
 
     memset(s, 0, sizeof(ppdb_base_spinlock_t));
     atomic_init(&s->lock, 0);
-    s->spin_count = 1000; // 默认自旋次数
+    s->enable_stats = false;  // 默认禁用统计
+    s->spin_count = 1000;     // 默认自旋次数
 
     *spinlock = s;
     return PPDB_OK;
+}
+
+void ppdb_base_spinlock_enable_stats(ppdb_base_spinlock_t* spinlock, bool enable) {
+    if (spinlock) {
+        spinlock->enable_stats = enable;
+        if (!enable) {
+            // 重置统计数据
+            spinlock->lock_count = 0;
+            spinlock->contention_count = 0;
+            spinlock->total_wait_time_us = 0;
+            spinlock->max_wait_time_us = 0;
+        }
+    }
 }
 
 ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
@@ -446,7 +476,11 @@ ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
         return PPDB_ERR_PARAM;
     }
 
-    uint64_t start_time = get_time_us();
+    uint64_t start_time = 0;
+    if (spinlock->enable_stats) {
+        start_time = get_time_us();
+    }
+
     int expected = 0;
     uint32_t spins = 0;
     
@@ -464,15 +498,17 @@ ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock) {
         }
     }
 
-    uint64_t end_time = get_time_us();
-    uint64_t wait_time = end_time - start_time;
+    if (spinlock->enable_stats) {
+        uint64_t end_time = get_time_us();
+        uint64_t wait_time = end_time - start_time;
 
-    spinlock->lock_count++;
-    if (wait_time > 0) {
-        spinlock->contention_count++;
-        spinlock->total_wait_time_us += wait_time;
-        if (wait_time > spinlock->max_wait_time_us) {
-            spinlock->max_wait_time_us = wait_time;
+        spinlock->lock_count++;
+        if (wait_time > 0) {
+            spinlock->contention_count++;
+            spinlock->total_wait_time_us += wait_time;
+            if (wait_time > spinlock->max_wait_time_us) {
+                spinlock->max_wait_time_us = wait_time;
+            }
         }
     }
 
@@ -486,33 +522,19 @@ ppdb_error_t ppdb_base_spinlock_trylock(ppdb_base_spinlock_t* spinlock) {
 
     int expected = 0;
     if (atomic_compare_exchange_strong(&spinlock->lock, &expected, 1)) {
-        spinlock->lock_count++;
+        if (spinlock->enable_stats) {
+            spinlock->lock_count++;
+        }
         return PPDB_OK;
     }
 
     return PPDB_ERR_BUSY;
 }
 
-ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock) {
-    if (!spinlock) {
-        return PPDB_ERR_PARAM;
-    }
-
-    atomic_store(&spinlock->lock, 0);
-    return PPDB_OK;
-}
-
-void ppdb_base_spinlock_set_spin_count(ppdb_base_spinlock_t* spinlock, uint32_t count) {
-    if (!spinlock) {
-        return;
-    }
-    spinlock->spin_count = count;
-}
-
 void ppdb_base_spinlock_get_stats(ppdb_base_spinlock_t* spinlock, uint64_t* lock_count,
                                  uint64_t* contention_count, uint64_t* total_wait_time_us,
                                  uint64_t* max_wait_time_us) {
-    if (!spinlock) {
+    if (!spinlock || !spinlock->enable_stats) {
         if (lock_count) *lock_count = 0;
         if (contention_count) *contention_count = 0;
         if (total_wait_time_us) *total_wait_time_us = 0;
