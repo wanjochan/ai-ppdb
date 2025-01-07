@@ -42,6 +42,8 @@ ppdb_error_t ppdb_base_skiplist_create(ppdb_base_skiplist_t** list, ppdb_base_co
     }
 
     memset(new_list->header->forward, 0, sizeof(ppdb_base_skiplist_node_t*) * MAX_SKIPLIST_LEVEL);
+    new_list->header->key = NULL;
+    new_list->header->value = NULL;
     new_list->level = 1;  // Start from level 1
     new_list->size = 0;
     new_list->compare = compare;

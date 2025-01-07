@@ -31,7 +31,7 @@ ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size
         ppdb_base_aligned_free(key_copy);
         ppdb_base_aligned_free(value_copy);
         ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_STORAGE_ERR_INTERNAL;
+        return err;
     }
 
     table->size++;
@@ -56,24 +56,28 @@ ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size
     *(size_t*)key_copy = key_size;
     memcpy((char*)key_copy + sizeof(size_t), key, key_size);
 
-    // Find in skiplist
-    void* found_value = NULL;
-    ppdb_error_t err = ppdb_base_skiplist_find(table->data, key_copy, &found_value);
-    ppdb_base_aligned_free(key_copy);
-
-    if (err != PPDB_OK || found_value == NULL) {
+    // Find value in skiplist
+    void* value_ptr = NULL;
+    ppdb_error_t err = ppdb_base_skiplist_find(table->data, key_copy, &value_ptr);
+    if (err == PPDB_ERR_PARAM) {
         ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_ERR_NOT_FOUND;
+        return PPDB_STORAGE_ERR_PARAM;
+    } else if (err == PPDB_ERR_NOT_FOUND) {
+        ppdb_base_spinlock_unlock(&table->lock);
+        return PPDB_STORAGE_ERR_NOT_FOUND;
+    } else if (err != PPDB_OK) {
+        ppdb_base_spinlock_unlock(&table->lock);
+        return PPDB_STORAGE_ERR_INTERNAL;
     }
 
     // Copy value
-    size_t found_size = *(size_t*)found_value;
+    size_t found_size = *(size_t*)value_ptr;
     if (*value_size < found_size) {
         ppdb_base_spinlock_unlock(&table->lock);
         return PPDB_STORAGE_ERR_PARAM;
     }
 
-    memcpy(value, (char*)found_value + sizeof(size_t), found_size);
+    memcpy(value, (char*)value_ptr + sizeof(size_t), found_size);
     *value_size = found_size;
 
     ppdb_base_spinlock_unlock(&table->lock);
@@ -100,9 +104,12 @@ ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, s
     ppdb_error_t err = ppdb_base_skiplist_remove(table->data, key_copy);
     ppdb_base_aligned_free(key_copy);
 
-    if (err != PPDB_OK) {
+    if (err == PPDB_ERR_NOT_FOUND) {
         ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_ERR_NOT_FOUND;
+        return PPDB_STORAGE_ERR_NOT_FOUND;
+    } else if (err != PPDB_OK) {
+        ppdb_base_spinlock_unlock(&table->lock);
+        return PPDB_STORAGE_ERR_INTERNAL;
     }
 
     table->size--;

@@ -78,8 +78,10 @@ static int test_data_basic_operations(void) {
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     
     // Get data
+    size = sizeof(buffer);
     err = ppdb_storage_get(table, key, strlen(key), buffer, &size);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_EQUALS(strlen(value) + 1, size);
     TEST_ASSERT_EQUALS(0, strcmp(buffer, value));
     
     // Delete data
@@ -89,7 +91,7 @@ static int test_data_basic_operations(void) {
     // Verify deletion
     size = sizeof(buffer);
     err = ppdb_storage_get(table, key, strlen(key), buffer, &size);
-    TEST_ASSERT_EQUALS(PPDB_ERR_NOT_FOUND, err);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_NOT_FOUND, err);
     
     printf("  Test passed: data_basic_operations\n");
     return 0;
@@ -212,7 +214,7 @@ static int test_data_multiple_operations(void) {
         size = sizeof(buffer);
         err = ppdb_storage_get(table, key, strlen(key), 
                               buffer, &size);
-        TEST_ASSERT_EQUALS(PPDB_ERR_NOT_FOUND, err);
+        TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_NOT_FOUND, err);
     }
     
     printf("  Test passed: data_multiple_operations\n");

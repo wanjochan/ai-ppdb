@@ -23,6 +23,7 @@
 #define PPDB_STORAGE_ERR_CONFIG         (PPDB_STORAGE_ERR_START + 0x0A)
 #define PPDB_STORAGE_ERR_MEMORY         (PPDB_STORAGE_ERR_START + 0x0B)
 #define PPDB_STORAGE_ERR_INTERNAL       (PPDB_STORAGE_ERR_START + 0x0C)
+#define PPDB_STORAGE_ERR_NOT_FOUND      (PPDB_STORAGE_ERR_START + 0x0D)
 
 // Default values
 #define PPDB_DEFAULT_DATA_DIR      "data"
@@ -34,16 +35,9 @@ typedef struct ppdb_storage_index_s ppdb_storage_index_t;
 
 // Internal functions
 static inline int data_compare(const void* a, const void* b) {
-    size_t size_a = *(const size_t*)a;
-    size_t size_b = *(const size_t*)b;
-    const char* data_a = (const char*)a + sizeof(size_t);
-    const char* data_b = (const char*)b + sizeof(size_t);
-    size_t min_size = size_a < size_b ? size_a : size_b;
-    int result = memcmp(data_a, data_b, min_size);
-    if (result == 0) {
-        return size_a - size_b;
-    }
-    return result;
+    const char* str_a = *(const char**)a;
+    const char* str_b = *(const char**)b;
+    return strcmp(str_a, str_b);
 }
 
 // Maintenance structure
@@ -56,7 +50,8 @@ typedef struct ppdb_storage_maintain_s {
 
 // Table structure
 struct ppdb_storage_table_s {
-    char* name;                    // Table name
+    char* name;                    // Owned table name string
+    size_t name_len;              // Length of table name
     ppdb_base_skiplist_t* data;    // Table data
     ppdb_base_skiplist_t* indexes; // Table indexes
     ppdb_base_spinlock_t lock;     // Table lock
@@ -106,7 +101,7 @@ struct ppdb_storage_s {
     ppdb_base_t* base;                  // Base layer instance
     ppdb_storage_config_t config;       // Storage configuration
     ppdb_storage_stats_t stats;         // Storage statistics
-    ppdb_storage_table_t* tables;       // List of tables
+    ppdb_base_skiplist_t* tables;       // List of tables (keys are table names)
     ppdb_base_spinlock_t lock;          // Global storage lock
     ppdb_storage_maintain_t maintain;    // Maintenance structure
 };

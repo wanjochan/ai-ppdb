@@ -67,12 +67,30 @@ static int test_table_create_normal(void) {
     ppdb_error_t err = ppdb_storage_create_table(storage, "test_table", &table);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(table);
+    TEST_ASSERT_NOT_NULL(table->name);
+    TEST_ASSERT_EQUALS(0, strcmp(table->name, "test_table"));
+    TEST_ASSERT_NOT_NULL(table->data);
+    TEST_ASSERT_NOT_NULL(table->indexes);
+    TEST_ASSERT_EQUALS(0, table->size);
+    TEST_ASSERT_EQUALS(true, table->is_open);
     
     // Try to create same table again
     ppdb_storage_table_t* table2 = NULL;
     err = ppdb_storage_create_table(storage, "test_table", &table2);
     TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_EXISTS, err);
     TEST_ASSERT_EQUALS(NULL, table2);
+    
+    // Create another table with different name
+    ppdb_storage_table_t* table3 = NULL;
+    err = ppdb_storage_create_table(storage, "test_table2", &table3);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(table3);
+    TEST_ASSERT_NOT_NULL(table3->name);
+    TEST_ASSERT_EQUALS(0, strcmp(table3->name, "test_table2"));
+    TEST_ASSERT_NOT_NULL(table3->data);
+    TEST_ASSERT_NOT_NULL(table3->indexes);
+    TEST_ASSERT_EQUALS(0, table3->size);
+    TEST_ASSERT_EQUALS(true, table3->is_open);
     
     printf("  Test passed: table_create_normal\n");
     return 0;

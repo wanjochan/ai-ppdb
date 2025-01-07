@@ -15,6 +15,12 @@
 #include "storage/storage_maintain.inc.c"
 #include "storage/storage_wal.inc.c"
 
+// Table name comparison function
+static int ppdb_storage_compare_table_name(const void* a, const void* b) {
+    if (!a || !b) return a ? 1 : (b ? -1 : 0);
+    return strcmp((const char*)a, (const char*)b);
+}
+
 // Storage initialization
 ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_base_t* base, const ppdb_storage_config_t* config) {
     if (!storage || !base || !config) return PPDB_STORAGE_ERR_PARAM;
@@ -42,13 +48,13 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_base_t* base, cons
 
     // Initialize tables list
     ppdb_base_skiplist_t* tables_list = NULL;
-    err = ppdb_base_skiplist_create(&tables_list, table_name_compare);
+    err = ppdb_base_skiplist_create(&tables_list, ppdb_storage_compare_table_name);
     if (err != PPDB_OK) {
         ppdb_base_spinlock_destroy(&s->lock);
         ppdb_base_aligned_free(s);
         return err;
     }
-    s->tables = (ppdb_storage_table_t*)tables_list;
+    s->tables = tables_list;
 
     // Initialize statistics
     err = ppdb_base_counter_create(&s->stats.reads);
