@@ -279,12 +279,42 @@ ppdb_error_t ppdb_base_future_wait_timeout(ppdb_base_async_future_t* future, uin
 ppdb_error_t ppdb_base_future_is_ready(ppdb_base_async_future_t* future, bool* ready);
 ppdb_error_t ppdb_base_future_get_result(ppdb_base_async_future_t* future, void* result, size_t size, size_t* actual_size);
 
-// Timer operations
-ppdb_error_t ppdb_base_timer_create(ppdb_base_async_loop_t* loop, ppdb_base_timer_t** timer);
-ppdb_error_t ppdb_base_timer_destroy(ppdb_base_timer_t* timer);
-ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer, uint64_t timeout_ms, bool repeat, ppdb_base_async_cb cb, void* user_data);
+// Timer statistics
+typedef struct ppdb_base_timer_stats_s {
+    uint64_t total_timeouts;      // Total number of timeouts
+    uint64_t active_timers;       // Current active timers
+    uint64_t total_resets;        // Total number of timer resets
+    uint64_t total_cancels;       // Total number of timer cancels
+} ppdb_base_timer_stats_t;
+
+// Timer structure
+typedef struct ppdb_base_timer_s {
+    ppdb_base_event_loop_t* loop;  // Event loop
+    uint64_t timeout_us;          // Timeout in microseconds
+    uint64_t next_timeout;        // Next timeout point
+    bool repeat;                  // Whether timer repeats
+    void* user_data;             // User data
+    ppdb_base_timer_callback_t callback;  // Timer callback
+    struct ppdb_base_timer_s* next;  // Next timer in list
+    ppdb_base_timer_stats_t stats;  // Timer statistics
+} ppdb_base_timer_t;
+
+// Timer functions
+ppdb_error_t ppdb_base_timer_create(ppdb_base_event_loop_t* loop,
+                                   ppdb_base_timer_t** timer);
+void ppdb_base_timer_destroy(ppdb_base_timer_t* timer);
+ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer,
+                                  uint64_t timeout_ms,
+                                  bool repeat,
+                                  ppdb_base_timer_callback_t callback,
+                                  void* user_data);
 ppdb_error_t ppdb_base_timer_stop(ppdb_base_timer_t* timer);
 ppdb_error_t ppdb_base_timer_reset(ppdb_base_timer_t* timer);
+
+// Timer statistics functions
+void ppdb_base_timer_get_stats(ppdb_base_timer_t* timer,
+                              ppdb_base_timer_stats_t* stats);
+void ppdb_base_timer_reset_stats(ppdb_base_timer_t* timer);
 
 // Operating System Type Definitions
 typedef enum ppdb_os_type {
@@ -311,5 +341,146 @@ struct ppdb_base_spinlock_s {
     uint64_t max_wait_time_us;
     uint32_t spin_count;
 };
+
+// Memory pool statistics
+typedef struct ppdb_base_mempool_stats_s {
+    uint64_t total_allocs;        // Total number of allocations
+    uint64_t total_frees;         // Total number of frees
+    uint64_t current_blocks;      // Current number of blocks
+    uint64_t peak_blocks;         // Peak number of blocks
+    uint64_t current_bytes;       // Current bytes allocated
+    uint64_t peak_bytes;          // Peak bytes allocated
+    uint64_t total_bytes;         // Total bytes allocated
+    uint64_t failed_allocs;       // Failed allocation attempts
+} ppdb_base_mempool_stats_t;
+
+// Memory pool operations
+// ... existing code ...
+
+// Memory pool statistics operations
+void ppdb_base_mempool_get_stats(ppdb_base_mempool_t* pool, ppdb_base_mempool_stats_t* stats);
+void ppdb_base_mempool_reset_stats(ppdb_base_mempool_t* pool);
+
+// IO request types
+#define PPDB_IO_READ  1
+#define PPDB_IO_WRITE 2
+
+// IO request state
+#define PPDB_IO_PENDING   0
+#define PPDB_IO_COMPLETE  1
+#define PPDB_IO_ERROR     2
+
+// IO Manager statistics
+typedef struct ppdb_base_io_stats_s {
+    uint64_t total_reads;          // Total read operations
+    uint64_t total_writes;         // Total write operations
+    uint64_t read_bytes;           // Total bytes read
+    uint64_t write_bytes;          // Total bytes written
+    uint64_t pending_ops;          // Current pending operations
+    uint64_t completed_ops;        // Total completed operations
+    uint64_t error_ops;           // Total operations with errors
+    uint64_t total_wait_time_us;  // Total wait time in microseconds
+} ppdb_base_io_stats_t;
+
+// IO Request structure
+typedef struct ppdb_base_io_request_s {
+    uint32_t type;                // Request type (read/write)
+    void* buffer;                 // Data buffer
+    size_t size;                  // Buffer size
+    uint64_t offset;             // File offset
+    int fd;                      // File descriptor
+    uint32_t state;              // Request state
+    ppdb_error_t error;          // Error code if any
+    uint64_t start_time;         // Request start time
+    ppdb_base_io_callback_t callback;  // Completion callback
+    void* callback_data;         // User data for callback
+    struct ppdb_base_io_request_s* next;  // Next request in queue
+} ppdb_base_io_request_t;
+
+// IO Manager structure
+typedef struct ppdb_base_io_manager_s {
+    ppdb_base_mutex_t* mutex;           // Mutex for thread safety
+    ppdb_base_thread_t* worker_thread;  // Worker thread
+    ppdb_base_io_request_t* pending;    // Pending requests queue
+    ppdb_base_io_request_t* completed;  // Completed requests queue
+    bool running;                       // Manager running state
+    ppdb_base_io_stats_t stats;        // IO statistics
+} ppdb_base_io_manager_t;
+
+// IO Manager functions
+ppdb_error_t ppdb_base_io_manager_create(ppdb_base_io_manager_t** manager);
+void ppdb_base_io_manager_destroy(ppdb_base_io_manager_t* manager);
+ppdb_error_t ppdb_base_io_manager_start(ppdb_base_io_manager_t* manager);
+ppdb_error_t ppdb_base_io_manager_stop(ppdb_base_io_manager_t* manager);
+
+// Async IO operations
+ppdb_error_t ppdb_base_io_read_async(ppdb_base_io_manager_t* manager, 
+                                    int fd, void* buffer, size_t size, 
+                                    uint64_t offset, ppdb_base_io_callback_t callback,
+                                    void* callback_data);
+ppdb_error_t ppdb_base_io_write_async(ppdb_base_io_manager_t* manager,
+                                     int fd, const void* buffer, size_t size,
+                                     uint64_t offset, ppdb_base_io_callback_t callback,
+                                     void* callback_data);
+
+// IO statistics operations
+void ppdb_base_io_get_stats(ppdb_base_io_manager_t* manager, ppdb_base_io_stats_t* stats);
+void ppdb_base_io_reset_stats(ppdb_base_io_manager_t* manager);
+
+// Event types
+#define PPDB_EVENT_NONE    0
+#define PPDB_EVENT_READ    1
+#define PPDB_EVENT_WRITE   2
+#define PPDB_EVENT_ERROR   4
+#define PPDB_EVENT_TIMEOUT 8
+
+// Event loop statistics
+typedef struct ppdb_base_event_stats_s {
+    uint64_t total_events;         // Total events processed
+    uint64_t active_handlers;      // Current active event handlers
+    uint64_t total_timeouts;       // Total timeout events
+    uint64_t total_errors;         // Total error events
+    uint64_t total_wait_time_us;   // Total wait time in microseconds
+} ppdb_base_event_stats_t;
+
+// Event handler structure
+typedef struct ppdb_base_event_handler_s {
+    int fd;                        // File descriptor
+    uint32_t events;              // Registered events
+    void* data;                   // User data
+    void (*callback)(struct ppdb_base_event_handler_s* handler, uint32_t events);
+    struct ppdb_base_event_handler_s* next;  // Next handler in list
+} ppdb_base_event_handler_t;
+
+// Event loop structure
+typedef struct ppdb_base_event_loop_s {
+    ppdb_base_mutex_t* mutex;           // Mutex for thread safety
+    ppdb_base_event_handler_t* handlers;  // List of event handlers
+    ppdb_base_timer_t* timers;          // List of active timers
+    bool running;                       // Loop running state
+    ppdb_base_event_stats_t stats;      // Event statistics
+    void* impl;                         // Platform-specific implementation
+} ppdb_base_event_loop_t;
+
+// Event loop functions
+ppdb_error_t ppdb_base_event_loop_create(ppdb_base_event_loop_t** loop);
+void ppdb_base_event_loop_destroy(ppdb_base_event_loop_t* loop);
+ppdb_error_t ppdb_base_event_loop_run(ppdb_base_event_loop_t* loop, uint64_t timeout_ms);
+ppdb_error_t ppdb_base_event_loop_stop(ppdb_base_event_loop_t* loop);
+
+// Event handler functions
+ppdb_error_t ppdb_base_event_handler_create(ppdb_base_event_loop_t* loop,
+                                          ppdb_base_event_handler_t** handler,
+                                          int fd, uint32_t events,
+                                          void (*callback)(ppdb_base_event_handler_t*, uint32_t),
+                                          void* data);
+void ppdb_base_event_handler_destroy(ppdb_base_event_handler_t* handler);
+ppdb_error_t ppdb_base_event_handler_modify(ppdb_base_event_handler_t* handler,
+                                          uint32_t events);
+
+// Event statistics functions
+void ppdb_base_event_get_stats(ppdb_base_event_loop_t* loop,
+                              ppdb_base_event_stats_t* stats);
+void ppdb_base_event_reset_stats(ppdb_base_event_loop_t* loop);
 
 #endif // PPDB_INTERNAL_BASE_H_

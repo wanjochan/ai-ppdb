@@ -1,14 +1,31 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
-// Internal async context structure
+// Internal async context structure with added statistics
 struct ppdb_base_async_ctx {
     int io_handle;  // unified I/O handle for async operations
     bool is_running;
     ppdb_base_error_t last_error;
+    
+    // Added IO statistics
+    struct {
+        uint64_t total_ops;
+        uint64_t pending_ops;
+        uint64_t completed_ops;
+        uint64_t failed_ops;
+        size_t bytes_read;
+        size_t bytes_written;
+    } stats;
+    
+    // Added IO request queue
+    struct {
+        ppdb_base_async_request_t* head;
+        ppdb_base_async_request_t* tail;
+        size_t count;
+    } queue;
 };
 
-// Initialize async context
+// Enhanced async init with statistics initialization
 ppdb_base_error_t ppdb_base_async_init(ppdb_base_async_ctx_t* ctx) {
     if (!ctx) {
         return PPDB_BASE_ERROR_INVALID_PARAM;
@@ -21,11 +38,15 @@ ppdb_base_error_t ppdb_base_async_init(ppdb_base_async_ctx_t* ctx) {
         return PPDB_BASE_ERROR_SYSTEM;
     }
 
+    // Initialize queue
+    ctx->queue.head = ctx->queue.tail = NULL;
+    ctx->queue.count = 0;
+
     ctx->is_running = true;
     return PPDB_BASE_ERROR_OK;
 }
 
-// Run event loop
+// Enhanced run loop with statistics tracking
 ppdb_base_error_t ppdb_base_async_run(ppdb_base_async_ctx_t* ctx) {
     if (!ctx) {
         return PPDB_BASE_ERROR_INVALID_PARAM;
@@ -34,9 +55,13 @@ ppdb_base_error_t ppdb_base_async_run(ppdb_base_async_ctx_t* ctx) {
     struct IoEvent events[32];
     
     while (ctx->is_running) {
+        // Process queued requests
+        ppdb_base_async_process_queue(ctx);
+        
         int nevents = WaitForIoEvents(ctx->io_handle, events, 32, -1);
         if (nevents < 0) {
             if (IsInterrupted()) continue;
+            ctx->stats.failed_ops++;
             ctx->last_error = PPDB_BASE_ERROR_SYSTEM;
             return PPDB_BASE_ERROR_SYSTEM;
         }
@@ -44,6 +69,7 @@ ppdb_base_error_t ppdb_base_async_run(ppdb_base_async_ctx_t* ctx) {
         for (int i = 0; i < nevents; i++) {
             ppdb_base_event_handler_t* handler = 
                 (ppdb_base_event_handler_t*)events[i].data;
+            ctx->stats.completed_ops++;
             handler->callback(handler->data);
         }
     }
@@ -58,14 +84,47 @@ void ppdb_base_async_stop(ppdb_base_async_ctx_t* ctx) {
     }
 }
 
-// Cleanup async context
+// Enhanced cleanup with statistics reset
 void ppdb_base_async_cleanup(ppdb_base_async_ctx_t* ctx) {
     if (!ctx) return;
+
+    // Cleanup queue
+    while (ctx->queue.head) {
+        ppdb_base_async_request_t* req = ctx->queue.head;
+        ctx->queue.head = req->next;
+        ppdb_base_free(req);
+    }
 
     if (ctx->io_handle >= 0) {
         CloseIoHandle(ctx->io_handle);
         ctx->io_handle = -1;
     }
+
+    // Reset statistics
+    memset(&ctx->stats, 0, sizeof(ctx->stats));
+}
+
+// Added queue management functions
+ppdb_base_error_t ppdb_base_async_queue_request(
+    ppdb_base_async_ctx_t* ctx,
+    ppdb_base_async_request_t* request) {
+    if (!ctx || !request) {
+        return PPDB_BASE_ERROR_INVALID_PARAM;
+    }
+    
+    // Add to queue
+    if (!ctx->queue.head) {
+        ctx->queue.head = ctx->queue.tail = request;
+    } else {
+        ctx->queue.tail->next = request;
+        ctx->queue.tail = request;
+    }
+    
+    ctx->queue.count++;
+    ctx->stats.total_ops++;
+    ctx->stats.pending_ops++;
+    
+    return PPDB_BASE_ERROR_OK;
 }
 
 // ... additional async utility functions ...
@@ -436,4 +495,215 @@ ppdb_error_t ppdb_base_async_create(ppdb_base_async_loop_t** loop) {
     }
 
     return ppdb_base_async_create_with_impl(impl, loop);
+}
+
+// Worker thread function
+static void* io_worker_thread(void* arg) {
+    ppdb_base_io_manager_t* manager = (ppdb_base_io_manager_t*)arg;
+    ppdb_base_io_request_t* request;
+    ssize_t result;
+
+    while (manager->running) {
+        // Get next request
+        ppdb_base_mutex_lock(manager->mutex);
+        request = manager->pending;
+        if (request) {
+            manager->pending = request->next;
+            manager->stats.pending_ops--;
+        }
+        ppdb_base_mutex_unlock(manager->mutex);
+
+        if (!request) {
+            // No pending requests, sleep briefly
+            usleep(1000);
+            continue;
+        }
+
+        // Process request
+        if (request->type == PPDB_IO_READ) {
+            result = pread(request->fd, request->buffer, request->size, request->offset);
+            if (result < 0) {
+                request->error = PPDB_BASE_ERR_IO;
+                request->state = PPDB_IO_ERROR;
+                manager->stats.error_ops++;
+            } else {
+                request->state = PPDB_IO_COMPLETE;
+                manager->stats.read_bytes += result;
+                manager->stats.completed_ops++;
+            }
+        } else if (request->type == PPDB_IO_WRITE) {
+            result = pwrite(request->fd, request->buffer, request->size, request->offset);
+            if (result < 0) {
+                request->error = PPDB_BASE_ERR_IO;
+                request->state = PPDB_IO_ERROR;
+                manager->stats.error_ops++;
+            } else {
+                request->state = PPDB_IO_COMPLETE;
+                manager->stats.write_bytes += result;
+                manager->stats.completed_ops++;
+            }
+        }
+
+        // Update wait time
+        uint64_t end_time = ppdb_base_get_time_us();
+        manager->stats.total_wait_time_us += (end_time - request->start_time);
+
+        // Add to completed queue and call callback
+        if (request->callback) {
+            request->callback(request->error, request->callback_data);
+        }
+
+        ppdb_base_mutex_lock(manager->mutex);
+        request->next = manager->completed;
+        manager->completed = request;
+        ppdb_base_mutex_unlock(manager->mutex);
+    }
+
+    return NULL;
+}
+
+ppdb_error_t ppdb_base_io_manager_create(ppdb_base_io_manager_t** manager) {
+    PPDB_CHECK_NULL(manager);
+
+    ppdb_base_io_manager_t* mgr = malloc(sizeof(ppdb_base_io_manager_t));
+    if (!mgr) return PPDB_BASE_ERR_MEMORY;
+
+    memset(mgr, 0, sizeof(ppdb_base_io_manager_t));
+
+    ppdb_error_t err = ppdb_base_mutex_create(&mgr->mutex);
+    if (err != PPDB_OK) {
+        free(mgr);
+        return err;
+    }
+
+    *manager = mgr;
+    return PPDB_OK;
+}
+
+void ppdb_base_io_manager_destroy(ppdb_base_io_manager_t* manager) {
+    if (!manager) return;
+
+    // Stop worker thread if running
+    if (manager->running) {
+        ppdb_base_io_manager_stop(manager);
+    }
+
+    // Free pending requests
+    ppdb_base_io_request_t* request = manager->pending;
+    while (request) {
+        ppdb_base_io_request_t* next = request->next;
+        free(request);
+        request = next;
+    }
+
+    // Free completed requests
+    request = manager->completed;
+    while (request) {
+        ppdb_base_io_request_t* next = request->next;
+        free(request);
+        request = next;
+    }
+
+    ppdb_base_mutex_destroy(manager->mutex);
+    free(manager);
+}
+
+ppdb_error_t ppdb_base_io_manager_start(ppdb_base_io_manager_t* manager) {
+    PPDB_CHECK_NULL(manager);
+
+    if (manager->running) return PPDB_BASE_ERR_INVALID_STATE;
+
+    manager->running = true;
+    return ppdb_base_thread_create(&manager->worker_thread, io_worker_thread, manager);
+}
+
+ppdb_error_t ppdb_base_io_manager_stop(ppdb_base_io_manager_t* manager) {
+    PPDB_CHECK_NULL(manager);
+
+    if (!manager->running) return PPDB_BASE_ERR_INVALID_STATE;
+
+    manager->running = false;
+    return ppdb_base_thread_join(manager->worker_thread, NULL);
+}
+
+static ppdb_error_t queue_io_request(ppdb_base_io_manager_t* manager,
+                                   uint32_t type, int fd, void* buffer,
+                                   size_t size, uint64_t offset,
+                                   ppdb_base_io_callback_t callback,
+                                   void* callback_data) {
+    PPDB_CHECK_NULL(manager);
+    PPDB_CHECK_NULL(buffer);
+    PPDB_CHECK_PARAM(size > 0);
+    PPDB_CHECK_PARAM(fd >= 0);
+
+    if (!manager->running) return PPDB_BASE_ERR_INVALID_STATE;
+
+    // Create request
+    ppdb_base_io_request_t* request = malloc(sizeof(ppdb_base_io_request_t));
+    if (!request) return PPDB_BASE_ERR_MEMORY;
+
+    request->type = type;
+    request->buffer = buffer;
+    request->size = size;
+    request->offset = offset;
+    request->fd = fd;
+    request->state = PPDB_IO_PENDING;
+    request->error = PPDB_OK;
+    request->callback = callback;
+    request->callback_data = callback_data;
+    request->start_time = ppdb_base_get_time_us();
+    request->next = NULL;
+
+    // Add to pending queue
+    ppdb_base_mutex_lock(manager->mutex);
+    if (!manager->pending) {
+        manager->pending = request;
+    } else {
+        ppdb_base_io_request_t* last = manager->pending;
+        while (last->next) {
+            last = last->next;
+        }
+        last->next = request;
+    }
+    manager->stats.pending_ops++;
+    if (type == PPDB_IO_READ) {
+        manager->stats.total_reads++;
+    } else {
+        manager->stats.total_writes++;
+    }
+    ppdb_base_mutex_unlock(manager->mutex);
+
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_io_read_async(ppdb_base_io_manager_t* manager,
+                                    int fd, void* buffer, size_t size,
+                                    uint64_t offset, ppdb_base_io_callback_t callback,
+                                    void* callback_data) {
+    return queue_io_request(manager, PPDB_IO_READ, fd, buffer, size,
+                          offset, callback, callback_data);
+}
+
+ppdb_error_t ppdb_base_io_write_async(ppdb_base_io_manager_t* manager,
+                                     int fd, const void* buffer, size_t size,
+                                     uint64_t offset, ppdb_base_io_callback_t callback,
+                                     void* callback_data) {
+    return queue_io_request(manager, PPDB_IO_WRITE, fd, (void*)buffer,
+                          size, offset, callback, callback_data);
+}
+
+void ppdb_base_io_get_stats(ppdb_base_io_manager_t* manager, ppdb_base_io_stats_t* stats) {
+    if (!manager || !stats) return;
+
+    ppdb_base_mutex_lock(manager->mutex);
+    memcpy(stats, &manager->stats, sizeof(ppdb_base_io_stats_t));
+    ppdb_base_mutex_unlock(manager->mutex);
+}
+
+void ppdb_base_io_reset_stats(ppdb_base_io_manager_t* manager) {
+    if (!manager) return;
+
+    ppdb_base_mutex_lock(manager->mutex);
+    memset(&manager->stats, 0, sizeof(ppdb_base_io_stats_t));
+    ppdb_base_mutex_unlock(manager->mutex);
 }

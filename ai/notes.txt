@@ -5,26 +5,59 @@ cd ppdb/scripts; .\build.bat test42
 
 
 ## 注意事项
+===================================
 遇到问题先重读 AGENT_RULES.md 和 ppdb/中的项目文档，
 然后分析所有问题并制定尽量利用平行处理（parallel_apply）的修复方案，
 重复这个过程直到没有新问题（包括警告类问题）。
-特别注意：不要胡乱自己创建新文件（因为可能只是目录和文件搞错了）、
-项目 ppdb 是分层的，所以
-    1. 数据操作类必须用 engine 层（事务/并发/MVCC）
-    2. base 层仅用于基础设施（内存/同步/异步/数据结构等）
-    3. storage 层通过 engine 封装来实现功能
-    4. peer 层通过 storage 层接口操作数据，通过 engine 层处理异步/网络
-    如果要跨层使用功能，需要有足够的理由
+特别注意：不要胡乱自己创建新文件（因为可能只是目录和文件搞错了）
+===================================
+项目 ppdb 分层结构为：
+base => (engine + storage) => peer => (libppdb, ppdb.exe)
+
+1. Base层（基础设施）
+   - 内存管理、错误处理
+   - 事件循环、异步IO
+   - 定时器、同步原语
+
+2. Engine层（与Storage层并列）
+   - 事务管理
+   - 并发控制
+   - MVCC
+   - 为Storage层提供服务
+
+3. Storage层（与Engine层并列）
+   - 通过调用Engine层服务实现数据操作
+   - memkv（内存存储）
+   - diskv（磁盘存储）
+
+4. Peer层（网络通信）
+   - 通过Storage层接口操作数据
+   - 通过Engine层处理异步/网络
+
+修改前检查清单：
+□ 这个调用是否涉及事务性操作？
+□ 这个调用是否需要并发控制？
+□ 这个调用是否涉及数据版本？
+□ 这个调用是否仅仅是基础设施服务？
+
+判断原则：
+- 如果前三个任一为是 => 使用 engine 层
+- 如果只有最后一个为是 => 使用 base 层
+===================================
 本项目坚持用cosmopolitan标准、代码中的注释用英文、
 新增加函数时要先在现有头文件看看是不是已经有封装好的；
+
 常用头文件引用形式:
 #include <cosmopolitan.h>
 #include "internal/base.h"
 #include "internal/engine.h"
 #include "internal/storage.h"
 #include "internal/peer.h"
+===================================
 
 ## 任务
+
+
 cd ../ppdb/scripts; .\build.bat base
 cd ../ppdb/scripts; .\build.bat sync_perf 
 cd ../ppdb/scripts; .\build.bat engine

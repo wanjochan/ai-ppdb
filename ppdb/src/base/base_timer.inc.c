@@ -1,6 +1,16 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
+// Timer statistics structure
+struct ppdb_base_timer_stats_s {
+    uint64_t timers_created;
+    uint64_t timers_started; 
+    uint64_t timers_stopped;
+    uint64_t timer_callbacks;
+    uint64_t active_timers;
+    uint64_t peak_timers;
+};
+
 // Timer structure definition
 struct ppdb_base_timer_s {
     ppdb_base_async_loop_t* loop;
@@ -10,55 +20,158 @@ struct ppdb_base_timer_s {
     void* user_data;
     bool repeat;
     uint64_t interval_ms;
+    bool active;
+    struct timespec next_expiry;
+    // Add heap related fields
+    int heap_index;
 };
 
+// Global timer statistics
+static struct ppdb_base_timer_stats_s timer_stats = {0};
+
 // Create a new timer
-ppdb_error_t ppdb_base_timer_create(ppdb_base_async_loop_t* loop, ppdb_base_timer_t** timer) {
-    if (!loop || !timer) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_base_timer_create(ppdb_base_event_loop_t* loop,
+                                   ppdb_base_timer_t** timer) {
+    PPDB_CHECK_NULL(loop);
+    PPDB_CHECK_NULL(timer);
 
-    ppdb_base_timer_t* new_timer = malloc(sizeof(struct ppdb_base_timer_s));
-    if (!new_timer) return PPDB_ERR_MEMORY;
+    ppdb_base_timer_t* t = malloc(sizeof(ppdb_base_timer_t));
+    if (!t) return PPDB_BASE_ERR_MEMORY;
 
-    memset(new_timer, 0, sizeof(struct ppdb_base_timer_s));
-    new_timer->loop = loop;
+    memset(t, 0, sizeof(ppdb_base_timer_t));
+    t->loop = loop;
 
-    *timer = new_timer;
+    // Add to timer list
+    ppdb_base_mutex_lock(loop->mutex);
+    t->next = loop->timers;
+    loop->timers = t;
+    ppdb_base_mutex_unlock(loop->mutex);
+
+    *timer = t;
     return PPDB_OK;
 }
 
+// Timer callback wrapper
+static void timer_callback_wrapper(ppdb_base_async_handle_t* handle, void* user_data) {
+    ppdb_base_timer_t* timer = (ppdb_base_timer_t*)user_data;
+    
+    timer_stats.timer_callbacks++;
+    
+    if (timer->callback) {
+        timer->callback(handle, timer->user_data);
+    }
+    
+    if (!timer->repeat) {
+        ppdb_base_timer_stop(timer);
+    } else {
+        // Update next expiry for repeating timer
+        clock_gettime(CLOCK_MONOTONIC, &timer->next_expiry);
+        timer->next_expiry.tv_sec += timer->interval_ms / 1000;
+        timer->next_expiry.tv_nsec += (timer->interval_ms % 1000) * 1000000;
+    }
+}
+
 // Start the timer
-ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer, uint64_t timeout_ms, 
-                                  bool repeat, ppdb_base_async_cb cb, void* user_data) {
-    if (!timer || !cb) return PPDB_ERR_PARAM;
+ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer,
+                                  uint64_t timeout_ms,
+                                  bool repeat,
+                                  ppdb_base_timer_callback_t callback,
+                                  void* user_data) {
+    PPDB_CHECK_NULL(timer);
+    PPDB_CHECK_NULL(callback);
+    PPDB_CHECK_PARAM(timeout_ms > 0);
 
-    timer->callback = cb;
-    timer->user_data = user_data;
+    ppdb_base_mutex_lock(timer->loop->mutex);
+
+    timer->timeout_us = timeout_ms * 1000;  // Convert to microseconds
     timer->repeat = repeat;
-    timer->interval_ms = timeout_ms;
+    timer->callback = callback;
+    timer->user_data = user_data;
+    timer->next_timeout = ppdb_base_get_time_us() + timer->timeout_us;
 
-    // TODO: Implement timer start logic using timer_fd and async handle
+    // Update statistics
+    timer->stats.active_timers++;
 
+    ppdb_base_mutex_unlock(timer->loop->mutex);
     return PPDB_OK;
 }
 
 // Stop the timer
 ppdb_error_t ppdb_base_timer_stop(ppdb_base_timer_t* timer) {
-    if (!timer) return PPDB_ERR_PARAM;
-    // TODO: Implement timer stop logic
+    PPDB_CHECK_NULL(timer);
+
+    ppdb_base_mutex_lock(timer->loop->mutex);
+
+    if (timer->callback) {
+        timer->callback = NULL;
+        timer->stats.active_timers--;
+        timer->stats.total_cancels++;
+    }
+
+    ppdb_base_mutex_unlock(timer->loop->mutex);
     return PPDB_OK;
 }
 
 // Reset the timer
 ppdb_error_t ppdb_base_timer_reset(ppdb_base_timer_t* timer) {
-    if (!timer) return PPDB_ERR_PARAM;
-    // TODO: Implement timer reset logic
+    PPDB_CHECK_NULL(timer);
+
+    ppdb_base_mutex_lock(timer->loop->mutex);
+
+    if (timer->callback) {
+        timer->next_timeout = ppdb_base_get_time_us() + timer->timeout_us;
+        timer->stats.total_resets++;
+    }
+
+    ppdb_base_mutex_unlock(timer->loop->mutex);
     return PPDB_OK;
 }
 
 // Destroy the timer
-ppdb_error_t ppdb_base_timer_destroy(ppdb_base_timer_t* timer) {
-    if (!timer) return PPDB_ERR_PARAM;
-    // TODO: Implement handle cleanup when async handle implementation is ready
+void ppdb_base_timer_destroy(ppdb_base_timer_t* timer) {
+    if (!timer) return;
+
+    ppdb_base_event_loop_t* loop = timer->loop;
+    if (!loop) {
+        free(timer);
+        return;
+    }
+
+    // Stop if running
+    if (timer->callback) {
+        ppdb_base_timer_stop(timer);
+    }
+
+    // Remove from timer list
+    ppdb_base_mutex_lock(loop->mutex);
+    ppdb_base_timer_t** curr = &loop->timers;
+    while (*curr) {
+        if (*curr == timer) {
+            *curr = timer->next;
+            break;
+        }
+        curr = &(*curr)->next;
+    }
+    ppdb_base_mutex_unlock(loop->mutex);
+
     free(timer);
-    return PPDB_OK;
+}
+
+void ppdb_base_timer_get_stats(ppdb_base_timer_t* timer,
+                              ppdb_base_timer_stats_t* stats) {
+    if (!timer || !stats) return;
+
+    ppdb_base_mutex_lock(timer->loop->mutex);
+    memcpy(stats, &timer->stats, sizeof(ppdb_base_timer_stats_t));
+    ppdb_base_mutex_unlock(timer->loop->mutex);
+}
+
+void ppdb_base_timer_reset_stats(ppdb_base_timer_t* timer) {
+    if (!timer) return;
+
+    ppdb_base_mutex_lock(timer->loop->mutex);
+    memset(&timer->stats, 0, sizeof(ppdb_base_timer_stats_t));
+    // Preserve active timers count
+    timer->stats.active_timers = timer->callback ? 1 : 0;
+    ppdb_base_mutex_unlock(timer->loop->mutex);
 }

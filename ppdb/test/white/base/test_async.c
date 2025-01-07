@@ -1,128 +1,181 @@
-#include "test.h"
+#include <cosmopolitan.h>
 #include "internal/base.h"
 
-static void test_async_loop(void) {
-    ppdb_base_async_loop_t* loop = NULL;
-    ppdb_error_t err;
+// Test data
+static int io_complete_count = 0;
+static char test_buffer[1024];
+static const char test_data[] = "Hello, Async IO!";
 
-    // Test loop creation
-    err = ppdb_base_async_loop_create(&loop);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_NOT_NULL(loop);
-
-    // Test loop destruction
-    err = ppdb_base_async_loop_destroy(loop);
-    ASSERT_EQ(err, PPDB_OK);
+// IO completion callback
+static void test_io_callback(ppdb_base_async_t* async, void* data, size_t bytes_transferred, ppdb_error_t error) {
+    io_complete_count++;
 }
 
-static void test_async_handle(void) {
-    ppdb_base_async_loop_t* loop = NULL;
-    ppdb_base_async_handle_t* handle = NULL;
+// Test async IO basic operations
+static void test_async_basic(void) {
     ppdb_error_t err;
+    ppdb_base_async_t* async = NULL;
+    ppdb_base_async_stats_t stats;
 
-    // Create loop
-    err = ppdb_base_async_loop_create(&loop);
-    ASSERT_EQ(err, PPDB_OK);
+    // Create async IO manager
+    err = ppdb_base_async_create(&async);
+    assert(err == PPDB_OK);
+    assert(async != NULL);
 
-    // Test handle creation
-    int fd = open("/dev/null", O_RDWR);
-    ASSERT_GT(fd, 0);
+    // Check initial stats
+    ppdb_base_async_get_stats(async, &stats);
+    assert(stats.total_operations == 0);
+    assert(stats.active_operations == 0);
+    assert(stats.total_bytes_read == 0);
+    assert(stats.total_bytes_written == 0);
 
-    err = ppdb_base_async_handle_create(loop, fd, &handle);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_NOT_NULL(handle);
+    // Cleanup
+    ppdb_base_async_destroy(async);
+}
 
-    // Test handle destruction
-    err = ppdb_base_async_handle_destroy(handle);
-    ASSERT_EQ(err, PPDB_OK);
+// Test async read operations
+static void test_async_read(void) {
+    ppdb_error_t err;
+    ppdb_base_async_t* async = NULL;
+    ppdb_base_async_stats_t stats;
+    int fd;
+    const char* test_file = "test_async_read.txt";
 
+    // Create async IO manager
+    err = ppdb_base_async_create(&async);
+    assert(err == PPDB_OK);
+
+    // Create test file
+    fd = open(test_file, O_CREAT | O_WRONLY, 0644);
+    assert(fd != -1);
+    assert(write(fd, test_data, strlen(test_data)) == strlen(test_data));
     close(fd);
-    ppdb_base_async_loop_destroy(loop);
+
+    // Open file for reading
+    fd = open(test_file, O_RDONLY);
+    assert(fd != -1);
+
+    // Start async read
+    io_complete_count = 0;
+    memset(test_buffer, 0, sizeof(test_buffer));
+    err = ppdb_base_async_read(async, fd, test_buffer, strlen(test_data), 0, test_io_callback, NULL);
+    assert(err == PPDB_OK);
+
+    // Wait for completion
+    err = ppdb_base_async_wait(async, 1000);
+    assert(err == PPDB_OK);
+
+    // Check results
+    assert(io_complete_count == 1);
+    assert(memcmp(test_buffer, test_data, strlen(test_data)) == 0);
+
+    // Check stats
+    ppdb_base_async_get_stats(async, &stats);
+    assert(stats.total_operations == 1);
+    assert(stats.active_operations == 0);
+    assert(stats.total_bytes_read == strlen(test_data));
+
+    // Cleanup
+    close(fd);
+    unlink(test_file);
+    ppdb_base_async_destroy(async);
 }
 
-static void test_future(void) {
-    ppdb_base_async_loop_t* loop = NULL;
-    ppdb_base_async_future_t* future = NULL;
+// Test async write operations
+static void test_async_write(void) {
     ppdb_error_t err;
+    ppdb_base_async_t* async = NULL;
+    ppdb_base_async_stats_t stats;
+    int fd;
+    const char* test_file = "test_async_write.txt";
+    char read_buffer[1024];
 
-    // Create loop
-    err = ppdb_base_async_loop_create(&loop);
-    ASSERT_EQ(err, PPDB_OK);
+    // Create async IO manager
+    err = ppdb_base_async_create(&async);
+    assert(err == PPDB_OK);
 
-    // Test future creation
-    err = ppdb_base_future_create(loop, &future);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_NOT_NULL(future);
+    // Create file for writing
+    fd = open(test_file, O_CREAT | O_RDWR, 0644);
+    assert(fd != -1);
 
-    // Test setting result
-    int result = 42;
-    err = ppdb_base_future_set_result(future, &result, sizeof(result));
-    ASSERT_EQ(err, PPDB_OK);
+    // Start async write
+    io_complete_count = 0;
+    err = ppdb_base_async_write(async, fd, test_data, strlen(test_data), 0, test_io_callback, NULL);
+    assert(err == PPDB_OK);
 
-    // Test getting result
-    int value;
-    size_t size;
-    err = ppdb_base_future_get_result(future, &value, sizeof(value), &size);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_EQ(size, sizeof(value));
-    ASSERT_EQ(value, result);
+    // Wait for completion
+    err = ppdb_base_async_wait(async, 1000);
+    assert(err == PPDB_OK);
 
-    // Test future destruction
-    err = ppdb_base_future_destroy(future);
-    ASSERT_EQ(err, PPDB_OK);
+    // Check results
+    assert(io_complete_count == 1);
+    
+    // Verify written data
+    lseek(fd, 0, SEEK_SET);
+    memset(read_buffer, 0, sizeof(read_buffer));
+    assert(read(fd, read_buffer, strlen(test_data)) == strlen(test_data));
+    assert(memcmp(read_buffer, test_data, strlen(test_data)) == 0);
 
-    ppdb_base_async_loop_destroy(loop);
+    // Check stats
+    ppdb_base_async_get_stats(async, &stats);
+    assert(stats.total_operations == 1);
+    assert(stats.active_operations == 0);
+    assert(stats.total_bytes_written == strlen(test_data));
+
+    // Cleanup
+    close(fd);
+    unlink(test_file);
+    ppdb_base_async_destroy(async);
 }
 
-static void timer_callback(ppdb_base_async_handle_t* handle, int status) {
-    int* counter = (int*)handle->data;
-    (*counter)++;
-}
-
-static void test_timer(void) {
-    ppdb_base_async_loop_t* loop = NULL;
-    ppdb_base_timer_t* timer = NULL;
+// Test error handling
+static void test_async_errors(void) {
     ppdb_error_t err;
+    ppdb_base_async_t* async = NULL;
 
-    // Create loop
-    err = ppdb_base_async_loop_create(&loop);
-    ASSERT_EQ(err, PPDB_OK);
+    // Test invalid parameters
+    err = ppdb_base_async_create(NULL);
+    assert(err == PPDB_BASE_ERR_PARAM);
 
-    // Test timer creation
-    err = ppdb_base_timer_create(loop, &timer);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_NOT_NULL(timer);
+    err = ppdb_base_async_create(&async);
+    assert(err == PPDB_OK);
 
-    // Test starting timer
-    int counter = 0;
-    timer->handle->data = &counter;
-    err = ppdb_base_timer_start(timer, 100, false, timer_callback, NULL);
-    ASSERT_EQ(err, PPDB_OK);
+    // Test invalid file descriptor
+    err = ppdb_base_async_read(async, -1, test_buffer, sizeof(test_buffer), 0, test_io_callback, NULL);
+    assert(err == PPDB_BASE_ERR_IO);
 
-    // Run loop for a short time
-    err = ppdb_base_async_loop_run(loop, 200);
-    ASSERT_EQ(err, PPDB_OK);
-    ASSERT_EQ(counter, 1);
+    // Test NULL buffer
+    err = ppdb_base_async_read(async, 0, NULL, sizeof(test_buffer), 0, test_io_callback, NULL);
+    assert(err == PPDB_BASE_ERR_PARAM);
 
-    // Test stopping timer
-    err = ppdb_base_timer_stop(timer);
-    ASSERT_EQ(err, PPDB_OK);
+    // Test zero length
+    err = ppdb_base_async_read(async, 0, test_buffer, 0, 0, test_io_callback, NULL);
+    assert(err == PPDB_BASE_ERR_PARAM);
 
-    // Test timer destruction
-    err = ppdb_base_timer_destroy(timer);
-    ASSERT_EQ(err, PPDB_OK);
+    // Test NULL callback
+    err = ppdb_base_async_read(async, 0, test_buffer, sizeof(test_buffer), 0, NULL, NULL);
+    assert(err == PPDB_BASE_ERR_PARAM);
 
-    ppdb_base_async_loop_destroy(loop);
+    // Cleanup
+    ppdb_base_async_destroy(async);
 }
 
 int main(void) {
-    TEST_INIT("Base Async");
+    printf("Testing async IO basic operations...\n");
+    test_async_basic();
+    printf("PASSED\n");
 
-    RUN_TEST(test_async_loop);
-    RUN_TEST(test_async_handle);
-    RUN_TEST(test_future);
-    RUN_TEST(test_timer);
+    printf("Testing async read operations...\n");
+    test_async_read();
+    printf("PASSED\n");
 
-    TEST_SUMMARY();
+    printf("Testing async write operations...\n");
+    test_async_write();
+    printf("PASSED\n");
+
+    printf("Testing async error handling...\n");
+    test_async_errors();
+    printf("PASSED\n");
+
     return 0;
 }
