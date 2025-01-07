@@ -9,6 +9,12 @@ cd ppdb/scripts; .\build.bat test42
 然后分析所有问题并制定尽量利用平行处理（parallel_apply）的修复方案，
 重复这个过程直到没有新问题（包括警告类问题）。
 特别注意：不要胡乱自己创建新文件（因为可能只是目录和文件搞错了）、
+项目 ppdb 是分层的，所以
+    1. 数据操作类必须用 engine 层（事务/并发/MVCC）
+    2. base 层仅用于基础设施（内存/同步/异步/数据结构等）
+    3. storage 层通过 engine 封装来实现功能
+    4. peer 层通过 storage 层接口操作数据，通过 engine 层处理异步/网络
+    如果要跨层使用功能，需要有足够的理由
 本项目坚持用cosmopolitan标准、代码中的注释用英文、
 新增加函数时要先在现有头文件看看是不是已经有封装好的；
 常用头文件引用形式:
@@ -28,5 +34,31 @@ cd ../ppdb/scripts; .\build.bat ppdb
 
 # 其他临时笔记
 
-
+注意：storage 和 peer 层过多使用base层，所以需要做以下改进
+表管理（engine层函数新建）:
+storage不要直接用skiplist
+应该用:
+engine_table_create
+engine_table_drop
+engine_table_open
+engine_table_close
+数据操作:
+storage不要直接用skiplist增删改查
+应该用:
+engine_put
+engine_get
+engine_delete
+engine_scan
+并发控制:
+storage不要直接用spinlock
+应该用:
+engine_begin_tx
+engine_commit_tx
+engine_rollback_tx
+异步操作:
+peer不要直接用base_async
+应该用:
+engine_async_get
+engine_async_put
+engine_async_delete
 

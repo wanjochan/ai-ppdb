@@ -25,7 +25,7 @@ static void test_error_context(void) {
 
 static void test_error_string(void) {
     assert(strcmp(ppdb_error_to_string(PPDB_OK), "Success") == 0);
-    assert(strcmp(ppdb_error_to_string(PPDB_ERR_MEMORY), "Memory allocation failed") == 0);
+    assert(strcmp(ppdb_error_to_string(PPDB_ERR_MEMORY), "Memory error") == 0);
 }
 
 int main(void) {

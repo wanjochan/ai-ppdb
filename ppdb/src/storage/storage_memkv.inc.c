@@ -2,6 +2,13 @@
 // 内部结构
 //-----------------------------------------------------------------------------
 
+/*
+ * TODO(improvement): LRU功能需要重构
+ * 1. 使用engine层的事务和表操作接口
+ * 2. 将LRU信息存储在单独的engine表中
+ * 3. 实现原子的更新操作
+ */
+/*
 // LRU 节点结构
 typedef struct lru_node {
     struct lru_node* prev;
@@ -9,14 +16,13 @@ typedef struct lru_node {
     ppdb_data_t key;
     uint64_t last_access;
 } lru_node_t;
+*/
 
 // memkv实例结构
 typedef struct {
-    ppdb_base_t* base;                // 基础设施
-    ppdb_base_mutex_t* global_lock;   // 全局锁
-    ppdb_base_skiplist_t* data;       // 数据存储
-    lru_node_t* lru_head;             // LRU 链表头
-    lru_node_t* lru_tail;             // LRU 链表尾
+    ppdb_engine_t* engine;            // 引擎实例
+    ppdb_engine_table_t* table;       // 数据表
+    ppdb_engine_mutex_t* global_lock; // 全局锁
     struct {
         uint64_t total_items;         // 总项数
         uint64_t total_memory;        // 总内存使用
@@ -36,14 +42,14 @@ static ppdb_error_t memkv_init(void** ctx, const ppdb_options_t* options) {
         return PPDB_ERR_MEMORY;
     }
     
-    // 初始化基础设施
-    ppdb_base_config_t base_config = {
+    // 初始化引擎
+    engine_config_t engine_config = {
         .memory_limit = options->cache_size,
         .thread_pool_size = 4,
         .thread_safe = true
     };
     
-    ppdb_error_t err = ppdb_base_init(&kv->base, &base_config);
+    ppdb_error_t err = engine_init(&kv->engine, &engine_config);
     if (err != PPDB_OK) {
         free(kv);
         return err;
@@ -52,16 +58,16 @@ static ppdb_error_t memkv_init(void** ctx, const ppdb_options_t* options) {
     // 创建全局锁
     err = ppdb_base_mutex_create(&kv->global_lock);
     if (err != PPDB_OK) {
-        ppdb_base_destroy(kv->base);
+        engine_destroy(kv->engine);
         free(kv);
         return err;
     }
     
-    // 创建跳表
-    err = ppdb_base_skiplist_create(&kv->data);
+    // 创建引擎表
+    err = engine_table_create(kv->engine, "memkv", &kv->table);
     if (err != PPDB_OK) {
         ppdb_base_mutex_destroy(kv->global_lock);
-        ppdb_base_destroy(kv->base);
+        engine_destroy(kv->engine);
         free(kv);
         return err;
     }
@@ -76,13 +82,20 @@ static void memkv_destroy(void* ctx) {
         return;
     }
     
-    ppdb_base_skiplist_destroy(kv->data);
+    engine_table_close(kv->table);
     ppdb_base_mutex_destroy(kv->global_lock);
-    ppdb_base_destroy(kv->base);
+    engine_destroy(kv->engine);
     free(kv);
 }
 
 // LRU 操作函数
+/*
+ * TODO(improvement): LRU功能需要重构
+ * 1. 使用engine层的事务和表操作接口
+ * 2. 将LRU信息存储在单独的engine表中
+ * 3. 实现原子的更新操作
+ */
+/*
 static void lru_remove_node(storage_memkv_t* kv, lru_node_t* node) {
     if (!node->prev) {
         kv->lru_head = node->next;
@@ -113,7 +126,7 @@ static void lru_add_to_front(storage_memkv_t* kv, lru_node_t* node) {
 }
 
 static void lru_update_access(storage_memkv_t* kv, const ppdb_data_t* key) {
-    lru_node_t* node = ppdb_base_skiplist_get_user_data(kv->data, key);
+    lru_node_t* node = ppdb_base_skiplist_get_user_data(kv->table, key);
     if (node) {
         lru_remove_node(kv, node);
         lru_add_to_front(kv, node);
@@ -121,18 +134,18 @@ static void lru_update_access(storage_memkv_t* kv, const ppdb_data_t* key) {
 }
 
 static ppdb_error_t lru_evict(storage_memkv_t* kv, size_t required_memory) {
-    while (kv->stats.total_memory + required_memory > kv->base->config.memory_limit && kv->lru_tail) {
+    while (kv->stats.total_memory + required_memory > kv->engine->config.memory_limit && kv->lru_tail) {
         lru_node_t* node = kv->lru_tail;
         ppdb_data_t value;
         
         // 获取要删除的键值对大小
-        ppdb_error_t err = ppdb_base_skiplist_get(kv->data, &node->key, &value);
+        ppdb_error_t err = ppdb_base_skiplist_get(kv->table, &node->key, &value);
         if (err != PPDB_OK) {
             return err;
         }
         
         // 从跳表和LRU链表中删除
-        err = ppdb_base_skiplist_delete(kv->data, &node->key);
+        err = ppdb_base_skiplist_delete(kv->table, &node->key);
         if (err != PPDB_OK) {
             return err;
         }
@@ -151,6 +164,7 @@ static ppdb_error_t lru_evict(storage_memkv_t* kv, size_t required_memory) {
     
     return PPDB_OK;
 }
+*/
 
 static ppdb_error_t memkv_get(void* ctx, const ppdb_data_t* key, ppdb_data_t* value) {
     storage_memkv_t* kv = (storage_memkv_t*)ctx;
@@ -158,20 +172,36 @@ static ppdb_error_t memkv_get(void* ctx, const ppdb_data_t* key, ppdb_data_t* va
         return PPDB_ERR_PARAM;
     }
     
-    ppdb_error_t err = ppdb_base_mutex_lock(kv->global_lock);
+    ppdb_error_t err = ppdb_engine_mutex_lock(kv->global_lock);
     if (err != PPDB_OK) {
         return err;
     }
+
+    // 开始事务
+    ppdb_engine_tx_t* tx = NULL;
+    err = ppdb_engine_begin_tx(kv->engine, &tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_mutex_unlock(kv->global_lock);
+        return err;
+    }
     
-    err = ppdb_base_skiplist_get(kv->data, key, value);
+    err = ppdb_engine_get(tx, kv->table, key, value);
     if (err == PPDB_OK) {
         kv->stats.hits++;
-        lru_update_access(kv, key);
+        // TODO: 实现新的LRU更新机制
     } else if (err == PPDB_ERR_NOT_FOUND) {
         kv->stats.misses++;
     }
     
-    ppdb_base_mutex_unlock(kv->global_lock);
+    // 提交事务
+    ppdb_error_t commit_err = ppdb_engine_commit_tx(tx);
+    if (commit_err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_mutex_unlock(kv->global_lock);
+        return commit_err;
+    }
+    
+    ppdb_engine_mutex_unlock(kv->global_lock);
     return err;
 }
 
@@ -181,50 +211,45 @@ static ppdb_error_t memkv_put(void* ctx, const ppdb_data_t* key, const ppdb_data
         return PPDB_ERR_PARAM;
     }
     
-    ppdb_error_t err = ppdb_base_mutex_lock(kv->global_lock);
+    ppdb_error_t err = ppdb_engine_mutex_lock(kv->global_lock);
     if (err != PPDB_OK) {
         return err;
     }
     
-    // 检查内存限制并执行LRU驱逐
+    // TODO: 实现新的内存限制检查机制
     size_t required_memory = key->size + value->size;
-    if (kv->stats.total_memory + required_memory > kv->base->config.memory_limit) {
-        err = lru_evict(kv, required_memory);
-        if (err != PPDB_OK) {
-            ppdb_base_mutex_unlock(kv->global_lock);
-            return err;
-        }
+    if (kv->stats.total_memory + required_memory > kv->engine->config.memory_limit) {
+        // TODO: 实现新的数据淘汰机制
+        ppdb_engine_mutex_unlock(kv->global_lock);
+        return PPDB_ERR_NO_MEMORY;
+    }
+
+    // 开始事务
+    ppdb_engine_tx_t* tx = NULL;
+    err = ppdb_engine_begin_tx(kv->engine, &tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_mutex_unlock(kv->global_lock);
+        return err;
     }
     
-    // 创建新的LRU节点
-    lru_node_t* node = malloc(sizeof(lru_node_t));
-    if (!node) {
-        ppdb_base_mutex_unlock(kv->global_lock);
-        return PPDB_ERR_MEMORY;
-    }
-    
-    // 复制键
-    node->key.data = malloc(key->size);
-    if (!node->key.data) {
-        free(node);
-        ppdb_base_mutex_unlock(kv->global_lock);
-        return PPDB_ERR_MEMORY;
-    }
-    memcpy(node->key.data, key->data, key->size);
-    node->key.size = key->size;
-    
-    // 存储数据并关联LRU节点
-    err = ppdb_base_skiplist_put_with_data(kv->data, key, value, node);
+    // 存储数据
+    err = ppdb_engine_put(tx, kv->table, key, value);
     if (err == PPDB_OK) {
-        lru_add_to_front(kv, node);
         kv->stats.total_items++;
         kv->stats.total_memory += required_memory;
+        
+        // 提交事务
+        err = ppdb_engine_commit_tx(tx);
+        if (err != PPDB_OK) {
+            ppdb_engine_rollback_tx(tx);
+            ppdb_engine_mutex_unlock(kv->global_lock);
+            return err;
+        }
     } else {
-        free(node->key.data);
-        free(node);
+        ppdb_engine_rollback_tx(tx);
     }
     
-    ppdb_base_mutex_unlock(kv->global_lock);
+    ppdb_engine_mutex_unlock(kv->global_lock);
     return err;
 }
 
@@ -234,22 +259,42 @@ static ppdb_error_t memkv_delete(void* ctx, const ppdb_data_t* key) {
         return PPDB_ERR_PARAM;
     }
     
-    ppdb_error_t err = ppdb_base_mutex_lock(kv->global_lock);
+    ppdb_error_t err = ppdb_engine_mutex_lock(kv->global_lock);
     if (err != PPDB_OK) {
+        return err;
+    }
+
+    // 开始事务
+    ppdb_engine_tx_t* tx = NULL;
+    err = ppdb_engine_begin_tx(kv->engine, &tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_mutex_unlock(kv->global_lock);
         return err;
     }
     
     ppdb_data_t old_value;
-    err = ppdb_base_skiplist_get(kv->data, key, &old_value);
+    err = ppdb_engine_get(tx, kv->table, key, &old_value);
     if (err == PPDB_OK) {
-        err = ppdb_base_skiplist_delete(kv->data, key);
+        err = ppdb_engine_delete(tx, kv->table, key);
         if (err == PPDB_OK) {
             kv->stats.total_items--;
             kv->stats.total_memory -= (key->size + old_value.size);
+            
+            // 提交事务
+            err = ppdb_engine_commit_tx(tx);
+            if (err != PPDB_OK) {
+                ppdb_engine_rollback_tx(tx);
+                ppdb_engine_mutex_unlock(kv->global_lock);
+                return err;
+            }
+        } else {
+            ppdb_engine_rollback_tx(tx);
         }
+    } else {
+        ppdb_engine_rollback_tx(tx);
     }
     
-    ppdb_base_mutex_unlock(kv->global_lock);
+    ppdb_engine_mutex_unlock(kv->global_lock);
     return err;
 }
 
@@ -259,18 +304,37 @@ static ppdb_error_t memkv_clear(void* ctx) {
         return PPDB_ERR_PARAM;
     }
     
-    ppdb_error_t err = ppdb_base_mutex_lock(kv->global_lock);
+    ppdb_error_t err = ppdb_engine_mutex_lock(kv->global_lock);
     if (err != PPDB_OK) {
         return err;
     }
+
+    // 开始事务
+    ppdb_engine_tx_t* tx = NULL;
+    err = ppdb_engine_begin_tx(kv->engine, &tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_mutex_unlock(kv->global_lock);
+        return err;
+    }
     
-    err = ppdb_base_skiplist_clear(kv->data);
+    // 清空表
+    err = ppdb_engine_table_clear(tx, kv->table);
     if (err == PPDB_OK) {
         kv->stats.total_items = 0;
         kv->stats.total_memory = 0;
+        
+        // 提交事务
+        err = ppdb_engine_commit_tx(tx);
+        if (err != PPDB_OK) {
+            ppdb_engine_rollback_tx(tx);
+            ppdb_engine_mutex_unlock(kv->global_lock);
+            return err;
+        }
+    } else {
+        ppdb_engine_rollback_tx(tx);
     }
     
-    ppdb_base_mutex_unlock(kv->global_lock);
+    ppdb_engine_mutex_unlock(kv->global_lock);
     return err;
 }
 

@@ -2,12 +2,22 @@
 #define PPDB_INTERNAL_STORAGE_H_
 
 #include <cosmopolitan.h>
-#include "internal/base.h"
 #include "internal/engine.h"
 
 //-----------------------------------------------------------------------------
 // Storage layer types
 //-----------------------------------------------------------------------------
+
+// Key-value types
+typedef struct ppdb_storage_key_s {
+    size_t size;
+    char data[];
+} ppdb_storage_key_t;
+
+typedef struct ppdb_storage_value_s {
+    size_t size;
+    char data[];
+} ppdb_storage_value_t;
 
 // Error codes
 #define PPDB_STORAGE_ERR_START     (PPDB_ERROR_START + 0x300)  // Storage: 0x1300-0x13FF
@@ -33,48 +43,31 @@ typedef struct ppdb_storage_s ppdb_storage_t;
 typedef struct ppdb_storage_table_s ppdb_storage_table_t;
 typedef struct ppdb_storage_index_s ppdb_storage_index_t;
 
-// Internal functions
-static inline int data_compare(const void* a, const void* b) {
-    const char* str_a = *(const char**)a;
-    const char* str_b = *(const char**)b;
-    return strcmp(str_a, str_b);
-}
-
-// Maintenance structure
-typedef struct ppdb_storage_maintain_s {
-    ppdb_base_mutex_t* mutex;      // Maintenance mutex
-    ppdb_base_thread_t* thread;    // Maintenance thread
-    bool is_running;               // Maintenance thread state
-    bool should_stop;              // Stop flag
-} ppdb_storage_maintain_t;
-
 // Table structure
 struct ppdb_storage_table_s {
     char* name;                    // Owned table name string
     size_t name_len;              // Length of table name
-    ppdb_base_skiplist_t* data;    // Table data
-    ppdb_base_skiplist_t* indexes; // Table indexes
-    ppdb_base_spinlock_t lock;     // Table lock
-    uint64_t size;                 // Number of records
-    bool is_open;                  // Table open state
+    ppdb_engine_table_t* engine_table; // Engine table handle
+    uint64_t size;                // Number of records
+    bool is_open;                 // Table open state
 };
 
 // Cursor type
 typedef struct ppdb_storage_cursor_s {
     ppdb_storage_table_t* table;
-    ppdb_base_skiplist_node_t* current;
+    ppdb_engine_cursor_t* engine_cursor;
     bool valid;
 } ppdb_storage_cursor_t;
 
 // Storage statistics
 typedef struct ppdb_storage_stats_s {
-    ppdb_base_counter_t* reads;           // Total read operations
-    ppdb_base_counter_t* writes;          // Total write operations
-    ppdb_base_counter_t* flushes;         // Total memtable flushes
-    ppdb_base_counter_t* compactions;     // Total compaction operations
-    ppdb_base_counter_t* cache_hits;      // Block cache hits
-    ppdb_base_counter_t* cache_misses;    // Block cache misses
-    ppdb_base_counter_t* wal_syncs;       // WAL sync operations
+    uint64_t reads;           // Total read operations
+    uint64_t writes;          // Total write operations
+    uint64_t flushes;         // Total memtable flushes
+    uint64_t compactions;     // Total compaction operations
+    uint64_t cache_hits;      // Block cache hits
+    uint64_t cache_misses;    // Block cache misses
+    uint64_t wal_syncs;       // WAL sync operations
 } ppdb_storage_stats_t;
 
 // Storage configuration
@@ -98,12 +91,10 @@ typedef struct ppdb_storage_config_s {
 
 // Internal storage structure
 struct ppdb_storage_s {
-    ppdb_base_t* base;                  // Base layer instance
+    ppdb_engine_t* engine;              // Engine instance
     ppdb_storage_config_t config;       // Storage configuration
     ppdb_storage_stats_t stats;         // Storage statistics
-    ppdb_base_skiplist_t* tables;       // List of tables (keys are table names)
-    ppdb_base_spinlock_t lock;          // Global storage lock
-    ppdb_storage_maintain_t maintain;    // Maintenance structure
+    ppdb_engine_tx_t* current_tx;       // Current transaction
 };
 
 //-----------------------------------------------------------------------------
@@ -111,17 +102,13 @@ struct ppdb_storage_s {
 //-----------------------------------------------------------------------------
 
 // Storage initialization and cleanup
-ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_base_t* base, const ppdb_storage_config_t* config);
+ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, const ppdb_storage_config_t* config);
 void ppdb_storage_destroy(ppdb_storage_t* storage);
 void ppdb_storage_get_stats(ppdb_storage_t* storage, ppdb_storage_stats_t* stats);
 
 // Table operations
-ppdb_error_t ppdb_table_create(ppdb_storage_t* storage, const char* name);
-ppdb_error_t ppdb_table_drop(ppdb_storage_t* storage, const char* name);
-ppdb_error_t ppdb_table_open(ppdb_storage_t* storage, const char* name);
-ppdb_error_t ppdb_table_close(ppdb_storage_t* storage);
-ppdb_error_t ppdb_storage_get_table(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table);
 ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table);
+ppdb_error_t ppdb_storage_get_table(ppdb_storage_t* storage, const void* name_key, ppdb_storage_table_t** table);
 ppdb_error_t ppdb_storage_drop_table(ppdb_storage_t* storage, const char* name);
 
 // Data operations
@@ -134,10 +121,6 @@ ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table);
 ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table);
 ppdb_error_t ppdb_storage_backup(ppdb_storage_t* storage, const char* backup_dir);
 ppdb_error_t ppdb_storage_restore(ppdb_storage_t* storage, const char* backup_dir);
-
-// Table management functions
-ppdb_error_t ppdb_storage_table_create(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table);
-void ppdb_storage_table_destroy(ppdb_storage_table_t* table);
 
 // Configuration management
 ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config);

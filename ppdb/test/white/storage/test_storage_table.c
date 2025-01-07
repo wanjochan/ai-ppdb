@@ -127,7 +127,15 @@ static int test_table_operations(void) {
     
     // Get table
     ppdb_storage_table_t* table2 = NULL;
-    err = ppdb_storage_get_table(storage, "test_table", &table2);
+    const char* name = "test_table";
+    size_t name_len = strlen(name);
+    ppdb_storage_key_t* name_key = ppdb_base_aligned_alloc(16, sizeof(ppdb_storage_key_t) + name_len + 1);
+    TEST_ASSERT_NOT_NULL(name_key);
+    name_key->size = name_len + 1;
+    memcpy(name_key->data, name, name_len + 1);
+    
+    err = ppdb_storage_get_table(storage, name_key, &table2);
+    ppdb_base_aligned_free(name_key);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(table2);
     TEST_ASSERT_EQUALS(table, table2);
@@ -138,7 +146,13 @@ static int test_table_operations(void) {
     table = NULL;  // Reset table after dropping
     
     // Try to get dropped table
-    err = ppdb_storage_get_table(storage, "test_table", &table2);
+    name_key = ppdb_base_aligned_alloc(16, sizeof(ppdb_storage_key_t) + name_len + 1);
+    TEST_ASSERT_NOT_NULL(name_key);
+    name_key->size = name_len + 1;
+    memcpy(name_key->data, name, name_len + 1);
+    
+    err = ppdb_storage_get_table(storage, name_key, &table2);
+    ppdb_base_aligned_free(name_key);
     TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_NOT_FOUND, err);
     
     // Try to drop non-existent table
@@ -171,17 +185,19 @@ static int test_multiple_tables(void) {
     
     // Verify all tables exist
     ppdb_storage_table_t* table_check = NULL;
-    err = ppdb_storage_get_table(storage, "table1", &table_check);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_EQUALS(tables[0], table_check);
-    
-    err = ppdb_storage_get_table(storage, "table2", &table_check);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_EQUALS(tables[1], table_check);
-    
-    err = ppdb_storage_get_table(storage, "table3", &table_check);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_EQUALS(tables[2], table_check);
+    const char* names[] = {"table1", "table2", "table3"};
+    for (int i = 0; i < 3; i++) {
+        size_t name_len = strlen(names[i]);
+        ppdb_storage_key_t* name_key = ppdb_base_aligned_alloc(16, sizeof(ppdb_storage_key_t) + name_len + 1);
+        TEST_ASSERT_NOT_NULL(name_key);
+        name_key->size = name_len + 1;
+        memcpy(name_key->data, names[i], name_len + 1);
+        
+        err = ppdb_storage_get_table(storage, name_key, &table_check);
+        ppdb_base_aligned_free(name_key);
+        TEST_ASSERT_EQUALS(PPDB_OK, err);
+        TEST_ASSERT_EQUALS(tables[i], table_check);
+    }
     
     // Drop tables in different order
     err = ppdb_storage_drop_table(storage, "table2");

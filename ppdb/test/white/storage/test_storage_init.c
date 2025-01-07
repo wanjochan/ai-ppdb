@@ -25,7 +25,6 @@ static int test_setup(void) {
         .block_size = 4096,              // 4KB
         .cache_size = 256 * 1024,        // 256KB
         .write_buffer_size = 64 * 1024,  // 64KB
-        .data_dir = "data",
         .use_compression = true,
         .sync_writes = true
     };
@@ -85,10 +84,6 @@ static int test_storage_init_invalid(void) {
     invalid_config.block_size = 0;
     TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, &invalid_config));
     
-    invalid_config = storage_config;
-    invalid_config.data_dir = NULL;
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, &invalid_config));
-    
     printf("  Test passed: storage_init_invalid\n");
     return 0;
 }
@@ -110,7 +105,6 @@ static int test_storage_config_management(void) {
     TEST_ASSERT_EQUALS(storage_config.block_size, current_config.block_size);
     TEST_ASSERT_EQUALS(storage_config.cache_size, current_config.cache_size);
     TEST_ASSERT_EQUALS(storage_config.write_buffer_size, current_config.write_buffer_size);
-    TEST_ASSERT_EQUALS(0, strcmp(current_config.data_dir, storage_config.data_dir));
     TEST_ASSERT_EQUALS(storage_config.use_compression, current_config.use_compression);
     TEST_ASSERT_EQUALS(storage_config.sync_writes, current_config.sync_writes);
     

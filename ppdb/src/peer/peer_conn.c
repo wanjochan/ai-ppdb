@@ -15,11 +15,11 @@ static void cleanup_request(ppdb_peer_request_t* req) {
     if (!req) return;
 
     if (req->key.extended_data) {
-        ppdb_base_free(req->key.extended_data);
+        ppdb_engine_free(req->key.extended_data);
         req->key.extended_data = NULL;
     }
     if (req->value.extended_data) {
-        ppdb_base_free(req->value.extended_data);
+        ppdb_engine_free(req->value.extended_data);
         req->value.extended_data = NULL;
     }
 }
@@ -28,12 +28,12 @@ static void cleanup_response(ppdb_peer_response_t* resp) {
     if (!resp) return;
 
     if (resp->value.extended_data) {
-        ppdb_base_free(resp->value.extended_data);
+        ppdb_engine_free(resp->value.extended_data);
         resp->value.extended_data = NULL;
     }
 }
 
-static void on_read(ppdb_base_async_handle_t* handle, int status) {
+static void on_read(ppdb_engine_async_handle_t* handle, int status) {
     ppdb_peer_connection_t* conn = handle->user_data;
     if (!conn) return;
 
@@ -66,7 +66,7 @@ static void on_read(ppdb_base_async_handle_t* handle, int status) {
     }
 }
 
-static void on_write(ppdb_base_async_handle_t* handle, int status) {
+static void on_write(ppdb_engine_async_handle_t* handle, int status) {
     ppdb_peer_connection_t* conn = handle->user_data;
     if (!conn) return;
 
@@ -78,6 +78,7 @@ static void on_write(ppdb_base_async_handle_t* handle, int status) {
 
     // Reset write buffer
     conn->write.pos = 0;
+    conn->write.size = 0;
 
     // Start reading next request
     ppdb_peer_conn_start_read(conn);
@@ -87,24 +88,36 @@ static void on_write(ppdb_base_async_handle_t* handle, int status) {
 // Public Functions
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_peer_conn_create(ppdb_peer_t* peer,
-                                  ppdb_peer_connection_t** conn) {
+ppdb_error_t ppdb_peer_conn_create(ppdb_peer_t* peer, ppdb_peer_connection_t** conn) {
     if (!peer || !conn) {
         return PPDB_ERR_PARAM;
     }
 
-    *conn = ppdb_base_alloc(sizeof(ppdb_peer_connection_t));
+    // Allocate connection structure
+    *conn = ppdb_engine_malloc(sizeof(ppdb_peer_connection_t));
     if (!*conn) {
         return PPDB_ERR_MEMORY;
     }
 
-    memset(*conn, 0, sizeof(ppdb_peer_connection_t));
+    // Initialize connection
     (*conn)->peer = peer;
-    (*conn)->state = PPDB_PEER_CONN_INIT;
     (*conn)->proto_state = PPDB_PEER_PROTO_INIT;
+    (*conn)->callback = NULL;
+    (*conn)->user_data = NULL;
+
+    // Create async handle
+    ppdb_error_t err = ppdb_engine_async_handle_create(peer->engine, &(*conn)->handle);
+    if (err != PPDB_OK) {
+        ppdb_engine_free(*conn);
+        *conn = NULL;
+        return err;
+    }
+
+    // Set user data
+    (*conn)->handle->user_data = *conn;
 
     // Allocate read buffer
-    (*conn)->read.buf = ppdb_base_alloc(PPDB_CONN_READ_BUF_SIZE);
+    (*conn)->read.buf = ppdb_engine_malloc(PPDB_CONN_READ_BUF_SIZE);
     if (!(*conn)->read.buf) {
         ppdb_peer_conn_destroy(*conn);
         *conn = NULL;
@@ -113,7 +126,7 @@ ppdb_error_t ppdb_peer_conn_create(ppdb_peer_t* peer,
     (*conn)->read.size = PPDB_CONN_READ_BUF_SIZE;
 
     // Allocate write buffer
-    (*conn)->write.buf = ppdb_base_alloc(PPDB_CONN_WRITE_BUF_SIZE);
+    (*conn)->write.buf = ppdb_engine_malloc(PPDB_CONN_WRITE_BUF_SIZE);
     if (!(*conn)->write.buf) {
         ppdb_peer_conn_destroy(*conn);
         *conn = NULL;
@@ -122,10 +135,10 @@ ppdb_error_t ppdb_peer_conn_create(ppdb_peer_t* peer,
     (*conn)->write.size = PPDB_CONN_WRITE_BUF_SIZE;
 
     // Update peer stats
-    ppdb_base_mutex_lock(peer->mutex);
+    ppdb_engine_mutex_lock(peer->mutex);
     peer->stats.total_connections++;
     peer->stats.active_connections++;
-    ppdb_base_mutex_unlock(peer->mutex);
+    ppdb_engine_mutex_unlock(peer->mutex);
 
     return PPDB_OK;
 }
@@ -135,9 +148,9 @@ void ppdb_peer_conn_destroy(ppdb_peer_connection_t* conn) {
 
     // Update peer stats
     if (conn->peer) {
-        ppdb_base_mutex_lock(conn->peer->mutex);
+        ppdb_engine_mutex_lock(conn->peer->mutex);
         conn->peer->stats.active_connections--;
-        ppdb_base_mutex_unlock(conn->peer->mutex);
+        ppdb_engine_mutex_unlock(conn->peer->mutex);
     }
 
     // Cleanup request/response data
@@ -146,18 +159,18 @@ void ppdb_peer_conn_destroy(ppdb_peer_connection_t* conn) {
 
     // Free buffers
     if (conn->read.buf) {
-        ppdb_base_free(conn->read.buf);
+        ppdb_engine_free(conn->read.buf);
     }
     if (conn->write.buf) {
-        ppdb_base_free(conn->write.buf);
+        ppdb_engine_free(conn->write.buf);
     }
 
     // Destroy async handle
     if (conn->handle) {
-        ppdb_base_async_handle_destroy(conn->handle);
+        ppdb_engine_async_handle_destroy(conn->handle);
     }
 
-    ppdb_base_free(conn);
+    ppdb_engine_free(conn);
 }
 
 ppdb_error_t ppdb_peer_conn_start_read(ppdb_peer_connection_t* conn) {
@@ -171,7 +184,7 @@ ppdb_error_t ppdb_peer_conn_start_read(ppdb_peer_connection_t* conn) {
     }
 
     // Start async read
-    return ppdb_base_async_read(conn->handle,
+    return ppdb_engine_async_read(conn->handle,
                               conn->read.buf + conn->read.pos,
                               conn->read.size - conn->read.pos,
                               on_read);
@@ -183,7 +196,7 @@ ppdb_error_t ppdb_peer_conn_start_write(ppdb_peer_connection_t* conn) {
     }
 
     // Start async write
-    return ppdb_base_async_write(conn->handle,
+    return ppdb_engine_async_write(conn->handle,
                                conn->write.buf + conn->write.pos,
                                conn->write.size - conn->write.pos,
                                on_write);

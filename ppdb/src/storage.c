@@ -176,7 +176,6 @@ ppdb_error_t ppdb_storage_config_validate(const ppdb_storage_config_t* config) {
     if (config->block_size == 0) return PPDB_STORAGE_ERR_PARAM;
     if (config->cache_size == 0) return PPDB_STORAGE_ERR_PARAM;
     if (config->write_buffer_size == 0) return PPDB_STORAGE_ERR_PARAM;
-    if (!config->data_dir) return PPDB_STORAGE_ERR_PARAM;
 
     return PPDB_OK;
 }

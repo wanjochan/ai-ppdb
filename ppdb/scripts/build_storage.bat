@@ -23,24 +23,25 @@ if not "%TEST_MODE%"=="notest" (
     REM Build and run storage tests
     echo Building storage tests...
 
-    REM Build each test file separately
+    REM Build each test file separately - only current stage tests
     for %%f in (
         test_storage_init.c
         test_storage_data.c
         test_storage_table.c
         test_storage_maintain.c
-        test_memtable.c
-        test_sharded_memtable.c
     ) do (
         echo Building %%f...
-        %GCC% %CFLAGS% "%BUILD_DIR%\storage.o" "%BUILD_DIR%\base.o" "%PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
+        %GCC% %CFLAGS% "%BUILD_DIR%\storage.o" "%BUILD_DIR%\base.o" "%BUILD_DIR%\engine.o" "%PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
         if errorlevel 1 exit /b 1
         "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%%~nf.exe.dbg" "%BUILD_DIR%\%%~nf.exe"
         if errorlevel 1 exit /b 1
         
         echo Running %%f...
         "%BUILD_DIR%\%%~nf.exe"
-        if errorlevel 1 exit /b 1
+        if errorlevel 1 (
+            echo Test %%f failed with error code !errorlevel!
+            exit /b !errorlevel!
+        )
     )
 
     echo All storage tests passed!

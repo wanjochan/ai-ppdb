@@ -6,36 +6,30 @@ ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size
                              const void* value, size_t value_size) {
     if (!table || !key || !value) return PPDB_STORAGE_ERR_PARAM;
     if (key_size == 0 || value_size == 0) return PPDB_STORAGE_ERR_PARAM;
-    
-    // Lock table
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Create copies of key and value
-    void* key_copy = ppdb_base_aligned_alloc(16, sizeof(size_t) + key_size);
-    void* value_copy = ppdb_base_aligned_alloc(16, sizeof(size_t) + value_size);
-    if (!key_copy || !value_copy) {
-        if (key_copy) ppdb_base_aligned_free(key_copy);
-        if (value_copy) ppdb_base_aligned_free(value_copy);
-        ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_STORAGE_ERR_MEMORY;
-    }
-
-    *(size_t*)key_copy = key_size;
-    memcpy((char*)key_copy + sizeof(size_t), key, key_size);
-    *(size_t*)value_copy = value_size;
-    memcpy((char*)value_copy + sizeof(size_t), value, value_size);
-
-    // Insert into skiplist
-    ppdb_error_t err = ppdb_base_skiplist_insert(table->data, key_copy, value_copy);
+    // Begin transaction
+    ppdb_engine_tx_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
     if (err != PPDB_OK) {
-        ppdb_base_aligned_free(key_copy);
-        ppdb_base_aligned_free(value_copy);
-        ppdb_base_spinlock_unlock(&table->lock);
         return err;
     }
 
-    table->size++;
-    ppdb_base_spinlock_unlock(&table->lock);
+    // Put data using engine
+    err = ppdb_engine_put(tx, table->engine_table, key, key_size, value, value_size);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
+    // Commit transaction
+    err = ppdb_engine_commit_tx(tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
+    // Update table size
+    atomic_fetch_add(&table->size, 1);
     return PPDB_OK;
 }
 
@@ -43,129 +37,164 @@ ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size
                              void* value, size_t* value_size) {
     if (!table || !key || !value || !value_size) return PPDB_STORAGE_ERR_PARAM;
     if (key_size == 0) return PPDB_STORAGE_ERR_PARAM;
-    
-    // Lock table
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Create temporary key copy for lookup
-    void* key_copy = ppdb_base_aligned_alloc(16, sizeof(size_t) + key_size);
-    if (!key_copy) {
-        ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_STORAGE_ERR_MEMORY;
+    // Begin read transaction
+    ppdb_engine_tx_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    if (err != PPDB_OK) {
+        return err;
     }
-    *(size_t*)key_copy = key_size;
-    memcpy((char*)key_copy + sizeof(size_t), key, key_size);
 
-    // Find value in skiplist
-    void* value_ptr = NULL;
-    ppdb_error_t err = ppdb_base_skiplist_find(table->data, key_copy, &value_ptr);
-    if (err == PPDB_ERR_PARAM) {
-        ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_STORAGE_ERR_PARAM;
-    } else if (err == PPDB_ERR_NOT_FOUND) {
-        ppdb_base_spinlock_unlock(&table->lock);
+    // Get data using engine
+    err = ppdb_engine_get(tx, table->engine_table, key, key_size, value, value_size);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
         return PPDB_STORAGE_ERR_NOT_FOUND;
-    } else if (err != PPDB_OK) {
-        ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_STORAGE_ERR_INTERNAL;
     }
 
-    // Copy value
-    size_t found_size = *(size_t*)value_ptr;
-    if (*value_size < found_size) {
-        ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_STORAGE_ERR_PARAM;
+    // Commit transaction
+    err = ppdb_engine_commit_tx(tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
     }
 
-    memcpy(value, (char*)value_ptr + sizeof(size_t), found_size);
-    *value_size = found_size;
-
-    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, size_t key_size) {
     if (!table || !key) return PPDB_STORAGE_ERR_PARAM;
     if (key_size == 0) return PPDB_STORAGE_ERR_PARAM;
-    
-    // Lock table
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Create temporary key copy for lookup
-    void* key_copy = ppdb_base_aligned_alloc(16, sizeof(size_t) + key_size);
-    if (!key_copy) {
-        ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_STORAGE_ERR_MEMORY;
+    // Begin transaction
+    ppdb_engine_tx_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    if (err != PPDB_OK) {
+        return err;
     }
-    *(size_t*)key_copy = key_size;
-    memcpy((char*)key_copy + sizeof(size_t), key, key_size);
 
-    // Remove from skiplist
-    ppdb_error_t err = ppdb_base_skiplist_remove(table->data, key_copy);
-    ppdb_base_aligned_free(key_copy);
-
-    if (err == PPDB_ERR_NOT_FOUND) {
-        ppdb_base_spinlock_unlock(&table->lock);
+    // Delete data using engine
+    err = ppdb_engine_delete(tx, table->engine_table, key, key_size);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
         return PPDB_STORAGE_ERR_NOT_FOUND;
-    } else if (err != PPDB_OK) {
-        ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_STORAGE_ERR_INTERNAL;
     }
 
-    table->size--;
-    ppdb_base_spinlock_unlock(&table->lock);
+    // Commit transaction
+    err = ppdb_engine_commit_tx(tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
+    // Update table size
+    atomic_fetch_sub(&table->size, 1);
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_storage_scan(ppdb_storage_table_t* table, ppdb_storage_cursor_t* cursor) {
     if (!table || !cursor) return PPDB_ERR_NULL_POINTER;
-    
-    // Lock table
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // Initialize cursor
+    // Begin read transaction
+    ppdb_engine_tx_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    if (err != PPDB_OK) {
+        return err;
+    }
+
+    // Create cursor using engine
+    err = ppdb_engine_cursor_open(tx, table->engine_table, &cursor->engine_cursor);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
     cursor->table = table;
-    cursor->current = NULL;
-    cursor->valid = false;
+    cursor->valid = true;
 
-    // TODO: Implement scan operation
+    // Move to first entry
+    err = ppdb_engine_cursor_first(cursor->engine_cursor);
+    if (err != PPDB_OK && err != PPDB_ENGINE_ERR_NOT_FOUND) {
+        ppdb_engine_cursor_close(cursor->engine_cursor);
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
 
-    ppdb_base_spinlock_unlock(&table->lock);
+    // Commit transaction
+    err = ppdb_engine_commit_tx(tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_cursor_close(cursor->engine_cursor);
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_storage_scan_next(ppdb_storage_table_t* table, ppdb_storage_cursor_t* cursor) {
     if (!table || !cursor) return PPDB_ERR_NULL_POINTER;
-    
-    // Lock table
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
+    if (!cursor->valid) return PPDB_STORAGE_ERR_INTERNAL;
 
-    // TODO: Implement scan next operation
+    // Move cursor to next entry
+    ppdb_error_t err = ppdb_engine_cursor_next(cursor->engine_cursor);
+    if (err != PPDB_OK) {
+        cursor->valid = false;
+        return PPDB_STORAGE_ERR_NOT_FOUND;
+    }
 
-    ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table) {
     if (!table) return PPDB_ERR_NULL_POINTER;
-    
-    // Lock table
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // TODO: Implement compaction operation
+    // Begin transaction
+    ppdb_engine_tx_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    if (err != PPDB_OK) {
+        return err;
+    }
 
-    ppdb_base_spinlock_unlock(&table->lock);
+    // Compact table using engine
+    err = ppdb_engine_compact(tx, table->engine_table);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
+    // Commit transaction
+    err = ppdb_engine_commit_tx(tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table) {
     if (!table) return PPDB_ERR_NULL_POINTER;
-    
-    // Lock table
-    PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
-    // TODO: Implement flush operation
+    // Begin transaction
+    ppdb_engine_tx_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    if (err != PPDB_OK) {
+        return err;
+    }
 
-    ppdb_base_spinlock_unlock(&table->lock);
+    // Flush table using engine
+    err = ppdb_engine_flush(tx, table->engine_table);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
+    // Commit transaction
+    err = ppdb_engine_commit_tx(tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_rollback_tx(tx);
+        return err;
+    }
+
     return PPDB_OK;
 }

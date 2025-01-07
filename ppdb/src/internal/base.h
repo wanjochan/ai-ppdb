@@ -185,6 +185,9 @@ typedef void (*ppdb_base_timer_callback_t)(ppdb_base_timer_t* timer, void* data)
 typedef void (*ppdb_base_io_callback_t)(ppdb_error_t status, void* data);
 typedef void (*ppdb_base_async_cb)(ppdb_base_async_handle_t* handle, int status);
 
+// Time functions
+uint64_t ppdb_base_get_time_us(void);
+
 // Thread operations
 ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg);
 ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread, void** retval);

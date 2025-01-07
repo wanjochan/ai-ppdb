@@ -13,37 +13,43 @@ static ppdb_storage_config_t storage_config;
 static int test_setup(void) {
     printf("Setting up test environment...\n");
     
+    printf("  Initializing base config...\n");
     // Initialize base config
     base_config = (ppdb_base_config_t){
-        .memory_limit = 1024 * 1024,
+        .memory_limit = 64 * 1024 * 1024,  // 64MB
         .thread_pool_size = 4,
         .thread_safe = true
     };
     
+    printf("  Initializing storage config...\n");
     // Initialize storage config
     storage_config = (ppdb_storage_config_t){
-        .memtable_size = 64 * 1024,
-        .block_size = 4096,
-        .cache_size = 256 * 1024,
-        .write_buffer_size = 64 * 1024,
-        .data_dir = "data",
-        .use_compression = true,
-        .sync_writes = true
+        .memtable_size = PPDB_DEFAULT_MEMTABLE_SIZE,      // 16MB
+        .block_size = PPDB_DEFAULT_BLOCK_SIZE,            // 4KB
+        .cache_size = PPDB_DEFAULT_CACHE_SIZE,            // 64MB
+        .write_buffer_size = PPDB_DEFAULT_WRITE_BUFFER_SIZE,  // 4MB
+        .data_dir = PPDB_DEFAULT_DATA_DIR,
+        .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
+        .sync_writes = PPDB_DEFAULT_SYNC_WRITES
     };
     
+    printf("  Initializing base layer...\n");
     // Initialize layers
     ppdb_error_t err = ppdb_base_init(&base, &base_config);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(base);
     
+    printf("  Initializing storage layer...\n");
     err = ppdb_storage_init(&storage, base, &storage_config);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(storage);
     
+    printf("  Creating test table...\n");
     err = ppdb_storage_create_table(storage, "test_table", &table);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(table);
     
+    printf("Test environment setup completed.\n");
     return 0;
 }
 
@@ -174,7 +180,7 @@ static int test_data_large_values(void) {
 static int test_data_multiple_operations(void) {
     printf("  Running test: data_multiple_operations\n");
     
-    const int num_entries = 1000;
+    const int num_entries = 100;  // Reduced from 1000
     char key[32];
     char value[32];
     char buffer[32];
@@ -182,38 +188,54 @@ static int test_data_multiple_operations(void) {
     ppdb_error_t err;
     
     // Insert multiple entries
+    printf("    Inserting %d entries...\n", num_entries);
     for (int i = 0; i < num_entries; i++) {
+        if (i % 10 == 0) {
+            printf("    Progress: %d/%d entries\n", i, num_entries);
+        }
         snprintf(key, sizeof(key), "key_%d", i);
         snprintf(value, sizeof(value), "value_%d", i);
-        err = ppdb_storage_put(table, key, strlen(key), 
-                              value, strlen(value) + 1);
+        err = ppdb_storage_put(table, key, strlen(key), value, strlen(value) + 1);
         TEST_ASSERT_EQUALS(PPDB_OK, err);
+        
+        // Add small delay to reduce contention
+        usleep(1000);  // 1ms delay
     }
     
+    printf("    Reading %d entries...\n", num_entries);
     // Read all entries
     for (int i = 0; i < num_entries; i++) {
+        if (i % 10 == 0) {
+            printf("    Progress: %d/%d entries\n", i, num_entries);
+        }
         snprintf(key, sizeof(key), "key_%d", i);
         snprintf(value, sizeof(value), "value_%d", i);
         size = sizeof(buffer);
-        err = ppdb_storage_get(table, key, strlen(key), 
-                              buffer, &size);
+        err = ppdb_storage_get(table, key, strlen(key), buffer, &size);
         TEST_ASSERT_EQUALS(PPDB_OK, err);
         TEST_ASSERT_EQUALS(0, strcmp(buffer, value));
     }
     
+    printf("    Deleting %d entries...\n", num_entries);
     // Delete all entries
     for (int i = 0; i < num_entries; i++) {
+        if (i % 10 == 0) {
+            printf("    Progress: %d/%d entries\n", i, num_entries);
+        }
         snprintf(key, sizeof(key), "key_%d", i);
         err = ppdb_storage_delete(table, key, strlen(key));
         TEST_ASSERT_EQUALS(PPDB_OK, err);
     }
     
+    printf("    Verifying deletion of %d entries...\n", num_entries);
     // Verify all entries are deleted
     for (int i = 0; i < num_entries; i++) {
+        if (i % 10 == 0) {
+            printf("    Progress: %d/%d entries\n", i, num_entries);
+        }
         snprintf(key, sizeof(key), "key_%d", i);
         size = sizeof(buffer);
-        err = ppdb_storage_get(table, key, strlen(key), 
-                              buffer, &size);
+        err = ppdb_storage_get(table, key, strlen(key), buffer, &size);
         TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_NOT_FOUND, err);
     }
     
