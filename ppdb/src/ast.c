@@ -38,6 +38,8 @@ typedef struct {
 typedef struct {
     const char* input;
     size_t pos;
+    Token current;
+    bool has_current;
 } Parser;
 
 // AST节点类型
@@ -130,7 +132,15 @@ typedef struct Env {
 } Env;
 
 // 前向声明
-static Node* parse(Parser* p);
+static Token next_token(Parser* p);
+static Node* parse_expr(Parser* p);
+static Node* parse_number(Parser* p, Token tok);
+static Node* parse_symbol(Parser* p, Token tok);
+static Node* parse_if(Parser* p);
+static Node* parse_while(Parser* p);
+static Node* parse_local(Parser* p);
+static Node* parse_lambda(Parser* p);
+static Node* parse_call(Parser* p, Node* func);
 static Value eval(Node* node, Env* env);
 static void free_node(Node* node);
 static Env* new_env(Env* parent);
@@ -138,7 +148,24 @@ static void free_env(Env* env);
 static Value* env_get(Env* env, const char* name);
 static bool env_set(Env* env, const char* name, Value value);
 
-// ... existing code ... 
+static Token peek_token(Parser* p) {
+    if (!p->has_current) {
+        p->current = next_token(p);
+        p->has_current = true;
+    }
+    return p->current;
+}
+
+static Token consume_token(Parser* p) {
+    Token tok;
+    if (p->has_current) {
+        tok = p->current;
+        p->has_current = false;
+    } else {
+        tok = next_token(p);
+    }
+    return tok;
+}
 
 //-----------------------------------------------------------------------------
 // 词法分析
@@ -222,7 +249,7 @@ static void free_node(Node* node) {
             break;
         case NODE_LAMBDA:
             for (size_t i = 0; i < node->data.lambda.param_count; i++)
-                free(node->data.lambda.params[i]);
+                free_node(node->data.lambda.params[i]);
             free(node->data.lambda.params);
             free_node(node->data.lambda.body);
             break;
@@ -290,7 +317,81 @@ static bool env_set(Env* env, const char* name, Value value) {
 //-----------------------------------------------------------------------------
 // 解析器
 //-----------------------------------------------------------------------------
-static Node* parse_expr(Parser* p);
+static Node* parse_expr(Parser* p) {
+    Token tok = consume_token(p);
+    Node* node = NULL;
+    
+    switch (tok.type) {
+        case TOK_NUMBER:
+            node = parse_number(p, tok);
+            break;
+            
+        case TOK_SYMBOL: {
+            // 检查是否是特权符号或运算符
+            if (strcmp(tok.value.sym, "if") == 0) {
+                Token next = peek_token(p);
+                if (next.type != TOK_LPAREN) break;
+                consume_token(p);  // 消费左括号
+                node = parse_if(p);
+            }
+            else if (strcmp(tok.value.sym, "while") == 0) {
+                Token next = peek_token(p);
+                if (next.type != TOK_LPAREN) break;
+                consume_token(p);  // 消费左括号
+                node = parse_while(p);
+            }
+            else if (strcmp(tok.value.sym, "local") == 0) {
+                Token next = peek_token(p);
+                if (next.type != TOK_LPAREN) break;
+                consume_token(p);  // 消费左括号
+                node = parse_local(p);
+            }
+            else if (strcmp(tok.value.sym, "lambda") == 0) {
+                Token next = peek_token(p);
+                if (next.type != TOK_LPAREN) break;
+                consume_token(p);  // 消费左括号
+                node = parse_lambda(p);
+            }
+            else if (strcmp(tok.value.sym, "+") == 0 || 
+                     strcmp(tok.value.sym, "-") == 0 ||
+                     strcmp(tok.value.sym, "*") == 0 ||
+                     strcmp(tok.value.sym, "/") == 0) {
+                Token next = peek_token(p);
+                if (next.type != TOK_LPAREN) break;
+                consume_token(p);  // 消费左括号
+                Node* func = parse_symbol(p, tok);
+                if (!func) break;
+                node = parse_call(p, func);
+            }
+            else {
+                node = parse_symbol(p, tok);
+                // 检查是否是函数调用
+                Token next = peek_token(p);
+                if (next.type == TOK_LPAREN) {
+                    consume_token(p);  // 消费左括号
+                    Node* func = node;
+                    node = parse_call(p, func);
+                    if (!node) free_node(func);
+                }
+            }
+            break;
+        }
+            
+        case TOK_LPAREN: {
+            tok = consume_token(p);
+            if (tok.type != TOK_SYMBOL) break;
+            
+            // 解析函数调用
+            Node* func = parse_symbol(p, tok);
+            if (!func) break;
+            
+            node = parse_call(p, func);
+            break;
+        }
+    }
+    
+    return node;
+}
 
 static Node* parse_number(Parser* p, Token tok) {
     Node* node = new_node(NODE_NUMBER);
@@ -372,29 +473,32 @@ static Node* parse_local(Parser* p) {
     node->data.local.value = parse_expr(p);
     if (!node->data.local.value) goto error;
     
-    // 检查右括号
+    // 检查右括号或逗号
     Token tok = next_token(p);
     if (tok.type == TOK_COMMA) {
         // 如果还有更多表达式，创建一个序列节点
         Node* seq = new_node(NODE_SEQUENCE);
         if (!seq) goto error;
         
-        seq->data.sequence.exprs = (Node**)malloc(2 * sizeof(Node*));
+        // 分配初始大小为2的数组
+        seq->data.sequence.exprs = (Node**)calloc(2, sizeof(Node*));
         if (!seq->data.sequence.exprs) {
             free_node(seq);
             goto error;
         }
         
+        // 添加第一个表达式（当前的local节点）
         seq->data.sequence.exprs[0] = node;
         seq->data.sequence.expr_count = 1;
         
-        // 解析剩余表达式
+        // 解析下一个表达式
         Node* next = parse_expr(p);
         if (!next) {
             free_node(seq);
             goto error;
         }
         
+        // 添加第二个表达式
         seq->data.sequence.exprs[1] = next;
         seq->data.sequence.expr_count = 2;
         
@@ -419,29 +523,30 @@ static Node* parse_lambda(Parser* p) {
     Node* node = new_node(NODE_LAMBDA);
     if (!node) return NULL;
     
-    // 解析参数列表
+    // 预分配参数数组
     node->data.lambda.params = NULL;
     node->data.lambda.param_count = 0;
     
-    Token tok = next_token(p);
+    // 解析参数列表
+    Token tok = consume_token(p);
     if (tok.type != TOK_SYMBOL) goto error;
     
-    // 添加第一个参数
+    // 创建参数节点
     Node* param = new_node(NODE_SYMBOL);
     if (!param) goto error;
     strncpy(param->data.sym, tok.value.sym, sizeof(param->data.sym)-1);
     
-    // 扩展参数数组
-    Node** new_params = (Node**)realloc(node->data.lambda.params, sizeof(Node*));
-    if (!new_params) {
+    // 分配参数数组
+    node->data.lambda.params = (Node**)malloc(sizeof(Node*));
+    if (!node->data.lambda.params) {
         free_node(param);
         goto error;
     }
-    node->data.lambda.params = new_params;
-    node->data.lambda.params[node->data.lambda.param_count++] = param;
+    node->data.lambda.params[0] = param;
+    node->data.lambda.param_count = 1;
     
     // 检查逗号
-    tok = next_token(p);
+    tok = consume_token(p);
     if (tok.type != TOK_COMMA) goto error;
     
     // 解析函数体
@@ -449,7 +554,8 @@ static Node* parse_lambda(Parser* p) {
     if (!node->data.lambda.body) goto error;
     
     // 检查右括号
-    if (next_token(p).type != TOK_RPAREN) goto error;
+    tok = consume_token(p);
+    if (tok.type != TOK_RPAREN) goto error;
     
     return node;
     
@@ -467,94 +573,27 @@ static Node* parse_call(Parser* p, Node* func) {
     node->data.call.arg_count = 0;
     
     // 解析参数列表
-    while (1) {
-        Node* arg = parse_expr(p);
-        if (!arg) goto error;
-        
-        // 扩展参数数组
-        Node** new_args = (Node**)realloc(node->data.call.args,
-                                        (node->data.call.arg_count + 1) * sizeof(Node*));
-        if (!new_args) {
-            free_node(arg);
-            goto error;
-        }
-        node->data.call.args = new_args;
-        node->data.call.args[node->data.call.arg_count++] = arg;
-        
-        Token tok = next_token(p);
-        if (tok.type == TOK_RPAREN) break;
-        if (tok.type != TOK_COMMA) goto error;
+    Node* arg = parse_expr(p);
+    if (!arg) goto error;
+    
+    // 分配参数数组
+    node->data.call.args = (Node**)malloc(sizeof(Node*));
+    if (!node->data.call.args) {
+        free_node(arg);
+        goto error;
     }
+    node->data.call.args[0] = arg;
+    node->data.call.arg_count = 1;
+    
+    // 检查右括号
+    Token tok = consume_token(p);
+    if (tok.type != TOK_RPAREN) goto error;
     
     return node;
     
 error:
     free_node(node);
     return NULL;
-}
-
-static Node* parse_expr(Parser* p) {
-    Token tok = next_token(p);
-    Node* node = NULL;
-    
-    switch (tok.type) {
-        case TOK_NUMBER:
-            node = parse_number(p, tok);
-            break;
-            
-        case TOK_SYMBOL: {
-            // 检查是否是特权符号或运算符
-            if (strcmp(tok.value.sym, "if") == 0) {
-                if (next_token(p).type != TOK_LPAREN) break;
-                node = parse_if(p);
-            }
-            else if (strcmp(tok.value.sym, "while") == 0) {
-                if (next_token(p).type != TOK_LPAREN) break;
-                node = parse_while(p);
-            }
-            else if (strcmp(tok.value.sym, "local") == 0) {
-                if (next_token(p).type != TOK_LPAREN) break;
-                node = parse_local(p);
-            }
-            else if (strcmp(tok.value.sym, "lambda") == 0) {
-                if (next_token(p).type != TOK_LPAREN) break;
-                node = parse_lambda(p);
-            }
-            else if (strcmp(tok.value.sym, "+") == 0 || 
-                     strcmp(tok.value.sym, "-") == 0 ||
-                     strcmp(tok.value.sym, "*") == 0 ||
-                     strcmp(tok.value.sym, "/") == 0) {
-                if (next_token(p).type != TOK_LPAREN) break;
-                Node* func = parse_symbol(p, tok);
-                if (!func) break;
-                node = parse_call(p, func);
-            }
-            else {
-                node = parse_symbol(p, tok);
-                // 检查是否是函数调用
-                if (node && next_token(p).type == TOK_LPAREN) {
-                    Node* func = node;
-                    node = parse_call(p, func);
-                    if (!node) free_node(func);
-                }
-            }
-            break;
-        }
-            
-        case TOK_LPAREN: {
-            tok = next_token(p);
-            if (tok.type != TOK_SYMBOL) break;
-            
-            // 解析函数调用
-            Node* func = parse_symbol(p, tok);
-            if (!func) break;
-            
-            node = parse_call(p, func);
-            break;
-        }
-    }
-    
-    return node;
 }
 
 //-----------------------------------------------------------------------------
@@ -772,7 +811,11 @@ static void print_value(Value v) {
 }
 
 Value eval_expr(const char* input) {
-    Parser parser = {.input = input, .pos = 0};
+    Parser parser = {
+        .input = input,
+        .pos = 0,
+        .has_current = false
+    };
     Node* ast = parse_expr(&parser);
     if (!ast) return (Value){.type = VAL_ERROR, .data.error.message = "Parse error"};
     

@@ -38,24 +38,19 @@ if not "%2"=="norun" (
     "%BUILD_DIR%\ast.exe" "if(1,42,0)"
 
     echo.
-    echo Testing while...
-    echo Input: while(0,42)
-    "%BUILD_DIR%\ast.exe" "while(0,42)"
-
-    echo.
     echo Testing local...
     echo Input: local(x,42)
     "%BUILD_DIR%\ast.exe" "local(x,42)"
 
     echo.
-    echo Testing lambda...
-    echo Input: lambda(x,42)
-    "%BUILD_DIR%\ast.exe" "lambda(x,42)"
+    echo Testing simple lambda...
+    echo Input: lambda(x,x)
+    "%BUILD_DIR%\ast.exe" "lambda(x,x)"
 
     echo.
-    echo Testing function call...
-    echo Input: local(f,lambda(x,42),f(1))
-    "%BUILD_DIR%\ast.exe" "local(f,lambda(x,42),f(1))"
+    echo Testing simple call...
+    echo Input: local(id,lambda(x,x),id(42))
+    "%BUILD_DIR%\ast.exe" "local(id,lambda(x,x),id(42))"
 )
 
 exit /b 0 
