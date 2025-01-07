@@ -462,20 +462,23 @@ static Node* parse_local(Parser* p) {
     if (!node) return NULL;
     
     // 解析变量名
-    Token name = next_token(p);
+    Token name = consume_token(p);
     if (name.type != TOK_SYMBOL) goto error;
     strncpy(node->data.local.name, name.value.sym, sizeof(node->data.local.name)-1);
     
     // 检查第一个逗号
-    if (next_token(p).type != TOK_COMMA) goto error;
+    Token tok = consume_token(p);
+    if (tok.type != TOK_COMMA) goto error;
     
     // 解析值
     node->data.local.value = parse_expr(p);
     if (!node->data.local.value) goto error;
     
     // 检查右括号或逗号
-    Token tok = next_token(p);
+    tok = peek_token(p);
     if (tok.type == TOK_COMMA) {
+        consume_token(p);  // 消费逗号
+        
         // 如果还有更多表达式，创建一个序列节点
         Node* seq = new_node(NODE_SEQUENCE);
         if (!seq) goto error;
@@ -503,7 +506,8 @@ static Node* parse_local(Parser* p) {
         seq->data.sequence.expr_count = 2;
         
         // 检查最后的右括号
-        if (next_token(p).type != TOK_RPAREN) {
+        tok = consume_token(p);
+        if (tok.type != TOK_RPAREN) {
             free_node(seq);
             goto error;
         }
@@ -512,6 +516,7 @@ static Node* parse_local(Parser* p) {
     }
     
     if (tok.type != TOK_RPAREN) goto error;
+    consume_token(p);  // 消费右括号
     return node;
     
 error:
@@ -524,7 +529,9 @@ static Node* parse_lambda(Parser* p) {
     if (!node) return NULL;
     
     // 预分配参数数组
-    node->data.lambda.params = NULL;
+    size_t capacity = 4;
+    node->data.lambda.params = (Node**)calloc(capacity, sizeof(Node*));
+    if (!node->data.lambda.params) goto error;
     node->data.lambda.param_count = 0;
     
     // 解析参数列表
@@ -536,14 +543,8 @@ static Node* parse_lambda(Parser* p) {
     if (!param) goto error;
     strncpy(param->data.sym, tok.value.sym, sizeof(param->data.sym)-1);
     
-    // 分配参数数组
-    node->data.lambda.params = (Node**)malloc(sizeof(Node*));
-    if (!node->data.lambda.params) {
-        free_node(param);
-        goto error;
-    }
-    node->data.lambda.params[0] = param;
-    node->data.lambda.param_count = 1;
+    // 添加参数
+    node->data.lambda.params[node->data.lambda.param_count++] = param;
     
     // 检查逗号
     tok = consume_token(p);
@@ -572,22 +573,38 @@ static Node* parse_call(Parser* p, Node* func) {
     node->data.call.args = NULL;
     node->data.call.arg_count = 0;
     
+    // 预分配参数数组
+    size_t capacity = 4;
+    node->data.call.args = (Node**)calloc(capacity, sizeof(Node*));
+    if (!node->data.call.args) goto error;
+    
     // 解析参数列表
-    Node* arg = parse_expr(p);
-    if (!arg) goto error;
-    
-    // 分配参数数组
-    node->data.call.args = (Node**)malloc(sizeof(Node*));
-    if (!node->data.call.args) {
-        free_node(arg);
-        goto error;
+    while (1) {
+        Node* arg = parse_expr(p);
+        if (!arg) goto error;
+        
+        // 检查是否需要扩展数组
+        if (node->data.call.arg_count >= capacity) {
+            capacity *= 2;
+            Node** new_args = (Node**)realloc(node->data.call.args, capacity * sizeof(Node*));
+            if (!new_args) {
+                free_node(arg);
+                goto error;
+            }
+            node->data.call.args = new_args;
+        }
+        
+        node->data.call.args[node->data.call.arg_count++] = arg;
+        
+        Token tok = peek_token(p);
+        if (tok.type == TOK_RPAREN) {
+            consume_token(p);  // 消费右括号
+            break;
+        }
+        
+        if (tok.type != TOK_COMMA) goto error;
+        consume_token(p);  // 消费逗号
     }
-    node->data.call.args[0] = arg;
-    node->data.call.arg_count = 1;
-    
-    // 检查右括号
-    Token tok = consume_token(p);
-    if (tok.type != TOK_RPAREN) goto error;
     
     return node;
     

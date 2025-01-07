@@ -51,6 +51,11 @@ if not "%2"=="norun" (
     echo Testing simple call...
     echo Input: local(id,lambda(x,x),id(42))
     "%BUILD_DIR%\ast.exe" "local(id,lambda(x,x),id(42))"
+
+    echo.
+    echo Testing fibonacci...
+    echo Input: local(fib,lambda(n,if(+(n,-1),if(+(n,-2),+(fib(+(n,-1)),fib(+(n,-2))),1),1)),fib(5))
+    "%BUILD_DIR%\ast.exe" "local(fib,lambda(n,if(+(n,-1),if(+(n,-2),+(fib(+(n,-1)),fib(+(n,-2))),1),1)),fib(5))"
 )
 
 exit /b 0 
