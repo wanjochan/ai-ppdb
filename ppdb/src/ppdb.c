@@ -1,6 +1,6 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
-#include "internal/peer.h"
+#include "peer/peer_server.inc.c"
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
@@ -250,37 +250,24 @@ static ppdb_error_t cmd_status(int argc, char** argv) {
 //-----------------------------------------------------------------------------
 
 int main(int argc, char** argv) {
-    // Initialize
-    ppdb_error_t err = ppdb_init();
-    if (err != PPDB_OK) {
-        fprintf(stderr, "Failed to initialize: %d\n", err);
-        return 1;
-    }
-
-    // Parse command
     if (argc < 2) {
         print_usage();
         return 1;
     }
-
+    
     const char* cmd = argv[1];
     if (strcmp(cmd, "server") == 0) {
-        err = cmd_server(argc - 1, argv + 1);
+        return cmd_server(argc - 1, argv + 1);
     } else if (strcmp(cmd, "client") == 0) {
-        err = cmd_client(argc - 1, argv + 1);
+        return cmd_client(argc - 1, argv + 1);
     } else if (strcmp(cmd, "status") == 0) {
-        err = cmd_status(argc - 1, argv + 1);
-    } else if (strcmp(cmd, "help") == 0 || strcmp(cmd, "--help") == 0) {
+        return cmd_status(argc - 1, argv + 1);
+    } else if (strcmp(cmd, "help") == 0) {
         print_usage();
-        err = PPDB_OK;
+        return 0;
     } else {
         fprintf(stderr, "Unknown command: %s\n\n", cmd);
         print_usage();
-        err = PPDB_ERR_PARAM;
+        return 1;
     }
-
-    // Cleanup
-    ppdb_cleanup();
-
-    return (err == PPDB_OK) ? 0 : 1;
 } 

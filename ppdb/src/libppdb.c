@@ -49,14 +49,6 @@ typedef struct ppdb_ctx_s {
     bool initialized;
 } ppdb_ctx_s;
 
-typedef struct ppdb_server_s {
-    ppdb_ctx_t ctx;
-    ppdb_net_config_t config;
-    bool running;
-    ppdb_conn_callback conn_cb;
-    void* user_data;
-} ppdb_server_s;
-
 //-----------------------------------------------------------------------------
 // Context Management
 //-----------------------------------------------------------------------------
@@ -89,95 +81,5 @@ ppdb_error_t ppdb_destroy(ppdb_ctx_t ctx) {
     }
 
     free(context);
-    return PPDB_OK;
-}
-
-//-----------------------------------------------------------------------------
-// Server Management
-//-----------------------------------------------------------------------------
-
-ppdb_error_t ppdb_server_create(ppdb_server_t* server, ppdb_ctx_t ctx, const ppdb_net_config_t* config) {
-    if (!server || !ctx || !config) {
-        return PPDB_ERR_PARAM;
-    }
-
-    ppdb_server_s* srv = (ppdb_server_s*)malloc(sizeof(ppdb_server_s));
-    if (!srv) {
-        return PPDB_ERR_MEMORY;
-    }
-
-    srv->ctx = ctx;
-    memcpy(&srv->config, config, sizeof(ppdb_net_config_t));
-    srv->running = false;
-    srv->conn_cb = NULL;
-    srv->user_data = NULL;
-
-    *server = srv;
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_server_start(ppdb_server_t server) {
-    if (!server) {
-        return PPDB_ERR_PARAM;
-    }
-
-    ppdb_server_s* srv = (ppdb_server_s*)server;
-    if (srv->running) {
-        return PPDB_ERR_BUSY;
-    }
-
-    // TODO: Implement actual server start logic
-    srv->running = true;
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_server_stop(ppdb_server_t server) {
-    if (!server) {
-        return PPDB_ERR_PARAM;
-    }
-
-    ppdb_server_s* srv = (ppdb_server_s*)server;
-    if (!srv->running) {
-        return PPDB_OK;
-    }
-
-    // TODO: Implement actual server stop logic
-    srv->running = false;
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_server_destroy(ppdb_server_t server) {
-    if (!server) {
-        return PPDB_ERR_PARAM;
-    }
-
-    ppdb_server_s* srv = (ppdb_server_s*)server;
-    if (srv->running) {
-        ppdb_server_stop(server);
-    }
-
-    free(srv);
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_server_set_conn_callback(ppdb_server_t server, ppdb_conn_callback cb, void* user_data) {
-    if (!server) {
-        return PPDB_ERR_PARAM;
-    }
-
-    ppdb_server_s* srv = (ppdb_server_s*)server;
-    srv->conn_cb = cb;
-    srv->user_data = user_data;
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_server_get_stats(ppdb_server_t server, char* buffer, size_t size) {
-    if (!server || !buffer || size == 0) {
-        return PPDB_ERR_PARAM;
-    }
-
-    // TODO: Implement actual stats collection
-    snprintf(buffer, size, "Server Stats:\nStatus: %s\n", 
-             ((ppdb_server_s*)server)->running ? "Running" : "Stopped");
     return PPDB_OK;
 } 
