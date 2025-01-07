@@ -1,7 +1,7 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
 #include "internal/storage.h"
-#include "test_common.h"
+#include "../test_framework.h"
 
 // Test setup and teardown
 static ppdb_base_t* base = NULL;
@@ -10,7 +10,9 @@ static ppdb_storage_table_t* table = NULL;
 static ppdb_base_config_t base_config;
 static ppdb_storage_config_t storage_config;
 
-static void test_setup(void) {
+static int test_setup(void) {
+    printf("Setting up test environment...\n");
+    
     // Initialize base config
     base_config = (ppdb_base_config_t){
         .memory_limit = 1024 * 1024,
@@ -30,11 +32,18 @@ static void test_setup(void) {
     };
     
     // Initialize layers
-    assert(ppdb_base_init(&base, &base_config) == PPDB_OK);
-    assert(ppdb_storage_init(&storage, base, &storage_config) == PPDB_OK);
+    ppdb_error_t err = ppdb_base_init(&base, &base_config);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(base);
+    
+    err = ppdb_storage_init(&storage, base, &storage_config);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(storage);
+    
+    return 0;
 }
 
-static void test_teardown(void) {
+static int test_teardown(void) {
     if (table) {
         // Table will be destroyed by storage
         table = NULL;
@@ -47,103 +56,138 @@ static void test_teardown(void) {
         ppdb_base_destroy(base);
         base = NULL;
     }
+    return 0;
 }
 
 // Test table creation
-static void test_table_create_normal(void) {
+static int test_table_create_normal(void) {
     printf("  Running test: table_create_normal\n");
     
     // Create table
-    assert(ppdb_storage_create_table(storage, "test_table", &table) == PPDB_OK);
-    assert(table != NULL);
+    ppdb_error_t err = ppdb_storage_create_table(storage, "test_table", &table);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(table);
     
     // Try to create same table again
     ppdb_storage_table_t* table2 = NULL;
-    assert(ppdb_storage_create_table(storage, "test_table", &table2) == PPDB_ERR_ALREADY_EXISTS);
-    assert(table2 == NULL);
+    err = ppdb_storage_create_table(storage, "test_table", &table2);
+    TEST_ASSERT_EQUALS(PPDB_ERR_ALREADY_EXISTS, err);
+    TEST_ASSERT_EQUALS(NULL, table2);
     
     printf("  Test passed: table_create_normal\n");
+    return 0;
 }
 
 // Test table creation with invalid parameters
-static void test_table_create_invalid(void) {
+static int test_table_create_invalid(void) {
     printf("  Running test: table_create_invalid\n");
     
     // Test NULL parameters
-    assert(ppdb_storage_create_table(NULL, "test_table", &table) == PPDB_ERR_NULL_POINTER);
-    assert(ppdb_storage_create_table(storage, NULL, &table) == PPDB_ERR_NULL_POINTER);
-    assert(ppdb_storage_create_table(storage, "test_table", NULL) == PPDB_ERR_NULL_POINTER);
+    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_create_table(NULL, "test_table", &table));
+    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_create_table(storage, NULL, &table));
+    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_create_table(storage, "test_table", NULL));
     
     // Test invalid table names
-    assert(ppdb_storage_create_table(storage, "", &table) == PPDB_ERR_INVALID_ARGUMENT);
-    assert(ppdb_storage_create_table(storage, "   ", &table) == PPDB_ERR_INVALID_ARGUMENT);
+    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_create_table(storage, "", &table));
+    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_create_table(storage, "   ", &table));
     
     printf("  Test passed: table_create_invalid\n");
+    return 0;
 }
 
 // Test table operations
-static void test_table_operations(void) {
+static int test_table_operations(void) {
     printf("  Running test: table_operations\n");
     
+    ppdb_error_t err;
+    
     // Create table
-    assert(ppdb_storage_create_table(storage, "test_table", &table) == PPDB_OK);
+    err = ppdb_storage_create_table(storage, "test_table", &table);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(table);
     
     // Get table
     ppdb_storage_table_t* table2 = NULL;
-    assert(ppdb_storage_get_table(storage, "test_table", &table2) == PPDB_OK);
-    assert(table2 == table);
+    err = ppdb_storage_get_table(storage, "test_table", &table2);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_EQUALS(table, table2);
     
     // Drop table
-    assert(ppdb_storage_drop_table(storage, "test_table") == PPDB_OK);
+    err = ppdb_storage_drop_table(storage, "test_table");
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
     
     // Try to get dropped table
-    assert(ppdb_storage_get_table(storage, "test_table", &table2) == PPDB_ERR_NOT_FOUND);
+    err = ppdb_storage_get_table(storage, "test_table", &table2);
+    TEST_ASSERT_EQUALS(PPDB_ERR_NOT_FOUND, err);
     
     // Try to drop non-existent table
-    assert(ppdb_storage_drop_table(storage, "non_existent") == PPDB_ERR_NOT_FOUND);
+    err = ppdb_storage_drop_table(storage, "non_existent");
+    TEST_ASSERT_EQUALS(PPDB_ERR_NOT_FOUND, err);
     
     printf("  Test passed: table_operations\n");
+    return 0;
 }
 
 // Test multiple tables
-static void test_multiple_tables(void) {
+static int test_multiple_tables(void) {
     printf("  Running test: multiple_tables\n");
+    
+    ppdb_error_t err;
     
     // Create multiple tables
     ppdb_storage_table_t* tables[3] = {NULL};
-    assert(ppdb_storage_create_table(storage, "table1", &tables[0]) == PPDB_OK);
-    assert(ppdb_storage_create_table(storage, "table2", &tables[1]) == PPDB_OK);
-    assert(ppdb_storage_create_table(storage, "table3", &tables[2]) == PPDB_OK);
+    err = ppdb_storage_create_table(storage, "table1", &tables[0]);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(tables[0]);
+    
+    err = ppdb_storage_create_table(storage, "table2", &tables[1]);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(tables[1]);
+    
+    err = ppdb_storage_create_table(storage, "table3", &tables[2]);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(tables[2]);
     
     // Verify all tables exist
     ppdb_storage_table_t* table_check = NULL;
-    assert(ppdb_storage_get_table(storage, "table1", &table_check) == PPDB_OK);
-    assert(table_check == tables[0]);
-    assert(ppdb_storage_get_table(storage, "table2", &table_check) == PPDB_OK);
-    assert(table_check == tables[1]);
-    assert(ppdb_storage_get_table(storage, "table3", &table_check) == PPDB_OK);
-    assert(table_check == tables[2]);
+    err = ppdb_storage_get_table(storage, "table1", &table_check);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_EQUALS(tables[0], table_check);
+    
+    err = ppdb_storage_get_table(storage, "table2", &table_check);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_EQUALS(tables[1], table_check);
+    
+    err = ppdb_storage_get_table(storage, "table3", &table_check);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_EQUALS(tables[2], table_check);
     
     // Drop tables in different order
-    assert(ppdb_storage_drop_table(storage, "table2") == PPDB_OK);
-    assert(ppdb_storage_drop_table(storage, "table1") == PPDB_OK);
-    assert(ppdb_storage_drop_table(storage, "table3") == PPDB_OK);
+    err = ppdb_storage_drop_table(storage, "table2");
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    
+    err = ppdb_storage_drop_table(storage, "table1");
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    
+    err = ppdb_storage_drop_table(storage, "table3");
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
     
     printf("  Test passed: multiple_tables\n");
+    return 0;
 }
 
 int main(void) {
-    printf("Running test suite: Storage Table Tests\n");
+    TEST_INIT();
     
     test_setup();
     
-    test_table_create_normal();
-    test_table_create_invalid();
-    test_table_operations();
-    test_multiple_tables();
+    TEST_RUN(test_table_create_normal);
+    TEST_RUN(test_table_create_invalid);
+    TEST_RUN(test_table_operations);
+    TEST_RUN(test_multiple_tables);
     
     test_teardown();
     
-    printf("Test suite completed\n");
+    TEST_CLEANUP();
     return 0;
 }

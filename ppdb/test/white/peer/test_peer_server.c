@@ -5,13 +5,20 @@
 
 // Test cases
 static int test_peer_server_basic(void) {
-    ppdb_handle_t db;
+    ppdb_ctx_t ctx;
     ppdb_error_t err;
 
-    // Create database
-    err = ppdb_create(&db, NULL);
+    // Create database with default options
+    ppdb_options_t options = {
+        .db_path = "./tmp",
+        .cache_size = 1024 * 1024 * 1024,  // 1GB
+        .max_readers = 10,
+        .sync_writes = false,
+        .flush_period_ms = 0
+    };
+    err = ppdb_create(&ctx, &options);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_NOT_NULL(db);
+    TEST_ASSERT_NOT_NULL(ctx);
 
     // Create server
     ppdb_server_t server;
@@ -25,7 +32,7 @@ static int test_peer_server_basic(void) {
         .protocol = "memcached"
     };
 
-    err = ppdb_server_create(&server, db, &config);
+    err = ppdb_server_create(&server, ctx, &config);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(server);
 
@@ -39,7 +46,7 @@ static int test_peer_server_basic(void) {
 
     // Cleanup
     ppdb_server_destroy(server);
-    ppdb_destroy(db);
+    ppdb_destroy(ctx);
 
     return 0;
 }

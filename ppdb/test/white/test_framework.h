@@ -29,7 +29,7 @@
 
 #define TEST_ASSERT_NOT_NULL(ptr) \
     do { \
-        if ((ptr) == NULL) { \
+        if ((void*)(ptr) == (void*)NULL) { \
             fprintf(stderr, "Assertion failed: %s is NULL\n", #ptr); \
             fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
             exit(1); \

@@ -2,7 +2,7 @@
 // PPDB Library Implementation
 //
 // 注意事项：
-// 1. 本文件实现了PPDB的核心功能，可以被编译成共享库供其他程序使用
+// 1. 本文件实现了PPDB的核心功能，可以被编译成共享库供其他程序使用，也可以直接被主程序调用（编译成.o）
 // 2. 共享库构建目标：
 //    - Windows: libppdb.dll (需要使用mingw64构建，当前cross9不支持)
 //    - Linux:   libppdb.so
