@@ -1,34 +1,6 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
-// Timer statistics structure
-struct ppdb_base_timer_stats_s {
-    uint64_t timers_created;
-    uint64_t timers_started; 
-    uint64_t timers_stopped;
-    uint64_t timer_callbacks;
-    uint64_t active_timers;
-    uint64_t peak_timers;
-};
-
-// Timer structure definition
-struct ppdb_base_timer_s {
-    ppdb_base_async_loop_t* loop;
-    int timer_fd;
-    ppdb_base_async_handle_t* handle;
-    ppdb_base_async_cb callback;
-    void* user_data;
-    bool repeat;
-    uint64_t interval_ms;
-    bool active;
-    struct timespec next_expiry;
-    // Add heap related fields
-    int heap_index;
-};
-
-// Global timer statistics
-static struct ppdb_base_timer_stats_s timer_stats = {0};
-
 // Create a new timer
 ppdb_error_t ppdb_base_timer_create(ppdb_base_event_loop_t* loop,
                                    ppdb_base_timer_t** timer) {
@@ -51,26 +23,6 @@ ppdb_error_t ppdb_base_timer_create(ppdb_base_event_loop_t* loop,
     return PPDB_OK;
 }
 
-// Timer callback wrapper
-static void timer_callback_wrapper(ppdb_base_async_handle_t* handle, void* user_data) {
-    ppdb_base_timer_t* timer = (ppdb_base_timer_t*)user_data;
-    
-    timer_stats.timer_callbacks++;
-    
-    if (timer->callback) {
-        timer->callback(handle, timer->user_data);
-    }
-    
-    if (!timer->repeat) {
-        ppdb_base_timer_stop(timer);
-    } else {
-        // Update next expiry for repeating timer
-        clock_gettime(CLOCK_MONOTONIC, &timer->next_expiry);
-        timer->next_expiry.tv_sec += timer->interval_ms / 1000;
-        timer->next_expiry.tv_nsec += (timer->interval_ms % 1000) * 1000000;
-    }
-}
-
 // Start the timer
 ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer,
                                   uint64_t timeout_ms,
@@ -91,6 +43,10 @@ ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer,
 
     // Update statistics
     timer->stats.active_timers++;
+    if (timer->stats.active_timers > timer->stats.peak_timers) {
+        timer->stats.peak_timers = timer->stats.active_timers;
+    }
+    timer->stats.total_timeouts++;
 
     ppdb_base_mutex_unlock(timer->loop->mutex);
     return PPDB_OK;

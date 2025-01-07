@@ -122,22 +122,6 @@ typedef struct ppdb_base_stats_s {
     uint64_t peak_memory;
 } ppdb_base_stats_t;
 
-// IO structures
-typedef struct ppdb_base_io_request_s {
-    void* buffer;
-    size_t size;
-    uint64_t offset;
-    bool is_write;
-    void* callback_data;
-} ppdb_base_io_request_t;
-
-typedef struct ppdb_base_io_stats_s {
-    uint64_t reads;
-    uint64_t writes;
-    uint64_t read_bytes;
-    uint64_t write_bytes;
-} ppdb_base_io_stats_t;
-
 // Context type
 typedef struct ppdb_base_context_s {
     ppdb_base_mempool_t* pool;
@@ -285,6 +269,7 @@ typedef struct ppdb_base_timer_stats_s {
     uint64_t active_timers;       // Current active timers
     uint64_t total_resets;        // Total number of timer resets
     uint64_t total_cancels;       // Total number of timer cancels
+    uint64_t peak_timers;         // Peak number of active timers
 } ppdb_base_timer_stats_t;
 
 // Timer structure

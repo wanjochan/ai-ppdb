@@ -5,8 +5,9 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
-// Thread-local error context
-static __thread ppdb_error_context_t g_error_context;
+// Error context
+static ppdb_error_context_t g_error_context;
+static ppdb_base_mutex_t* g_error_context_mutex = NULL;
 
 // Error statistics
 typedef struct ppdb_error_stats_s {
@@ -20,7 +21,9 @@ static ppdb_base_mutex_t* g_error_mutex = NULL;
 void ppdb_error_init(void) {
     if (g_error_mutex) return;
     ppdb_base_mutex_create(&g_error_mutex);
+    ppdb_base_mutex_create(&g_error_context_mutex);
     memset(&g_error_stats, 0, sizeof(g_error_stats));
+    memset(&g_error_context, 0, sizeof(g_error_context));
 }
 
 void ppdb_error_cleanup(void) {
@@ -28,12 +31,18 @@ void ppdb_error_cleanup(void) {
         ppdb_base_mutex_destroy(g_error_mutex);
         g_error_mutex = NULL;
     }
+    if (g_error_context_mutex) {
+        ppdb_base_mutex_destroy(g_error_context_mutex);
+        g_error_context_mutex = NULL;
+    }
 }
 
 void ppdb_error_set_context(ppdb_error_context_t* ctx) {
     if (!ctx) return;
 
+    ppdb_base_mutex_lock(g_error_context_mutex);
     memcpy(&g_error_context, ctx, sizeof(ppdb_error_context_t));
+    ppdb_base_mutex_unlock(g_error_context_mutex);
 
     // Update statistics
     if (g_error_mutex) {
@@ -47,11 +56,17 @@ void ppdb_error_set_context(ppdb_error_context_t* ctx) {
 }
 
 const ppdb_error_context_t* ppdb_error_get_context(void) {
-    return &g_error_context;
+    static ppdb_error_context_t ctx;
+    ppdb_base_mutex_lock(g_error_context_mutex);
+    memcpy(&ctx, &g_error_context, sizeof(ppdb_error_context_t));
+    ppdb_base_mutex_unlock(g_error_context_mutex);
+    return &ctx;
 }
 
 void ppdb_error_clear_context(void) {
+    ppdb_base_mutex_lock(g_error_context_mutex);
     memset(&g_error_context, 0, sizeof(ppdb_error_context_t));
+    ppdb_base_mutex_unlock(g_error_context_mutex);
 }
 
 const char* ppdb_error_to_string(ppdb_error_t err) {

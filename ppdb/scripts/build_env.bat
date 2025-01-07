@@ -50,11 +50,11 @@ if not exist "%OBJCOPY%" (
 
 rem Set build flags based on BUILD_MODE
 if /i "%BUILD_MODE%"=="release" (
-    set "COMMON_FLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
+    set "COMMON_FLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables -ftls-model=initial-exec"
     set "RELEASE_FLAGS=-DNDEBUG"
     set "BUILD_FLAGS=%COMMON_FLAGS% %RELEASE_FLAGS%"
 ) else (
-    set "COMMON_FLAGS=-g -O0 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables"
+    set "COMMON_FLAGS=-g -O0 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables -ftls-model=initial-exec"
     set "DEBUG_FLAGS=-DDEBUG"
     set "BUILD_FLAGS=%COMMON_FLAGS% %DEBUG_FLAGS%"
 )
