@@ -5,8 +5,8 @@
  */
 
 #include <cosmopolitan.h>
-#include <internal/base.h>
-#include <internal/peer.h>
+#include "internal/peer.h"
+#include "internal/engine.h"
 
 // Implementation of connection functions
 ppdb_error_t ppdb_peer_connection_create(ppdb_engine_async_loop_t* loop, ppdb_peer_connection_t** conn) {

@@ -19,7 +19,7 @@ static void on_engine_complete(ppdb_error_t error, void* result, void* user_data
         if (data->size <= sizeof(resp.value.inline_data)) {
             memcpy(resp.value.inline_data, data->inline_data, data->size);
         } else {
-            resp.value.extended_data = ppdb_base_alloc(data->size);
+            resp.value.extended_data = ppdb_engine_malloc(data->size);
             if (!resp.value.extended_data) {
                 resp.error = PPDB_ERR_MEMORY;
             } else {
@@ -31,7 +31,7 @@ static void on_engine_complete(ppdb_error_t error, void* result, void* user_data
             }
         }
         resp.value.size = data->size;
-        ppdb_base_free(result);
+        ppdb_engine_free(result);
     }
 
     // Send response
@@ -89,7 +89,7 @@ static ppdb_error_t handle_stats(ppdb_peer_connection_t* conn,
     }
 
     // Prepare stats buffer
-    char* stats = ppdb_base_alloc(1024);
+    char* stats = ppdb_engine_malloc(1024);
     if (!stats) {
         return PPDB_ERR_MEMORY;
     }
@@ -97,7 +97,7 @@ static ppdb_error_t handle_stats(ppdb_peer_connection_t* conn,
     // Get stats
     ppdb_error_t err = ppdb_peer_get_stats(peer, stats, 1024);
     if (err != PPDB_OK) {
-        ppdb_base_free(stats);
+        ppdb_engine_free(stats);
         return err;
     }
 
@@ -120,7 +120,7 @@ static ppdb_error_t handle_stats(ppdb_peer_connection_t* conn,
     ppdb_peer_async_complete(conn, PPDB_OK, &resp);
 
     if (stats) {
-        ppdb_base_free(stats);
+        ppdb_engine_free(stats);
     }
     return PPDB_OK;
 }
@@ -141,9 +141,9 @@ ppdb_error_t ppdb_peer_async_handle_request(ppdb_peer_connection_t* conn,
     }
 
     // Update request stats
-    ppdb_base_mutex_lock(peer->mutex);
+    ppdb_engine_mutex_lock(peer->mutex);
     peer->stats.total_requests++;
-    ppdb_base_mutex_unlock(peer->mutex);
+    ppdb_engine_mutex_unlock(peer->mutex);
 
     // Handle request based on type
     ppdb_error_t err;
@@ -166,9 +166,9 @@ ppdb_error_t ppdb_peer_async_handle_request(ppdb_peer_connection_t* conn,
     }
 
     if (err != PPDB_OK) {
-        ppdb_base_mutex_lock(peer->mutex);
+        ppdb_engine_mutex_lock(peer->mutex);
         peer->stats.failed_requests++;
-        ppdb_base_mutex_unlock(peer->mutex);
+        ppdb_engine_mutex_unlock(peer->mutex);
     }
 
     return err;

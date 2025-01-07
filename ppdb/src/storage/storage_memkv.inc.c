@@ -2,73 +2,70 @@
 // 内部结构
 //-----------------------------------------------------------------------------
 
+#include <cosmopolitan.h>
+#include "internal/storage.h"
+#include "internal/engine.h"
+
 /*
  * TODO(improvement): LRU功能需要重构
  * 1. 使用engine层的事务和表操作接口
  * 2. 将LRU信息存储在单独的engine表中
  * 3. 实现原子的更新操作
  */
-/*
-// LRU 节点结构
-typedef struct lru_node {
-    struct lru_node* prev;
-    struct lru_node* next;
-    ppdb_data_t key;
-    uint64_t last_access;
-} lru_node_t;
-*/
 
 // memkv实例结构
 typedef struct {
-    ppdb_engine_t* engine;            // 引擎实例
-    ppdb_engine_table_t* table;       // 数据表
-    ppdb_engine_mutex_t* global_lock; // 全局锁
+    ppdb_engine_t* engine;             // 引擎实例
+    ppdb_engine_table_t* table;        // 数据表
+    ppdb_engine_mutex_t* global_lock;  // 全局锁
     struct {
-        uint64_t total_items;         // 总项数
-        uint64_t total_memory;        // 总内存使用
-        uint64_t hits;                // 命中次数
-        uint64_t misses;              // 未命中次数
-        uint64_t evictions;           // 驱逐次数
+        uint64_t total_items;          // 总项数
+        uint64_t total_memory;         // 总内存使用
+        uint64_t hits;                 // 命中次数
+        uint64_t misses;               // 未命中次数
+        uint64_t evictions;            // 驱逐次数
     } stats;
-} storage_memkv_t;
+} storage_memkv_t; 
 
 //-----------------------------------------------------------------------------
 // 存储操作实现
 //-----------------------------------------------------------------------------
 
 static ppdb_error_t memkv_init(void** ctx, const ppdb_options_t* options) {
-    storage_memkv_t* kv = calloc(1, sizeof(storage_memkv_t));
+    // 分配并初始化内存
+    storage_memkv_t* kv = ppdb_engine_malloc(sizeof(storage_memkv_t));
     if (!kv) {
         return PPDB_ERR_MEMORY;
     }
+    ppdb_engine_memset(kv, 0, sizeof(storage_memkv_t));
     
     // 初始化引擎
-    engine_config_t engine_config = {
+    ppdb_engine_config_t engine_config = {
         .memory_limit = options->cache_size,
         .thread_pool_size = 4,
         .thread_safe = true
     };
     
-    ppdb_error_t err = engine_init(&kv->engine, &engine_config);
+    ppdb_error_t err = ppdb_engine_init(&kv->engine, &engine_config);
     if (err != PPDB_OK) {
-        free(kv);
+        ppdb_engine_free(kv);
         return err;
     }
     
     // 创建全局锁
-    err = ppdb_base_mutex_create(&kv->global_lock);
+    err = ppdb_engine_mutex_create(&kv->global_lock);
     if (err != PPDB_OK) {
-        engine_destroy(kv->engine);
-        free(kv);
+        ppdb_engine_destroy(kv->engine);
+        ppdb_engine_free(kv);
         return err;
     }
     
     // 创建引擎表
-    err = engine_table_create(kv->engine, "memkv", &kv->table);
+    err = ppdb_engine_table_create(kv->engine, "memkv", &kv->table);
     if (err != PPDB_OK) {
-        ppdb_base_mutex_destroy(kv->global_lock);
-        engine_destroy(kv->engine);
-        free(kv);
+        ppdb_engine_mutex_destroy(kv->global_lock);
+        ppdb_engine_destroy(kv->engine);
+        ppdb_engine_free(kv);
         return err;
     }
     
@@ -82,89 +79,11 @@ static void memkv_destroy(void* ctx) {
         return;
     }
     
-    engine_table_close(kv->table);
-    ppdb_base_mutex_destroy(kv->global_lock);
-    engine_destroy(kv->engine);
-    free(kv);
+    ppdb_engine_table_close(kv->table);
+    ppdb_engine_mutex_destroy(kv->global_lock);
+    ppdb_engine_destroy(kv->engine);
+    ppdb_engine_free(kv);
 }
-
-// LRU 操作函数
-/*
- * TODO(improvement): LRU功能需要重构
- * 1. 使用engine层的事务和表操作接口
- * 2. 将LRU信息存储在单独的engine表中
- * 3. 实现原子的更新操作
- */
-/*
-static void lru_remove_node(storage_memkv_t* kv, lru_node_t* node) {
-    if (!node->prev) {
-        kv->lru_head = node->next;
-    } else {
-        node->prev->next = node->next;
-    }
-    
-    if (!node->next) {
-        kv->lru_tail = node->prev;
-    } else {
-        node->next->prev = node->prev;
-    }
-}
-
-static void lru_add_to_front(storage_memkv_t* kv, lru_node_t* node) {
-    node->prev = NULL;
-    node->next = kv->lru_head;
-    node->last_access = ppdb_base_get_current_time();
-    
-    if (kv->lru_head) {
-        kv->lru_head->prev = node;
-    }
-    kv->lru_head = node;
-    
-    if (!kv->lru_tail) {
-        kv->lru_tail = node;
-    }
-}
-
-static void lru_update_access(storage_memkv_t* kv, const ppdb_data_t* key) {
-    lru_node_t* node = ppdb_base_skiplist_get_user_data(kv->table, key);
-    if (node) {
-        lru_remove_node(kv, node);
-        lru_add_to_front(kv, node);
-    }
-}
-
-static ppdb_error_t lru_evict(storage_memkv_t* kv, size_t required_memory) {
-    while (kv->stats.total_memory + required_memory > kv->engine->config.memory_limit && kv->lru_tail) {
-        lru_node_t* node = kv->lru_tail;
-        ppdb_data_t value;
-        
-        // 获取要删除的键值对大小
-        ppdb_error_t err = ppdb_base_skiplist_get(kv->table, &node->key, &value);
-        if (err != PPDB_OK) {
-            return err;
-        }
-        
-        // 从跳表和LRU链表中删除
-        err = ppdb_base_skiplist_delete(kv->table, &node->key);
-        if (err != PPDB_OK) {
-            return err;
-        }
-        
-        lru_remove_node(kv, node);
-        
-        // 更新统计信息
-        kv->stats.total_items--;
-        kv->stats.total_memory -= (node->key.size + value.size);
-        kv->stats.evictions++;
-        
-        // 释放资源
-        free(node->key.data);
-        free(node);
-    }
-    
-    return PPDB_OK;
-}
-*/
 
 static ppdb_error_t memkv_get(void* ctx, const ppdb_data_t* key, ppdb_data_t* value) {
     storage_memkv_t* kv = (storage_memkv_t*)ctx;
@@ -344,12 +263,13 @@ static ppdb_error_t memkv_get_stats(void* ctx, char* buffer, size_t size) {
         return PPDB_ERR_PARAM;
     }
     
-    ppdb_error_t err = ppdb_base_mutex_lock(kv->global_lock);
+    ppdb_error_t err = ppdb_engine_mutex_lock(kv->global_lock);
     if (err != PPDB_OK) {
         return err;
     }
     
-    int written = snprintf(buffer, size,
+    // 使用engine层的字符串操作函数
+    int written = ppdb_engine_snprintf(buffer, size,
         "STAT curr_items %lu\r\n"
         "STAT bytes %lu\r\n"
         "STAT get_hits %lu\r\n"
@@ -363,7 +283,7 @@ static ppdb_error_t memkv_get_stats(void* ctx, char* buffer, size_t size) {
         kv->stats.evictions
     );
     
-    ppdb_base_mutex_unlock(kv->global_lock);
+    ppdb_engine_mutex_unlock(kv->global_lock);
     
     if (written >= size) {
         return PPDB_ERR_BUFFER_FULL;
