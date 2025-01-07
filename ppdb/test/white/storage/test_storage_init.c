@@ -5,6 +5,7 @@
 
 // Test setup and teardown
 static ppdb_base_t* base = NULL;
+static ppdb_engine_t* engine = NULL;
 static ppdb_storage_t* storage = NULL;
 static ppdb_base_config_t base_config;
 static ppdb_storage_config_t storage_config;
@@ -25,6 +26,7 @@ static int test_setup(void) {
         .block_size = 4096,              // 4KB
         .cache_size = 256 * 1024,        // 256KB
         .write_buffer_size = 64 * 1024,  // 64KB
+        .data_dir = "data",              // Data directory
         .use_compression = true,
         .sync_writes = true
     };
@@ -33,6 +35,11 @@ static int test_setup(void) {
     ppdb_error_t err = ppdb_base_init(&base, &base_config);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(base);
+
+    // Initialize engine layer
+    err = ppdb_engine_init(&engine, base);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(engine);
     
     return 0;
 }
@@ -41,6 +48,10 @@ static int test_teardown(void) {
     if (storage) {
         ppdb_storage_destroy(storage);
         storage = NULL;
+    }
+    if (engine) {
+        ppdb_engine_destroy(engine);
+        engine = NULL;
     }
     if (base) {
         ppdb_base_destroy(base);
@@ -54,7 +65,7 @@ static int test_storage_init_normal(void) {
     printf("  Running test: storage_init_normal\n");
     
     // Test normal initialization
-    ppdb_error_t err = ppdb_storage_init(&storage, base, &storage_config);
+    ppdb_error_t err = ppdb_storage_init(&storage, engine, &storage_config);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(storage);
     
@@ -71,18 +82,18 @@ static int test_storage_init_invalid(void) {
     printf("  Running test: storage_init_invalid\n");
     
     // Test NULL parameters
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(NULL, base, &storage_config));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(NULL, engine, &storage_config));
     TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, NULL, &storage_config));
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, NULL));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, engine, NULL));
     
     // Test invalid config values
     ppdb_storage_config_t invalid_config = storage_config;
     invalid_config.memtable_size = 0;
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, &invalid_config));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, engine, &invalid_config));
     
     invalid_config = storage_config;
     invalid_config.block_size = 0;
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, &invalid_config));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, engine, &invalid_config));
     
     printf("  Test passed: storage_init_invalid\n");
     return 0;
@@ -93,7 +104,7 @@ static int test_storage_config_management(void) {
     printf("  Running test: storage_config_management\n");
     
     // Initialize storage
-    ppdb_error_t err = ppdb_storage_init(&storage, base, &storage_config);
+    ppdb_error_t err = ppdb_storage_init(&storage, engine, &storage_config);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(storage);
     
@@ -139,20 +150,20 @@ static int test_storage_statistics(void) {
     printf("  Running test: storage_statistics\n");
     
     // Initialize storage
-    ppdb_error_t err = ppdb_storage_init(&storage, base, &storage_config);
+    ppdb_error_t err = ppdb_storage_init(&storage, engine, &storage_config);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(storage);
     
     // Get initial stats
     ppdb_storage_stats_t stats;
     ppdb_storage_get_stats(storage, &stats);
-    TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.reads));
-    TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.writes));
-    TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.flushes));
-    TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.compactions));
-    TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.cache_hits));
-    TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.cache_misses));
-    TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.wal_syncs));
+    TEST_ASSERT_EQUALS(0, stats.reads);
+    TEST_ASSERT_EQUALS(0, stats.writes);
+    TEST_ASSERT_EQUALS(0, stats.flushes);
+    TEST_ASSERT_EQUALS(0, stats.compactions);
+    TEST_ASSERT_EQUALS(0, stats.cache_hits);
+    TEST_ASSERT_EQUALS(0, stats.cache_misses);
+    TEST_ASSERT_EQUALS(0, stats.wal_syncs);
     
     // Cleanup
     ppdb_storage_destroy(storage);

@@ -8,8 +8,8 @@ ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size
     if (key_size == 0 || value_size == 0) return PPDB_STORAGE_ERR_PARAM;
 
     // Begin transaction
-    ppdb_engine_tx_t* tx = NULL;
-    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    ppdb_engine_txn_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_txn_begin(table->engine, &tx);
     if (err != PPDB_OK) {
         return err;
     }
@@ -17,14 +17,14 @@ ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size
     // Put data using engine
     err = ppdb_engine_put(tx, table->engine_table, key, key_size, value, value_size);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
     // Commit transaction
-    err = ppdb_engine_commit_tx(tx);
+    err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
@@ -39,8 +39,8 @@ ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size
     if (key_size == 0) return PPDB_STORAGE_ERR_PARAM;
 
     // Begin read transaction
-    ppdb_engine_tx_t* tx = NULL;
-    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    ppdb_engine_txn_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_txn_begin(table->engine, &tx);
     if (err != PPDB_OK) {
         return err;
     }
@@ -48,14 +48,14 @@ ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size
     // Get data using engine
     err = ppdb_engine_get(tx, table->engine_table, key, key_size, value, value_size);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return PPDB_STORAGE_ERR_NOT_FOUND;
     }
 
     // Commit transaction
-    err = ppdb_engine_commit_tx(tx);
+    err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
@@ -67,8 +67,8 @@ ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, s
     if (key_size == 0) return PPDB_STORAGE_ERR_PARAM;
 
     // Begin transaction
-    ppdb_engine_tx_t* tx = NULL;
-    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    ppdb_engine_txn_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_txn_begin(table->engine, &tx);
     if (err != PPDB_OK) {
         return err;
     }
@@ -76,14 +76,14 @@ ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, s
     // Delete data using engine
     err = ppdb_engine_delete(tx, table->engine_table, key, key_size);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return PPDB_STORAGE_ERR_NOT_FOUND;
     }
 
     // Commit transaction
-    err = ppdb_engine_commit_tx(tx);
+    err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
@@ -93,64 +93,58 @@ ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, s
 }
 
 ppdb_error_t ppdb_storage_scan(ppdb_storage_table_t* table, ppdb_storage_cursor_t* cursor) {
-    if (!table || !cursor) return PPDB_ERR_NULL_POINTER;
+    if (!table || !cursor) return PPDB_STORAGE_ERR_PARAM;
 
     // Begin read transaction
-    ppdb_engine_tx_t* tx = NULL;
-    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    ppdb_engine_txn_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_txn_begin(table->engine, &tx);
     if (err != PPDB_OK) {
         return err;
     }
 
-    // Create cursor using engine
+    // Initialize cursor
+    cursor->table = table;
+    cursor->valid = false;
+
+    // Open cursor in engine
     err = ppdb_engine_cursor_open(tx, table->engine_table, &cursor->engine_cursor);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
-    cursor->table = table;
-    cursor->valid = true;
-
-    // Move to first entry
+    // Move cursor to first entry
     err = ppdb_engine_cursor_first(cursor->engine_cursor);
-    if (err != PPDB_OK && err != PPDB_ENGINE_ERR_NOT_FOUND) {
-        ppdb_engine_cursor_close(cursor->engine_cursor);
-        ppdb_engine_rollback_tx(tx);
-        return err;
-    }
-
-    // Commit transaction
-    err = ppdb_engine_commit_tx(tx);
     if (err != PPDB_OK) {
         ppdb_engine_cursor_close(cursor->engine_cursor);
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
+    cursor->valid = true;
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_storage_scan_next(ppdb_storage_table_t* table, ppdb_storage_cursor_t* cursor) {
-    if (!table || !cursor) return PPDB_ERR_NULL_POINTER;
-    if (!cursor->valid) return PPDB_STORAGE_ERR_INTERNAL;
+    if (!table || !cursor) return PPDB_STORAGE_ERR_PARAM;
+    if (!cursor->valid) return PPDB_STORAGE_ERR_INVALID_STATE;
 
     // Move cursor to next entry
     ppdb_error_t err = ppdb_engine_cursor_next(cursor->engine_cursor);
     if (err != PPDB_OK) {
         cursor->valid = false;
-        return PPDB_STORAGE_ERR_NOT_FOUND;
+        return err;
     }
 
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table) {
-    if (!table) return PPDB_ERR_NULL_POINTER;
+    if (!table) return PPDB_STORAGE_ERR_PARAM;
 
     // Begin transaction
-    ppdb_engine_tx_t* tx = NULL;
-    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    ppdb_engine_txn_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_txn_begin(table->engine, &tx);
     if (err != PPDB_OK) {
         return err;
     }
@@ -158,14 +152,14 @@ ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table) {
     // Compact table using engine
     err = ppdb_engine_compact(tx, table->engine_table);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
     // Commit transaction
-    err = ppdb_engine_commit_tx(tx);
+    err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
@@ -173,11 +167,11 @@ ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table) {
 }
 
 ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table) {
-    if (!table) return PPDB_ERR_NULL_POINTER;
+    if (!table) return PPDB_STORAGE_ERR_PARAM;
 
     // Begin transaction
-    ppdb_engine_tx_t* tx = NULL;
-    ppdb_error_t err = ppdb_engine_begin_tx(table->engine_table->engine, &tx);
+    ppdb_engine_txn_t* tx = NULL;
+    ppdb_error_t err = ppdb_engine_txn_begin(table->engine, &tx);
     if (err != PPDB_OK) {
         return err;
     }
@@ -185,14 +179,14 @@ ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table) {
     // Flush table using engine
     err = ppdb_engine_flush(tx, table->engine_table);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 
     // Commit transaction
-    err = ppdb_engine_commit_tx(tx);
+    err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
         return err;
     }
 

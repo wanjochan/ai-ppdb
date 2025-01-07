@@ -35,10 +35,10 @@ base => (engine + storage) => peer => (libppdb, ppdb.exe)
    - 通过Engine层处理异步/网络
 
 修改前检查清单：
-□ 这个调用是否涉及事务性操作？
-□ 这个调用是否需要并发控制？
-□ 这个调用是否涉及数据版本？
-□ 这个调用是否仅仅是基础设施服务？
+* 这个调用是否涉及事务性操作？
+* 这个调用是否需要并发控制？
+* 这个调用是否涉及数据版本？
+* 这个调用是否仅仅是基础设施服务？
 
 判断原则：
 - 如果前三个任一为是 => 使用 engine 层
@@ -66,32 +66,3 @@ cd ../ppdb/scripts; .\build.bat peer
 cd ../ppdb/scripts; .\build.bat ppdb
 
 # 其他临时笔记
-
-注意：storage 和 peer 层过多使用base层，所以需要做以下改进
-表管理（engine层函数新建）:
-storage不要直接用skiplist
-应该用:
-engine_table_create
-engine_table_drop
-engine_table_open
-engine_table_close
-数据操作:
-storage不要直接用skiplist增删改查
-应该用:
-engine_put
-engine_get
-engine_delete
-engine_scan
-并发控制:
-storage不要直接用spinlock
-应该用:
-engine_begin_tx
-engine_commit_tx
-engine_rollback_tx
-异步操作:
-peer不要直接用base_async
-应该用:
-engine_async_get
-engine_async_put
-engine_async_delete
-

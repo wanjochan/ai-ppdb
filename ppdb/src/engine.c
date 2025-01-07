@@ -2,86 +2,120 @@
  * engine.c - PPDB引擎层实现
  *
  * 本文件是PPDB引擎层的主入口，负责组织和初始化所有引擎模块。
- * 包含以下模块：
- * 1. 错误处理 (engine_error.inc.c)
- * 2. 数据结构 (engine_struct.inc.c)
- * 3. 核心功能 (engine_core.inc.c)
- * 4. 事务管理 (engine_txn.inc.c)
- * 5. IO管理 (engine_io.inc.c)
  */
 
 #include <cosmopolitan.h>
 #include "internal/base.h"
 #include "internal/engine.h"
 
-// 包含各模块实现
-#include "engine/engine_error.inc.c"
-#include "engine/engine_struct.inc.c"
-#include "engine/engine_core.inc.c"
+// Include implementation files
 #include "engine/engine_txn.inc.c"
+#include "engine/engine_table.inc.c"
+#include "engine/engine_cursor.inc.c"
 #include "engine/engine_io.inc.c"
+#include "engine/engine_stats.inc.c"
+#include "engine/engine_mutex.inc.c"
+#include "engine/engine_async.inc.c"
 
-// 引擎层初始化
+// Engine initialization
 ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
-    ppdb_engine_t* new_engine;
-    ppdb_error_t err;
-
     if (!engine || !base) return PPDB_ENGINE_ERR_PARAM;
+    if (*engine) return PPDB_ENGINE_ERR_PARAM;
 
-    // 分配引擎结构
-    new_engine = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_engine_t));
-    if (!new_engine) return PPDB_ENGINE_ERR_INIT;
+    // Allocate engine structure
+    ppdb_engine_t* e = malloc(sizeof(ppdb_engine_t));
+    if (!e) return PPDB_ENGINE_ERR_INIT;
 
-    memset(new_engine, 0, sizeof(ppdb_engine_t));
-    new_engine->base = base;
+    // Initialize engine structure
+    memset(e, 0, sizeof(ppdb_engine_t));
+    e->base = base;
 
-    // 初始化全局互斥锁
-    err = ppdb_base_mutex_create(&new_engine->global_mutex);
-    if (err != PPDB_OK) goto error;
+    // Initialize global mutex
+    ppdb_error_t err = ppdb_base_mutex_create(&e->global_mutex);
+    if (err != PPDB_OK) {
+        free(e);
+        return err;
+    }
 
-    // 初始化核心功能
-    err = ppdb_engine_core_init(new_engine);
-    if (err != PPDB_OK) goto error;
+    // Initialize transaction manager
+    err = ppdb_engine_txn_init(e);
+    if (err != PPDB_OK) {
+        ppdb_base_mutex_destroy(e->global_mutex);
+        free(e);
+        return err;
+    }
 
-    // 初始化事务管理
-    err = ppdb_engine_txn_init(new_engine);
-    if (err != PPDB_OK) goto error;
+    // Initialize IO manager
+    err = ppdb_engine_io_init(e);
+    if (err != PPDB_OK) {
+        ppdb_engine_txn_cleanup(e);
+        ppdb_base_mutex_destroy(e->global_mutex);
+        free(e);
+        return err;
+    }
 
-    // 启动引擎核心
-    err = ppdb_engine_core_start(new_engine);
-    if (err != PPDB_OK) goto error;
+    // Initialize statistics
+    err = ppdb_engine_stats_init(&e->stats);
+    if (err != PPDB_OK) {
+        ppdb_engine_io_cleanup(e);
+        ppdb_engine_txn_cleanup(e);
+        ppdb_base_mutex_destroy(e->global_mutex);
+        free(e);
+        return err;
+    }
 
-    *engine = new_engine;
+    *engine = e;
     return PPDB_OK;
-
-error:
-    ppdb_engine_destroy(new_engine);
-    return err;
 }
 
-// 引擎层清理
 void ppdb_engine_destroy(ppdb_engine_t* engine) {
     if (!engine) return;
 
-    // 停止引擎核心
-    ppdb_engine_core_stop(engine);
+    // Cleanup statistics
+    ppdb_engine_stats_cleanup(&engine->stats);
 
-    // 按照依赖关系反序清理
+    // Cleanup IO manager
     ppdb_engine_io_cleanup(engine);
-    ppdb_engine_txn_cleanup(engine);
-    ppdb_engine_core_cleanup(engine);
 
+    // Cleanup transaction manager
+    ppdb_engine_txn_cleanup(engine);
+
+    // Destroy global mutex
     if (engine->global_mutex) {
         ppdb_base_mutex_destroy(engine->global_mutex);
     }
 
-    ppdb_base_aligned_free(engine);
+    // Free engine structure
+    free(engine);
 }
 
-// 获取统计信息
-void ppdb_engine_get_stats(ppdb_engine_t* engine, ppdb_engine_stats_t* stats) {
-    if (!engine || !stats) return;
-
-    // Copy statistics
-    memcpy(stats, &engine->stats, sizeof(ppdb_engine_stats_t));
+const char* ppdb_engine_strerror(ppdb_error_t err) {
+    switch (err) {
+        case PPDB_ENGINE_ERR_INIT:
+            return "Engine initialization failed";
+        case PPDB_ENGINE_ERR_PARAM:
+            return "Invalid parameter";
+        case PPDB_ENGINE_ERR_MUTEX:
+            return "Mutex operation failed";
+        case PPDB_ENGINE_ERR_TXN:
+            return "Transaction operation failed";
+        case PPDB_ENGINE_ERR_MVCC:
+            return "MVCC operation failed";
+        case PPDB_ENGINE_ERR_ASYNC:
+            return "Async operation failed";
+        case PPDB_ENGINE_ERR_TIMEOUT:
+            return "Operation timed out";
+        case PPDB_ENGINE_ERR_BUSY:
+            return "Resource is busy";
+        case PPDB_ENGINE_ERR_FULL:
+            return "Resource is full";
+        case PPDB_ENGINE_ERR_NOT_FOUND:
+            return "Resource not found";
+        case PPDB_ENGINE_ERR_EXISTS:
+            return "Resource already exists";
+        case PPDB_ENGINE_ERR_INVALID_STATE:
+            return "Invalid state";
+        default:
+            return "Unknown engine error";
+    }
 }

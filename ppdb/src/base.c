@@ -1,102 +1,60 @@
 /*
- * base.c - PPDB基础设施层实现
- *
- * 包含以下模块：
- * 1. 内存管理 (base_memory.inc.c)
- * 2. 数据结构 (base_struct.inc.c)
- * 3. 同步原语 (base_sync.inc.c)
- * 4. 工具函数 (base_utils.inc.c)
- * 5. 跳表实现 (base_skiplist.inc.c)
- * 6. 错误处理 (base_error.inc.c)
- * 7. 计数器实现 (base_counter.inc.c)
+ * base.c - Base Layer Implementation
  */
 
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
-// Time utility functions
-uint64_t ppdb_base_get_current_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
-}
-
-uint64_t ppdb_base_get_time_us(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
-}
-
-// Base infrastructure layer structure definition
-struct ppdb_base_s {
-    // Memory management
-    ppdb_base_mempool_t* global_pool;
-    ppdb_base_mutex_t* mem_mutex;
-
-    // Synchronization primitives
-    ppdb_base_sync_config_t sync_config;
-    ppdb_base_mutex_t* global_mutex;
-
-    // Configuration
-    ppdb_base_config_t config;
-
-    // Statistics
-    struct {
-        _Atomic(uint64_t) total_allocs;
-        _Atomic(uint64_t) total_frees;
-        _Atomic(uint64_t) current_memory;
-        _Atomic(uint64_t) peak_memory;
-    } stats;
-};
+// Error type definition
+typedef int ppdb_error_t;
 
 // Include implementation files
-#include "base/base_memory.inc.c"
 #include "base/base_error.inc.c"
 #include "base/base_sync.inc.c"
-#include "base/base_struct.inc.c"
+#include "base/base_memory.inc.c"
 #include "base/base_utils.inc.c"
-#include "base/base_skiplist.inc.c"
 #include "base/base_counter.inc.c"
 #include "base/base_timer.inc.c"
+#include "base/base_skiplist.inc.c"
+#include "base/base_async.inc.c"
+#include "base/base_io.inc.c"
+
+// Global state
+static bool base_initialized = false;
 
 // Base layer initialization
-ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config) {
-    PPDB_CHECK_NULL(base);
-    PPDB_CHECK_NULL(config);
-
-    ppdb_base_t* new_base = (ppdb_base_t*)malloc(sizeof(ppdb_base_t));
-    if (new_base == NULL) {
-        return PPDB_BASE_ERR_MEMORY;
+ppdb_error_t ppdb_base_init(void) {
+    if (base_initialized) {
+        return PPDB_OK;
     }
 
-    memset(new_base, 0, sizeof(ppdb_base_t));
-    new_base->config = *config;
+    ppdb_error_t err;
 
-    // Initialize subsystems
-    PPDB_RETURN_IF_ERROR(ppdb_base_memory_init(new_base));
-    PPDB_RETURN_IF_ERROR(ppdb_base_sync_init(new_base));
+    // Initialize error handling
+    err = ppdb_error_init();
+    if (err != PPDB_OK) {
+        return err;
+    }
 
-    *base = new_base;
+    // Initialize memory management
+    err = ppdb_base_memory_init();
+    if (err != PPDB_OK) {
+        return err;
+    }
+
+    base_initialized = true;
     return PPDB_OK;
 }
 
-void ppdb_base_destroy(ppdb_base_t* base) {
-    if (base == NULL) {
+// Base layer cleanup
+void ppdb_base_cleanup(void) {
+    if (!base_initialized) {
         return;
     }
 
-    // Cleanup subsystems in reverse order
-    ppdb_base_sync_cleanup(base);
-    ppdb_base_memory_cleanup(base);
+    // Cleanup in reverse order of initialization
+    ppdb_base_memory_cleanup();
+    ppdb_error_cleanup();
 
-    free(base);
-}
-
-void ppdb_base_get_stats(ppdb_base_t* base, ppdb_base_stats_t* stats) {
-    if (base == NULL || stats == NULL) {
-        return;
-    }
-
-    memset(stats, 0, sizeof(ppdb_base_stats_t));
-    ppdb_base_memory_get_stats(base, stats);
+    base_initialized = false;
 }

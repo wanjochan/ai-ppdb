@@ -31,7 +31,7 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, 
     if (err != PPDB_OK) return PPDB_STORAGE_ERR_PARAM;
 
     // Allocate storage structure
-    ppdb_storage_t* s = ppdb_engine_malloc(sizeof(ppdb_storage_t));
+    ppdb_storage_t* s = malloc(sizeof(ppdb_storage_t));
     if (!s) return PPDB_STORAGE_ERR_MEMORY;
 
     // Initialize storage structure
@@ -42,95 +42,50 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, 
     // Initialize lock
     err = ppdb_engine_mutex_create(&s->lock);
     if (err != PPDB_OK) {
-        ppdb_engine_free(s);
+        free(s);
         return err;
     }
 
     // Initialize tables list
-    ppdb_engine_table_t* tables_list = NULL;
-    err = ppdb_engine_table_create(engine, "tables", &tables_list);
+    ppdb_engine_txn_t* tx = NULL;
+    err = ppdb_engine_txn_begin(engine, &tx);
     if (err != PPDB_OK) {
         ppdb_engine_mutex_destroy(s->lock);
-        ppdb_engine_free(s);
+        free(s);
         return err;
     }
-    s->tables = tables_list;
+
+    err = ppdb_engine_table_create(tx, "tables", &s->tables);
+    if (err != PPDB_OK) {
+        ppdb_engine_txn_rollback(tx);
+        ppdb_engine_mutex_destroy(s->lock);
+        free(s);
+        return err;
+    }
+
+    err = ppdb_engine_txn_commit(tx);
+    if (err != PPDB_OK) {
+        ppdb_engine_txn_rollback(tx);
+        ppdb_engine_mutex_destroy(s->lock);
+        free(s);
+        return err;
+    }
 
     // Initialize statistics
-    err = ppdb_engine_counter_create(&s->stats.reads);
-    if (err != PPDB_OK) {
-        ppdb_engine_table_destroy(tables_list);
-        ppdb_engine_mutex_destroy(s->lock);
-        ppdb_engine_free(s);
-        return err;
-    }
+    s->stats.reads = 0;
+    s->stats.writes = 0;
+    s->stats.flushes = 0;
+    s->stats.compactions = 0;
+    s->stats.cache_hits = 0;
+    s->stats.cache_misses = 0;
+    s->stats.wal_syncs = 0;
 
-    err = ppdb_engine_counter_create(&s->stats.writes);
+    // Initialize maintenance
+    err = ppdb_storage_maintain_init(s);
     if (err != PPDB_OK) {
-        ppdb_engine_counter_destroy(s->stats.reads);
-        ppdb_engine_table_destroy(tables_list);
+        ppdb_engine_table_close(s->tables);
         ppdb_engine_mutex_destroy(s->lock);
-        ppdb_engine_free(s);
-        return err;
-    }
-
-    err = ppdb_engine_counter_create(&s->stats.flushes);
-    if (err != PPDB_OK) {
-        ppdb_engine_counter_destroy(s->stats.writes);
-        ppdb_engine_counter_destroy(s->stats.reads);
-        ppdb_engine_table_destroy(tables_list);
-        ppdb_engine_mutex_destroy(s->lock);
-        ppdb_engine_free(s);
-        return err;
-    }
-
-    err = ppdb_engine_counter_create(&s->stats.compactions);
-    if (err != PPDB_OK) {
-        ppdb_engine_counter_destroy(s->stats.flushes);
-        ppdb_engine_counter_destroy(s->stats.writes);
-        ppdb_engine_counter_destroy(s->stats.reads);
-        ppdb_engine_table_destroy(tables_list);
-        ppdb_engine_mutex_destroy(s->lock);
-        ppdb_engine_free(s);
-        return err;
-    }
-
-    err = ppdb_engine_counter_create(&s->stats.cache_hits);
-    if (err != PPDB_OK) {
-        ppdb_engine_counter_destroy(s->stats.compactions);
-        ppdb_engine_counter_destroy(s->stats.flushes);
-        ppdb_engine_counter_destroy(s->stats.writes);
-        ppdb_engine_counter_destroy(s->stats.reads);
-        ppdb_engine_table_destroy(tables_list);
-        ppdb_engine_mutex_destroy(s->lock);
-        ppdb_engine_free(s);
-        return err;
-    }
-
-    err = ppdb_engine_counter_create(&s->stats.cache_misses);
-    if (err != PPDB_OK) {
-        ppdb_engine_counter_destroy(s->stats.cache_hits);
-        ppdb_engine_counter_destroy(s->stats.compactions);
-        ppdb_engine_counter_destroy(s->stats.flushes);
-        ppdb_engine_counter_destroy(s->stats.writes);
-        ppdb_engine_counter_destroy(s->stats.reads);
-        ppdb_engine_table_destroy(tables_list);
-        ppdb_engine_mutex_destroy(s->lock);
-        ppdb_engine_free(s);
-        return err;
-    }
-
-    err = ppdb_engine_counter_create(&s->stats.wal_syncs);
-    if (err != PPDB_OK) {
-        ppdb_engine_counter_destroy(s->stats.cache_misses);
-        ppdb_engine_counter_destroy(s->stats.cache_hits);
-        ppdb_engine_counter_destroy(s->stats.compactions);
-        ppdb_engine_counter_destroy(s->stats.flushes);
-        ppdb_engine_counter_destroy(s->stats.writes);
-        ppdb_engine_counter_destroy(s->stats.reads);
-        ppdb_engine_table_destroy(tables_list);
-        ppdb_engine_mutex_destroy(s->lock);
-        ppdb_engine_free(s);
+        free(s);
         return err;
     }
 
@@ -138,52 +93,51 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, 
     return PPDB_OK;
 }
 
-// Storage cleanup
 void ppdb_storage_destroy(ppdb_storage_t* storage) {
     if (!storage) return;
 
-    // Destroy tables
-    ppdb_engine_table_destroy(storage->tables);
+    // Stop and cleanup maintenance
+    ppdb_storage_maintain_cleanup(storage);
 
-    // Destroy statistics
-    ppdb_engine_counter_destroy(storage->stats.reads);
-    ppdb_engine_counter_destroy(storage->stats.writes);
-    ppdb_engine_counter_destroy(storage->stats.flushes);
-    ppdb_engine_counter_destroy(storage->stats.compactions);
-    ppdb_engine_counter_destroy(storage->stats.cache_hits);
-    ppdb_engine_counter_destroy(storage->stats.cache_misses);
-    ppdb_engine_counter_destroy(storage->stats.wal_syncs);
+    // Close tables
+    if (storage->tables) {
+        ppdb_engine_table_close(storage->tables);
+    }
 
     // Destroy lock
-    ppdb_engine_mutex_destroy(storage->lock);
+    if (storage->lock) {
+        ppdb_engine_mutex_destroy(storage->lock);
+    }
 
     // Free storage structure
-    ppdb_engine_free(storage);
+    free(storage);
 }
 
-// Get storage statistics
 void ppdb_storage_get_stats(ppdb_storage_t* storage, ppdb_storage_stats_t* stats) {
     if (!storage || !stats) return;
 
     *stats = storage->stats;
 }
 
-// Configuration validation
 ppdb_error_t ppdb_storage_config_validate(const ppdb_storage_config_t* config) {
     if (!config) return PPDB_STORAGE_ERR_PARAM;
 
-    if (config->memtable_size == 0) return PPDB_STORAGE_ERR_PARAM;
-    if (config->block_size == 0) return PPDB_STORAGE_ERR_PARAM;
-    if (config->cache_size == 0) return PPDB_STORAGE_ERR_PARAM;
-    if (config->write_buffer_size == 0) return PPDB_STORAGE_ERR_PARAM;
+    // Validate configuration values
+    if (config->memtable_size == 0 ||
+        config->block_size == 0 ||
+        config->cache_size == 0 ||
+        config->write_buffer_size == 0 ||
+        !config->data_dir) {
+        return PPDB_STORAGE_ERR_CONFIG;
+    }
 
     return PPDB_OK;
 }
 
-// Configuration initialization
 ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config) {
     if (!config) return PPDB_STORAGE_ERR_PARAM;
 
+    // Set default values
     config->memtable_size = PPDB_DEFAULT_MEMTABLE_SIZE;
     config->block_size = PPDB_DEFAULT_BLOCK_SIZE;
     config->cache_size = PPDB_DEFAULT_CACHE_SIZE;
@@ -195,7 +149,6 @@ ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config) {
     return PPDB_OK;
 }
 
-// Get storage configuration
 ppdb_error_t ppdb_storage_get_config(ppdb_storage_t* storage, ppdb_storage_config_t* config) {
     if (!storage || !config) return PPDB_STORAGE_ERR_PARAM;
 
@@ -203,12 +156,12 @@ ppdb_error_t ppdb_storage_get_config(ppdb_storage_t* storage, ppdb_storage_confi
     return PPDB_OK;
 }
 
-// Update storage configuration
 ppdb_error_t ppdb_storage_update_config(ppdb_storage_t* storage, const ppdb_storage_config_t* config) {
     if (!storage || !config) return PPDB_STORAGE_ERR_PARAM;
 
     // Validate new configuration
-    PPDB_RETURN_IF_ERROR(ppdb_storage_config_validate(config));
+    ppdb_error_t err = ppdb_storage_config_validate(config);
+    if (err != PPDB_OK) return err;
 
     // Update configuration
     storage->config = *config;

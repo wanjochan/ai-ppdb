@@ -3,12 +3,12 @@
 
 // Test suite for error handling
 static void test_error_basic(void) {
-    assert(PPDB_ERR_MEMORY != PPDB_OK);
+    assert(PPDB_BASE_ERR_MEMORY != PPDB_OK);
 }
 
 static void test_error_context(void) {
     ppdb_error_context_t ctx;
-    ctx.code = PPDB_ERR_MEMORY;
+    ctx.code = PPDB_BASE_ERR_MEMORY;
     ctx.file = __FILE__;
     ctx.line = __LINE__;
     ctx.func = __func__;
@@ -25,7 +25,7 @@ static void test_error_context(void) {
 
 static void test_error_string(void) {
     assert(strcmp(ppdb_error_to_string(PPDB_OK), "Success") == 0);
-    assert(strcmp(ppdb_error_to_string(PPDB_ERR_MEMORY), "Memory error") == 0);
+    assert(strcmp(ppdb_error_to_string(PPDB_BASE_ERR_MEMORY), "Memory error") == 0);
 }
 
 int main(void) {

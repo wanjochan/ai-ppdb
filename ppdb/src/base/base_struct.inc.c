@@ -1,144 +1,250 @@
 /*
- * base_struct.inc.c - Core data structure implementations for PPDB
- *
- * This file contains the fundamental data structure implementations used
- * throughout the PPDB system, including linked lists, hash tables, and other
- * basic data structures.
- *
- * Copyright (c) 2023 PPDB Authors
+ * base_struct.inc.c - Data Structure Implementation
  */
 
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
-/* Basic data structures */
+// List implementation
+ppdb_error_t ppdb_base_list_init(ppdb_base_list_t** list) {
+    ppdb_base_list_t* new_list;
 
-// Linked list node
-typedef struct ppdb_base_list_node {
-    struct ppdb_base_list_node *next;
-    struct ppdb_base_list_node *prev;
-    void *data;
-} ppdb_base_list_node_t;
-
-// Linked list
-typedef struct ppdb_base_list {
-    ppdb_base_list_node_t *head;
-    ppdb_base_list_node_t *tail;
-    size_t size;
-} ppdb_base_list_t;
-
-// Hash table entry
-typedef struct ppdb_base_hash_entry {
-    char *key;
-    void *value;
-    struct ppdb_base_hash_entry *next;
-} ppdb_base_hash_entry_t;
-
-// Hash table
-typedef struct ppdb_base_hash_table {
-    ppdb_base_hash_entry_t **buckets;
-    size_t size;
-    size_t capacity;
-} ppdb_base_hash_table_t;
-
-// Initialize a new linked list
-ppdb_error_t ppdb_base_list_init(ppdb_base_list_t *list) {
     if (!list) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
-    
-    list->head = NULL;
-    list->tail = NULL;
-    list->size = 0;
-    
+
+    new_list = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_list_t));
+    if (!new_list) {
+        return PPDB_BASE_ERR_MEMORY;
+    }
+
+    new_list->head = NULL;
+    new_list->tail = NULL;
+    new_list->size = 0;
+    new_list->cleanup = NULL;
+
+    *list = new_list;
     return PPDB_OK;
 }
 
-// Add node to list
-ppdb_error_t ppdb_base_list_add(ppdb_base_list_t *list, void *data) {
+void ppdb_base_list_destroy(ppdb_base_list_t* list) {
+    if (!list) return;
+
+    ppdb_base_list_node_t* current = list->head;
+    ppdb_base_list_node_t* next;
+
+    while (current) {
+        next = current->next;
+        if (list->cleanup) {
+            list->cleanup(current->data);
+        }
+        ppdb_base_aligned_free(current);
+        current = next;
+    }
+
+    ppdb_base_aligned_free(list);
+}
+
+ppdb_error_t ppdb_base_list_add(ppdb_base_list_t* list, void* data) {
+    ppdb_base_list_node_t* node;
+
     if (!list) {
-        return PPDB_ERR_PARAM;
+        return PPDB_BASE_ERR_PARAM;
     }
-    
-    ppdb_base_list_node_t *node = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_list_node_t));
+
+    node = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_list_node_t));
     if (!node) {
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
-    
+
     node->data = data;
     node->next = NULL;
-    node->prev = list->tail;
-    
-    if (list->tail) {
-        list->tail->next = node;
-    } else {
+
+    if (!list->head) {
         list->head = node;
+        list->tail = node;
+    } else {
+        list->tail->next = node;
+        list->tail = node;
     }
-    
-    list->tail = node;
+
     list->size++;
-    
     return PPDB_OK;
 }
 
-// Remove node from list
-void ppdb_base_list_remove(ppdb_base_list_t *list, ppdb_base_list_node_t *node) {
-    if (!list || !node) {
-        return;
+void* ppdb_base_list_pop_front(ppdb_base_list_t* list) {
+    if (!list || !list->head) {
+        return NULL;
     }
-    
-    if (node->prev) {
-        node->prev->next = node->next;
-    } else {
-        list->head = node->next;
+
+    ppdb_base_list_node_t* node = list->head;
+    void* data = node->data;
+
+    list->head = node->next;
+    if (!list->head) {
+        list->tail = NULL;
     }
-    
-    if (node->next) {
-        node->next->prev = node->prev;
-    } else {
-        list->tail = node->prev;
-    }
-    
+
     list->size--;
     ppdb_base_aligned_free(node);
+    return data;
 }
 
-// Initialize hash table
-ppdb_error_t ppdb_base_hash_init(ppdb_base_hash_table_t *table, size_t capacity) {
-    if (!table || capacity == 0) {
-        return PPDB_ERR_PARAM;
+size_t ppdb_base_list_size(ppdb_base_list_t* list) {
+    if (!list) return 0;
+    return list->size;
+}
+
+void ppdb_base_list_set_cleanup(ppdb_base_list_t* list, ppdb_base_cleanup_func_t cleanup) {
+    if (!list) return;
+    list->cleanup = cleanup;
+}
+
+// Hash table implementation
+ppdb_error_t ppdb_base_hash_init(ppdb_base_hash_t** hash, size_t bucket_count, ppdb_base_compare_func_t compare) {
+    ppdb_base_hash_t* new_hash;
+
+    if (!hash || bucket_count == 0 || !compare) {
+        return PPDB_BASE_ERR_PARAM;
     }
-    
-    table->buckets = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_hash_entry_t*) * capacity);
-    if (!table->buckets) {
-        return PPDB_ERR_MEMORY;
+
+    new_hash = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_hash_t));
+    if (!new_hash) {
+        return PPDB_BASE_ERR_MEMORY;
     }
-    
-    memset(table->buckets, 0, sizeof(ppdb_base_hash_entry_t*) * capacity);
-    table->capacity = capacity;
-    table->size = 0;
-    
+
+    new_hash->buckets = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_hash_entry_t*) * bucket_count);
+    if (!new_hash->buckets) {
+        ppdb_base_aligned_free(new_hash);
+        return PPDB_BASE_ERR_MEMORY;
+    }
+
+    memset(new_hash->buckets, 0, sizeof(ppdb_base_hash_entry_t*) * bucket_count);
+    new_hash->bucket_count = bucket_count;
+    new_hash->size = 0;
+    new_hash->compare = compare;
+    new_hash->cleanup = NULL;
+
+    *hash = new_hash;
     return PPDB_OK;
 }
 
-// Hash table cleanup
-void ppdb_base_hash_cleanup(ppdb_base_hash_table_t *table) {
-    if (!table) {
-        return;
-    }
-    
-    for (size_t i = 0; i < table->capacity; i++) {
-        ppdb_base_hash_entry_t *entry = table->buckets[i];
+void ppdb_base_hash_destroy(ppdb_base_hash_t* hash) {
+    if (!hash) return;
+
+    for (size_t i = 0; i < hash->bucket_count; i++) {
+        ppdb_base_hash_entry_t* entry = hash->buckets[i];
         while (entry) {
-            ppdb_base_hash_entry_t *next = entry->next;
-            ppdb_base_aligned_free(entry->key);
+            ppdb_base_hash_entry_t* next = entry->next;
+            if (hash->cleanup) {
+                hash->cleanup(entry->value);
+            }
             ppdb_base_aligned_free(entry);
             entry = next;
         }
     }
-    
-    ppdb_base_aligned_free(table->buckets);
-    table->buckets = NULL;
-    table->size = 0;
-    table->capacity = 0;
+
+    ppdb_base_aligned_free(hash->buckets);
+    ppdb_base_aligned_free(hash);
+}
+
+ppdb_error_t ppdb_base_hash_put(ppdb_base_hash_t* hash, void* key, void* value) {
+    ppdb_base_hash_entry_t* entry;
+    size_t bucket;
+
+    if (!hash || !key) {
+        return PPDB_BASE_ERR_PARAM;
+    }
+
+    bucket = ppdb_base_str_hash(key) % hash->bucket_count;
+    entry = hash->buckets[bucket];
+
+    while (entry) {
+        if (hash->compare(entry->key, key) == 0) {
+            if (hash->cleanup) {
+                hash->cleanup(entry->value);
+            }
+            entry->value = value;
+            return PPDB_OK;
+        }
+        entry = entry->next;
+    }
+
+    entry = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_hash_entry_t));
+    if (!entry) {
+        return PPDB_BASE_ERR_MEMORY;
+    }
+
+    entry->key = key;
+    entry->value = value;
+    entry->next = hash->buckets[bucket];
+    hash->buckets[bucket] = entry;
+    hash->size++;
+
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_hash_get(ppdb_base_hash_t* hash, const void* key, void** value) {
+    ppdb_base_hash_entry_t* entry;
+    size_t bucket;
+
+    if (!hash || !key || !value) {
+        return PPDB_BASE_ERR_PARAM;
+    }
+
+    bucket = ppdb_base_str_hash(key) % hash->bucket_count;
+    entry = hash->buckets[bucket];
+
+    while (entry) {
+        if (hash->compare(entry->key, key) == 0) {
+            *value = entry->value;
+            return PPDB_OK;
+        }
+        entry = entry->next;
+    }
+
+    return PPDB_BASE_ERR_INVALID_STATE;
+}
+
+ppdb_error_t ppdb_base_hash_remove(ppdb_base_hash_t* hash, const void* key) {
+    ppdb_base_hash_entry_t* entry;
+    ppdb_base_hash_entry_t* prev = NULL;
+    size_t bucket;
+
+    if (!hash || !key) {
+        return PPDB_BASE_ERR_PARAM;
+    }
+
+    bucket = ppdb_base_str_hash(key) % hash->bucket_count;
+    entry = hash->buckets[bucket];
+
+    while (entry) {
+        if (hash->compare(entry->key, key) == 0) {
+            if (prev) {
+                prev->next = entry->next;
+            } else {
+                hash->buckets[bucket] = entry->next;
+            }
+            if (hash->cleanup) {
+                hash->cleanup(entry->value);
+            }
+            ppdb_base_aligned_free(entry);
+            hash->size--;
+            return PPDB_OK;
+        }
+        prev = entry;
+        entry = entry->next;
+    }
+
+    return PPDB_BASE_ERR_INVALID_STATE;
+}
+
+size_t ppdb_base_hash_size(ppdb_base_hash_t* hash) {
+    if (!hash) return 0;
+    return hash->size;
+}
+
+void ppdb_base_hash_set_cleanup(ppdb_base_hash_t* hash, ppdb_base_cleanup_func_t cleanup) {
+    if (!hash) return;
+    hash->cleanup = cleanup;
 }

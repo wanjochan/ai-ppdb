@@ -98,11 +98,11 @@ void test_memory_pool(void) {
     ASSERT_NOT_NULL(pool);
 
     // Allocate memory
-    void* ptr1 = ppdb_base_mempool_alloc(pool);
+    void* ptr1 = ppdb_base_mempool_alloc(pool, 16);
     ASSERT_NOT_NULL(ptr1);
     ASSERT_EQ((uintptr_t)ptr1 % 16, 0);
 
-    void* ptr2 = ppdb_base_mempool_alloc(pool);
+    void* ptr2 = ppdb_base_mempool_alloc(pool, 16);
     ASSERT_NOT_NULL(ptr2);
     ASSERT_EQ((uintptr_t)ptr2 % 16, 0);
 
@@ -149,7 +149,7 @@ void test_memory_concurrent(void) {
 
     // Wait for threads
     for (int i = 0; i < 4; i++) {
-        err = ppdb_base_thread_join(threads[i], NULL);
+        err = ppdb_base_thread_join(threads[i]);
         ASSERT_OK(err);
     }
 }

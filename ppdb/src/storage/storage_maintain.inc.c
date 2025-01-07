@@ -42,7 +42,7 @@ void ppdb_storage_maintain_cleanup(ppdb_storage_t* storage) {
 
     // Cancel task if exists
     if (storage->maintain.task) {
-        ppdb_engine_async_cancel_task(storage->maintain.task);
+        ppdb_engine_async_cancel(storage->maintain.task);
         storage->maintain.task = NULL;
     }
 
@@ -64,8 +64,8 @@ static void maintenance_task(void* arg) {
 
     while (!storage->maintain.should_stop) {
         // 开始事务
-        ppdb_engine_tx_t* tx = NULL;
-        ppdb_error_t err = ppdb_engine_begin_tx(storage->engine, &tx);
+        ppdb_engine_txn_t* tx = NULL;
+        ppdb_error_t err = ppdb_engine_txn_begin(storage->engine, &tx);
         if (err == PPDB_OK) {
             err = ppdb_engine_mutex_lock(storage->maintain.mutex);
             if (err == PPDB_OK) {
@@ -79,12 +79,12 @@ static void maintenance_task(void* arg) {
 
             // 提交或回滚事务
             if (err == PPDB_OK) {
-                err = ppdb_engine_commit_tx(tx);
+                err = ppdb_engine_txn_commit(tx);
                 if (err != PPDB_OK) {
-                    ppdb_engine_rollback_tx(tx);
+                    ppdb_engine_txn_rollback(tx);
                 }
             } else {
-                ppdb_engine_rollback_tx(tx);
+                ppdb_engine_txn_rollback(tx);
             }
         }
 
@@ -104,16 +104,16 @@ ppdb_error_t ppdb_storage_maintain_start(ppdb_storage_t* storage) {
         return PPDB_STORAGE_ERR_ALREADY_RUNNING;
     }
 
-    // 调度维护任务
-    ppdb_error_t err = ppdb_engine_async_schedule_task(storage->engine, 
-                                                      maintenance_task, 
-                                                      storage,
-                                                      &storage->maintain.task);
+    // Schedule maintenance task
+    ppdb_error_t err = ppdb_engine_async_schedule(storage->engine,
+                                                maintenance_task,
+                                                storage,
+                                                &storage->maintain.task);
     if (err != PPDB_OK) {
         return err;
     }
 
-    // 等待任务启动
+    // Wait for task to start
     while (!storage->maintain.is_running) {
         ppdb_engine_yield();
     }
@@ -130,17 +130,17 @@ ppdb_error_t ppdb_storage_maintain_stop(ppdb_storage_t* storage) {
         return PPDB_STORAGE_ERR_NOT_RUNNING;
     }
 
-    // 通知任务停止
+    // Signal task to stop
     storage->maintain.should_stop = true;
 
-    // 等待任务停止
+    // Wait for task to stop
     while (storage->maintain.is_running) {
         ppdb_engine_yield();
     }
 
-    // 取消任务
+    // Cancel task
     if (storage->maintain.task) {
-        ppdb_engine_async_cancel_task(storage->maintain.task);
+        ppdb_engine_async_cancel(storage->maintain.task);
         storage->maintain.task = NULL;
     }
 
@@ -152,29 +152,28 @@ ppdb_error_t ppdb_storage_maintain_compact(ppdb_storage_t* storage) {
         return PPDB_STORAGE_ERR_PARAM;
     }
 
+    // Lock maintenance mutex
     ppdb_error_t err = ppdb_engine_mutex_lock(storage->maintain.mutex);
     if (err != PPDB_OK) {
         return err;
     }
 
-    // 开始事务
-    ppdb_engine_tx_t* tx = NULL;
-    err = ppdb_engine_begin_tx(storage->engine, &tx);
+    // Begin transaction
+    ppdb_engine_txn_t* tx = NULL;
+    err = ppdb_engine_txn_begin(storage->engine, &tx);
     if (err != PPDB_OK) {
         ppdb_engine_mutex_unlock(storage->maintain.mutex);
         return err;
     }
 
-    // TODO: 实现压缩逻辑
-    // 1. 找到需要压缩的表
-    // 2. 创建新的压缩表
-    // 3. 替换旧表
-    // 4. 更新元数据
+    // Compact all tables
+    ppdb_storage_table_t* table = NULL;
+    // TODO: Iterate through tables and compact each one
 
-    // 提交事务
-    err = ppdb_engine_commit_tx(tx);
+    // Commit transaction
+    err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
     }
 
     ppdb_engine_mutex_unlock(storage->maintain.mutex);
@@ -186,29 +185,28 @@ ppdb_error_t ppdb_storage_maintain_cleanup_expired(ppdb_storage_t* storage) {
         return PPDB_STORAGE_ERR_PARAM;
     }
 
+    // Lock maintenance mutex
     ppdb_error_t err = ppdb_engine_mutex_lock(storage->maintain.mutex);
     if (err != PPDB_OK) {
         return err;
     }
 
-    // 开始事务
-    ppdb_engine_tx_t* tx = NULL;
-    err = ppdb_engine_begin_tx(storage->engine, &tx);
+    // Begin transaction
+    ppdb_engine_txn_t* tx = NULL;
+    err = ppdb_engine_txn_begin(storage->engine, &tx);
     if (err != PPDB_OK) {
         ppdb_engine_mutex_unlock(storage->maintain.mutex);
         return err;
     }
 
-    // TODO: 实现过期数据清理
-    // 1. 扫描过期数据
-    // 2. 删除过期数据
-    // 3. 更新元数据
-    // 4. 更新统计信息
+    // Cleanup expired data
+    ppdb_storage_table_t* table = NULL;
+    // TODO: Iterate through tables and cleanup expired data
 
-    // 提交事务
-    err = ppdb_engine_commit_tx(tx);
+    // Commit transaction
+    err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
     }
 
     ppdb_engine_mutex_unlock(storage->maintain.mutex);
@@ -220,28 +218,28 @@ ppdb_error_t ppdb_storage_maintain_optimize_indexes(ppdb_storage_t* storage) {
         return PPDB_STORAGE_ERR_PARAM;
     }
 
+    // Lock maintenance mutex
     ppdb_error_t err = ppdb_engine_mutex_lock(storage->maintain.mutex);
     if (err != PPDB_OK) {
         return err;
     }
 
-    // 开始事务
-    ppdb_engine_tx_t* tx = NULL;
-    err = ppdb_engine_begin_tx(storage->engine, &tx);
+    // Begin transaction
+    ppdb_engine_txn_t* tx = NULL;
+    err = ppdb_engine_txn_begin(storage->engine, &tx);
     if (err != PPDB_OK) {
         ppdb_engine_mutex_unlock(storage->maintain.mutex);
         return err;
     }
 
-    // TODO: 实现索引优化
-    // 1. 分析索引使用情况
-    // 2. 重建低效索引
-    // 3. 更新统计信息
+    // Optimize indexes
+    ppdb_storage_table_t* table = NULL;
+    // TODO: Iterate through tables and optimize indexes
 
-    // 提交事务
-    err = ppdb_engine_commit_tx(tx);
+    // Commit transaction
+    err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        ppdb_engine_rollback_tx(tx);
+        ppdb_engine_txn_rollback(tx);
     }
 
     ppdb_engine_mutex_unlock(storage->maintain.mutex);

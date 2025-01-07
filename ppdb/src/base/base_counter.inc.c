@@ -1,20 +1,26 @@
 /*
- * base_counter.inc.c - 基础层原子计数器实现
+ * base_counter.inc.c - Counter Implementation
  */
 
+#include <cosmopolitan.h>
+#include "internal/base.h"
+
+// Create counter
 ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter) {
-    ppdb_base_counter_t* new_counter;
-    ppdb_error_t err;
+    if (!counter) {
+        return PPDB_BASE_ERR_PARAM;
+    }
 
-    if (!counter) return PPDB_ERR_PARAM;
+    ppdb_base_counter_t* new_counter = (ppdb_base_counter_t*)malloc(sizeof(ppdb_base_counter_t));
+    if (!new_counter) {
+        return PPDB_BASE_ERR_MEMORY;
+    }
 
-    new_counter = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_counter_t));
-    if (!new_counter) return PPDB_ERR_MEMORY;
+    memset(new_counter, 0, sizeof(ppdb_base_counter_t));
 
-    new_counter->value = 0;
-    err = ppdb_base_mutex_create(&new_counter->mutex);
+    ppdb_error_t err = ppdb_base_mutex_create(&new_counter->mutex);
     if (err != PPDB_OK) {
-        ppdb_base_aligned_free(new_counter);
+        free(new_counter);
         return err;
     }
 
@@ -22,55 +28,114 @@ ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter) {
     return PPDB_OK;
 }
 
-void ppdb_base_counter_destroy(ppdb_base_counter_t* counter) {
-    if (!counter) return;
-    
+// Destroy counter
+ppdb_error_t ppdb_base_counter_destroy(ppdb_base_counter_t* counter) {
+    if (!counter) {
+        return PPDB_BASE_ERR_PARAM;
+    }
+
     if (counter->mutex) {
         ppdb_base_mutex_destroy(counter->mutex);
     }
-    ppdb_base_aligned_free(counter);
+
+    free(counter);
+    return PPDB_OK;
 }
 
-uint64_t ppdb_base_counter_increment(ppdb_base_counter_t* counter) {
-    uint64_t result;
-    
-    if (!counter) return 0;
-    
+// Get counter value
+int64_t ppdb_base_counter_get(ppdb_base_counter_t* counter) {
+    if (!counter) {
+        return 0;
+    }
+
     ppdb_base_mutex_lock(counter->mutex);
-    result = ++counter->value;
+    int64_t value = counter->value;
     ppdb_base_mutex_unlock(counter->mutex);
-    
-    return result;
+
+    return value;
 }
 
-uint64_t ppdb_base_counter_decrement(ppdb_base_counter_t* counter) {
-    uint64_t result;
-    
-    if (!counter) return 0;
-    
-    ppdb_base_mutex_lock(counter->mutex);
-    result = --counter->value;
-    ppdb_base_mutex_unlock(counter->mutex);
-    
-    return result;
-}
+// Set counter value
+void ppdb_base_counter_set(ppdb_base_counter_t* counter, int64_t value) {
+    if (!counter) {
+        return;
+    }
 
-uint64_t ppdb_base_counter_get(ppdb_base_counter_t* counter) {
-    uint64_t result;
-    
-    if (!counter) return 0;
-    
-    ppdb_base_mutex_lock(counter->mutex);
-    result = counter->value;
-    ppdb_base_mutex_unlock(counter->mutex);
-    
-    return result;
-}
-
-void ppdb_base_counter_set(ppdb_base_counter_t* counter, uint64_t value) {
-    if (!counter) return;
-    
     ppdb_base_mutex_lock(counter->mutex);
     counter->value = value;
+    ppdb_base_mutex_unlock(counter->mutex);
+}
+
+// Increment counter
+void ppdb_base_counter_inc(ppdb_base_counter_t* counter) {
+    if (!counter) {
+        return;
+    }
+
+    ppdb_base_mutex_lock(counter->mutex);
+    counter->value++;
+    ppdb_base_mutex_unlock(counter->mutex);
+}
+
+// Decrement counter
+void ppdb_base_counter_dec(ppdb_base_counter_t* counter) {
+    if (!counter) {
+        return;
+    }
+
+    ppdb_base_mutex_lock(counter->mutex);
+    if (counter->value > 0) {
+        counter->value--;
+    }
+    ppdb_base_mutex_unlock(counter->mutex);
+}
+
+// Add value to counter
+void ppdb_base_counter_add(ppdb_base_counter_t* counter, int64_t value) {
+    if (!counter) {
+        return;
+    }
+
+    ppdb_base_mutex_lock(counter->mutex);
+    counter->value += value;
+    ppdb_base_mutex_unlock(counter->mutex);
+}
+
+// Subtract value from counter
+void ppdb_base_counter_sub(ppdb_base_counter_t* counter, int64_t value) {
+    if (!counter) {
+        return;
+    }
+
+    ppdb_base_mutex_lock(counter->mutex);
+    counter->value -= value;
+    ppdb_base_mutex_unlock(counter->mutex);
+}
+
+// Compare and exchange counter value
+bool ppdb_base_counter_compare_exchange(ppdb_base_counter_t* counter, int64_t expected, int64_t desired) {
+    if (!counter) {
+        return false;
+    }
+
+    bool success = false;
+    ppdb_base_mutex_lock(counter->mutex);
+    if (counter->value == expected) {
+        counter->value = desired;
+        success = true;
+    }
+    ppdb_base_mutex_unlock(counter->mutex);
+
+    return success;
+}
+
+// Reset counter
+void ppdb_base_counter_reset(ppdb_base_counter_t* counter) {
+    if (!counter) {
+        return;
+    }
+
+    ppdb_base_mutex_lock(counter->mutex);
+    counter->value = 0;
     ppdb_base_mutex_unlock(counter->mutex);
 } 
