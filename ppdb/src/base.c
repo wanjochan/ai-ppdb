@@ -8,53 +8,61 @@
 // Error type definition
 typedef int ppdb_error_t;
 
-// Include implementation files
+// Include implementations
 #include "base/base_error.inc.c"
 #include "base/base_sync.inc.c"
 #include "base/base_memory.inc.c"
-#include "base/base_utils.inc.c"
-#include "base/base_counter.inc.c"
-#include "base/base_timer.inc.c"
 #include "base/base_skiplist.inc.c"
+#include "base/base_timer.inc.c"
+#include "base/base_utils.inc.c"
 #include "base/base_async.inc.c"
-#include "base/base_io.inc.c"
+#include "base/base_spinlock.inc.c"
 
 // Global state
 static bool base_initialized = false;
 
 // Base layer initialization
-ppdb_error_t ppdb_base_init(void) {
-    if (base_initialized) {
-        return PPDB_OK;
+ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config) {
+    if (!base || !config) {
+        return PPDB_BASE_ERR_PARAM;
     }
 
-    ppdb_error_t err;
-
-    // Initialize error handling
-    err = ppdb_error_init();
-    if (err != PPDB_OK) {
-        return err;
+    ppdb_base_t* new_base = (ppdb_base_t*)malloc(sizeof(ppdb_base_t));
+    if (!new_base) {
+        return PPDB_BASE_ERR_MEMORY;
     }
 
-    // Initialize memory management
-    err = ppdb_base_memory_init();
-    if (err != PPDB_OK) {
-        return err;
-    }
+    memset(new_base, 0, sizeof(ppdb_base_t));
+    memcpy(&new_base->config, config, sizeof(ppdb_base_config_t));
+    new_base->initialized = true;
 
-    base_initialized = true;
+    *base = new_base;
     return PPDB_OK;
 }
 
 // Base layer cleanup
-void ppdb_base_cleanup(void) {
-    if (!base_initialized) {
+void ppdb_base_destroy(ppdb_base_t* base) {
+    if (!base) {
         return;
     }
 
-    // Cleanup in reverse order of initialization
-    ppdb_base_memory_cleanup();
-    ppdb_error_cleanup();
+    base->initialized = false;
+    free(base);
+}
 
-    base_initialized = false;
+// Thread cleanup
+void ppdb_base_thread_destroy(ppdb_base_thread_t* thread) {
+    if (!thread) {
+        return;
+    }
+
+    thread->initialized = false;
+    free(thread);
+}
+
+// Mutex statistics
+void ppdb_base_mutex_enable_stats(ppdb_base_mutex_t* mutex, bool enable) {
+    // Currently not implemented
+    (void)mutex;
+    (void)enable;
 }

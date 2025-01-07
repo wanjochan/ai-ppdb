@@ -11,6 +11,27 @@
 #define PPDB_MAX_ERROR_MESSAGE 256
 #define PPDB_MAX_SKIPLIST_LEVEL 32
 
+// Base configuration
+typedef struct ppdb_base_config_s {
+    size_t memory_limit;
+    size_t thread_pool_size;
+    bool thread_safe;
+} ppdb_base_config_t;
+
+// Base context
+typedef struct ppdb_base_s {
+    ppdb_base_config_t config;
+    bool initialized;
+} ppdb_base_t;
+
+// Spinlock structure
+typedef struct ppdb_base_spinlock_s {
+    _Atomic(bool) locked;
+    bool initialized;
+    bool stats_enabled;
+    uint64_t contention_count;
+} ppdb_base_spinlock_t;
+
 // Error codes
 #define PPDB_OK 0
 #define PPDB_BASE_ERR_PARAM 1
@@ -162,8 +183,8 @@ typedef struct ppdb_base_sync_config_s {
 } ppdb_base_sync_config_t;
 
 // Base layer initialization and cleanup
-ppdb_error_t ppdb_base_init(void);
-void ppdb_base_cleanup(void);
+ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config);
+void ppdb_base_destroy(ppdb_base_t* base);
 
 // Error handling functions
 ppdb_error_t ppdb_error_init(void);
@@ -186,11 +207,13 @@ ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex);
+void ppdb_base_mutex_enable_stats(ppdb_base_mutex_t* mutex, bool enable);
 
 // Thread functions
 ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thread_func_t func, void* arg);
 ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread);
 ppdb_error_t ppdb_base_thread_detach(ppdb_base_thread_t* thread);
+void ppdb_base_thread_destroy(ppdb_base_thread_t* thread);
 void ppdb_base_yield(void);
 void ppdb_base_sleep(uint32_t milliseconds);
 
@@ -270,5 +293,13 @@ bool ppdb_base_is_power_of_two(size_t x);
 size_t ppdb_base_align_size(size_t size, size_t alignment);
 uint32_t ppdb_base_next_power_of_two(uint32_t x);
 int ppdb_base_count_bits(uint32_t x);
+
+// Spinlock functions
+ppdb_error_t ppdb_base_spinlock_create(ppdb_base_spinlock_t** spinlock);
+ppdb_error_t ppdb_base_spinlock_destroy(ppdb_base_spinlock_t* spinlock);
+ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock);
+ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock);
+ppdb_error_t ppdb_base_spinlock_trylock(ppdb_base_spinlock_t* spinlock);
+void ppdb_base_spinlock_enable_stats(ppdb_base_spinlock_t* spinlock, bool enable);
 
 #endif /* PPDB_BASE_H */

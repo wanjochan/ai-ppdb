@@ -147,7 +147,7 @@ static void test_mutex_performance(void) {
     for (int i = 0; i < NUM_THREADS; i++) {
         printf("Joining thread %d...\n", i);
         fflush(stdout);
-        ppdb_base_thread_join(ctx->threads[i], NULL);
+        ppdb_base_thread_join(ctx->threads[i]);
         printf("Thread %d joined\n", i);
         fflush(stdout);
         ppdb_base_thread_destroy(ctx->threads[i]);
@@ -230,7 +230,7 @@ static void test_spinlock_performance(void) {
     for (int i = 0; i < NUM_THREADS; i++) {
         printf("Joining thread %d...\n", i);
         fflush(stdout);
-        ppdb_base_thread_join(ctx->threads[i], NULL);
+        ppdb_base_thread_join(ctx->threads[i]);
         printf("Thread %d joined\n", i);
         fflush(stdout);
         ppdb_base_thread_destroy(ctx->threads[i]);
