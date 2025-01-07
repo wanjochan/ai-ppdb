@@ -1,37 +1,37 @@
 #ifndef PPDB_AST_RUNTIME_H_
 #define PPDB_AST_RUNTIME_H_
 
-/* AST node types */
-typedef enum {
-    AST_SYMBOL,
-    AST_NUMBER,
-    AST_CALL
-} ast_node_type_t;
+#include "cosmopolitan.h"
+#include "ppdb/ast.h"
 
-/* AST node structure */
-typedef struct ast_node {
-    ast_node_type_t type;
-    union {
-        double number_value;
-        struct { char *name; } symbol;
-        struct {
-            struct ast_node *func;
-            struct ast_node **args;
-            size_t arg_count;
-        } call;
-    } value;
-} ast_node_t;
+// 环境条目结构
+typedef struct env_entry {
+    char* name;
+    ast_node_t* value;
+    struct env_entry* next;
+} env_entry_t;
 
-/* Runtime AST functions */
-ast_node_t *ast_create_number(double value);
-ast_node_t *ast_create_symbol(const char *name);
-ast_node_t *ast_create_call(ast_node_t *func, ast_node_t **args, size_t arg_count);
-void ast_free(ast_node_t *node);
-ast_node_t *ast_clone(ast_node_t *node);
-ast_node_t *ast_eval(ast_node_t *node);
+// 环境结构
+typedef struct ast_env {
+    env_entry_t* entries;
+    struct ast_env* parent;
+} ast_env_t;
 
-/* Runtime environment functions */
-void env_define(const char *name, ast_node_t *value);
-ast_node_t *env_lookup(const char *name);
+// 环境函数
+ast_env_t* ast_env_new(ast_env_t* parent);
+void ast_env_free(ast_env_t* env);
+void ast_env_define(ast_env_t* env, const char* name, ast_node_t* value);
+ast_node_t* ast_env_lookup(ast_env_t* env, const char* name);
 
-#endif /* PPDB_AST_RUNTIME_H_ */ 
+// 内置函数
+ast_node_t* builtin_seq(ast_node_t** args, size_t arg_count, ast_env_t* env);
+ast_node_t* builtin_local(ast_node_t** args, size_t arg_count, ast_env_t* env);
+ast_node_t* builtin_if(ast_node_t** args, size_t arg_count, ast_env_t* env);
+ast_node_t* builtin_while(ast_node_t** args, size_t arg_count, ast_env_t* env);
+ast_node_t* builtin_add(ast_node_t** args, size_t arg_count, ast_env_t* env);
+ast_node_t* builtin_sub(ast_node_t** args, size_t arg_count, ast_env_t* env);
+ast_node_t* builtin_mul(ast_node_t** args, size_t arg_count, ast_env_t* env);
+ast_node_t* builtin_div(ast_node_t** args, size_t arg_count, ast_env_t* env);
+ast_node_t* builtin_eq(ast_node_t** args, size_t arg_count, ast_env_t* env);
+
+#endif // PPDB_AST_RUNTIME_H_ 
