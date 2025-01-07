@@ -23,22 +23,22 @@ struct ppdb_base_skiplist_s {
 
 // Create a new skip list
 ppdb_error_t ppdb_base_skiplist_create(ppdb_base_skiplist_t** list, ppdb_base_compare_func_t compare) {
-    if (!list || !compare) return PPDB_ERR_PARAM;
+    if (!list || !compare) return PPDB_BASE_ERR_PARAM;
 
     ppdb_base_skiplist_t* new_list = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_skiplist_t));
-    if (!new_list) return PPDB_ERR_MEMORY;
+    if (!new_list) return PPDB_BASE_ERR_MEMORY;
 
     new_list->header = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_skiplist_node_t));
     if (!new_list->header) {
         ppdb_base_aligned_free(new_list);
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     new_list->header->forward = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_skiplist_node_t*) * MAX_SKIPLIST_LEVEL);
     if (!new_list->header->forward) {
         ppdb_base_aligned_free(new_list->header);
         ppdb_base_aligned_free(new_list);
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     memset(new_list->header->forward, 0, sizeof(ppdb_base_skiplist_node_t*) * MAX_SKIPLIST_LEVEL);
@@ -69,7 +69,7 @@ void ppdb_base_skiplist_destroy(ppdb_base_skiplist_t* list) {
 
 // Insert a key-value pair into the skip list
 ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, const void* key, void* value) {
-    if (!list || !key) return PPDB_ERR_PARAM;
+    if (!list || !key) return PPDB_BASE_ERR_PARAM;
 
     ppdb_base_skiplist_node_t* update[MAX_SKIPLIST_LEVEL];
     ppdb_base_skiplist_node_t* current = list->header;
@@ -108,12 +108,12 @@ ppdb_error_t ppdb_base_skiplist_insert(ppdb_base_skiplist_t* list, const void* k
 
     // Create new node
     ppdb_base_skiplist_node_t* new_node = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_skiplist_node_t));
-    if (!new_node) return PPDB_ERR_MEMORY;
+    if (!new_node) return PPDB_BASE_ERR_MEMORY;
 
     new_node->forward = ppdb_base_aligned_alloc(sizeof(void*), sizeof(ppdb_base_skiplist_node_t*) * MAX_SKIPLIST_LEVEL);
     if (!new_node->forward) {
         ppdb_base_aligned_free(new_node);
-        return PPDB_ERR_MEMORY;
+        return PPDB_BASE_ERR_MEMORY;
     }
 
     // Initialize forward array

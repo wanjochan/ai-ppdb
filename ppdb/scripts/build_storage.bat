@@ -33,7 +33,7 @@ if not "%TEST_MODE%"=="notest" (
         test_sharded_memtable.c
     ) do (
         echo Building %%f...
-        %GCC% %CFLAGS% "%BUILD_DIR%\storage.o" "%BUILD_DIR%\base.o" "%PPDB_DIR%\test\white\storage\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
+        %GCC% %CFLAGS% "%BUILD_DIR%\storage.o" "%BUILD_DIR%\base.o" "%PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
         if errorlevel 1 exit /b 1
         "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%%~nf.exe.dbg" "%BUILD_DIR%\%%~nf.exe"
         if errorlevel 1 exit /b 1

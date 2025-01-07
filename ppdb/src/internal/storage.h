@@ -18,9 +18,11 @@
 #define PPDB_STORAGE_ERR_IO        (PPDB_STORAGE_ERR_START + 0x05)
 #define PPDB_STORAGE_ERR_ALREADY_RUNNING (PPDB_STORAGE_ERR_START + 0x06)
 #define PPDB_STORAGE_ERR_NOT_RUNNING     (PPDB_STORAGE_ERR_START + 0x07)
-#define PPDB_ERR_TABLE_EXISTS      (PPDB_STORAGE_ERR_START + 0x08)
-#define PPDB_ERR_TABLE_NOT_FOUND   (PPDB_STORAGE_ERR_START + 0x09)
-#define PPDB_ERR_CONFIG           (PPDB_STORAGE_ERR_START + 0x0A)
+#define PPDB_STORAGE_ERR_TABLE_EXISTS    (PPDB_STORAGE_ERR_START + 0x08)
+#define PPDB_STORAGE_ERR_TABLE_NOT_FOUND (PPDB_STORAGE_ERR_START + 0x09)
+#define PPDB_STORAGE_ERR_CONFIG         (PPDB_STORAGE_ERR_START + 0x0A)
+#define PPDB_STORAGE_ERR_MEMORY         (PPDB_STORAGE_ERR_START + 0x0B)
+#define PPDB_STORAGE_ERR_INTERNAL       (PPDB_STORAGE_ERR_START + 0x0C)
 
 // Default values
 #define PPDB_DEFAULT_DATA_DIR      "data"
@@ -29,6 +31,20 @@
 typedef struct ppdb_storage_s ppdb_storage_t;
 typedef struct ppdb_storage_table_s ppdb_storage_table_t;
 typedef struct ppdb_storage_index_s ppdb_storage_index_t;
+
+// Internal functions
+static inline int data_compare(const void* a, const void* b) {
+    size_t size_a = *(const size_t*)a;
+    size_t size_b = *(const size_t*)b;
+    const char* data_a = (const char*)a + sizeof(size_t);
+    const char* data_b = (const char*)b + sizeof(size_t);
+    size_t min_size = size_a < size_b ? size_a : size_b;
+    int result = memcmp(data_a, data_b, min_size);
+    if (result == 0) {
+        return size_a - size_b;
+    }
+    return result;
+}
 
 // Maintenance structure
 typedef struct ppdb_storage_maintain_s {
@@ -110,6 +126,8 @@ ppdb_error_t ppdb_table_drop(ppdb_storage_t* storage, const char* name);
 ppdb_error_t ppdb_table_open(ppdb_storage_t* storage, const char* name);
 ppdb_error_t ppdb_table_close(ppdb_storage_t* storage);
 ppdb_error_t ppdb_storage_get_table(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table);
+ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table);
+ppdb_error_t ppdb_storage_drop_table(ppdb_storage_t* storage, const char* name);
 
 // Data operations
 ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size_t key_size, const void* value, size_t value_size);

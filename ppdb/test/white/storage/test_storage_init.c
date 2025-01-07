@@ -72,22 +72,22 @@ static int test_storage_init_invalid(void) {
     printf("  Running test: storage_init_invalid\n");
     
     // Test NULL parameters
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_init(NULL, base, &storage_config));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_init(&storage, NULL, &storage_config));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_init(&storage, base, NULL));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(NULL, base, &storage_config));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, NULL, &storage_config));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, NULL));
     
     // Test invalid config values
     ppdb_storage_config_t invalid_config = storage_config;
     invalid_config.memtable_size = 0;
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_init(&storage, base, &invalid_config));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, &invalid_config));
     
     invalid_config = storage_config;
     invalid_config.block_size = 0;
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_init(&storage, base, &invalid_config));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, &invalid_config));
     
     invalid_config = storage_config;
     invalid_config.data_dir = NULL;
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_init(&storage, base, &invalid_config));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_init(&storage, base, &invalid_config));
     
     printf("  Test passed: storage_init_invalid\n");
     return 0;
@@ -151,8 +151,7 @@ static int test_storage_statistics(void) {
     
     // Get initial stats
     ppdb_storage_stats_t stats;
-    err = ppdb_storage_get_stats(storage, &stats);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    ppdb_storage_get_stats(storage, &stats);
     TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.reads));
     TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.writes));
     TEST_ASSERT_EQUALS(0, ppdb_base_counter_get(stats.flushes));

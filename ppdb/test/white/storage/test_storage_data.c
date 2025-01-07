@@ -105,24 +105,24 @@ static int test_data_invalid_params(void) {
     size_t size = sizeof(buffer);
     
     // Test NULL parameters
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_put(NULL, key, strlen(key), value, strlen(value)));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_put(table, NULL, strlen(key), value, strlen(value)));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_put(table, key, strlen(key), NULL, strlen(value)));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_put(NULL, key, strlen(key), value, strlen(value)));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_put(table, NULL, strlen(key), value, strlen(value)));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_put(table, key, strlen(key), NULL, strlen(value)));
     
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_get(NULL, key, strlen(key), buffer, &size));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_get(table, NULL, strlen(key), buffer, &size));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_get(table, key, strlen(key), NULL, &size));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_get(table, key, strlen(key), buffer, NULL));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_get(NULL, key, strlen(key), buffer, &size));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_get(table, NULL, strlen(key), buffer, &size));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_get(table, key, strlen(key), NULL, &size));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_get(table, key, strlen(key), buffer, NULL));
     
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_delete(NULL, key, strlen(key)));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_delete(table, NULL, strlen(key)));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_delete(NULL, key, strlen(key)));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_delete(table, NULL, strlen(key)));
     
     // Test zero-length parameters
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_put(table, key, 0, value, strlen(value)));
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_put(table, key, strlen(key), value, 0));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_put(table, key, 0, value, strlen(value)));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_put(table, key, strlen(key), value, 0));
     
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_get(table, key, 0, buffer, &size));
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_delete(table, key, 0));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_get(table, key, 0, buffer, &size));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_delete(table, key, 0));
     
     printf("  Test passed: data_invalid_params\n");
     return 0;

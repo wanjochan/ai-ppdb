@@ -71,7 +71,7 @@ static int test_table_create_normal(void) {
     // Try to create same table again
     ppdb_storage_table_t* table2 = NULL;
     err = ppdb_storage_create_table(storage, "test_table", &table2);
-    TEST_ASSERT_EQUALS(PPDB_ERR_ALREADY_EXISTS, err);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_EXISTS, err);
     TEST_ASSERT_EQUALS(NULL, table2);
     
     printf("  Test passed: table_create_normal\n");
@@ -83,13 +83,13 @@ static int test_table_create_invalid(void) {
     printf("  Running test: table_create_invalid\n");
     
     // Test NULL parameters
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_create_table(NULL, "test_table", &table));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_create_table(storage, NULL, &table));
-    TEST_ASSERT_EQUALS(PPDB_ERR_NULL_POINTER, ppdb_storage_create_table(storage, "test_table", NULL));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(NULL, "test_table", &table));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(storage, NULL, &table));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(storage, "test_table", NULL));
     
     // Test invalid table names
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_create_table(storage, "", &table));
-    TEST_ASSERT_EQUALS(PPDB_ERR_INVALID_ARGUMENT, ppdb_storage_create_table(storage, "   ", &table));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(storage, "", &table));
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(storage, "   ", &table));
     
     printf("  Test passed: table_create_invalid\n");
     return 0;
@@ -100,6 +100,7 @@ static int test_table_operations(void) {
     printf("  Running test: table_operations\n");
     
     ppdb_error_t err;
+    table = NULL;  // Initialize table to NULL
     
     // Create table
     err = ppdb_storage_create_table(storage, "test_table", &table);
@@ -110,19 +111,21 @@ static int test_table_operations(void) {
     ppdb_storage_table_t* table2 = NULL;
     err = ppdb_storage_get_table(storage, "test_table", &table2);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
+    TEST_ASSERT_NOT_NULL(table2);
     TEST_ASSERT_EQUALS(table, table2);
     
     // Drop table
     err = ppdb_storage_drop_table(storage, "test_table");
     TEST_ASSERT_EQUALS(PPDB_OK, err);
+    table = NULL;  // Reset table after dropping
     
     // Try to get dropped table
     err = ppdb_storage_get_table(storage, "test_table", &table2);
-    TEST_ASSERT_EQUALS(PPDB_ERR_NOT_FOUND, err);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_NOT_FOUND, err);
     
     // Try to drop non-existent table
     err = ppdb_storage_drop_table(storage, "non_existent");
-    TEST_ASSERT_EQUALS(PPDB_ERR_NOT_FOUND, err);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_NOT_FOUND, err);
     
     printf("  Test passed: table_operations\n");
     return 0;

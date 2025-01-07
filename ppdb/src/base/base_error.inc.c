@@ -37,8 +37,8 @@ const char* ppdb_error_to_string(ppdb_error_t err) {
             return "Not found";
         case PPDB_ERR_BUSY:
             return "Resource busy";
-        case PPDB_ERR_BUFFER_TOO_SMALL:
-            return "Buffer too small";
+        case PPDB_ERR_BUFFER_FULL:
+            return "Buffer full";
         case PPDB_BASE_ERR_MUTEX:
             return "Base mutex error";
         case PPDB_BASE_ERR_RWLOCK:

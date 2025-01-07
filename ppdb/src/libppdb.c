@@ -53,33 +53,37 @@ typedef struct ppdb_ctx_s {
 // Context Management
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_create(ppdb_ctx_t* ctx, const ppdb_options_t* options) {
+// Create database context
+ppdb_error_t ppdb_create(ppdb_ctx_t** ctx, const ppdb_options_t* options) {
     if (!ctx || !options) {
         return PPDB_ERR_PARAM;
     }
-
-    ppdb_ctx_s* context = (ppdb_ctx_s*)malloc(sizeof(ppdb_ctx_s));
+    
+    // Allocate context
+    ppdb_ctx_t* context = (ppdb_ctx_t*)malloc(sizeof(ppdb_ctx_t));
     if (!context) {
         return PPDB_ERR_MEMORY;
     }
-
-    memcpy(&context->options, options, sizeof(ppdb_options_t));
+    
+    // Initialize context
+    memset(context, 0, sizeof(ppdb_ctx_t));
     context->initialized = true;
-
-    *ctx = (ppdb_ctx_t)context;
+    context->options = *options;
+    
+    *ctx = context;
     return PPDB_OK;
 }
 
-ppdb_error_t ppdb_destroy(ppdb_ctx_t ctx) {
-    if (!ctx) {
-        return PPDB_ERR_PARAM;
+// Destroy database context
+void ppdb_destroy(ppdb_ctx_t* ctx) {
+    if (!ctx) return;
+    
+    // Stop and destroy server if running
+    if (ctx->server) {
+        ppdb_server_stop(ctx->server);
+        ppdb_server_destroy(ctx->server);
     }
-
-    ppdb_ctx_s* context = (ppdb_ctx_s*)ctx;
-    if (!context->initialized) {
-        return PPDB_ERR_PARAM;
-    }
-
-    free(context);
-    return PPDB_OK;
+    
+    // Free context
+    free(ctx);
 } 

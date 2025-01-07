@@ -4,33 +4,34 @@
 
 ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size_t key_size,
                              const void* value, size_t value_size) {
-    if (!table || !key || !value) return PPDB_ERR_PARAM;
+    if (!table || !key || !value) return PPDB_STORAGE_ERR_PARAM;
+    if (key_size == 0 || value_size == 0) return PPDB_STORAGE_ERR_PARAM;
     
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
     // Create copies of key and value
-    char* key_copy = malloc(key_size + 1);
-    char* value_copy = malloc(value_size + 1);
+    void* key_copy = ppdb_base_aligned_alloc(16, sizeof(size_t) + key_size);
+    void* value_copy = ppdb_base_aligned_alloc(16, sizeof(size_t) + value_size);
     if (!key_copy || !value_copy) {
-        free(key_copy);
-        free(value_copy);
+        if (key_copy) ppdb_base_aligned_free(key_copy);
+        if (value_copy) ppdb_base_aligned_free(value_copy);
         ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_ERR_MEMORY;
+        return PPDB_STORAGE_ERR_MEMORY;
     }
 
-    memcpy(key_copy, key, key_size);
-    memcpy(value_copy, value, value_size);
-    key_copy[key_size] = '\0';
-    value_copy[value_size] = '\0';
+    *(size_t*)key_copy = key_size;
+    memcpy((char*)key_copy + sizeof(size_t), key, key_size);
+    *(size_t*)value_copy = value_size;
+    memcpy((char*)value_copy + sizeof(size_t), value, value_size);
 
     // Insert into skiplist
     ppdb_error_t err = ppdb_base_skiplist_insert(table->data, key_copy, value_copy);
     if (err != PPDB_OK) {
-        free(key_copy);
-        free(value_copy);
+        ppdb_base_aligned_free(key_copy);
+        ppdb_base_aligned_free(value_copy);
         ppdb_base_spinlock_unlock(&table->lock);
-        return err;
+        return PPDB_STORAGE_ERR_INTERNAL;
     }
 
     table->size++;
@@ -40,24 +41,25 @@ ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size
 
 ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size_t key_size,
                              void* value, size_t* value_size) {
-    if (!table || !key || !value || !value_size) return PPDB_ERR_PARAM;
+    if (!table || !key || !value || !value_size) return PPDB_STORAGE_ERR_PARAM;
+    if (key_size == 0) return PPDB_STORAGE_ERR_PARAM;
     
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
     // Create temporary key copy for lookup
-    char* key_copy = malloc(key_size + 1);
+    void* key_copy = ppdb_base_aligned_alloc(16, sizeof(size_t) + key_size);
     if (!key_copy) {
         ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_ERR_MEMORY;
+        return PPDB_STORAGE_ERR_MEMORY;
     }
-    memcpy(key_copy, key, key_size);
-    key_copy[key_size] = '\0';
+    *(size_t*)key_copy = key_size;
+    memcpy((char*)key_copy + sizeof(size_t), key, key_size);
 
     // Find in skiplist
     void* found_value = NULL;
     ppdb_error_t err = ppdb_base_skiplist_find(table->data, key_copy, &found_value);
-    free(key_copy);
+    ppdb_base_aligned_free(key_copy);
 
     if (err != PPDB_OK || found_value == NULL) {
         ppdb_base_spinlock_unlock(&table->lock);
@@ -65,33 +67,42 @@ ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size
     }
 
     // Copy value
-    size_t len = strlen((const char*)found_value);
-    if (len + 1 > *value_size) {  // +1 for null terminator
+    size_t found_size = *(size_t*)found_value;
+    if (*value_size < found_size) {
         ppdb_base_spinlock_unlock(&table->lock);
-        return PPDB_ERR_BUFFER_TOO_SMALL;
+        return PPDB_STORAGE_ERR_PARAM;
     }
 
-    memcpy(value, found_value, len + 1);  // Include null terminator
-    *value_size = len;
+    memcpy(value, (char*)found_value + sizeof(size_t), found_size);
+    *value_size = found_size;
 
     ppdb_base_spinlock_unlock(&table->lock);
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, size_t key_size) {
-    if (!table || !key) return PPDB_ERR_PARAM;
-    
-    // Avoid unused parameter warnings
-    (void)key_size;
+    if (!table || !key) return PPDB_STORAGE_ERR_PARAM;
+    if (key_size == 0) return PPDB_STORAGE_ERR_PARAM;
     
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
 
+    // Create temporary key copy for lookup
+    void* key_copy = ppdb_base_aligned_alloc(16, sizeof(size_t) + key_size);
+    if (!key_copy) {
+        ppdb_base_spinlock_unlock(&table->lock);
+        return PPDB_STORAGE_ERR_MEMORY;
+    }
+    *(size_t*)key_copy = key_size;
+    memcpy((char*)key_copy + sizeof(size_t), key, key_size);
+
     // Remove from skiplist
-    ppdb_error_t err = ppdb_base_skiplist_remove(table->data, key);
+    ppdb_error_t err = ppdb_base_skiplist_remove(table->data, key_copy);
+    ppdb_base_aligned_free(key_copy);
+
     if (err != PPDB_OK) {
         ppdb_base_spinlock_unlock(&table->lock);
-        return err;
+        return PPDB_ERR_NOT_FOUND;
     }
 
     table->size--;
@@ -100,7 +111,7 @@ ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, s
 }
 
 ppdb_error_t ppdb_storage_scan(ppdb_storage_table_t* table, ppdb_storage_cursor_t* cursor) {
-    if (!table || !cursor) return PPDB_ERR_PARAM;
+    if (!table || !cursor) return PPDB_ERR_NULL_POINTER;
     
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
@@ -117,7 +128,7 @@ ppdb_error_t ppdb_storage_scan(ppdb_storage_table_t* table, ppdb_storage_cursor_
 }
 
 ppdb_error_t ppdb_storage_scan_next(ppdb_storage_table_t* table, ppdb_storage_cursor_t* cursor) {
-    if (!table || !cursor) return PPDB_ERR_PARAM;
+    if (!table || !cursor) return PPDB_ERR_NULL_POINTER;
     
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
@@ -129,7 +140,7 @@ ppdb_error_t ppdb_storage_scan_next(ppdb_storage_table_t* table, ppdb_storage_cu
 }
 
 ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table) {
-    if (!table) return PPDB_ERR_PARAM;
+    if (!table) return PPDB_ERR_NULL_POINTER;
     
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));
@@ -141,7 +152,7 @@ ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table) {
 }
 
 ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table) {
-    if (!table) return PPDB_ERR_PARAM;
+    if (!table) return PPDB_ERR_NULL_POINTER;
     
     // Lock table
     PPDB_RETURN_IF_ERROR(ppdb_base_spinlock_lock(&table->lock));

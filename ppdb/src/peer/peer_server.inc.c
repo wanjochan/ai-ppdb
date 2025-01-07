@@ -4,233 +4,306 @@
 #include <cosmopolitan.h>
 #include "../internal/peer.h"
 #include "../internal/base.h"
-#include "../internal/storage.h"
 
 //-----------------------------------------------------------------------------
-// Server Context Implementation
+// Server Types
 //-----------------------------------------------------------------------------
 
-struct ppdb_server_s {
-    ppdb_ctx_t ctx;              // Database context
-    ppdb_net_config_t config;    // Network configuration
-    ppdb_handle_t peer;          // Network peer handle
-    bool running;                // Server running flag
-    int listen_fd;               // Listening socket
-    pthread_t accept_thread;     // Accept thread handle
+// Client state
+typedef struct client_state {
+    void* peer_data;                // Protocol-specific data
+    struct ppdb_server* server;     // Server instance
+    ppdb_base_async_handle_t* handle; // Client handle
+} client_state_t;
+
+// Server structure
+struct ppdb_server {
+    ppdb_ctx_t* ctx;                // Database context
+    const peer_ops_t* peer_ops;     // Protocol operations
+    ppdb_base_async_loop_t* loop;   // Event loop
+    ppdb_base_async_handle_t* listen_handle; // Listen handle
+    bool running;                   // Server state
 };
 
-// Forward declarations
-static void* accept_thread_func(void* arg);
-
 //-----------------------------------------------------------------------------
-// Server Management Implementation
+// Forward Declarations
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_server_create(ppdb_server_t* server, ppdb_ctx_t ctx, const ppdb_net_config_t* config) {
+static void on_client_data(ppdb_base_async_handle_t* handle, const uint8_t* data, size_t size);
+static void on_client_close(ppdb_base_async_handle_t* handle);
+static void on_new_connection(ppdb_base_async_handle_t* handle, int client_fd);
+
+//-----------------------------------------------------------------------------
+// Memory Management
+//-----------------------------------------------------------------------------
+
+static void* ppdb_base_alloc(size_t size) {
+    void* ptr = malloc(size);
+    if (ptr) {
+        memset(ptr, 0, size);
+    }
+    return ptr;
+}
+
+static void ppdb_base_free(void* ptr) {
+    free(ptr);
+}
+
+//-----------------------------------------------------------------------------
+// Server Implementation
+//-----------------------------------------------------------------------------
+
+// Create server instance
+ppdb_error_t ppdb_server_create(struct ppdb_server** server, ppdb_ctx_t* ctx, ppdb_net_config_t* config) {
     if (!server || !ctx || !config) {
         return PPDB_ERR_PARAM;
     }
-
-    // Allocate server context
-    ppdb_server_t srv = (ppdb_server_t)malloc(sizeof(struct ppdb_server_s));
-    if (!srv) {
+    
+    // Allocate server
+    struct ppdb_server* s = ppdb_base_alloc(sizeof(struct ppdb_server));
+    if (!s) {
         return PPDB_ERR_MEMORY;
     }
-    memset(srv, 0, sizeof(struct ppdb_server_s));
-
-    // Initialize server context
-    srv->ctx = ctx;
-    srv->config = *config;
-    srv->running = false;
-    srv->listen_fd = -1;
-
-    *server = srv;
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_server_start(ppdb_server_t server) {
-    if (!server) {
-        fprintf(stderr, "Server context is null\n");
+    
+    // Initialize server
+    s->ctx = ctx;
+    s->peer_ops = peer_get_ops(config->protocol);
+    if (!s->peer_ops) {
+        ppdb_base_free(s);
         return PPDB_ERR_PARAM;
     }
-
-    if (server->running) {
-        fprintf(stderr, "Server is already running\n");
-        return PPDB_ERR_BUSY;
+    
+    // Create event loop
+    s->loop = ppdb_base_async_loop_create();
+    if (!s->loop) {
+        ppdb_base_free(s);
+        return PPDB_ERR_SYSTEM;
     }
-
-    fprintf(stderr, "Creating socket...\n");
-    // Create listening socket
-    server->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server->listen_fd < 0) {
-        fprintf(stderr, "Failed to create socket: %s\n", strerror(errno));
-        return PPDB_ERR_NETWORK;
+    
+    // Create listen handle
+    s->listen_handle = ppdb_base_async_handle_create(s->loop);
+    if (!s->listen_handle) {
+        ppdb_base_async_loop_destroy(s->loop);
+        ppdb_base_free(s);
+        return PPDB_ERR_SYSTEM;
     }
-    fprintf(stderr, "Socket created: fd=%d\n", server->listen_fd);
-
-    // Set socket options
-    int reuse = 1;
-    if (setsockopt(server->listen_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse)) < 0) {
-        fprintf(stderr, "Failed to set socket options: %s\n", strerror(errno));
-        close(server->listen_fd);
-        return PPDB_ERR_NETWORK;
-    }
-    fprintf(stderr, "Socket options set\n");
-
-    // Bind socket
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(server->config.port);
-    addr.sin_addr.s_addr = inet_addr(server->config.host);
-
-    fprintf(stderr, "Binding to %s:%d...\n", server->config.host, server->config.port);
-    if (bind(server->listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        fprintf(stderr, "Failed to bind socket: %s\n", strerror(errno));
-        close(server->listen_fd);
-        return PPDB_ERR_NETWORK;
-    }
-    fprintf(stderr, "Socket bound successfully\n");
-
+    
+    // Set callbacks
+    ppdb_base_async_handle_set_accept_cb(s->listen_handle, on_new_connection);
+    ppdb_base_async_handle_set_data_cb(s->listen_handle, NULL);
+    ppdb_base_async_handle_set_close_cb(s->listen_handle, NULL);
+    
+    // Set user data
+    ppdb_base_async_handle_set_data(s->listen_handle, s);
+    
     // Listen
-    fprintf(stderr, "Starting to listen...\n");
-    if (listen(server->listen_fd, SOMAXCONN) < 0) {
-        fprintf(stderr, "Failed to listen on socket: %s\n", strerror(errno));
-        close(server->listen_fd);
-        return PPDB_ERR_NETWORK;
-    }
-    fprintf(stderr, "Listening started\n");
-
-    // Create peer instance
-    fprintf(stderr, "Creating peer instance...\n");
-    ppdb_error_t err = ppdb_conn_create(&server->peer, peer_get_memcached(), server->ctx);
+    ppdb_error_t err = ppdb_base_async_handle_listen(s->listen_handle, config->host, config->port);
     if (err != PPDB_OK) {
-        fprintf(stderr, "Failed to create peer instance: %d\n", err);
-        close(server->listen_fd);
+        ppdb_base_async_handle_destroy(s->listen_handle);
+        ppdb_base_async_loop_destroy(s->loop);
+        ppdb_base_free(s);
         return err;
     }
-    fprintf(stderr, "Peer instance created\n");
-
-    // Start peer with the listening socket
-    fprintf(stderr, "Setting peer socket...\n");
-    err = ppdb_conn_set_socket(server->peer, server->listen_fd);
-    if (err != PPDB_OK) {
-        fprintf(stderr, "Failed to set peer socket: %d\n", err);
-        close(server->listen_fd);
-        ppdb_conn_destroy(server->peer);
-        server->peer = 0;
-        return err;
-    }
-    fprintf(stderr, "Peer socket set\n");
-
-    // Start accept thread
-    fprintf(stderr, "Starting accept thread...\n");
-    server->running = true;
-    if (pthread_create(&server->accept_thread, NULL, accept_thread_func, server) != 0) {
-        fprintf(stderr, "Failed to create accept thread: %s\n", strerror(errno));
-        close(server->listen_fd);
-        ppdb_conn_destroy(server->peer);
-        server->peer = 0;
-        server->running = false;
-        return PPDB_ERR_NETWORK;
-    }
-    fprintf(stderr, "Accept thread started\n");
-
-    fprintf(stderr, "Server successfully started and listening on %s:%d\n", 
-            server->config.host, server->config.port);
+    
+    *server = s;
     return PPDB_OK;
 }
 
-static void* accept_thread_func(void* arg) {
-    ppdb_server_t server = (ppdb_server_t)arg;
-    struct sockaddr_in client_addr;
-    socklen_t client_len = sizeof(client_addr);
-
-    fprintf(stderr, "Accept thread running\n");
-
-    while (server->running) {
-        // Accept new connection
-        fprintf(stderr, "Waiting for new connection...\n");
-        int client_fd = accept(server->listen_fd, (struct sockaddr*)&client_addr, &client_len);
-        if (client_fd < 0) {
-            if (server->running) {
-                fprintf(stderr, "Failed to accept connection: %s\n", strerror(errno));
-            }
-            continue;
-        }
-
-        // Create new peer connection
-        fprintf(stderr, "Creating peer for new connection...\n");
-        ppdb_handle_t client_peer;
-        ppdb_error_t err = ppdb_conn_create(&client_peer, peer_get_memcached(), server->ctx);
-        if (err != PPDB_OK) {
-            fprintf(stderr, "Failed to create peer for new connection: %d\n", err);
-            close(client_fd);
-            continue;
-        }
-
-        // Set socket for the new connection
-        fprintf(stderr, "Setting socket for new connection...\n");
-        err = ppdb_conn_set_socket(client_peer, client_fd);
-        if (err != PPDB_OK) {
-            fprintf(stderr, "Failed to set socket for new connection: %d\n", err);
-            close(client_fd);
-            ppdb_conn_destroy(client_peer);
-            continue;
-        }
-
-        fprintf(stderr, "New client connected from %s:%d\n", 
-                inet_ntoa(client_addr.sin_addr), 
-                ntohs(client_addr.sin_port));
-    }
-
-    fprintf(stderr, "Accept thread exiting\n");
-    return NULL;
-}
-
-ppdb_error_t ppdb_server_stop(ppdb_server_t server) {
+// Start server
+ppdb_error_t ppdb_server_start(struct ppdb_server* server) {
     if (!server) {
         return PPDB_ERR_PARAM;
     }
-
-    if (!server->running) {
+    
+    if (server->running) {
         return PPDB_ERR_BUSY;
     }
-
-    // Stop accept thread
-    server->running = false;
-    shutdown(server->listen_fd, SHUT_RDWR);
-    pthread_join(server->accept_thread, NULL);
-
-    // Close listening socket
-    if (server->listen_fd >= 0) {
-        close(server->listen_fd);
-        server->listen_fd = -1;
-    }
-
-    // Stop peer
-    ppdb_conn_close(server->peer);
-
-    // Cleanup peer
-    ppdb_conn_destroy(server->peer);
-    server->peer = 0;
-
-    return PPDB_OK;
+    
+    server->running = true;
+    return ppdb_base_async_loop_run(server->loop);
 }
 
-ppdb_error_t ppdb_server_destroy(ppdb_server_t server) {
+// Stop server
+ppdb_error_t ppdb_server_stop(struct ppdb_server* server) {
     if (!server) {
         return PPDB_ERR_PARAM;
     }
+    
+    if (!server->running) {
+        return PPDB_OK;
+    }
+    
+    server->running = false;
+    ppdb_base_async_loop_stop(server->loop);
+    return PPDB_OK;
+}
 
-    // Stop server if running
+// Destroy server instance
+void ppdb_server_destroy(struct ppdb_server* server) {
+    if (!server) {
+        return;
+    }
+    
     if (server->running) {
         ppdb_server_stop(server);
     }
+    
+    if (server->listen_handle) {
+        ppdb_base_async_handle_destroy(server->listen_handle);
+    }
+    
+    if (server->loop) {
+        ppdb_base_async_loop_destroy(server->loop);
+    }
+    
+    ppdb_base_free(server);
+}
 
-    // Free server context
-    free(server);
-    return PPDB_OK;
+//-----------------------------------------------------------------------------
+// Event Handlers
+//-----------------------------------------------------------------------------
+
+// Handle client data
+static void on_client_data(ppdb_base_async_handle_t* handle, const uint8_t* data, size_t size) {
+    client_state_t* state = (client_state_t*)ppdb_base_async_handle_get_data(handle);
+    if (!state) {
+        return;
+    }
+    
+    // Create connection handle
+    ppdb_handle_t conn = NULL;
+    ppdb_error_t err = ppdb_conn_create(&conn, state->server->peer_ops, state->server->ctx);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to create connection handle\n");
+        ppdb_base_async_handle_close(handle);
+        return;
+    }
+    
+    // Set socket
+    err = ppdb_conn_set_socket(conn, ppdb_base_async_handle_get_fd(handle));
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to set connection socket\n");
+        ppdb_conn_destroy(conn);
+        ppdb_base_async_handle_close(handle);
+        return;
+    }
+    
+    // Handle data
+    err = state->server->peer_ops->on_data(state->peer_data, conn, data, size);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to handle client data\n");
+        ppdb_conn_destroy(conn);
+        ppdb_base_async_handle_close(handle);
+        return;
+    }
+    
+    ppdb_conn_destroy(conn);
+}
+
+// Handle client close
+static void on_client_close(ppdb_base_async_handle_t* handle) {
+    client_state_t* state = (client_state_t*)ppdb_base_async_handle_get_data(handle);
+    if (!state) {
+        return;
+    }
+    
+    // Notify protocol
+    if (state->peer_data) {
+        ppdb_handle_t conn = NULL;
+        ppdb_error_t err = ppdb_conn_create(&conn, state->server->peer_ops, state->server->ctx);
+        if (err == PPDB_OK) {
+            state->server->peer_ops->on_disconnect(state->peer_data, conn);
+            ppdb_conn_destroy(conn);
+        }
+        
+        state->server->peer_ops->destroy(state->peer_data);
+    }
+    
+    // Free state
+    ppdb_base_free(state);
+}
+
+// Handle new connection
+static void on_new_connection(ppdb_base_async_handle_t* handle, int client_fd) {
+    struct ppdb_server* server = (struct ppdb_server*)ppdb_base_async_handle_get_data(handle);
+    if (!server) {
+        close(client_fd);
+        return;
+    }
+    
+    fprintf(stderr, "New client connected from fd %d\n", client_fd);
+    
+    // Create client handle
+    ppdb_base_async_handle_t* client_handle = ppdb_base_async_handle_create(server->loop);
+    if (!client_handle) {
+        fprintf(stderr, "Failed to create client handle\n");
+        close(client_fd);
+        return;
+    }
+    
+    // Create client state
+    client_state_t* state = ppdb_base_alloc(sizeof(client_state_t));
+    if (!state) {
+        fprintf(stderr, "Failed to allocate client state\n");
+        ppdb_base_async_handle_destroy(client_handle);
+        close(client_fd);
+        return;
+    }
+    
+    // Initialize state
+    state->server = server;
+    state->handle = client_handle;
+    
+    // Create protocol instance
+    ppdb_error_t err = server->peer_ops->create(&state->peer_data, server->ctx);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to create protocol instance\n");
+        ppdb_base_free(state);
+        ppdb_base_async_handle_destroy(client_handle);
+        close(client_fd);
+        return;
+    }
+    
+    // Set callbacks
+    ppdb_base_async_handle_set_data_cb(client_handle, on_client_data);
+    ppdb_base_async_handle_set_close_cb(client_handle, on_client_close);
+    
+    // Set user data
+    ppdb_base_async_handle_set_data(client_handle, state);
+    
+    // Accept connection
+    err = ppdb_base_async_handle_accept(client_handle, client_fd);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to accept client connection\n");
+        server->peer_ops->destroy(state->peer_data);
+        ppdb_base_free(state);
+        ppdb_base_async_handle_destroy(client_handle);
+        close(client_fd);
+        return;
+    }
+    
+    // Notify protocol
+    ppdb_handle_t conn = NULL;
+    err = ppdb_conn_create(&conn, server->peer_ops, server->ctx);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to create connection handle\n");
+        server->peer_ops->destroy(state->peer_data);
+        ppdb_base_free(state);
+        ppdb_base_async_handle_destroy(client_handle);
+        return;
+    }
+    
+    err = server->peer_ops->on_connect(state->peer_data, conn);
+    if (err != PPDB_OK) {
+        fprintf(stderr, "Failed to handle client connection\n");
+        ppdb_conn_destroy(conn);
+        server->peer_ops->destroy(state->peer_data);
+        ppdb_base_free(state);
+        ppdb_base_async_handle_destroy(client_handle);
+        return;
+    }
+    
+    ppdb_conn_destroy(conn);
 }
 
 #endif // PPDB_PEER_SERVER_INC_C_ 
