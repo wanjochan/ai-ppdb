@@ -119,3 +119,30 @@ ppdb_error_t ppdb_base_async_submit(ppdb_base_async_loop_t* loop, ppdb_base_asyn
 
     return PPDB_OK;
 }
+
+ppdb_error_t ppdb_base_async_schedule(ppdb_base_t* base, ppdb_base_async_func_t fn, void* arg, ppdb_base_async_handle_t** handle) {
+    if (!base || !fn || !handle) return PPDB_BASE_ERR_PARAM;
+
+    // Create async handle
+    ppdb_base_async_handle_t* new_handle = (ppdb_base_async_handle_t*)malloc(sizeof(ppdb_base_async_handle_t));
+    if (!new_handle) return PPDB_BASE_ERR_MEMORY;
+
+    // Initialize handle
+    new_handle->fn = fn;
+    new_handle->arg = arg;
+    new_handle->next = NULL;
+    new_handle->cancelled = false;
+
+    // TODO: Add to async task queue and schedule execution
+    // For now, just execute immediately
+    fn(arg);
+
+    *handle = new_handle;
+    return PPDB_OK;
+}
+
+void ppdb_base_async_cancel(ppdb_base_async_handle_t* handle) {
+    if (!handle) return;
+    handle->cancelled = true;
+    // TODO: Remove from async task queue if not yet executed
+}

@@ -11,6 +11,9 @@
 #define PPDB_MAX_ERROR_MESSAGE 256
 #define PPDB_MAX_SKIPLIST_LEVEL 32
 
+// Error codes base
+#define PPDB_ERROR_START 0x1000
+
 // Base configuration
 typedef struct ppdb_base_config_s {
     size_t memory_limit;
@@ -55,6 +58,7 @@ typedef struct ppdb_base_thread_s ppdb_base_thread_t;
 typedef struct ppdb_base_counter_s ppdb_base_counter_t;
 typedef struct ppdb_base_skiplist_s ppdb_base_skiplist_t;
 typedef struct ppdb_base_async_loop_s ppdb_base_async_loop_t;
+typedef struct ppdb_base_async_handle_s ppdb_base_async_handle_t;
 typedef struct ppdb_base_io_manager_s ppdb_base_io_manager_t;
 typedef struct ppdb_base_mempool_s ppdb_base_mempool_t;
 typedef struct ppdb_base_mempool_block_s ppdb_base_mempool_block_t;
@@ -301,5 +305,17 @@ ppdb_error_t ppdb_base_spinlock_lock(ppdb_base_spinlock_t* spinlock);
 ppdb_error_t ppdb_base_spinlock_unlock(ppdb_base_spinlock_t* spinlock);
 ppdb_error_t ppdb_base_spinlock_trylock(ppdb_base_spinlock_t* spinlock);
 void ppdb_base_spinlock_enable_stats(ppdb_base_spinlock_t* spinlock, bool enable);
+
+// Async task structure
+struct ppdb_base_async_handle_s {
+    ppdb_base_async_func_t fn;
+    void* arg;
+    struct ppdb_base_async_handle_s* next;
+    bool cancelled;
+};
+
+// Function declarations for async operations
+ppdb_error_t ppdb_base_async_schedule(ppdb_base_t* base, ppdb_base_async_func_t fn, void* arg, ppdb_base_async_handle_t** handle);
+void ppdb_base_async_cancel(ppdb_base_async_handle_t* handle);
 
 #endif /* PPDB_BASE_H */

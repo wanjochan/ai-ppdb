@@ -147,8 +147,10 @@ void ppdb_engine_mutex_destroy(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_engine_mutex_lock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_engine_mutex_unlock(ppdb_base_mutex_t* mutex);
 
-// Async operations
+// Function types
 typedef void (*ppdb_engine_async_fn)(void* arg);
+
+// Async operations
 ppdb_error_t ppdb_engine_async_schedule(ppdb_engine_t* engine, ppdb_engine_async_fn fn, void* arg, ppdb_base_async_handle_t** handle);
 void ppdb_engine_async_cancel(ppdb_base_async_handle_t* handle);
 

@@ -7,19 +7,16 @@
 
 // Create counter
 ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter) {
-    if (!counter) {
-        return PPDB_BASE_ERR_PARAM;
-    }
+    if (!counter) return PPDB_BASE_ERR_PARAM;
 
     ppdb_base_counter_t* new_counter = (ppdb_base_counter_t*)malloc(sizeof(ppdb_base_counter_t));
-    if (!new_counter) {
-        return PPDB_BASE_ERR_MEMORY;
-    }
+    if (!new_counter) return PPDB_BASE_ERR_MEMORY;
 
-    memset(new_counter, 0, sizeof(ppdb_base_counter_t));
+    new_counter->value = 0;
+    new_counter->mutex = NULL;
 
     ppdb_error_t err = ppdb_base_mutex_create(&new_counter->mutex);
-    if (err != PPDB_OK) {
+    if (err) {
         free(new_counter);
         return err;
     }
@@ -30,28 +27,22 @@ ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter) {
 
 // Destroy counter
 ppdb_error_t ppdb_base_counter_destroy(ppdb_base_counter_t* counter) {
-    if (!counter) {
-        return PPDB_BASE_ERR_PARAM;
-    }
-
+    if (!counter) return PPDB_BASE_ERR_PARAM;
     if (counter->mutex) {
         ppdb_base_mutex_destroy(counter->mutex);
     }
-
     free(counter);
     return PPDB_OK;
 }
 
 // Get counter value
 int64_t ppdb_base_counter_get(ppdb_base_counter_t* counter) {
-    if (!counter) {
-        return 0;
-    }
-
+    if (!counter) return 0;
+    
     ppdb_base_mutex_lock(counter->mutex);
     int64_t value = counter->value;
     ppdb_base_mutex_unlock(counter->mutex);
-
+    
     return value;
 }
 
@@ -68,10 +59,8 @@ void ppdb_base_counter_set(ppdb_base_counter_t* counter, int64_t value) {
 
 // Increment counter
 void ppdb_base_counter_inc(ppdb_base_counter_t* counter) {
-    if (!counter) {
-        return;
-    }
-
+    if (!counter) return;
+    
     ppdb_base_mutex_lock(counter->mutex);
     counter->value++;
     ppdb_base_mutex_unlock(counter->mutex);
@@ -79,14 +68,10 @@ void ppdb_base_counter_inc(ppdb_base_counter_t* counter) {
 
 // Decrement counter
 void ppdb_base_counter_dec(ppdb_base_counter_t* counter) {
-    if (!counter) {
-        return;
-    }
-
+    if (!counter) return;
+    
     ppdb_base_mutex_lock(counter->mutex);
-    if (counter->value > 0) {
-        counter->value--;
-    }
+    counter->value--;
     ppdb_base_mutex_unlock(counter->mutex);
 }
 
