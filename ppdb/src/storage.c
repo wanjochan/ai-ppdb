@@ -47,25 +47,8 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, 
     }
 
     // Initialize tables list
-    ppdb_engine_txn_t* tx = NULL;
-    err = ppdb_engine_txn_begin(engine, &tx);
+    err = ppdb_engine_table_list_create(engine, &s->tables);
     if (err != PPDB_OK) {
-        ppdb_engine_mutex_destroy(s->lock);
-        free(s);
-        return err;
-    }
-
-    err = ppdb_engine_table_create(tx, "tables", &s->tables);
-    if (err != PPDB_OK) {
-        ppdb_engine_txn_rollback(tx);
-        ppdb_engine_mutex_destroy(s->lock);
-        free(s);
-        return err;
-    }
-
-    err = ppdb_engine_txn_commit(tx);
-    if (err != PPDB_OK) {
-        ppdb_engine_txn_rollback(tx);
         ppdb_engine_mutex_destroy(s->lock);
         free(s);
         return err;
@@ -83,7 +66,7 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, 
     // Initialize maintenance
     err = ppdb_storage_maintain_init(s);
     if (err != PPDB_OK) {
-        ppdb_engine_table_close(s->tables);
+        ppdb_engine_table_list_destroy(s->tables);
         ppdb_engine_mutex_destroy(s->lock);
         free(s);
         return err;
@@ -99,17 +82,18 @@ void ppdb_storage_destroy(ppdb_storage_t* storage) {
     // Stop and cleanup maintenance
     ppdb_storage_maintain_cleanup(storage);
 
-    // Close tables
+    // Cleanup tables
     if (storage->tables) {
-        ppdb_engine_table_close(storage->tables);
+        ppdb_engine_table_list_destroy(storage->tables);
+        storage->tables = NULL;
     }
 
-    // Destroy lock
+    // Cleanup lock
     if (storage->lock) {
         ppdb_engine_mutex_destroy(storage->lock);
+        storage->lock = NULL;
     }
 
-    // Free storage structure
     free(storage);
 }
 

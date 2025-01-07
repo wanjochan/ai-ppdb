@@ -57,6 +57,8 @@ typedef struct ppdb_base_sync_s ppdb_base_sync_t;
 typedef struct ppdb_base_thread_s ppdb_base_thread_t;
 typedef struct ppdb_base_counter_s ppdb_base_counter_t;
 typedef struct ppdb_base_skiplist_s ppdb_base_skiplist_t;
+typedef struct ppdb_base_skiplist_node_s ppdb_base_skiplist_node_t;
+typedef struct ppdb_base_skiplist_iterator_s ppdb_base_skiplist_iterator_t;
 typedef struct ppdb_base_async_loop_s ppdb_base_async_loop_t;
 typedef struct ppdb_base_async_handle_s ppdb_base_async_handle_t;
 typedef struct ppdb_base_io_manager_s ppdb_base_io_manager_t;
@@ -113,6 +115,12 @@ struct ppdb_base_skiplist_s {
     int level;
     size_t size;
     ppdb_base_compare_func_t compare;
+};
+
+// Skiplist iterator structure
+struct ppdb_base_skiplist_iterator_s {
+    struct ppdb_base_skiplist_s* list;
+    struct ppdb_base_skiplist_node_s* current;
 };
 
 // Async task structure
@@ -317,5 +325,15 @@ struct ppdb_base_async_handle_s {
 // Function declarations for async operations
 ppdb_error_t ppdb_base_async_schedule(ppdb_base_t* base, ppdb_base_async_func_t fn, void* arg, ppdb_base_async_handle_t** handle);
 void ppdb_base_async_cancel(ppdb_base_async_handle_t* handle);
+
+// Skiplist iterator type and functions
+typedef struct ppdb_base_skiplist_iterator_s ppdb_base_skiplist_iterator_t;
+
+// Skiplist iterator operations
+ppdb_base_skiplist_iterator_t* ppdb_base_skiplist_iterator_create(ppdb_base_skiplist_t* list);
+void ppdb_base_skiplist_iterator_destroy(ppdb_base_skiplist_iterator_t* it);
+bool ppdb_base_skiplist_iterator_valid(ppdb_base_skiplist_iterator_t* it);
+void* ppdb_base_skiplist_iterator_value(ppdb_base_skiplist_iterator_t* it);
+void ppdb_base_skiplist_iterator_next(ppdb_base_skiplist_iterator_t* it);
 
 #endif /* PPDB_BASE_H */

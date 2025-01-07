@@ -10,9 +10,9 @@ typedef int ppdb_error_t;
 
 // Include implementations
 #include "base/base_error.inc.c"
-#include "base/base_sync.inc.c"
 #include "base/base_memory.inc.c"
 #include "base/base_skiplist.inc.c"
+#include "base/base_sync.inc.c"
 #include "base/base_timer.inc.c"
 #include "base/base_utils.inc.c"
 #include "base/base_async.inc.c"

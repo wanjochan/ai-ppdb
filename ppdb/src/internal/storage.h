@@ -54,6 +54,7 @@ struct ppdb_storage_table_s {
     size_t name_len;              // Length of table name
     ppdb_engine_table_t* engine_table; // Engine table handle
     ppdb_engine_t* engine;        // Engine instance
+    ppdb_storage_t* storage;      // Storage instance
     uint64_t size;                // Number of records
     bool is_open;                 // Table open state
 };
@@ -110,7 +111,7 @@ struct ppdb_storage_s {
     ppdb_storage_stats_t stats;         // Storage statistics
     ppdb_engine_txn_t* current_tx;      // Current transaction
     ppdb_base_mutex_t* lock;            // Global lock
-    ppdb_engine_table_t* tables;        // Tables list
+    ppdb_engine_table_list_t* tables;   // Tables list (managed by engine)
     ppdb_storage_maintain_t maintain;    // Maintenance info
 };
 

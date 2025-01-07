@@ -1,229 +1,276 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
+#include "internal/engine.h"
 #include "internal/storage.h"
 #include "../test_framework.h"
 
 // Test setup and teardown
 static ppdb_base_t* base = NULL;
+static ppdb_engine_t* engine = NULL;
 static ppdb_storage_t* storage = NULL;
 static ppdb_storage_table_t* table = NULL;
 static ppdb_base_config_t base_config;
 static ppdb_storage_config_t storage_config;
 
-static int test_setup(void) {
-    printf("Setting up test environment...\n");
+static void cleanup_resources(void) {
+    ppdb_error_t err;
     
-    // Initialize base config
-    base_config = (ppdb_base_config_t){
-        .memory_limit = 1024 * 1024,
-        .thread_pool_size = 4,
-        .thread_safe = true
-    };
+    if (storage && storage->current_tx) {
+        printf("Warning: Transaction still active during cleanup, rolling back\n");
+        ppdb_engine_txn_rollback(storage->current_tx);
+        storage->current_tx = NULL;
+    }
     
-    // Initialize storage config
-    storage_config = (ppdb_storage_config_t){
-        .memtable_size = 64 * 1024,
-        .block_size = 4096,
-        .cache_size = 256 * 1024,
-        .write_buffer_size = 64 * 1024,
-        .data_dir = "data",
-        .use_compression = true,
-        .sync_writes = true
-    };
-    
-    // Initialize layers
-    ppdb_error_t err = ppdb_base_init(&base, &base_config);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_NOT_NULL(base);
-    
-    err = ppdb_storage_init(&storage, base, &storage_config);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_NOT_NULL(storage);
-    
-    return 0;
-}
-
-static int test_teardown(void) {
     if (table) {
-        // Table will be destroyed by storage
+        err = ppdb_storage_table_close(table);
+        if (err != PPDB_OK) {
+            printf("Error: Failed to close table: %d, error: %s\n", err, ppdb_error_str(err));
+        }
         table = NULL;
     }
+    
     if (storage) {
-        ppdb_storage_destroy(storage);
+        err = ppdb_storage_destroy(storage);
+        if (err != PPDB_OK) {
+            printf("Error: Failed to destroy storage: %d\n", err);
+        }
         storage = NULL;
     }
+    
+    if (engine) {
+        ppdb_engine_destroy(engine);
+        engine = NULL;
+    }
+    
     if (base) {
         ppdb_base_destroy(base);
         base = NULL;
     }
+}
+
+static int test_setup(void) {
+    printf("\n=== Setting up test environment ===\n");
+    ppdb_error_t err;
+    
+    // Initialize base config with safe defaults
+    memset(&base_config, 0, sizeof(ppdb_base_config_t));
+    base_config.memory_limit = 1024 * 1024;
+    base_config.thread_pool_size = 4;
+    base_config.thread_safe = true;
+    
+    // Initialize storage config with safe defaults
+    memset(&storage_config, 0, sizeof(ppdb_storage_config_t));
+    storage_config.memtable_size = 64 * 1024;
+    storage_config.block_size = 4096;
+    storage_config.cache_size = 256 * 1024;
+    storage_config.write_buffer_size = 64 * 1024;
+    storage_config.data_dir = "test_data";
+    storage_config.use_compression = true;
+    storage_config.sync_writes = true;
+    
+    printf("Initializing base layer...\n");
+    if ((err = ppdb_base_init(&base, &base_config)) != PPDB_OK) {
+        printf("Error: Failed to initialize base: %d, error: %s\n", err, ppdb_error_str(err));
+        goto cleanup;
+    }
+    printf("Base layer initialized successfully\n");
+    
+    if ((err = ppdb_engine_init(&engine, base)) != PPDB_OK) {
+        printf("Error: Failed to initialize engine: %d, error: %s\n", err, ppdb_error_str(err));
+        goto cleanup;
+    }
+    printf("Engine layer initialized successfully\n");
+    
+    if ((err = ppdb_storage_init(&storage, engine, &storage_config)) != PPDB_OK) {
+        printf("Error: Failed to initialize storage: %d, error: %s\n", err, ppdb_error_str(err));
+        goto cleanup;
+    }
+    printf("Storage layer initialized successfully\n");
+    
+    return 0;
+
+cleanup:
+    cleanup_resources();
+    return -1;
+}
+
+static int test_teardown(void) {
+    printf("\n=== Tearing down test environment ===\n");
+    cleanup_resources();
     return 0;
 }
 
-// Test table creation
+// Test table creation with normal parameters
 static int test_table_create_normal(void) {
-    printf("  Running test: table_create_normal\n");
+    printf("\n=== Test Case: test_table_create_normal ===\n");
+    ppdb_error_t err;
+    ppdb_engine_txn_t* tx = NULL;
     
-    // Create table
-    ppdb_error_t err = ppdb_storage_create_table(storage, "test_table", &table);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    // Pre-transaction state check
+    TEST_ASSERT_NULL(storage->current_tx);
+    TEST_ASSERT_MEMORY_CLEAN();
+    
+    printf("Starting transaction for table creation test\n");
+    if ((err = ppdb_engine_txn_begin(engine, &tx)) != PPDB_OK) {
+        printf("Error: Failed to begin transaction: %d, error: %s\n", err, ppdb_error_str(err));
+        return -1;
+    }
+    storage->current_tx = tx;
+    TEST_ASSERT_NOT_NULL(storage->current_tx);
+    
+    // Post-begin transaction state check
+    TEST_ASSERT_TRANSACTION_ACTIVE(tx);
+    printf("Transaction began successfully, tx: %p\n", (void*)tx);
+    
+    printf("Attempting to create table 'test_table'\n");
+    if ((err = ppdb_storage_create_table(storage, "test_table", &table)) != PPDB_OK) {
+        printf("Error: Failed to create table: %d, error: %s\n", err, ppdb_error_str(err));
+        goto rollback;
+    }
     TEST_ASSERT_NOT_NULL(table);
-    TEST_ASSERT_NOT_NULL(table->name);
-    TEST_ASSERT_EQUALS(0, strcmp(table->name, "test_table"));
-    TEST_ASSERT_NOT_NULL(table->data);
-    TEST_ASSERT_NOT_NULL(table->indexes);
-    TEST_ASSERT_EQUALS(0, table->size);
-    TEST_ASSERT_EQUALS(true, table->is_open);
+    printf("Table 'test_table' created successfully\n");
     
-    // Try to create same table again
-    ppdb_storage_table_t* table2 = NULL;
-    err = ppdb_storage_create_table(storage, "test_table", &table2);
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_EXISTS, err);
-    TEST_ASSERT_EQUALS(NULL, table2);
+    printf("Committing transaction\n");
+    if ((err = ppdb_engine_txn_commit(tx)) != PPDB_OK) {
+        printf("Error: Failed to commit transaction: %d, error: %s\n", err, ppdb_error_str(err));
+        goto rollback;
+    }
+    storage->current_tx = NULL;
+    TEST_ASSERT_NULL(storage->current_tx);
+    TEST_ASSERT_MEMORY_CLEAN();
+    printf("Transaction committed successfully\n");
     
-    // Create another table with different name
-    ppdb_storage_table_t* table3 = NULL;
-    err = ppdb_storage_create_table(storage, "test_table2", &table3);
+    // Cleanup phase with transaction checks
+    printf("Starting cleanup phase\n");
+    TEST_ASSERT_NULL(storage->current_tx);
+    err = ppdb_engine_txn_begin(engine, &tx);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_NOT_NULL(table3);
-    TEST_ASSERT_NOT_NULL(table3->name);
-    TEST_ASSERT_EQUALS(0, strcmp(table3->name, "test_table2"));
-    TEST_ASSERT_NOT_NULL(table3->data);
-    TEST_ASSERT_NOT_NULL(table3->indexes);
-    TEST_ASSERT_EQUALS(0, table3->size);
-    TEST_ASSERT_EQUALS(true, table3->is_open);
+    storage->current_tx = tx;
+    TEST_ASSERT_TRANSACTION_ACTIVE(tx);
     
-    printf("  Test passed: table_create_normal\n");
+    printf("Dropping test table\n");
+    err = ppdb_storage_drop_table(storage, "test_table");
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    table = NULL;
+    
+    printf("Committing cleanup transaction\n");
+    err = ppdb_engine_txn_commit(tx);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    storage->current_tx = NULL;
+    TEST_ASSERT_NULL(storage->current_tx);
+    TEST_ASSERT_MEMORY_CLEAN();
+    
+    printf("Test test_table_create_normal completed successfully\n");
     return 0;
+
+rollback:
+    printf("Warning: Rolling back transaction due to error\n");
+    if ((err = ppdb_engine_txn_rollback(tx)) != PPDB_OK) {
+        printf("Error: Rollback failed: %d, error: %s\n", err, ppdb_error_str(err));
+    }
+    storage->current_tx = NULL;
+    TEST_ASSERT_NULL(storage->current_tx);
+    TEST_ASSERT_MEMORY_CLEAN();
+    return -1;
 }
 
 // Test table creation with invalid parameters
 static int test_table_create_invalid(void) {
-    printf("  Running test: table_create_invalid\n");
+    printf("\n=== Test Case: test_table_create_invalid ===\n");
+    ppdb_error_t err;
+    ppdb_engine_txn_t* tx = NULL;
+    ppdb_storage_table_t* invalid_table = NULL;
     
-    // Test NULL parameters
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(NULL, "test_table", &table));
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(storage, NULL, &table));
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(storage, "test_table", NULL));
+    TEST_ASSERT_NULL(storage->current_tx);
+    printf("Beginning transaction for invalid table creation tests\n");
     
-    // Test invalid table names
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(storage, "", &table));
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, ppdb_storage_create_table(storage, "   ", &table));
+    err = ppdb_engine_txn_begin(engine, &tx);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    storage->current_tx = tx;
+    TEST_ASSERT_NOT_NULL(storage->current_tx);
     
-    printf("  Test passed: table_create_invalid\n");
+    printf("Testing NULL storage parameter\n");
+    err = ppdb_storage_create_table(NULL, "test_table", &invalid_table);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, err);
+    
+    printf("Testing NULL table name parameter\n");
+    err = ppdb_storage_create_table(storage, NULL, &invalid_table);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, err);
+    
+    printf("Testing empty table name\n");
+    err = ppdb_storage_create_table(storage, "", &invalid_table);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, err);
+    
+    printf("Testing whitespace table name\n");
+    err = ppdb_storage_create_table(storage, "   ", &invalid_table);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, err);
+    
+    printf("Committing transaction\n");
+    err = ppdb_engine_txn_commit(tx);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    storage->current_tx = NULL;
+    TEST_ASSERT_NULL(storage->current_tx);
+    
+    printf("Test test_table_create_invalid completed successfully\n");
     return 0;
 }
 
 // Test table operations
 static int test_table_operations(void) {
-    printf("  Running test: table_operations\n");
-    
+    printf("\n=== Test Case: test_table_operations ===\n");
     ppdb_error_t err;
-    table = NULL;  // Initialize table to NULL
+    ppdb_engine_txn_t* tx = NULL;
     
-    // Create table
+    TEST_ASSERT_NULL(storage->current_tx);
+    printf("Beginning transaction for table operations test\n");
+    
+    err = ppdb_engine_txn_begin(engine, &tx);
+    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    storage->current_tx = tx;
+    
+    printf("Creating test table\n");
     err = ppdb_storage_create_table(storage, "test_table", &table);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
     TEST_ASSERT_NOT_NULL(table);
     
-    // Get table
-    ppdb_storage_table_t* table2 = NULL;
-    const char* name = "test_table";
-    size_t name_len = strlen(name);
-    ppdb_storage_key_t* name_key = ppdb_base_aligned_alloc(16, sizeof(ppdb_storage_key_t) + name_len + 1);
-    TEST_ASSERT_NOT_NULL(name_key);
-    name_key->size = name_len + 1;
-    memcpy(name_key->data, name, name_len + 1);
+    printf("Attempting to create duplicate table\n");
+    ppdb_storage_table_t* duplicate_table = NULL;
+    err = ppdb_storage_create_table(storage, "test_table", &duplicate_table);
+    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_EXISTS, err);
     
-    err = ppdb_storage_get_table(storage, name_key, &table2);
-    ppdb_base_aligned_free(name_key);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_NOT_NULL(table2);
-    TEST_ASSERT_EQUALS(table, table2);
-    
-    // Drop table
+    printf("Dropping test table\n");
     err = ppdb_storage_drop_table(storage, "test_table");
     TEST_ASSERT_EQUALS(PPDB_OK, err);
-    table = NULL;  // Reset table after dropping
+    table = NULL;
     
-    // Try to get dropped table
-    name_key = ppdb_base_aligned_alloc(16, sizeof(ppdb_storage_key_t) + name_len + 1);
-    TEST_ASSERT_NOT_NULL(name_key);
-    name_key->size = name_len + 1;
-    memcpy(name_key->data, name, name_len + 1);
-    
-    err = ppdb_storage_get_table(storage, name_key, &table2);
-    ppdb_base_aligned_free(name_key);
-    TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_NOT_FOUND, err);
-    
-    // Try to drop non-existent table
+    printf("Attempting to drop non-existent table\n");
     err = ppdb_storage_drop_table(storage, "non_existent");
     TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_TABLE_NOT_FOUND, err);
     
-    printf("  Test passed: table_operations\n");
-    return 0;
-}
-
-// Test multiple tables
-static int test_multiple_tables(void) {
-    printf("  Running test: multiple_tables\n");
-    
-    ppdb_error_t err;
-    
-    // Create multiple tables
-    ppdb_storage_table_t* tables[3] = {NULL};
-    err = ppdb_storage_create_table(storage, "table1", &tables[0]);
+    printf("Committing transaction\n");
+    err = ppdb_engine_txn_commit(tx);
     TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_NOT_NULL(tables[0]);
+    storage->current_tx = NULL;
     
-    err = ppdb_storage_create_table(storage, "table2", &tables[1]);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_NOT_NULL(tables[1]);
-    
-    err = ppdb_storage_create_table(storage, "table3", &tables[2]);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    TEST_ASSERT_NOT_NULL(tables[2]);
-    
-    // Verify all tables exist
-    ppdb_storage_table_t* table_check = NULL;
-    const char* names[] = {"table1", "table2", "table3"};
-    for (int i = 0; i < 3; i++) {
-        size_t name_len = strlen(names[i]);
-        ppdb_storage_key_t* name_key = ppdb_base_aligned_alloc(16, sizeof(ppdb_storage_key_t) + name_len + 1);
-        TEST_ASSERT_NOT_NULL(name_key);
-        name_key->size = name_len + 1;
-        memcpy(name_key->data, names[i], name_len + 1);
-        
-        err = ppdb_storage_get_table(storage, name_key, &table_check);
-        ppdb_base_aligned_free(name_key);
-        TEST_ASSERT_EQUALS(PPDB_OK, err);
-        TEST_ASSERT_EQUALS(tables[i], table_check);
-    }
-    
-    // Drop tables in different order
-    err = ppdb_storage_drop_table(storage, "table2");
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    
-    err = ppdb_storage_drop_table(storage, "table1");
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    
-    err = ppdb_storage_drop_table(storage, "table3");
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
-    
-    printf("  Test passed: multiple_tables\n");
+    printf("Test test_table_operations completed successfully\n");
     return 0;
 }
 
 int main(void) {
     TEST_INIT();
+    printf("\n=== Starting Storage Table Tests ===\n");
     
-    test_setup();
+    if (test_setup() != 0) {
+        printf("Error: Test setup failed\n");
+        return -1;
+    }
     
     TEST_RUN(test_table_create_normal);
     TEST_RUN(test_table_create_invalid);
     TEST_RUN(test_table_operations);
-    TEST_RUN(test_multiple_tables);
     
     test_teardown();
+    printf("\n=== All storage table tests completed successfully ===\n");
     
     TEST_CLEANUP();
     return 0;

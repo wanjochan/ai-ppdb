@@ -55,7 +55,7 @@ base => (engine + storage) => peer => (libppdb, ppdb.exe)
 #include "internal/peer.h"
 ===================================
 
-## 任务（必须解决一个下继续下一个，修复好要重头再来）
+## 任务（必须解决一个继续下一个，修复好要重头再来）
 cd ../ppdb/scripts; .\build.bat base
 cd ../ppdb/scripts; .\build.bat sync_perf 
 cd ../ppdb/scripts; .\build.bat engine

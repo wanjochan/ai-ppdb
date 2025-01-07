@@ -36,6 +36,15 @@
         } \
     } while (0)
 
+#define TEST_ASSERT_NULL(ptr) \
+    do { \
+        if ((void*)(ptr) != (void*)NULL) { \
+            fprintf(stderr, "Assertion failed: %s is not NULL\n", #ptr); \
+            fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
+            exit(1); \
+        } \
+    } while (0)
+
 // Test types
 typedef enum {
     TEST_TYPE_UNIT = 1,    // Unit test

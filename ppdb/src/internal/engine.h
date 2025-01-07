@@ -66,6 +66,7 @@ struct ppdb_engine_cursor_s {
 #define PPDB_ENGINE_ERR_NOT_FOUND  (PPDB_ENGINE_ERR_START + 0x00A)
 #define PPDB_ENGINE_ERR_EXISTS     (PPDB_ENGINE_ERR_START + 0x00B)
 #define PPDB_ENGINE_ERR_INVALID_STATE (PPDB_ENGINE_ERR_START + 0x00C)
+#define PPDB_ENGINE_ERR_MEMORY     (PPDB_ENGINE_ERR_START + 0x00D)
 
 // Error message conversion function
 const char* ppdb_engine_strerror(ppdb_error_t err);
@@ -161,5 +162,25 @@ void ppdb_engine_sleep(uint32_t milliseconds);
 // Memory operations
 void* ppdb_engine_malloc(size_t size);
 void ppdb_engine_free(void* ptr);
+
+// Table maintenance operations
+ppdb_error_t ppdb_engine_table_compact(ppdb_engine_table_t* table);
+ppdb_error_t ppdb_engine_table_cleanup_expired(ppdb_engine_table_t* table);
+ppdb_error_t ppdb_engine_table_optimize_indexes(ppdb_engine_table_t* table);
+
+// Table list management
+typedef struct ppdb_engine_table_list_s {
+    ppdb_base_skiplist_t* skiplist;
+    ppdb_base_mutex_t* lock;
+    ppdb_engine_t* engine;
+} ppdb_engine_table_list_t;
+
+// Table list operations
+ppdb_error_t ppdb_engine_table_list_create(ppdb_engine_t* engine, ppdb_engine_table_list_t** list);
+ppdb_error_t ppdb_engine_table_list_destroy(ppdb_engine_table_list_t* list);
+ppdb_error_t ppdb_engine_table_list_add(ppdb_engine_table_list_t* list, ppdb_engine_table_t* table);
+ppdb_error_t ppdb_engine_table_list_remove(ppdb_engine_table_list_t* list, const char* name);
+ppdb_error_t ppdb_engine_table_list_find(ppdb_engine_table_list_t* list, const char* name, ppdb_engine_table_t** table);
+ppdb_error_t ppdb_engine_table_list_foreach(ppdb_engine_table_list_t* list, void (*fn)(ppdb_engine_table_t* table, void* arg), void* arg);
 
 #endif // PPDB_INTERNAL_ENGINE_H

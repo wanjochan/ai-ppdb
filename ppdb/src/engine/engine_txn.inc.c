@@ -48,6 +48,12 @@ ppdb_error_t ppdb_engine_txn_begin(ppdb_engine_t* engine, ppdb_engine_txn_t** tx
     new_txn->engine = engine;
 
     // Initialize transaction statistics
+    new_txn->stats.reads = NULL;
+    new_txn->stats.writes = NULL;
+    new_txn->stats.is_active = false;
+    new_txn->stats.is_committed = false;
+    new_txn->stats.is_rolledback = false;
+
     ppdb_error_t err = ppdb_base_counter_create(&new_txn->stats.reads);
     if (err != PPDB_OK) {
         free(new_txn);
@@ -82,7 +88,15 @@ ppdb_error_t ppdb_engine_txn_begin(ppdb_engine_t* engine, ppdb_engine_txn_t** tx
     ppdb_base_counter_inc(engine->stats.active_txns);
 
     // Unlock transaction manager
-    ppdb_base_mutex_unlock(engine->txn_mgr.txn_mutex);
+    err = ppdb_base_mutex_unlock(engine->txn_mgr.txn_mutex);
+    if (err != PPDB_OK) {
+        ppdb_base_counter_dec(engine->stats.active_txns);
+        ppdb_base_counter_dec(engine->stats.total_txns);
+        ppdb_base_counter_destroy(new_txn->stats.writes);
+        ppdb_base_counter_destroy(new_txn->stats.reads);
+        free(new_txn);
+        return err;
+    }
 
     new_txn->stats.is_active = true;
     *txn = new_txn;

@@ -11,6 +11,7 @@
 // Include implementation files
 #include "engine/engine_txn.inc.c"
 #include "engine/engine_table.inc.c"
+#include "engine/engine_table_list.inc.c"
 #include "engine/engine_cursor.inc.c"
 #include "engine/engine_io.inc.c"
 #include "engine/engine_stats.inc.c"
@@ -55,6 +56,7 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     }
 
     // Initialize statistics
+    memset(&e->stats, 0, sizeof(ppdb_engine_stats_t));
     err = ppdb_engine_stats_init(&e->stats);
     if (err != PPDB_OK) {
         ppdb_engine_io_cleanup(e);
