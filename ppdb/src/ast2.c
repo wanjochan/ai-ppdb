@@ -91,6 +91,7 @@ typedef struct Env {
     struct Env* parent;
     EnvVar vars[32];
     size_t ref_count;  // 引用计数
+    size_t depth;      // 当前递归深度
 } Env;
 
 // 解析器
@@ -102,6 +103,7 @@ typedef struct {
 #define MAX_VARS 32
 #define MAX_ARGS 8
 #define MAX_IDENT 32
+#define MAX_RECURSION_DEPTH 28  // 限制递归深度为28层
 
 //-----------------------------------------------------------------------------
 // 前向声明
@@ -214,6 +216,7 @@ static Env* new_env(Env* parent) {
     Env* env = (Env*)calloc(1, sizeof(Env));
     if (env) {
         env->parent = parent;
+        env->depth = parent ? parent->depth + 1 : 0;  // 计算当前深度
         // 如果有父环境,增加引用计数
         if (parent) parent->ref_count++;
     }
@@ -618,6 +621,9 @@ static Value builtin_sub(Node* node, Env* env) {
     return (Value){.type = VAL_NUM, .data.num = arg1.data.num - arg2.data.num};
 }
 
+// 添加全局递归深度计数器
+static size_t g_recursion_depth = 0;
+
 // 求值函数调用
 static Value eval_call(Node* node, Env* env) {
     if (!node || !env) return (Value){.type = VAL_ERR, .data.err = "Invalid call"};
@@ -631,19 +637,33 @@ static Value eval_call(Node* node, Env* env) {
     if (!fun) return (Value){.type = VAL_ERR, .data.err = "Function not found"};
     if (fun->type != VAL_FUN) return (Value){.type = VAL_ERR, .data.err = "Not a function"};
     
+    // 检查递归深度
+    g_recursion_depth++;
+    if (g_recursion_depth > MAX_RECURSION_DEPTH) {
+        g_recursion_depth--;
+        fprintf(stderr, "Current recursion depth for function '%s': %zu, limit: %d\n", 
+                node->data.call.name, g_recursion_depth, MAX_RECURSION_DEPTH);
+        return (Value){.type = VAL_ERR, .data.err = "Maximum recursion depth exceeded"};
+    }
+    
     // 创建新环境,父环境是函数定义时的环境
     Env* env_new = new_env(fun->data.fun.env);
-    if (!env_new) return (Value){.type = VAL_ERR, .data.err = "Out of memory"};
+    if (!env_new) {
+        g_recursion_depth--;
+        return (Value){.type = VAL_ERR, .data.err = "Out of memory"};
+    }
     
     // 计算参数值并绑定到新环境
     if (node->data.call.arg_count > 0) {
         Value arg = eval(node->data.call.args[0], env);
         if (arg.type == VAL_ERR) {
             free_env(env_new);
+            g_recursion_depth--;
             return arg;
         }
         if (!env_add(env_new, fun->data.fun.node->data.lambda.param, arg)) {
             free_env(env_new);
+            g_recursion_depth--;
             return (Value){.type = VAL_ERR, .data.err = "Failed to bind parameter"};
         }
     }
@@ -651,6 +671,7 @@ static Value eval_call(Node* node, Env* env) {
     // 执行函数体
     Value result = eval(fun->data.fun.node->data.lambda.body, env_new);
     free_env(env_new);
+    g_recursion_depth--;
     return result;
 }
 
