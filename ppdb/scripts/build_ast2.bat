@@ -33,6 +33,21 @@ if not "%2"=="norun" (
     "%BUILD_DIR%\ast2.exe" "+(1,2)"
 
     echo.
+    echo Testing multiply...
+    echo Input: *(6,7)
+    "%BUILD_DIR%\ast2.exe" "*(6,7)"
+
+    echo.
+    echo Testing divide...
+    echo Input: /(10,2)
+    "%BUILD_DIR%\ast2.exe" "/(10,2)"
+
+    echo.
+    echo Testing modulo...
+    echo Input: mod(7,3)
+    "%BUILD_DIR%\ast2.exe" "mod(7,3)"
+
+    echo.
     echo Testing if...
     echo Input: if(1,42,0)
     "%BUILD_DIR%\ast2.exe" "if(1,42,0)"

@@ -111,11 +111,147 @@ typedef struct {
 
 static Node* new_node(NodeType type);
 static void free_node(Node* node);
-static Value eval_call(Node* node, Env* env);
 static Value eval(Node* node, Env* env);
-static Value builtin_add(Node* node, Env* env);
-static Value builtin_sub(Node* node, Env* env);
+static Value eval_call(Node* node, Env* env);
+static Value eval_if(Node* node, Env* env);
+static Value eval_local(Node* node, Env* env);
+static Value eval_lambda(Node* node, Env* env);
 static Node* parse_expr(Parser* p);
+
+//-----------------------------------------------------------------------------
+// 内置函数定义
+//-----------------------------------------------------------------------------
+
+// 内置函数类型
+typedef Value (*BuiltinFunc)(Node*, Env*);
+
+// 内置函数注册表项
+typedef struct {
+    char name[32];
+    BuiltinFunc func;
+} BuiltinEntry;
+
+// 内置函数注册表
+static BuiltinEntry builtin_funcs[32] = {0};
+static size_t builtin_func_count = 0;
+
+// 注册内置函数
+static bool register_builtin(const char* name, BuiltinFunc func) {
+    if (builtin_func_count >= 32) return false;
+    
+    strncpy(builtin_funcs[builtin_func_count].name, name, sizeof(builtin_funcs[0].name) - 1);
+    builtin_funcs[builtin_func_count].func = func;
+    builtin_func_count++;
+    return true;
+}
+
+// 查找内置函数
+static BuiltinFunc lookup_builtin(const char* name) {
+    for (size_t i = 0; i < builtin_func_count; i++) {
+        if (strcmp(builtin_funcs[i].name, name) == 0) {
+            return builtin_funcs[i].func;
+        }
+    }
+    return NULL;
+}
+
+// 内置函数实现
+static Value builtin_add(Node* node, Env* env) {
+    if (!node || !env || node->data.call.arg_count != 2)
+        return (Value){.type = VAL_ERR, .data.err = "Add requires 2 arguments"};
+    
+    Value arg1 = eval(node->data.call.args[0], env);
+    if (arg1.type == VAL_ERR) return arg1;
+    
+    Value arg2 = eval(node->data.call.args[1], env);
+    if (arg2.type == VAL_ERR) return arg2;
+    
+    if (arg1.type != VAL_NUM || arg2.type != VAL_NUM)
+        return (Value){.type = VAL_ERR, .data.err = "Arguments must be numbers"};
+    
+    return (Value){.type = VAL_NUM, .data.num = arg1.data.num + arg2.data.num};
+}
+
+static Value builtin_sub(Node* node, Env* env) {
+    if (!node || !env || node->data.call.arg_count != 2)
+        return (Value){.type = VAL_ERR, .data.err = "Sub requires 2 arguments"};
+    
+    Value arg1 = eval(node->data.call.args[0], env);
+    if (arg1.type == VAL_ERR) return arg1;
+    
+    Value arg2 = eval(node->data.call.args[1], env);
+    if (arg2.type == VAL_ERR) return arg2;
+    
+    if (arg1.type != VAL_NUM || arg2.type != VAL_NUM)
+        return (Value){.type = VAL_ERR, .data.err = "Arguments must be numbers"};
+    
+    return (Value){.type = VAL_NUM, .data.num = arg1.data.num - arg2.data.num};
+}
+
+static Value builtin_mul(Node* node, Env* env) {
+    if (!node || !env || node->data.call.arg_count != 2)
+        return (Value){.type = VAL_ERR, .data.err = "Mul requires 2 arguments"};
+    
+    Value arg1 = eval(node->data.call.args[0], env);
+    if (arg1.type == VAL_ERR) return arg1;
+    
+    Value arg2 = eval(node->data.call.args[1], env);
+    if (arg2.type == VAL_ERR) return arg2;
+    
+    if (arg1.type != VAL_NUM || arg2.type != VAL_NUM)
+        return (Value){.type = VAL_ERR, .data.err = "Arguments must be numbers"};
+    
+    return (Value){.type = VAL_NUM, .data.num = arg1.data.num * arg2.data.num};
+}
+
+static Value builtin_div(Node* node, Env* env) {
+    if (!node || !env || node->data.call.arg_count != 2)
+        return (Value){.type = VAL_ERR, .data.err = "Div requires 2 arguments"};
+    
+    Value arg1 = eval(node->data.call.args[0], env);
+    if (arg1.type == VAL_ERR) return arg1;
+    
+    Value arg2 = eval(node->data.call.args[1], env);
+    if (arg2.type == VAL_ERR) return arg2;
+    
+    if (arg1.type != VAL_NUM || arg2.type != VAL_NUM)
+        return (Value){.type = VAL_ERR, .data.err = "Arguments must be numbers"};
+    
+    if (arg2.data.num == 0)
+        return (Value){.type = VAL_ERR, .data.err = "Division by zero"};
+    
+    return (Value){.type = VAL_NUM, .data.num = arg1.data.num / arg2.data.num};
+}
+
+static Value builtin_mod(Node* node, Env* env) {
+    if (!node || !env || node->data.call.arg_count != 2)
+        return (Value){.type = VAL_ERR, .data.err = "Mod requires 2 arguments"};
+    
+    Value arg1 = eval(node->data.call.args[0], env);
+    if (arg1.type == VAL_ERR) return arg1;
+    
+    Value arg2 = eval(node->data.call.args[1], env);
+    if (arg2.type == VAL_ERR) return arg2;
+    
+    if (arg1.type != VAL_NUM || arg2.type != VAL_NUM)
+        return (Value){.type = VAL_ERR, .data.err = "Arguments must be numbers"};
+    
+    if (arg2.data.num == 0)
+        return (Value){.type = VAL_ERR, .data.err = "Division by zero"};
+    
+    return (Value){.type = VAL_NUM, .data.num = fmod(arg1.data.num, arg2.data.num)};
+}
+
+// 初始化所有内置函数
+static bool init_builtins(void) {
+    bool ok = true;
+    ok &= register_builtin("+", builtin_add);
+    ok &= register_builtin("-", builtin_sub);
+    ok &= register_builtin("*", builtin_mul);
+    ok &= register_builtin("/", builtin_div);
+    ok &= register_builtin("mod", builtin_mod);
+    return ok;
+}
 
 //-----------------------------------------------------------------------------
 // 工具函数
@@ -587,40 +723,6 @@ static Node* parse_expr(Parser* p) {
 // 求值器
 //-----------------------------------------------------------------------------
 
-// 内置加法函数
-static Value builtin_add(Node* node, Env* env) {
-    if (!node || !env || node->data.call.arg_count != 2)
-        return (Value){.type = VAL_ERR, .data.err = "Add requires 2 arguments"};
-    
-    Value arg1 = eval(node->data.call.args[0], env);
-    if (arg1.type == VAL_ERR) return arg1;
-    
-    Value arg2 = eval(node->data.call.args[1], env);
-    if (arg2.type == VAL_ERR) return arg2;
-    
-    if (arg1.type != VAL_NUM || arg2.type != VAL_NUM)
-        return (Value){.type = VAL_ERR, .data.err = "Arguments must be numbers"};
-    
-    return (Value){.type = VAL_NUM, .data.num = arg1.data.num + arg2.data.num};
-}
-
-// 内置减法函数
-static Value builtin_sub(Node* node, Env* env) {
-    if (!node || !env || node->data.call.arg_count != 2)
-        return (Value){.type = VAL_ERR, .data.err = "Sub requires 2 arguments"};
-    
-    Value arg1 = eval(node->data.call.args[0], env);
-    if (arg1.type == VAL_ERR) return arg1;
-    
-    Value arg2 = eval(node->data.call.args[1], env);
-    if (arg2.type == VAL_ERR) return arg2;
-    
-    if (arg1.type != VAL_NUM || arg2.type != VAL_NUM)
-        return (Value){.type = VAL_ERR, .data.err = "Arguments must be numbers"};
-    
-    return (Value){.type = VAL_NUM, .data.num = arg1.data.num - arg2.data.num};
-}
-
 // 添加全局递归深度计数器
 static size_t g_recursion_depth = 0;
 
@@ -629,8 +731,8 @@ static Value eval_call(Node* node, Env* env) {
     if (!node || !env) return (Value){.type = VAL_ERR, .data.err = "Invalid call"};
     
     // 检查是否是内置函数
-    if (strcmp(node->data.call.name, "+") == 0) return builtin_add(node, env);
-    if (strcmp(node->data.call.name, "-") == 0) return builtin_sub(node, env);
+    BuiltinFunc builtin = lookup_builtin(node->data.call.name);
+    if (builtin) return builtin(node, env);
     
     // 获取用户定义函数
     Value* fun = env_get(env, node->data.call.name);
@@ -772,6 +874,12 @@ static Value eval(Node* node, Env* env) {
 int main(int argc, char* argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <expression>\n", argv[0]);
+        return 1;
+    }
+    
+    // 初始化内置函数
+    if (!init_builtins()) {
+        fprintf(stderr, "Failed to initialize builtin functions\n");
         return 1;
     }
     
