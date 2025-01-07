@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
+
 """
-Stress test for PPDB using memcache protocol
-This script performs various stress tests against the PPDB server
-using the memcache protocol on port 11211
+PPDB Stress Test Script
+This script performs stress testing on a PPDB server using the memcached protocol.
 """
 
 import memcache
@@ -11,10 +11,9 @@ import string
 import time
 import threading
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import sys
 import logging
-import socket
+from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging
 logging.basicConfig(
@@ -24,63 +23,29 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class PPDBStressTest:
-    def __init__(self, host='127.0.0.1', port=11211, num_threads=4):
-        """Initialize stress test parameters"""
+    def __init__(self, host='127.0.0.1', port=11211, num_threads=4, duration=60):
         self.host = host
         self.port = port
         self.num_threads = num_threads
+        self.duration = duration
         self.client = None
-        self.stop_test = False
         self.stats = {
-            'total_ops': 0,
-            'successful_ops': 0,
-            'failed_ops': 0,
-            'total_time': 0,
-            'avg_latency': 0,
+            'set_ops': 0,
+            'get_ops': 0,
+            'delete_ops': 0,
             'set_errors': 0,
             'get_errors': 0,
-            'delete_errors': 0,
-            'connection_errors': 0
+            'delete_errors': 0
         }
-        self._lock = threading.Lock()
+        self.stats_lock = threading.Lock()
+        self.running = False
 
-    def _generate_random_string(self, length=10):
-        """Generate random string for key/value"""
-        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
-
-    def _update_stats(self, success, latency, error_type=None):
-        """Update test statistics"""
-        with self._lock:
-            self.stats['total_ops'] += 1
-            if success:
-                self.stats['successful_ops'] += 1
-            else:
-                self.stats['failed_ops'] += 1
-                if error_type:
-                    self.stats[error_type] += 1
-            self.stats['total_time'] += latency
-            self.stats['avg_latency'] = self.stats['total_time'] / self.stats['total_ops']
-
-    def _check_server(self):
-        """Check if server is accessible"""
+    def connect(self):
+        """Initialize memcached client connection"""
         try:
-            sock = socket.create_connection((self.host, self.port), timeout=5)
-            sock.close()
-            return True
-        except Exception as e:
-            logger.error(f"Server connection check failed: {str(e)}")
-            return False
-
-    def _init_client(self):
-        """Initialize memcache client with debug enabled"""
-        try:
-            self.client = memcache.Client(
-                [f'{self.host}:{self.port}'],
-                debug=True,  # Enable debug mode
-                socket_timeout=5.0,  # Set socket timeout
-                socket_connect_timeout=5.0  # Set connect timeout
-            )
-            # Test connection with a simple set/get
+            server = f"{self.host}:{self.port}"
+            self.client = memcache.Client([server], debug=True)
+            # Test connection
             test_key = 'test_connection'
             test_value = 'test_value'
             if not self.client.set(test_key, test_value):
@@ -88,136 +53,109 @@ class PPDBStressTest:
             if self.client.get(test_key) != test_value:
                 raise Exception("Failed to get test value")
             self.client.delete(test_key)
+            logger.info(f"Connected to {server}")
             return True
         except Exception as e:
-            logger.error(f"Client initialization failed: {str(e)}")
+            logger.error(f"Client initialization failed: {e}")
             return False
 
-    def _worker(self, worker_id):
+    def generate_random_string(self, length=10):
+        """Generate a random string of fixed length"""
+        return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+    def update_stats(self, operation, success):
+        """Update operation statistics"""
+        with self.stats_lock:
+            if success:
+                self.stats[f'{operation}_ops'] += 1
+            else:
+                self.stats[f'{operation}_errors'] += 1
+
+    def worker(self):
         """Worker function that performs operations"""
-        ops = 0
-        client = memcache.Client(
-            [f'{self.host}:{self.port}'],
-            debug=True,
-            socket_timeout=5.0,
-            socket_connect_timeout=5.0
-        )
-        
-        while not self.stop_test:
-            # Generate random key and value
-            key = f'key_{worker_id}_{self._generate_random_string()}'
-            value = self._generate_random_string(100)  # 100 byte value
+        while self.running:
+            key = self.generate_random_string()
+            value = self.generate_random_string(100)
             
+            # SET operation
             try:
-                # SET operation
-                start_time = time.time()
-                success = client.set(key, value)
-                latency = time.time() - start_time
-                if not success:
-                    logger.error(f"Worker {worker_id}: SET operation failed for key {key}")
-                    self._update_stats(False, latency, 'set_errors')
-                    continue
-                self._update_stats(success, latency)
-                
-                # GET operation
-                start_time = time.time()
-                result = client.get(key)
-                latency = time.time() - start_time
-                if result is None:
-                    logger.error(f"Worker {worker_id}: GET operation failed for key {key}")
-                    self._update_stats(False, latency, 'get_errors')
-                    continue
-                success = result == value
-                if not success:
-                    logger.error(f"Worker {worker_id}: Value mismatch for key {key}")
-                self._update_stats(success, latency)
-                
-                # DELETE operation
-                start_time = time.time()
-                success = client.delete(key)
-                latency = time.time() - start_time
-                if not success:
-                    logger.error(f"Worker {worker_id}: DELETE operation failed for key {key}")
-                    self._update_stats(False, latency, 'delete_errors')
-                    continue
-                self._update_stats(success, latency)
-                
-                ops += 3
-                if ops % 100 == 0:
-                    logger.info(f'Worker {worker_id} completed {ops} operations')
-                
+                success = self.client.set(key, value)
+                self.update_stats('set', success)
             except Exception as e:
-                logger.error(f'Worker {worker_id} error: {str(e)}')
-                self._update_stats(False, 0, 'connection_errors')
-                time.sleep(1)  # Wait before retry
+                logger.error(f"SET operation failed: {e}")
+                self.update_stats('set', False)
 
-    def run_test(self, duration=60):
-        """Run stress test for specified duration"""
-        # Check server accessibility
-        if not self._check_server():
-            logger.error(f"Server {self.host}:{self.port} is not accessible")
-            return False
-            
-        # Initialize test client
-        if not self._init_client():
+            # GET operation
+            try:
+                result = self.client.get(key)
+                self.update_stats('get', result == value)
+            except Exception as e:
+                logger.error(f"GET operation failed: {e}")
+                self.update_stats('get', False)
+
+            # DELETE operation
+            try:
+                success = self.client.delete(key)
+                self.update_stats('delete', success)
+            except Exception as e:
+                logger.error(f"DELETE operation failed: {e}")
+                self.update_stats('delete', False)
+
+    def run_test(self):
+        """Run the stress test"""
+        if not self.connect():
             logger.error("Failed to initialize test client")
             return False
-            
-        logger.info(f'Starting stress test with {self.num_threads} threads for {duration} seconds')
+
+        logger.info(f"Starting stress test with {self.num_threads} threads for {self.duration} seconds")
+        self.running = True
         
-        # Create thread pool
         with ThreadPoolExecutor(max_workers=self.num_threads) as executor:
-            # Start workers
-            futures = []
-            for i in range(self.num_threads):
-                futures.append(executor.submit(self._worker, i))
+            futures = [executor.submit(self.worker) for _ in range(self.num_threads)]
             
-            # Wait for specified duration
-            time.sleep(duration)
-            self.stop_test = True
+            # Wait for the specified duration
+            time.sleep(self.duration)
+            
+            # Stop the test
+            self.running = False
             
             # Wait for all workers to complete
             for future in futures:
-                try:
-                    future.result()
-                except Exception as e:
-                    logger.error(f"Worker thread failed: {str(e)}")
+                future.result()
+
+        # Log results
+        total_ops = sum(v for k, v in self.stats.items() if k.endswith('_ops'))
+        total_errors = sum(v for k, v in self.stats.items() if k.endswith('_errors'))
         
-        # Print results
-        logger.info('\nTest Results:')
-        logger.info(f'Total Operations: {self.stats["total_ops"]}')
-        logger.info(f'Successful Operations: {self.stats["successful_ops"]}')
-        logger.info(f'Failed Operations: {self.stats["failed_ops"]}')
-        logger.info(f'SET Errors: {self.stats["set_errors"]}')
-        logger.info(f'GET Errors: {self.stats["get_errors"]}')
-        logger.info(f'DELETE Errors: {self.stats["delete_errors"]}')
-        logger.info(f'Connection Errors: {self.stats["connection_errors"]}')
-        logger.info(f'Average Latency: {self.stats["avg_latency"]*1000:.2f} ms')
-        logger.info(f'Operations/Second: {self.stats["total_ops"]/duration:.2f}')
-        logger.info(f'Success Rate: {(self.stats["successful_ops"]/self.stats["total_ops"])*100:.2f}%')
-        
-        return self.stats["successful_ops"] > 0
+        if total_ops > 0:
+            logger.info("Stress test completed successfully")
+            logger.info(f"Total operations: {total_ops}")
+            logger.info(f"Total errors: {total_errors}")
+            logger.info(f"Success rate: {(total_ops / (total_ops + total_errors)) * 100:.2f}%")
+            logger.info(f"Operations per second: {total_ops / self.duration:.2f}")
+            return True
+        else:
+            logger.error("Stress test failed - no successful operations")
+            return False
 
 def main():
-    """Main entry point"""
     parser = argparse.ArgumentParser(description='PPDB Stress Test')
     parser.add_argument('--host', default='127.0.0.1', help='Server host')
     parser.add_argument('--port', type=int, default=11211, help='Server port')
-    parser.add_argument('--threads', type=int, default=4, help='Number of threads')
+    parser.add_argument('--threads', type=int, default=4, help='Number of worker threads')
     parser.add_argument('--duration', type=int, default=60, help='Test duration in seconds')
+    
     args = parser.parse_args()
-
-    try:
-        test = PPDBStressTest(args.host, args.port, args.threads)
-        if not test.run_test(args.duration):
-            logger.error("Stress test failed - no successful operations")
-            sys.exit(1)
-    except KeyboardInterrupt:
-        logger.info('\nTest interrupted by user')
-        sys.exit(1)
-    except Exception as e:
-        logger.error(f'Test failed: {str(e)}')
-        sys.exit(1)
+    
+    test = PPDBStressTest(
+        host=args.host,
+        port=args.port,
+        num_threads=args.threads,
+        duration=args.duration
+    )
+    
+    success = test.run_test()
+    sys.exit(0 if success else 1)
 
 if __name__ == '__main__':
     main() 
