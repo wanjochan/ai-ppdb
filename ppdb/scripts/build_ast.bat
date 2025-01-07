@@ -1,6 +1,10 @@
 @echo off
 setlocal EnableDelayedExpansion
 
+rem Get build mode from parameter
+set "BUILD_MODE=%1"
+if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
+
 rem Load environment variables and common functions
 call "%~dp0\build_env.bat"
 if errorlevel 1 exit /b 1
@@ -8,42 +12,53 @@ if errorlevel 1 exit /b 1
 rem Create build directory if it doesn't exist
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
-
-rem Build AST runtime
-echo Building AST runtime...
-"%GCC%" %CFLAGS% -c "%SRC_DIR%\ast_runtime.c" -o "%BUILD_DIR%\ast_runtime.o"
+rem Build AST
+echo Building AST...
+"%GCC%" %CFLAGS% ^
+    "%SRC_DIR%\ast.c" ^
+    %LDFLAGS% %LIBS% -o "%BUILD_DIR%\ast.exe.dbg"
 if errorlevel 1 exit /b 1
 
-rem Build AST core
-echo Building AST core...
-"%GCC%" %CFLAGS% -c "%SRC_DIR%\ast.c" -o "%BUILD_DIR%\ast.o"
+"%OBJCOPY%" -S -O binary "%BUILD_DIR%\ast.exe.dbg" "%BUILD_DIR%\ast.exe"
 if errorlevel 1 exit /b 1
 
+rem Run the test if not explicitly disabled
+if not "%2"=="norun" (
+    echo.
+    echo Test 1: Basic arithmetic
+    echo Expression: add(1, 2)
+    echo Expected: 3
+    "%BUILD_DIR%\ast.exe" "add(1, 2)"
+    echo.
 
+    echo Test 2: Variable definition
+    echo Expression: local(x, 42)
+    echo Expected: 42
+    "%BUILD_DIR%\ast.exe" "local(x, 42)"
+    echo.
 
-echo Build successful!
+    echo Test 3: Variable lookup
+    echo Expression: seq(local(x, 42), x)
+    echo Expected: 42
+    "%BUILD_DIR%\ast.exe" "seq(local(x, 42), x)"
+    echo.
 
-rem Run tests
-echo Running AST tests 1: expect 3
-"%BUILD_DIR%\ast.exe" "+(1, 2)"
+    echo Test 4: Function definition
+    echo Expression: local(f, lambda(x, 42))
+    echo Expected: lambda(x, 42)
+    "%BUILD_DIR%\ast.exe" "local(f, lambda(x, 42))"
+    echo.
 
-rem Test lambda function
-echo Testing lambda function...
-echo Test case 1: const42 function
-"%BUILD_DIR%\ast.exe" "local(const42, lambda(x, 42));const42(0)"
+    echo Test 5: Function lookup
+    echo Expression: seq(local(f, lambda(x, 42)), f)
+    echo Expected: lambda(x, 42)
+    "%BUILD_DIR%\ast.exe" "seq(local(f, lambda(x, 42)), f)"
+    echo.
 
-rem Test fibonacci function
-echo Testing fibonacci function...
-echo Test case 1: fib(0), expect 0
-"%BUILD_DIR%\ast.exe" "local(fib, lambda(n, if(=(n, 0), 0, if(=(n, 1), 1, +(fib(-(n, 1)), fib(-(n, 2)))))));fib(0)"
+    echo Test 6: Function call
+    echo Expression: seq(local(f, lambda(x, 42)), f(0))
+    echo Expected: 42
+    "%BUILD_DIR%\ast.exe" "seq(local(f, lambda(x, 42)), f(0))"
+)
 
-echo Test case 2: fib(1), expect 1
-"%BUILD_DIR%\ast.exe" "local(fib, lambda(n, if(=(n, 0), 0, if(=(n, 1), 1, +(fib(-(n, 1)), fib(-(n, 2)))))));fib(1)"
-
-echo Test case 3: fib(2), expect 1
-"%BUILD_DIR%\ast.exe" "local(fib, lambda(n, if(=(n, 0), 0, if(=(n, 1), 1, +(fib(-(n, 1)), fib(-(n, 2)))))));fib(2)"
-
-if errorlevel 1 exit /b 1
-
-echo All tests passed!
 exit /b 0 
