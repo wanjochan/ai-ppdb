@@ -63,7 +63,7 @@ ppdb/
 
 PPDB 采用清晰的分层架构设计，每一层都有其明确的职责和边界：
 
-base => engine => storage => peer => [ppdb.exe] + [ppdb.h,libppdb]
+base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
 
 1. **基础层** (`base.h/c`)
    - 内存管理：内存分配、释放、内存池管理

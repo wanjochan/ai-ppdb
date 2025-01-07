@@ -19,16 +19,23 @@ typedef int ppdb_error_t;
 #include "base/base_spinlock.inc.c"
 
 // Global state
-static bool base_initialized = false;
+static _Atomic(bool) base_initialized = false;
 
 // Base layer initialization
 ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config) {
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&base_initialized, &expected, true)) {
+        return PPDB_BASE_ERR_SYSTEM;  // Already initialized
+    }
+
     if (!base || !config) {
+        atomic_store(&base_initialized, false);
         return PPDB_BASE_ERR_PARAM;
     }
 
     ppdb_base_t* new_base = (ppdb_base_t*)malloc(sizeof(ppdb_base_t));
     if (!new_base) {
+        atomic_store(&base_initialized, false);
         return PPDB_BASE_ERR_MEMORY;
     }
 
@@ -48,6 +55,7 @@ void ppdb_base_destroy(ppdb_base_t* base) {
 
     base->initialized = false;
     free(base);
+    atomic_store(&base_initialized, false);
 }
 
 // Thread cleanup

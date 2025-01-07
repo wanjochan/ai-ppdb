@@ -6,6 +6,17 @@ static int __attribute__((used)) compare_int(const void* a, const void* b) {
     return (int)(intptr_t)a - (int)(intptr_t)b;
 }
 
+static void verify_value(ppdb_base_skiplist_t* list, intptr_t key, const char* expected_value) {
+    void* actual_value = NULL;
+    assert(ppdb_base_skiplist_find(list, (void*)key, &actual_value) == PPDB_OK);
+    assert(actual_value != NULL);
+    assert(strcmp((const char*)actual_value, expected_value) == 0);
+    (void)actual_value;  // Suppress unused variable warning
+    (void)list;  // Suppress unused parameter warning
+    (void)key;   // Suppress unused parameter warning
+    (void)expected_value;  // Suppress unused parameter warning
+}
+
 static void test_skiplist_basic(void) {
     ppdb_base_skiplist_t* list = NULL;
 
@@ -19,18 +30,16 @@ static void test_skiplist_basic(void) {
     assert(ppdb_base_skiplist_insert(list, (void*)3, (void*)"three") == PPDB_OK);
 
     // Find values
-    void* value = NULL;
-    assert(ppdb_base_skiplist_find(list, (void*)1, &value) == PPDB_OK);
-    assert(strcmp((char*)value, "one") == 0);
-    assert(ppdb_base_skiplist_find(list, (void*)2, &value) == PPDB_OK);
-    assert(strcmp((char*)value, "two") == 0);
-    assert(ppdb_base_skiplist_find(list, (void*)3, &value) == PPDB_OK);
-    assert(strcmp((char*)value, "three") == 0);
-    assert(ppdb_base_skiplist_find(list, (void*)4, &value) != PPDB_OK);
+    verify_value(list, 1, "one");
+    verify_value(list, 2, "two");
+    verify_value(list, 3, "three");
+    
+    // Test non-existent key
+    assert(ppdb_base_skiplist_find(list, (void*)4, NULL) != PPDB_OK);
 
     // Remove values
     assert(ppdb_base_skiplist_remove(list, (void*)2) == PPDB_OK);
-    assert(ppdb_base_skiplist_find(list, (void*)2, &value) != PPDB_OK);
+    assert(ppdb_base_skiplist_find(list, (void*)2, NULL) != PPDB_OK);
 
     // Try to remove non-existent key
     assert(ppdb_base_skiplist_remove(list, (void*)4) != PPDB_OK);

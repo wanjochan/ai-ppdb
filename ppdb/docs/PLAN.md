@@ -54,7 +54,7 @@
 
 ## 开发阶段与分层架构
 
-base => engine => storage => peer => [ppdb.exe] + [ppdb.h,libppdb]
+base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
 
 ### 第一阶段：内存KV（memkv）
 > 实现单机版纯内存键值存储
