@@ -19,6 +19,7 @@ typedef int ppdb_error_t;
 #include "base/base_spinlock.inc.c"
 #include "base/base_counter.inc.c"
 #include "base/base_io.inc.c"
+#include "base/base_sync_perf.inc.c"
 
 // Global state
 static _Atomic(bool) base_initialized = false;
@@ -26,6 +27,7 @@ static _Atomic(bool) base_initialized = false;
 // Base layer initialization
 ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config) {
     if (!base || !config) return PPDB_BASE_ERR_PARAM;
+    if (base_initialized) return PPDB_BASE_ERR_EXISTS;
 
     ppdb_base_t* new_base = malloc(sizeof(ppdb_base_t));
     if (!new_base) return PPDB_BASE_ERR_MEMORY;
@@ -38,6 +40,7 @@ ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config
     new_base->io_manager = NULL;
 
     *base = new_base;
+    base_initialized = true;
     return PPDB_OK;
 }
 
@@ -63,6 +66,7 @@ void ppdb_base_destroy(ppdb_base_t* base) {
 
     base->initialized = false;
     free(base);
+    base_initialized = false;
 }
 
 // Mutex statistics

@@ -1,414 +1,314 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
-#include "test_common.h"
+#include "../test_framework.h"
 
-// Test configuration
-#define NUM_THREADS 4
-#define OPS_PER_THREAD 100000
-#define VALUE_SIZE 8
-#define MAX_RETRIES 1000  // Maximum retries for lock acquisition
+// 全局测试数据
+static ppdb_base_t* g_base = NULL;
 
-// Forward declarations
-struct test_context_s;
+// 性能统计数据
+typedef struct {
+    int64_t total_ops;
+    int64_t total_time_ns;
+    int64_t min_time_ns;
+    int64_t max_time_ns;
+    double avg_time_ns;
+    double ops_per_sec;
+} perf_stats_t;
 
-// Thread arguments
-typedef struct thread_args_s {
-    struct test_context_s* ctx;
-    int thread_id;
-    uint64_t total_time_us;
-    uint64_t contention_count;
-    uint64_t ops_completed;
-    uint64_t retry_count;
-} thread_args_t;
+// 测试初始化
+static int test_setup(void) {
+    printf("\n=== Setting up sync performance test environment ===\n");
+    
+    // 初始化 base 配置
+    ppdb_base_config_t base_config = {
+        .memory_limit = 1024 * 1024 * 100,  // 100MB
+        .thread_pool_size = 8,
+        .thread_safe = true,
+        .enable_logging = true,
+        .log_level = PPDB_LOG_DEBUG
+    };
+    
+    // 初始化 base 层
+    ASSERT_OK(ppdb_base_init(&g_base, &base_config));
+    
+    printf("Test environment setup completed\n");
+    return 0;
+}
 
-// Shared data structure
-typedef struct test_context_s {
-    ppdb_base_t* base;
+// 测试清理
+static int test_teardown(void) {
+    printf("\n=== Cleaning up sync performance test environment ===\n");
+    
+    if (g_base) {
+        ppdb_base_destroy(g_base);
+        g_base = NULL;
+    }
+    
+    printf("Test environment cleanup completed\n");
+    return 0;
+}
+
+// 性能统计初始化
+static void init_perf_stats(perf_stats_t* stats) {
+    stats->total_ops = 0;
+    stats->total_time_ns = 0;
+    stats->min_time_ns = INT64_MAX;
+    stats->max_time_ns = 0;
+    stats->avg_time_ns = 0.0;
+    stats->ops_per_sec = 0.0;
+}
+
+// 更新性能统计
+static void update_perf_stats(perf_stats_t* stats, int64_t op_time_ns) {
+    stats->total_ops++;
+    stats->total_time_ns += op_time_ns;
+    stats->min_time_ns = MIN(stats->min_time_ns, op_time_ns);
+    stats->max_time_ns = MAX(stats->max_time_ns, op_time_ns);
+    stats->avg_time_ns = (double)stats->total_time_ns / stats->total_ops;
+    stats->ops_per_sec = 1e9 * stats->total_ops / stats->total_time_ns;
+}
+
+// 打印性能统计
+static void print_perf_stats(const char* test_name, perf_stats_t* stats) {
+    printf("\n=== Performance Statistics for %s ===\n", test_name);
+    printf("Total Operations: %ld\n", stats->total_ops);
+    printf("Total Time: %.2f ms\n", stats->total_time_ns / 1e6);
+    printf("Min Time: %.2f us\n", stats->min_time_ns / 1e3);
+    printf("Max Time: %.2f us\n", stats->max_time_ns / 1e3);
+    printf("Avg Time: %.2f us\n", stats->avg_time_ns / 1e3);
+    printf("Throughput: %.2f ops/sec\n", stats->ops_per_sec);
+    printf("=====================================\n");
+}
+
+// 互斥锁性能测试
+typedef struct {
     ppdb_base_mutex_t* mutex;
-    ppdb_base_spinlock_t* spinlock;
-    _Atomic(uint64_t) counter;
-    uint64_t shared_buffer[1];
-    thread_args_t thread_args[NUM_THREADS];
-    ppdb_base_thread_t* threads[NUM_THREADS];
-    _Atomic(bool) should_stop;
-} test_context_t;
+    int thread_id;
+    int64_t iterations;
+    perf_stats_t stats;
+} mutex_thread_data_t;
 
-// Mutex thread function
-static void __attribute__((used)) mutex_thread_func(void* arg) {
-    thread_args_t* args = (thread_args_t*)arg;
-    test_context_t* ctx = args->ctx;
-    uint64_t start_time, end_time;
-    args->ops_completed = 0;
-    args->retry_count = 0;
+static void* mutex_perf_thread(void* arg) {
+    mutex_thread_data_t* data = (mutex_thread_data_t*)arg;
+    int64_t start_time, end_time;
     
-    for (int i = 0; i < OPS_PER_THREAD && !atomic_load(&ctx->should_stop); i++) {
-        start_time = ppdb_base_get_time_us();
+    for (int64_t i = 0; i < data->iterations; i++) {
+        start_time = ppdb_base_get_time_ns();
         
-        // Lock with retry
-        int retries = 0;
-        ppdb_error_t err;
-        while (retries < MAX_RETRIES) {
-            err = ppdb_base_mutex_lock(ctx->mutex);
-            if (err == PPDB_OK) {
-                break;
-            }
-            args->contention_count++;
-            args->retry_count++;
-            retries++;
-            ppdb_base_sleep(1);  // Small backoff (1ms)
-        }
+        ASSERT_OK(ppdb_base_mutex_lock(data->mutex));
+        // 模拟临界区操作
+        ppdb_base_sleep_us(1);
+        ASSERT_OK(ppdb_base_mutex_unlock(data->mutex));
         
-        if (retries >= MAX_RETRIES) {
-            printf("Thread %d: Lock acquisition failed after %d retries (error: %d)\n", 
-                   args->thread_id, retries, err);
-            fflush(stdout);
-            atomic_store(&ctx->should_stop, true);  // Stop all threads
-            break;
-        }
-        
-        end_time = ppdb_base_get_time_us();
-        args->total_time_us += (end_time - start_time);
-        
-        // Critical section - use sequential consistency
-        uint64_t old_value = atomic_load_explicit(&ctx->counter, memory_order_seq_cst);
-        atomic_store_explicit(&ctx->counter, old_value + 1, memory_order_seq_cst);
-        ctx->shared_buffer[0]++;
-        args->ops_completed++;
-        
-        // Unlock
-        err = ppdb_base_mutex_unlock(ctx->mutex);
-        if (err != PPDB_OK) {
-            printf("Thread %d: Failed to unlock mutex (error: %d)\n", args->thread_id, err);
-            fflush(stdout);
-            atomic_store(&ctx->should_stop, true);  // Stop all threads
-            break;
-        }
-        
-        // Reduce log frequency
-        if (i % 10000 == 0) {
-            printf("Thread %d completed %d operations (retries: %lu)\n", 
-                   args->thread_id, i, args->retry_count);
-            fflush(stdout);
-        }
+        end_time = ppdb_base_get_time_ns();
+        update_perf_stats(&data->stats, end_time - start_time);
     }
+    
+    return NULL;
 }
 
-// Spinlock thread function
-static void __attribute__((used)) spinlock_thread_func(void* arg) {
-    thread_args_t* args = (thread_args_t*)arg;
-    test_context_t* ctx = args->ctx;
-    uint64_t start_time, end_time;
-    args->ops_completed = 0;
-    args->retry_count = 0;
+static int test_mutex_performance(void) {
+    printf("\n=== Running mutex performance test ===\n");
     
-    for (int i = 0; i < OPS_PER_THREAD && !atomic_load(&ctx->should_stop); i++) {
-        start_time = ppdb_base_get_time_us();
+    const int num_threads = 4;
+    const int64_t iterations_per_thread = 10000;
+    
+    // 创建互斥锁
+    ppdb_base_mutex_t* mutex = NULL;
+    ASSERT_OK(ppdb_base_mutex_create(&mutex));
+    
+    // 创建线程数据
+    mutex_thread_data_t* thread_data = ppdb_base_malloc(sizeof(mutex_thread_data_t) * num_threads);
+    ppdb_base_thread_t** threads = ppdb_base_malloc(sizeof(ppdb_base_thread_t*) * num_threads);
+    
+    // 启动线程
+    for (int i = 0; i < num_threads; i++) {
+        thread_data[i].mutex = mutex;
+        thread_data[i].thread_id = i;
+        thread_data[i].iterations = iterations_per_thread;
+        init_perf_stats(&thread_data[i].stats);
         
-        // Lock with retry
-        int retries = 0;
-        ppdb_error_t err;
-        while (retries < MAX_RETRIES) {
-            err = ppdb_base_spinlock_lock(ctx->spinlock);
-            if (err == PPDB_OK) {
-                break;
-            }
-            args->contention_count++;
-            args->retry_count++;
-            retries++;
-            ppdb_base_yield();  // Yield CPU to other threads
-        }
-        
-        if (retries >= MAX_RETRIES) {
-            printf("Thread %d: Lock acquisition failed after %d retries (error: %d)\n", 
-                   args->thread_id, retries, err);
-            fflush(stdout);
-            atomic_store(&ctx->should_stop, true);  // Stop all threads
-            break;
-        }
-        
-        end_time = ppdb_base_get_time_us();
-        args->total_time_us += (end_time - start_time);
-        
-        // Critical section - use sequential consistency
-        uint64_t old_value = atomic_load_explicit(&ctx->counter, memory_order_seq_cst);
-        atomic_store_explicit(&ctx->counter, old_value + 1, memory_order_seq_cst);
-        ctx->shared_buffer[0]++;
-        args->ops_completed++;
-        
-        // Unlock
-        err = ppdb_base_spinlock_unlock(ctx->spinlock);
-        if (err != PPDB_OK) {
-            printf("Thread %d: Failed to unlock spinlock (error: %d)\n", args->thread_id, err);
-            fflush(stdout);
-            atomic_store(&ctx->should_stop, true);  // Stop all threads
-            break;
-        }
-        
-        // Reduce log frequency
-        if (i % 10000 == 0) {
-            printf("Thread %d completed %d operations (retries: %lu)\n", 
-                   args->thread_id, i, args->retry_count);
-            fflush(stdout);
-        }
+        ASSERT_OK(ppdb_base_thread_create(&threads[i], (ppdb_base_thread_func_t)mutex_perf_thread, &thread_data[i]));
     }
+    
+    // 等待线程完成
+    for (int i = 0; i < num_threads; i++) {
+        ASSERT_OK(ppdb_base_thread_join(threads[i]));
+    }
+    
+    // 合并统计数据
+    perf_stats_t total_stats;
+    init_perf_stats(&total_stats);
+    
+    for (int i = 0; i < num_threads; i++) {
+        total_stats.total_ops += thread_data[i].stats.total_ops;
+        total_stats.total_time_ns += thread_data[i].stats.total_time_ns;
+        total_stats.min_time_ns = MIN(total_stats.min_time_ns, thread_data[i].stats.min_time_ns);
+        total_stats.max_time_ns = MAX(total_stats.max_time_ns, thread_data[i].stats.max_time_ns);
+    }
+    
+    total_stats.avg_time_ns = (double)total_stats.total_time_ns / total_stats.total_ops;
+    total_stats.ops_per_sec = 1e9 * total_stats.total_ops / total_stats.total_time_ns;
+    
+    // 打印结果
+    print_perf_stats("Mutex Performance Test", &total_stats);
+    
+    // 清理
+    ppdb_base_mutex_destroy(mutex);
+    ppdb_base_free(thread_data);
+    ppdb_base_free(threads);
+    
+    return 0;
 }
 
-// Test mutex performance
-static void test_mutex_performance(void) {
-    printf("Running mutex performance test...\n");
-    fflush(stdout);
+// 读写锁性能测试
+typedef struct {
+    ppdb_base_rwlock_t* rwlock;
+    int thread_id;
+    int64_t iterations;
+    bool is_reader;
+    perf_stats_t stats;
+} rwlock_thread_data_t;
+
+static void* rwlock_perf_thread(void* arg) {
+    rwlock_thread_data_t* data = (rwlock_thread_data_t*)arg;
+    int64_t start_time, end_time;
     
-    // Initialize test context
-    test_context_t* ctx = calloc(1, sizeof(test_context_t));
-    assert(ctx != NULL);
-    
-    // Initialize base
-    printf("Initializing base...\n");
-    fflush(stdout);
-    ppdb_error_t err = ppdb_base_init(&ctx->base, &(ppdb_base_config_t){
-        .memory_limit = 1024 * 1024,  // 1MB
-        .thread_pool_size = NUM_THREADS,
-        .thread_safe = true
-    });
-    if (err != PPDB_OK) {
-        printf("Failed to initialize base (error: %d)\n", err);
-        fflush(stdout);
-        free(ctx);
-        return;
-    }
-    
-    // Initialize mutex and shared memory
-    printf("Creating mutex...\n");
-    fflush(stdout);
-    err = ppdb_base_mutex_create(&ctx->mutex);
-    if (err != PPDB_OK) {
-        printf("Failed to create mutex (error: %d)\n", err);
-        fflush(stdout);
-        ppdb_base_destroy(ctx->base);
-        free(ctx);
-        return;
-    }
-    
-    ppdb_base_mutex_enable_stats(ctx->mutex, true);
-    ctx->shared_buffer[0] = 0;
-    atomic_store_explicit(&ctx->counter, 0, memory_order_seq_cst);
-    atomic_store(&ctx->should_stop, false);
-    
-    // Start threads
-    printf("Starting threads...\n");
-    fflush(stdout);
-    uint64_t test_start_time = ppdb_base_get_time_us();
-    
-    for (int i = 0; i < NUM_THREADS; i++) {
-        ctx->thread_args[i].ctx = ctx;
-        ctx->thread_args[i].thread_id = i;
-        ctx->thread_args[i].total_time_us = 0;
-        ctx->thread_args[i].contention_count = 0;
-        ctx->thread_args[i].ops_completed = 0;
-        ctx->thread_args[i].retry_count = 0;
-        printf("Creating thread %d...\n", i);
-        fflush(stdout);
+    for (int64_t i = 0; i < data->iterations; i++) {
+        start_time = ppdb_base_get_time_ns();
         
-        err = ppdb_base_thread_create(&ctx->threads[i], mutex_thread_func, &ctx->thread_args[i]);
-        if (err != PPDB_OK) {
-            printf("Failed to create thread %d (error: %d)\n", i, err);
-            fflush(stdout);
-            atomic_store(&ctx->should_stop, true);  // Stop all threads
-            break;
+        if (data->is_reader) {
+            ASSERT_OK(ppdb_base_rwlock_rdlock(data->rwlock));
+            // 模拟读操作
+            ppdb_base_sleep_us(1);
+            ASSERT_OK(ppdb_base_rwlock_unlock(data->rwlock));
+        } else {
+            ASSERT_OK(ppdb_base_rwlock_wrlock(data->rwlock));
+            // 模拟写操作
+            ppdb_base_sleep_us(2);
+            ASSERT_OK(ppdb_base_rwlock_unlock(data->rwlock));
         }
-        printf("Thread %d created\n", i);
-        fflush(stdout);
+        
+        end_time = ppdb_base_get_time_ns();
+        update_perf_stats(&data->stats, end_time - start_time);
     }
     
-    // Wait for threads
-    printf("Waiting for threads to complete...\n");
-    fflush(stdout);
-    uint64_t total_time_us = 0;
-    uint64_t total_contention = 0;
-    uint64_t total_ops_completed = 0;
-    uint64_t total_retries = 0;
-    
-    for (int i = 0; i < NUM_THREADS; i++) {
-        if (ctx->threads[i]) {
-            printf("Joining thread %d...\n", i);
-            fflush(stdout);
-            err = ppdb_base_thread_join(ctx->threads[i]);
-            if (err != PPDB_OK) {
-                printf("Failed to join thread %d (error: %d)\n", i, err);
-                fflush(stdout);
-            }
-            printf("Thread %d joined\n", i);
-            fflush(stdout);
-            ppdb_base_thread_destroy(ctx->threads[i]);
-            total_time_us += ctx->thread_args[i].total_time_us;
-            total_contention += ctx->thread_args[i].contention_count;
-            total_ops_completed += ctx->thread_args[i].ops_completed;
-            total_retries += ctx->thread_args[i].retry_count;
-        }
-    }
-    
-    uint64_t test_end_time = ppdb_base_get_time_us();
-    uint64_t test_duration = test_end_time - test_start_time;
-    
-    // Output statistics
-    double avg_latency_us = total_ops_completed > 0 ? 
-        (double)total_time_us / total_ops_completed : 0.0;
-    double ops_per_sec = test_duration > 0 ? 
-        (double)total_ops_completed / (test_duration / 1000000.0) : 0.0;
-    
-    printf("Mutex Performance Results:\n");
-    printf("  Total Operations Completed: %zu\n", total_ops_completed);
-    printf("  Total Time: %.2f seconds\n", test_duration / 1000000.0);
-    printf("  Average Lock Latency: %.2f microseconds\n", avg_latency_us);
-    printf("  Operations/Second: %.2f\n", ops_per_sec);
-    printf("  Lock Contentions: %zu\n", total_contention);
-    printf("  Total Lock Retries: %zu\n", total_retries);
-    printf("  Average Retries per Operation: %.2f\n", 
-           total_ops_completed > 0 ? (double)total_retries / total_ops_completed : 0.0);
-    printf("  Final Counter: %zu\n", atomic_load_explicit(&ctx->counter, memory_order_seq_cst));
-    printf("  Shared Buffer: %zu\n", ctx->shared_buffer[0]);
-    fflush(stdout);
-    
-    // Cleanup
-    printf("Cleaning up mutex test resources...\n");
-    fflush(stdout);
-    ppdb_base_mutex_destroy(ctx->mutex);
-    ppdb_base_destroy(ctx->base);
-    free(ctx);
+    return NULL;
 }
 
-// Test spinlock performance
-static void test_spinlock_performance(void) {
-    printf("\nRunning spinlock performance test...\n");
-    fflush(stdout);
+static int test_rwlock_performance(void) {
+    printf("\n=== Running rwlock performance test ===\n");
     
-    // Initialize test context
-    test_context_t* ctx = calloc(1, sizeof(test_context_t));
-    assert(ctx != NULL);
+    const int num_readers = 3;
+    const int num_writers = 1;
+    const int num_threads = num_readers + num_writers;
+    const int64_t iterations_per_thread = 10000;
     
-    // Initialize base
-    printf("Initializing base...\n");
-    fflush(stdout);
-    ppdb_error_t err = ppdb_base_init(&ctx->base, &(ppdb_base_config_t){
-        .memory_limit = 1024 * 1024,  // 1MB
-        .thread_pool_size = NUM_THREADS,
-        .thread_safe = true
-    });
-    if (err != PPDB_OK) {
-        printf("Failed to initialize base (error: %d)\n", err);
-        fflush(stdout);
-        free(ctx);
-        return;
-    }
+    // 创建读写锁
+    ppdb_base_rwlock_t* rwlock = NULL;
+    ASSERT_OK(ppdb_base_rwlock_create(&rwlock));
     
-    // Initialize spinlock and shared memory
-    printf("Creating spinlock...\n");
-    fflush(stdout);
-    err = ppdb_base_spinlock_create(&ctx->spinlock);
-    if (err != PPDB_OK) {
-        printf("Failed to create spinlock (error: %d)\n", err);
-        fflush(stdout);
-        ppdb_base_destroy(ctx->base);
-        free(ctx);
-        return;
-    }
+    // 创建线程数据
+    rwlock_thread_data_t* thread_data = ppdb_base_malloc(sizeof(rwlock_thread_data_t) * num_threads);
+    ppdb_base_thread_t** threads = ppdb_base_malloc(sizeof(ppdb_base_thread_t*) * num_threads);
     
-    ppdb_base_spinlock_enable_stats(ctx->spinlock, true);
-    ctx->shared_buffer[0] = 0;
-    atomic_store_explicit(&ctx->counter, 0, memory_order_seq_cst);
-    atomic_store(&ctx->should_stop, false);
-    
-    // Start threads
-    printf("Starting threads...\n");
-    fflush(stdout);
-    uint64_t test_start_time = ppdb_base_get_time_us();
-    
-    for (int i = 0; i < NUM_THREADS; i++) {
-        ctx->thread_args[i].ctx = ctx;
-        ctx->thread_args[i].thread_id = i;
-        ctx->thread_args[i].total_time_us = 0;
-        ctx->thread_args[i].contention_count = 0;
-        ctx->thread_args[i].ops_completed = 0;
-        ctx->thread_args[i].retry_count = 0;
-        printf("Creating thread %d...\n", i);
-        fflush(stdout);
+    // 启动线程
+    for (int i = 0; i < num_threads; i++) {
+        thread_data[i].rwlock = rwlock;
+        thread_data[i].thread_id = i;
+        thread_data[i].iterations = iterations_per_thread;
+        thread_data[i].is_reader = (i < num_readers);
+        init_perf_stats(&thread_data[i].stats);
         
-        err = ppdb_base_thread_create(&ctx->threads[i], spinlock_thread_func, &ctx->thread_args[i]);
-        if (err != PPDB_OK) {
-            printf("Failed to create thread %d (error: %d)\n", i, err);
-            fflush(stdout);
-            atomic_store(&ctx->should_stop, true);  // Stop all threads
-            break;
-        }
-        printf("Thread %d created\n", i);
-        fflush(stdout);
+        ASSERT_OK(ppdb_base_thread_create(&threads[i], (ppdb_base_thread_func_t)rwlock_perf_thread, &thread_data[i]));
     }
     
-    // Wait for threads
-    printf("Waiting for threads to complete...\n");
-    fflush(stdout);
-    uint64_t total_time_us = 0;
-    uint64_t total_contention = 0;
-    uint64_t total_ops_completed = 0;
-    uint64_t total_retries = 0;
+    // 等待线程完成
+    for (int i = 0; i < num_threads; i++) {
+        ASSERT_OK(ppdb_base_thread_join(threads[i]));
+    }
     
-    for (int i = 0; i < NUM_THREADS; i++) {
-        if (ctx->threads[i]) {
-            printf("Joining thread %d...\n", i);
-            fflush(stdout);
-            err = ppdb_base_thread_join(ctx->threads[i]);
-            if (err != PPDB_OK) {
-                printf("Failed to join thread %d (error: %d)\n", i, err);
-                fflush(stdout);
-            }
-            printf("Thread %d joined\n", i);
-            fflush(stdout);
-            ppdb_base_thread_destroy(ctx->threads[i]);
-            total_time_us += ctx->thread_args[i].total_time_us;
-            total_contention += ctx->thread_args[i].contention_count;
-            total_ops_completed += ctx->thread_args[i].ops_completed;
-            total_retries += ctx->thread_args[i].retry_count;
+    // 合并统计数据
+    perf_stats_t reader_stats, writer_stats;
+    init_perf_stats(&reader_stats);
+    init_perf_stats(&writer_stats);
+    
+    for (int i = 0; i < num_threads; i++) {
+        if (thread_data[i].is_reader) {
+            reader_stats.total_ops += thread_data[i].stats.total_ops;
+            reader_stats.total_time_ns += thread_data[i].stats.total_time_ns;
+            reader_stats.min_time_ns = MIN(reader_stats.min_time_ns, thread_data[i].stats.min_time_ns);
+            reader_stats.max_time_ns = MAX(reader_stats.max_time_ns, thread_data[i].stats.max_time_ns);
+        } else {
+            writer_stats.total_ops += thread_data[i].stats.total_ops;
+            writer_stats.total_time_ns += thread_data[i].stats.total_time_ns;
+            writer_stats.min_time_ns = MIN(writer_stats.min_time_ns, thread_data[i].stats.min_time_ns);
+            writer_stats.max_time_ns = MAX(writer_stats.max_time_ns, thread_data[i].stats.max_time_ns);
         }
     }
     
-    uint64_t test_end_time = ppdb_base_get_time_us();
-    uint64_t test_duration = test_end_time - test_start_time;
+    reader_stats.avg_time_ns = (double)reader_stats.total_time_ns / reader_stats.total_ops;
+    reader_stats.ops_per_sec = 1e9 * reader_stats.total_ops / reader_stats.total_time_ns;
     
-    // Output statistics
-    double avg_latency_us = total_ops_completed > 0 ? 
-        (double)total_time_us / total_ops_completed : 0.0;
-    double ops_per_sec = test_duration > 0 ? 
-        (double)total_ops_completed / (test_duration / 1000000.0) : 0.0;
+    writer_stats.avg_time_ns = (double)writer_stats.total_time_ns / writer_stats.total_ops;
+    writer_stats.ops_per_sec = 1e9 * writer_stats.total_ops / writer_stats.total_time_ns;
     
-    printf("Spinlock Performance Results:\n");
-    printf("  Total Operations Completed: %zu\n", total_ops_completed);
-    printf("  Total Time: %.2f seconds\n", test_duration / 1000000.0);
-    printf("  Average Lock Latency: %.2f microseconds\n", avg_latency_us);
-    printf("  Operations/Second: %.2f\n", ops_per_sec);
-    printf("  Lock Contentions: %zu\n", total_contention);
-    printf("  Total Lock Retries: %zu\n", total_retries);
-    printf("  Average Retries per Operation: %.2f\n", 
-           total_ops_completed > 0 ? (double)total_retries / total_ops_completed : 0.0);
-    printf("  Final Counter: %zu\n", atomic_load_explicit(&ctx->counter, memory_order_seq_cst));
-    printf("  Shared Buffer: %zu\n", ctx->shared_buffer[0]);
-    fflush(stdout);
+    // 打印结果
+    print_perf_stats("RWLock Reader Performance", &reader_stats);
+    print_perf_stats("RWLock Writer Performance", &writer_stats);
     
-    // Cleanup
-    printf("Cleaning up spinlock test resources...\n");
-    fflush(stdout);
-    ppdb_base_spinlock_destroy(ctx->spinlock);
-    ppdb_base_destroy(ctx->base);
-    free(ctx);
+    // 清理
+    ppdb_base_rwlock_destroy(rwlock);
+    ppdb_base_free(thread_data);
+    ppdb_base_free(threads);
+    
+    return 0;
 }
 
 int main(void) {
-    printf("Running Synchronization Performance Tests\n");
-    fflush(stdout);
+    printf("Running sync performance tests...\n");
     
-    test_mutex_performance();
-    test_spinlock_performance();
+    TEST_INIT();
     
-    printf("\nAll performance tests completed\n");
-    fflush(stdout);
-    return 0;
+    if (test_setup() != 0) {
+        printf("Test setup failed\n");
+        return 1;
+    }
+    
+    test_case_t test_cases[] = {
+        {
+            .name = "mutex_performance",
+            .description = "Test mutex performance",
+            .fn = test_mutex_performance,
+            .timeout_seconds = 60,
+            .skip = false
+        },
+        {
+            .name = "rwlock_performance",
+            .description = "Test rwlock performance",
+            .fn = test_rwlock_performance,
+            .timeout_seconds = 60,
+            .skip = false
+        }
+    };
+    
+    test_suite_t suite = {
+        .name = "Sync Performance Tests",
+        .setup = NULL,
+        .teardown = NULL,
+        .cases = test_cases,
+        .num_cases = sizeof(test_cases) / sizeof(test_cases[0])
+    };
+    
+    int result = run_test_suite(&suite);
+    
+    if (test_teardown() != 0) {
+        printf("Test teardown failed\n");
+        return 1;
+    }
+    
+    TEST_CLEANUP();
+    test_print_stats();
+    
+    return result;
 } 

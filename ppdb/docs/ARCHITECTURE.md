@@ -19,41 +19,15 @@ ppdb/
 │   │   ├── api/            # API测试
 │   │   └── perf/           # 性能测试
 │   └── white/               # 白盒测试
-│       ├── base/           # 基础层测试
-│       ├── engine/         # 引擎层测试
-│       ├── storage/        # 存储层测试
-│       └── peer/           # 节点层测试
+│       └── {layer}/           # 各层测试
 └── src/                       # 源代码目录
     ├── internal/             # 内部实现头文件
     │   ├── base.h          # 基础设施：内存、线程、同步、异步、日志、错误、工具
-    │   ├── engine.h        # 引擎核心：事务、并发控制、MVCC等
-    │   ├── storage.h       # 存储：数据组织、持久化、缓存等
+    │   ├── database.h        # 数据层：事务、并发控制、MVCC、数据组织、持久化、缓存等
     │   └── peer.h          # 节点应用层：服务器、客户端、协议、通信等
-    ├── base/                # 基础层实现
-    │   ├── base_memory.inc.c    # 内存管理实现
-    │   ├── base_thread.inc.c    # 线程管理实现
-    │   ├── base_sync.inc.c      # 同步原语实现
-    │   ├── base_error.inc.c     # 错误处理实现
-    │   └── base_io.inc.c        # IO管理实现
-    ├── engine/              # 引擎层实现
-    │   ├── engine_txn.inc.c     # 事务管理实现
-    │   ├── engine_mvcc.inc.c    # MVCC实现
-    │   ├── engine_io.inc.c      # IO操作封装
-    │   └── engine_stats.inc.c   # 统计信息实现
-    ├── storage/             # 存储层实现
-    │   ├── storage_table.inc.c  # 表管理实现
-    │   ├── storage_index.inc.c  # 索引实现
-    │   ├── storage_wal.inc.c    # WAL日志实现
-    │   └── storage_cache.inc.c  # 缓存管理实现
-    ├── peer/                # 节点层实现
-    │   ├── peer_server.inc.c    # 服务器实现
-    │   ├── peer_client.inc.c    # 客户端实现
-    │   ├── peer_proto.inc.c     # 协议实现
-    │   └── peer_conn.inc.c      # 连接管理实现
-    ├── base.c               # 基础层主文件
-    ├── engine.c             # 引擎层主文件
-    ├── storage.c            # 存储层主文件
-    ├── peer.c               # 节点层主文件
+    ├── {layer}/                # 各层的实现
+    │   ├── {layer}_{module}.inc.c    # 子模块实现
+    ├── {layer}.c               # 各层主文件
     ├── libppdb.c            # 动态库实现(配合ppdb.h)
     └── ppdb.c               # 主程序入口
 
@@ -63,7 +37,7 @@ ppdb/
 
 PPDB 采用清晰的分层架构设计，每一层都有其明确的职责和边界：
 
-base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
+base => database => peer => [ppdb.exe] + [ppdb.h,libppdb]
 
 1. **基础层** (`base.h/c`)
    - 内存管理：内存分配、释放、内存池管理
@@ -76,7 +50,7 @@ base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
    - 时间管理：高精度时间戳、定时器
    - 事件循环：异步事件处理、回调管理
 
-2. **引擎层** (`engine.h/c`)
+2. **数据库层** (`database.h/c`)
    - 事务管理：事务创建、提交、回滚
    - 并发控制：MVCC实现、锁管理
    - 统计信息：事务计数、读写统计
@@ -84,8 +58,6 @@ base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
    - 内存管理：基于base层的内存管理封装
    - 错误处理：引擎层错误码和错误处理
    - 配置管理：引擎参数配置
-
-3. **存储层** (`storage.h/c`)
    - 表管理：表的创建、删除、获取
    - 数据操作：get/put/delete 基本操作
    - 游标支持：数据遍历和扫描
@@ -95,27 +67,26 @@ base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
    - WAL日志：预写日志实现
    - 缓存管理：块缓存、内存表管理
 
-4. **节点层** (`peer.h/c`)
+3. **节点层** (`peer.h/c`)
    - 连接管理：连接池、连接状态管理
    - 协议适配：支持多种协议（memcached、redis等）
    - 请求处理：请求解析、响应生成
    - 会话管理：超时控制、资源清理
-   - 异步操作：非阻塞IO、事件驱动
    - 服务管理：服务器创建、启动、停止
    - 配置管理：网络参数、连接限制等
+   - 客户端：CLT和查询语言等
    - 统计信息：连接数、请求数等
 
 5. **公共 API 层** (`ppdb.h`)
    - 对外提供统一的接口
-   - 这是用户唯一需要包含的头文件
+   - 唯一需要包含的公共头文件
    - 隐藏内部实现细节
 
 ## 层间调用规则
 
 1. **严格的单向依赖**
-   - peer层只能调用storage层接口
-   - storage层只能调用engine层接口
-   - engine层只能调用base层接口
+   - peer层只能调用database层接口
+   - database层只能调用base层接口
    - base层不依赖其他层
 
 2. **接口封装原则**
@@ -167,19 +138,17 @@ base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
 4. 定时器的完整实现
 5. 错误上下文的完整实现
 
-#### Engine 层需要补充：
+#### Database 层需要补充：
 1. MVCC实现（目前接口未定义，不急）
 2. 事务隔离级别的实现 //不急
 3. 事务日志的实现 //不急
 4. 异步操作的封装（`engine_async_get/put/delete`），不急
 5. 表管理相关功能（`engine_table_create/drop/open/close`），不急
-
-#### Storage 层需要补充：
-1. WAL（预写日志）的实现 //for-diskv，不急
-2. 压缩和恢复功能的实现 //不急
-3. 缓存管理的实现 //不急
-4. 备份和恢复功能的实现 //不急
-5. 配置动态更新功能 //不急
+6. WAL（预写日志）的实现 //for-diskv，不急
+7. 压缩和恢复功能的实现 //不急
+8. 缓存管理的实现 //不急
+9. 备份和恢复功能的实现 //不急
+10. 配置动态更新功能 //不急
 
 #### Peer 层需要补充：
 1. 协议适配器的完整实现（Redis/Memcached），目前有部分，memkv先测试好memcached协议！
@@ -192,17 +161,12 @@ base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
 
 ### 2. 可以抽象到下一层增加重用性的函数
 
-1. Storage 层移到 Engine 层：
-   - 表操作相关函数（`ppdb_storage_create_table` -> `engine_table_create`）
-   - 数据操作相关函数（`ppdb_storage_put/get/delete` -> `engine_put/get/delete`）
-   - 事务控制相关函数（使用 `engine_begin_tx/commit_tx/rollback_tx`）
-
-2. Peer 层移到 Storage 层：
+. Peer 层移到 Database 层：
    - 数据序列化/反序列化功能
    - 批量操作功能
    - 查询优化功能
 
-3. Storage 层移到 Base 层：
+. Database 层移到 Base 层：
    - 内存管理相关功能（目前直接使用 skiplist）
    - IO操作相关功能（应该通过 engine 层封装）
 

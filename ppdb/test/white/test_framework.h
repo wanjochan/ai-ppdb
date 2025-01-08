@@ -45,6 +45,16 @@
         } \
     } while (0)
 
+#define ASSERT_OK(expr) \
+    do { \
+        ppdb_error_t __err = (expr); \
+        if (__err != PPDB_OK) { \
+            fprintf(stderr, "Error %d at %s:%d: %s failed\n", \
+                    __err, __FILE__, __LINE__, #expr); \
+            exit(1); \
+        } \
+    } while (0)
+
 // Test types
 typedef enum {
     TEST_TYPE_UNIT = 1,    // Unit test

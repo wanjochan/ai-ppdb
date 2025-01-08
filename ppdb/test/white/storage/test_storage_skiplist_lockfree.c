@@ -5,7 +5,6 @@
 
 // 全局测试数据
 static ppdb_base_t* g_base = NULL;
-static ppdb_storage_t* g_storage = NULL;
 
 // 测试初始化
 static int test_setup(void) {
@@ -15,10 +14,12 @@ static int test_setup(void) {
     ppdb_base_config_t base_config = {
         .memory_limit = 1024 * 1024 * 10,  // 10MB
         .thread_pool_size = 4,
-        .thread_safe = true
+        .thread_safe = true,
+        .enable_logging = true,
+        .log_level = PPDB_LOG_DEBUG
     };
     
-    // 初始化各层
+    // 初始化 base 层
     ASSERT_OK(ppdb_base_init(&g_base, &base_config));
     
     printf("Test environment setup completed\n");
@@ -42,10 +43,24 @@ static int test_teardown(void) {
 static void create_test_kv(const char* key_str, const char* value_str, 
                           ppdb_key_t* key, ppdb_value_t* value) {
     key->size = strlen(key_str);
+    key->data = ppdb_base_malloc(key->size);
     memcpy(key->data, key_str, key->size);
     
     value->size = strlen(value_str);
+    value->data = ppdb_base_malloc(value->size);
     memcpy(value->data, value_str, value->size);
+}
+
+// 释放key和value
+static void free_test_kv(ppdb_key_t* key, ppdb_value_t* value) {
+    if (key && key->data) {
+        ppdb_base_free(key->data);
+        key->data = NULL;
+    }
+    if (value && value->data) {
+        ppdb_base_free(value->data);
+        value->data = NULL;
+    }
 }
 
 // 基础功能测试
@@ -75,6 +90,7 @@ static int test_skiplist_basic(void) {
     ASSERT_ERR(ppdb_skiplist_find(list, &key1, &found_value), PPDB_ERR_NOT_FOUND);
     
     // 清理
+    free_test_kv(&key1, &value1);
     ppdb_skiplist_destroy(list);
     printf("Basic skiplist tests completed\n");
     return 0;
@@ -101,6 +117,8 @@ static void* concurrent_insert_thread(void* arg) {
         create_test_kv(key_str, value_str, &key, &value);
         
         ppdb_skiplist_insert(list, &key, &value);
+        
+        free_test_kv(&key, &value);
     }
     
     return NULL;
@@ -114,18 +132,18 @@ static int test_skiplist_concurrent(void) {
     ASSERT_OK(ppdb_skiplist_create(&list));
     
     // 创建多个线程进行并发插入
-    pthread_t threads[4];
+    ppdb_base_thread_t threads[4];
     thread_data_t thread_data[4];
     
     for (int i = 0; i < 4; i++) {
         thread_data[i].list = list;
         thread_data[i].thread_id = i;
-        pthread_create(&threads[i], NULL, concurrent_insert_thread, &thread_data[i]);
+        ASSERT_OK(ppdb_base_thread_create(&threads[i], concurrent_insert_thread, &thread_data[i]));
     }
     
     // 等待所有线程完成
     for (int i = 0; i < 4; i++) {
-        pthread_join(threads[i], NULL);
+        ASSERT_OK(ppdb_base_thread_join(threads[i], NULL));
     }
     
     // 验证结果
@@ -153,9 +171,11 @@ static int test_skiplist_boundary(void) {
     // 测试空键/值
     create_test_kv("", "value", &key, &value);
     ASSERT_ERR(ppdb_skiplist_insert(list, &key, &value), PPDB_ERR_NULL_POINTER);
+    free_test_kv(&key, &value);
     
     create_test_kv("key", "", &key, &value);
     ASSERT_ERR(ppdb_skiplist_insert(list, &key, &value), PPDB_ERR_NULL_POINTER);
+    free_test_kv(&key, &value);
     
     // 测试重复键
     create_test_kv("key", "value1", &key, &value);
@@ -175,6 +195,8 @@ static int test_skiplist_boundary(void) {
     ASSERT_ERR(ppdb_skiplist_remove(list, &key), PPDB_ERR_NOT_FOUND);
     
     // 清理
+    free_test_kv(&key, &value);
+    free_test_kv(&key, &value2);
     ppdb_skiplist_destroy(list);
     printf("Boundary condition tests completed\n");
     return 0;
@@ -202,6 +224,8 @@ static int test_skiplist_stress(void) {
         
         ASSERT_OK(ppdb_skiplist_insert(list, &key, &value));
         
+        free_test_kv(&key, &value);
+        
         if (i % 1000 == 0) {
             printf("Inserted %d entries\n", i);
         }
@@ -223,6 +247,8 @@ static int test_skiplist_stress(void) {
         ASSERT_EQ(found_value.size, value.size);
         ASSERT_EQ(memcmp(found_value.data, value.data, value.size), 0);
         
+        free_test_kv(&key, &value);
+        
         if (i % 1000 == 0) {
             printf("Verified %d entries\n", i);
         }
@@ -239,6 +265,8 @@ static int test_skiplist_stress(void) {
         create_test_kv(key_str, "", &key, &value);
         
         ASSERT_OK(ppdb_skiplist_remove(list, &key));
+        
+        free_test_kv(&key, &value);
         
         if (i % 1000 == 0) {
             printf("Deleted %d entries\n", i);

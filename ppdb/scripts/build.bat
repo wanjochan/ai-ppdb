@@ -23,18 +23,15 @@ if "%TARGET%"=="test42" (
 ) else if "%TARGET%"=="base" (
     call "%~dp0\build_base.bat" %BUILD_MODE%
     exit /b !errorlevel!
-) else if "%TARGET%"=="engine" (
-    call "%~dp0\build_engine.bat" %BUILD_MODE%
-    exit /b !errorlevel!
-) else if "%TARGET%"=="storage" (
+) else if "%TARGET%"=="database" (
     call "%~dp0\build_base.bat" %BUILD_MODE%
     if errorlevel 1 exit /b 1
-    call "%~dp0\build_engine.bat" %BUILD_MODE%
-    if errorlevel 1 exit /b 1
-    call "%~dp0\build_storage.bat" %BUILD_MODE%
+    call "%~dp0\build_database.bat" %BUILD_MODE%
     exit /b !errorlevel!
 ) else if "%TARGET%"=="peer" (
     call "%~dp0\build_base.bat" %BUILD_MODE%
+    if errorlevel 1 exit /b 1
+    call "%~dp0\build_database.bat" %BUILD_MODE%
     if errorlevel 1 exit /b 1
     call "%~dp0\build_peer.bat" %BUILD_MODE%
     exit /b !errorlevel!
@@ -44,12 +41,8 @@ if "%TARGET%"=="test42" (
         call "%~dp0\build_base.bat" notest %BUILD_MODE%
         if errorlevel 1 exit /b 1
     )
-    if not exist "%BUILD_DIR%\engine.o" (
-        call "%~dp0\build_engine.bat" notest %BUILD_MODE%
-        if errorlevel 1 exit /b 1
-    )
-    if not exist "%BUILD_DIR%\storage.o" (
-        call "%~dp0\build_storage.bat" notest %BUILD_MODE%
+    if not exist "%BUILD_DIR%\database.o" (
+        call "%~dp0\build_database.bat" notest %BUILD_MODE%
         if errorlevel 1 exit /b 1
     )
     call "%~dp0\build_ppdb.bat" %BUILD_MODE%
@@ -60,9 +53,7 @@ if "%TARGET%"=="test42" (
     echo Building all targets...
     call "%~dp0\build_base.bat" notest %BUILD_MODE%
     if errorlevel 1 exit /b 1
-    call "%~dp0\build_engine.bat" notest %BUILD_MODE%
-    if errorlevel 1 exit /b 1
-    call "%~dp0\build_storage.bat" notest %BUILD_MODE%
+    call "%~dp0\build_database.bat" notest %BUILD_MODE%
     if errorlevel 1 exit /b 1
     call "%~dp0\build_peer.bat" notest %BUILD_MODE%
     if errorlevel 1 exit /b 1
@@ -72,6 +63,6 @@ if "%TARGET%"=="test42" (
     exit /b !errorlevel!
 ) else (
     echo Error: Unknown target %TARGET%
-    echo Available targets: test42, sync_perf, base, engine, storage, peer, ppdb, all
+    echo Available targets: test42, sync_perf, base, database, peer, ppdb, all
     exit /b 1
 ) 

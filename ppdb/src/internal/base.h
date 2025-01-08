@@ -11,6 +11,12 @@
 #define PPDB_MAX_ERROR_MESSAGE 256
 #define PPDB_MAX_SKIPLIST_LEVEL 32
 
+// Log levels
+#define PPDB_LOG_ERROR 0
+#define PPDB_LOG_WARN  1
+#define PPDB_LOG_INFO  2
+#define PPDB_LOG_DEBUG 3
+
 // Common status codes
 #define PPDB_OK 0
 
@@ -40,6 +46,11 @@ typedef struct ppdb_error_context_s {
     char message[PPDB_MAX_ERROR_MESSAGE];
 } ppdb_error_context_t;
 
+// Error functions
+ppdb_error_t ppdb_error_set_context(const ppdb_error_context_t* ctx);
+const ppdb_error_context_t* ppdb_error_get_context(void);
+const char* ppdb_error_to_string(ppdb_error_t error);
+
 // Forward declarations
 typedef struct ppdb_base_s ppdb_base_t;
 typedef struct ppdb_base_mutex_s ppdb_base_mutex_t;
@@ -56,6 +67,7 @@ typedef struct ppdb_base_mempool_s ppdb_base_mempool_t;
 typedef struct ppdb_base_mempool_block_s ppdb_base_mempool_block_t;
 typedef struct ppdb_base_timer_s ppdb_base_timer_t;
 typedef struct ppdb_base_timer_stats_s ppdb_base_timer_stats_t;
+typedef struct ppdb_base_rwlock_s ppdb_base_rwlock_t;
 
 // Function types
 typedef void (*ppdb_base_thread_func_t)(void* arg);
@@ -69,6 +81,8 @@ typedef struct ppdb_base_config_s {
     size_t memory_limit;      // Maximum memory usage in bytes
     size_t thread_pool_size;  // Number of threads in the pool
     bool thread_safe;         // Whether to enable thread safety
+    bool enable_logging;      // Whether to enable logging
+    int log_level;           // Log level
 } ppdb_base_config_t;
 
 // Base context
@@ -281,6 +295,15 @@ typedef struct ppdb_base_io_manager_s {
 } ppdb_base_io_manager_t;
 
 // Utility functions
+uint64_t ppdb_base_get_time_ns(void);
 uint64_t ppdb_base_get_time_us(void);
+ppdb_error_t ppdb_base_sleep_us(uint32_t microseconds);
+
+// RWLock functions
+ppdb_error_t ppdb_base_rwlock_create(ppdb_base_rwlock_t** rwlock);
+ppdb_error_t ppdb_base_rwlock_destroy(ppdb_base_rwlock_t* rwlock);
+ppdb_error_t ppdb_base_rwlock_rdlock(ppdb_base_rwlock_t* rwlock);
+ppdb_error_t ppdb_base_rwlock_wrlock(ppdb_base_rwlock_t* rwlock);
+ppdb_error_t ppdb_base_rwlock_unlock(ppdb_base_rwlock_t* rwlock);
 
 #endif // PPDB_BASE_H

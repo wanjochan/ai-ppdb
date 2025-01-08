@@ -1,46 +1,46 @@
 /*
- * engine_core.inc.c - Engine core functionality implementation
+ * database_core.inc.c - Database core functionality implementation
  */
 
 #include <cosmopolitan.h>
-#include "internal/engine.h"
+#include "internal/database.h"
 
-// Core engine initialization
-static ppdb_error_t ppdb_engine_core_init(ppdb_engine_t* engine) {
+// Core database initialization
+static ppdb_error_t ppdb_database_core_init(ppdb_database_t* db) {
     ppdb_error_t err;
 
     // Initialize statistics
-    err = ppdb_engine_stats_init(&engine->stats);
+    err = ppdb_database_stats_init(&db->stats);
     if (err != PPDB_OK) return err;
 
     return PPDB_OK;
 }
 
-// Core engine cleanup
-static void ppdb_engine_core_cleanup(ppdb_engine_t* engine) {
-    if (!engine) return;
+// Core database cleanup
+static void ppdb_database_core_cleanup(ppdb_database_t* db) {
+    if (!db) return;
 
     // Cleanup statistics
-    ppdb_engine_stats_cleanup(&engine->stats);
+    ppdb_database_stats_cleanup(&db->stats);
 }
 
-// Core engine operations
-static ppdb_error_t ppdb_engine_core_start(ppdb_engine_t* engine) {
-    if (!engine) return PPDB_ENGINE_ERR_PARAM;
+// Core database operations
+static ppdb_error_t ppdb_database_core_start(ppdb_database_t* db) {
+    if (!db) return PPDB_DATABASE_ERR_PARAM;
 
     // Start IO thread if needed
-    if (!engine->io_mgr.io_running) {
-        return ppdb_engine_io_init(engine);
+    if (!db->io_mgr.io_running) {
+        return ppdb_database_io_init(db);
     }
 
     return PPDB_OK;
 }
 
-static void ppdb_engine_core_stop(ppdb_engine_t* engine) {
-    if (!engine) return;
+static void ppdb_database_core_stop(ppdb_database_t* db) {
+    if (!db) return;
 
     // Stop IO thread if running
-    if (engine->io_mgr.io_running) {
-        ppdb_engine_io_cleanup(engine);
+    if (db->io_mgr.io_running) {
+        ppdb_database_io_cleanup(db);
     }
 }

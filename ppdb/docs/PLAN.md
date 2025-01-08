@@ -54,7 +54,7 @@
 
 ## 开发阶段与分层架构
 
-base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
+base => database => peer => [ppdb.exe] + [ppdb.h,libppdb]
 
 ### 第一阶段：内存KV（memkv）
 > 实现单机版纯内存键值存储
@@ -67,14 +67,12 @@ base => (engine + storage) => peer => [ppdb.exe] + [ppdb.h,libppdb]
 - [x] 错误处理
 - [x] 基础工具函数
 
-#### 1.2 引擎层（engine）
+#### 1.2 数据库层（database）
 - [x] **指导原则**：高效的内存数据结构
 - [x] 事务管理
 - [x] 并发控制
 - [x] MVCC实现
 - [x] 异步操作支持
-
-#### 1.3 存储层（storage）
 - [x] **指导原则**：可靠的数据管理
 - [x] 跳表实现
 - [x] 内存表实现

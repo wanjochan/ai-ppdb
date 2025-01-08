@@ -27,11 +27,12 @@ ppdb_error_t ppdb_error_init(void) {
     return PPDB_OK;
 }
 
-void ppdb_error_set_context(ppdb_error_context_t* ctx) {
-    if (!ctx) return;
+ppdb_error_t ppdb_error_set_context(const ppdb_error_context_t* ctx) {
+    if (!ctx) return PPDB_BASE_ERR_PARAM;
     pthread_mutex_lock(&error_mutex);
     memcpy(&error_context, ctx, sizeof(ppdb_error_context_t));
     pthread_mutex_unlock(&error_mutex);
+    return PPDB_OK;
 }
 
 const ppdb_error_context_t* ppdb_error_get_context(void) {

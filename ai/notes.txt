@@ -12,27 +12,22 @@ cd ppdb/scripts; .\build.bat test42
 特别注意：不要胡乱自己创建新文件（因为可能只是目录和文件搞错了）
 ===================================
 项目 ppdb 分层结构为：
-base => (engine + storage) => peer => (libppdb, ppdb.exe)
+base => database => peer => (libppdb, ppdb.exe)
 
 1. Base层（基础设施）
    - 内存管理、错误处理
    - 事件循环、异步IO
    - 定时器、同步原语
 
-2. Engine层（与Storage层并列）
+2. Database层
    - 事务管理
    - 并发控制
    - MVCC
-   - 为Storage层提供服务
-
-3. Storage层（与Engine层并列）
-   - 通过调用Engine层服务实现数据操作
    - memkv（内存存储）
    - diskv（磁盘存储）
 
 4. Peer层（网络通信）
-   - 通过Storage层接口操作数据
-   - 通过Engine层处理异步/网络
+   - 通过Database层接口操作数据，处理异步/网络
 
 修改前检查清单：
 * 这个调用是否涉及事务性操作？
@@ -41,7 +36,7 @@ base => (engine + storage) => peer => (libppdb, ppdb.exe)
 * 这个调用是否仅仅是基础设施服务？
 
 判断原则：
-- 如果前三个任一为是 => 使用 engine 层
+- 如果前三个任一为是 => 使用 Database 层
 - 如果只有最后一个为是 => 使用 base 层
 
 主代码要增加头文件的话，要把内容加到对应那一层的头文件中,不要新增头文件
@@ -52,16 +47,14 @@ base => (engine + storage) => peer => (libppdb, ppdb.exe)
 常用头文件引用形式:
 #include <cosmopolitan.h>
 #include "internal/base.h"
-#include "internal/engine.h"
-#include "internal/storage.h"
+#include "internal/database.h"
 #include "internal/peer.h"
 ===================================
 
 ## 任务（必须解决一个继续下一个，修复好要重头再来）
 cd ../ppdb/scripts; .\build.bat base
 cd ../ppdb/scripts; .\build.bat sync_perf 
-cd ../ppdb/scripts; .\build.bat engine
-cd ../ppdb/scripts; .\build.bat storage
+cd ../ppdb/scripts; .\build.bat database
 cd ../ppdb/scripts; .\build.bat peer
 cd ../ppdb/scripts; .\build.bat ppdb
 
