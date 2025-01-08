@@ -25,25 +25,17 @@ static _Atomic(bool) base_initialized = false;
 
 // Base layer initialization
 ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config) {
-    bool expected = false;
-    if (!atomic_compare_exchange_strong(&base_initialized, &expected, true)) {
-        return PPDB_BASE_ERR_SYSTEM;  // Already initialized
-    }
+    if (!base || !config) return PPDB_BASE_ERR_PARAM;
 
-    if (!base || !config) {
-        atomic_store(&base_initialized, false);
-        return PPDB_BASE_ERR_PARAM;
-    }
+    ppdb_base_t* new_base = malloc(sizeof(ppdb_base_t));
+    if (!new_base) return PPDB_BASE_ERR_MEMORY;
 
-    ppdb_base_t* new_base = (ppdb_base_t*)malloc(sizeof(ppdb_base_t));
-    if (!new_base) {
-        atomic_store(&base_initialized, false);
-        return PPDB_BASE_ERR_MEMORY;
-    }
-
-    memset(new_base, 0, sizeof(ppdb_base_t));
     memcpy(&new_base->config, config, sizeof(ppdb_base_config_t));
     new_base->initialized = true;
+    new_base->lock = NULL;
+    new_base->mempool = NULL;
+    new_base->async_loop = NULL;
+    new_base->io_manager = NULL;
 
     *base = new_base;
     return PPDB_OK;
@@ -51,23 +43,26 @@ ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config
 
 // Base layer cleanup
 void ppdb_base_destroy(ppdb_base_t* base) {
-    if (!base) {
-        return;
+    if (!base) return;
+
+    if (base->io_manager) {
+        ppdb_base_io_manager_destroy(base->io_manager);
+    }
+
+    if (base->async_loop) {
+        // TODO: Cleanup async loop
+    }
+
+    if (base->mempool) {
+        ppdb_base_mempool_destroy(base->mempool);
+    }
+
+    if (base->lock) {
+        ppdb_base_mutex_destroy(base->lock);
     }
 
     base->initialized = false;
     free(base);
-    atomic_store(&base_initialized, false);
-}
-
-// Thread cleanup
-void ppdb_base_thread_destroy(ppdb_base_thread_t* thread) {
-    if (!thread) {
-        return;
-    }
-
-    thread->initialized = false;
-    free(thread);
 }
 
 // Mutex statistics

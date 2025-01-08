@@ -141,8 +141,9 @@ ppdb_error_t ppdb_base_async_schedule(ppdb_base_t* base, ppdb_base_async_func_t 
     return PPDB_OK;
 }
 
-void ppdb_base_async_cancel(ppdb_base_async_handle_t* handle) {
-    if (!handle) return;
+// Cancel async operation
+ppdb_error_t ppdb_base_async_cancel(ppdb_base_async_handle_t* handle) {
+    if (!handle) return PPDB_BASE_ERR_PARAM;
     handle->cancelled = true;
-    // TODO: Remove from async task queue if not yet executed
+    return PPDB_OK;
 }

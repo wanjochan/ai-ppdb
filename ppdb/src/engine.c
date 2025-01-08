@@ -33,7 +33,7 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     e->base = base;
 
     // Initialize global mutex
-    ppdb_error_t err = ppdb_base_mutex_create(&e->global_mutex);
+    ppdb_error_t err = ppdb_base_mutex_create(&e->lock);
     if (err != PPDB_OK) {
         free(e);
         return err;
@@ -43,7 +43,7 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     memset(&e->stats, 0, sizeof(ppdb_engine_stats_t));
     err = ppdb_engine_stats_init(&e->stats);
     if (err != PPDB_OK) {
-        ppdb_base_mutex_destroy(e->global_mutex);
+        ppdb_base_mutex_destroy(e->lock);
         free(e);
         return err;
     }
@@ -52,7 +52,7 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     err = ppdb_engine_txn_init(e);
     if (err != PPDB_OK) {
         ppdb_engine_stats_cleanup(&e->stats);
-        ppdb_base_mutex_destroy(e->global_mutex);
+        ppdb_base_mutex_destroy(e->lock);
         free(e);
         return err;
     }
@@ -62,7 +62,7 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     if (err != PPDB_OK) {
         ppdb_engine_txn_cleanup(e);
         ppdb_engine_stats_cleanup(&e->stats);
-        ppdb_base_mutex_destroy(e->global_mutex);
+        ppdb_base_mutex_destroy(e->lock);
         free(e);
         return err;
     }
@@ -73,7 +73,7 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
         ppdb_engine_table_list_destroy(e->tables);
         ppdb_engine_txn_cleanup(e);
         ppdb_engine_stats_cleanup(&e->stats);
-        ppdb_base_mutex_destroy(e->global_mutex);
+        ppdb_base_mutex_destroy(e->lock);
         free(e);
         return err;
     }
@@ -101,9 +101,9 @@ void ppdb_engine_destroy(ppdb_engine_t* engine) {
     ppdb_engine_stats_cleanup(&engine->stats);
 
     // Cleanup global mutex
-    if (engine->global_mutex) {
-        ppdb_base_mutex_destroy(engine->global_mutex);
-        engine->global_mutex = NULL;
+    if (engine->lock) {
+        ppdb_base_mutex_destroy(engine->lock);
+        engine->lock = NULL;
     }
 
     free(engine);

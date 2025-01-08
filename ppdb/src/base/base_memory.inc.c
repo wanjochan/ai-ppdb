@@ -17,14 +17,8 @@ void ppdb_base_memory_cleanup(void) {
 
 // Memory allocation with alignment
 void* ppdb_base_aligned_alloc(size_t alignment, size_t size) {
-    if (alignment == 0 || size == 0) {
-        return NULL;
-    }
-
-    // Ensure alignment is a power of 2
-    if ((alignment & (alignment - 1)) != 0) {
-        return NULL;
-    }
+    if (alignment == 0 || size == 0) return NULL;
+    if ((alignment & (alignment - 1)) != 0) return NULL;  // Must be power of 2
 
 #ifdef _WIN32
     return _aligned_malloc(size, alignment);
@@ -73,18 +67,21 @@ ppdb_error_t ppdb_base_mempool_create(ppdb_base_mempool_t** pool, size_t block_s
 }
 
 // Destroy memory pool
-void ppdb_base_mempool_destroy(ppdb_base_mempool_t* pool) {
-    if (!pool) return;
+ppdb_error_t ppdb_base_mempool_destroy(ppdb_base_mempool_t* pool) {
+    if (!pool) return PPDB_BASE_ERR_PARAM;
 
+    // Free all blocks
     ppdb_base_mempool_block_t* block = pool->head;
     while (block) {
         ppdb_base_mempool_block_t* next = block->next;
-        ppdb_base_aligned_free(block->data);
+        free(block->data);
         free(block);
         block = next;
     }
 
+    // Free pool
     free(pool);
+    return PPDB_OK;
 }
 
 // Allocate memory from pool

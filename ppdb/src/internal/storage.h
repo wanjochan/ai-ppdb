@@ -1,153 +1,162 @@
-#ifndef PPDB_INTERNAL_STORAGE_H_
-#define PPDB_INTERNAL_STORAGE_H_
+#ifndef PPDB_STORAGE_H
+#define PPDB_STORAGE_H
 
-#include <cosmopolitan.h>
-#include "internal/engine.h"
+#include "base.h"
+#include "engine.h"
 
-//-----------------------------------------------------------------------------
-// Storage layer types
-//-----------------------------------------------------------------------------
+// Default configuration values
+#define PPDB_DEFAULT_MEMTABLE_SIZE     (64 * 1024 * 1024)  // 64MB
+#define PPDB_DEFAULT_BLOCK_SIZE        (4 * 1024)          // 4KB
+#define PPDB_DEFAULT_CACHE_SIZE        (256 * 1024 * 1024) // 256MB
+#define PPDB_DEFAULT_WRITE_BUFFER_SIZE (8 * 1024 * 1024)   // 8MB
+#define PPDB_DEFAULT_DATA_DIR          "data"
+#define PPDB_DEFAULT_USE_COMPRESSION   true
+#define PPDB_DEFAULT_SYNC_WRITES       false
 
-// Key-value types
-typedef struct ppdb_storage_key_s {
-    size_t size;
-    char data[];
-} ppdb_storage_key_t;
-
-typedef struct ppdb_storage_value_s {
-    size_t size;
-    char data[];
-} ppdb_storage_value_t;
-
-// Error codes
-#define PPDB_STORAGE_ERR_START     (PPDB_ERROR_START + 0x300)  // Storage: 0x1300-0x13FF
-#define PPDB_STORAGE_ERR_PARAM     (PPDB_STORAGE_ERR_START + 0x01)
-#define PPDB_STORAGE_ERR_TABLE     (PPDB_STORAGE_ERR_START + 0x02)
-#define PPDB_STORAGE_ERR_INDEX     (PPDB_STORAGE_ERR_START + 0x03)
-#define PPDB_STORAGE_ERR_WAL       (PPDB_STORAGE_ERR_START + 0x04)
-#define PPDB_STORAGE_ERR_IO        (PPDB_STORAGE_ERR_START + 0x05)
-#define PPDB_STORAGE_ERR_ALREADY_RUNNING (PPDB_STORAGE_ERR_START + 0x06)
-#define PPDB_STORAGE_ERR_NOT_RUNNING     (PPDB_STORAGE_ERR_START + 0x07)
-#define PPDB_STORAGE_ERR_TABLE_EXISTS    (PPDB_STORAGE_ERR_START + 0x08)
-#define PPDB_STORAGE_ERR_TABLE_NOT_FOUND (PPDB_STORAGE_ERR_START + 0x09)
-#define PPDB_STORAGE_ERR_CONFIG         (PPDB_STORAGE_ERR_START + 0x0A)
-#define PPDB_STORAGE_ERR_MEMORY         (PPDB_STORAGE_ERR_START + 0x0B)
-#define PPDB_STORAGE_ERR_INTERNAL       (PPDB_STORAGE_ERR_START + 0x0C)
-#define PPDB_STORAGE_ERR_NOT_FOUND      (PPDB_STORAGE_ERR_START + 0x0D)
-#define PPDB_STORAGE_ERR_INVALID_STATE  (PPDB_STORAGE_ERR_START + 0x0E)
-#define PPDB_STORAGE_ERR_BUFFER_FULL    (PPDB_STORAGE_ERR_START + 0x0F)
-
-// Default values
-#define PPDB_DEFAULT_DATA_DIR      "data"
+// Error codes (4400-4599)
+#define PPDB_STORAGE_ERR_START         4400
+#define PPDB_STORAGE_ERR_PARAM         4401
+#define PPDB_STORAGE_ERR_MEMORY        4402
+#define PPDB_STORAGE_ERR_NOT_FOUND     4403
+#define PPDB_STORAGE_ERR_DUPLICATE     4404
+#define PPDB_STORAGE_ERR_INVALID_STATE 4405
+#define PPDB_STORAGE_ERR_TXN_CONFLICT  4406
+#define PPDB_STORAGE_ERR_BUFFER_FULL   4407
+#define PPDB_STORAGE_ERR_TABLE         4408
+#define PPDB_STORAGE_ERR_INDEX         4409
+#define PPDB_STORAGE_ERR_WAL           4410
+#define PPDB_STORAGE_ERR_IO            4411
+#define PPDB_STORAGE_ERR_CONFIG        4412
+#define PPDB_STORAGE_ERR_INTERNAL      4413
+#define PPDB_STORAGE_ERR_TABLE_EXISTS  4414
+#define PPDB_STORAGE_ERR_TABLE_NOT_FOUND 4415
 
 // Forward declarations
 typedef struct ppdb_storage_s ppdb_storage_t;
 typedef struct ppdb_storage_table_s ppdb_storage_table_t;
-typedef struct ppdb_storage_index_s ppdb_storage_index_t;
-
-// Engine layer types
-typedef struct ppdb_engine_table_s ppdb_engine_table_t;
-typedef struct ppdb_engine_cursor_s ppdb_engine_cursor_t;
-
-// Table structure
-struct ppdb_storage_table_s {
-    char* name;                    // Owned table name string
-    size_t name_len;              // Length of table name
-    ppdb_engine_table_t* engine_table; // Engine table handle
-    ppdb_engine_t* engine;        // Engine instance
-    ppdb_storage_t* storage;      // Storage instance
-    uint64_t size;                // Number of records
-    bool is_open;                 // Table open state
-};
-
-// Cursor type
-typedef struct ppdb_storage_cursor_s {
-    ppdb_storage_table_t* table;
-    ppdb_engine_cursor_t* engine_cursor;
-    bool valid;
-} ppdb_storage_cursor_t;
-
-// Storage statistics
-typedef struct ppdb_storage_stats_s {
-    uint64_t reads;           // Total read operations
-    uint64_t writes;          // Total write operations
-    uint64_t flushes;         // Total memtable flushes
-    uint64_t compactions;     // Total compaction operations
-    uint64_t cache_hits;      // Block cache hits
-    uint64_t cache_misses;    // Block cache misses
-    uint64_t wal_syncs;       // WAL sync operations
-} ppdb_storage_stats_t;
+typedef struct ppdb_storage_maintain_s ppdb_storage_maintain_t;
+typedef struct ppdb_storage_config_s ppdb_storage_config_t;
+typedef struct ppdb_storage_stats_s ppdb_storage_stats_t;
+typedef struct ppdb_storage_cursor_s ppdb_storage_cursor_t;
 
 // Storage configuration
 typedef struct ppdb_storage_config_s {
-    size_t memtable_size;        // Size limit for memtable before flush
-    size_t block_size;           // SSTable block size
-    size_t cache_size;           // Block cache size
-    size_t write_buffer_size;    // Write buffer size for WAL
-    const char* data_dir;        // Data directory path
-    bool use_compression;        // Whether to use compression
-    bool sync_writes;            // Whether to sync writes to disk
+    size_t memtable_size;      // Size of memtable in bytes
+    size_t block_size;         // Size of data blocks in bytes
+    size_t cache_size;         // Size of block cache in bytes
+    size_t write_buffer_size;  // Size of write buffer in bytes
+    const char* data_dir;      // Directory for data files
+    bool use_compression;      // Whether to use compression
+    bool sync_writes;          // Whether to sync writes to disk
+    bool use_checksum;         // Whether to use checksums
+    size_t max_file_size;      // Maximum size of data files
+    size_t max_open_files;     // Maximum number of open files
 } ppdb_storage_config_t;
 
-// Maintenance structure
-typedef struct ppdb_storage_maintain_s {
-    ppdb_base_mutex_t* mutex;
+// Storage statistics
+typedef struct ppdb_storage_stats_s {
+    uint64_t total_reads;      // Total number of reads
+    uint64_t total_writes;     // Total number of writes
+    uint64_t cache_hits;       // Number of cache hits
+    uint64_t cache_misses;     // Number of cache misses
+    uint64_t bytes_written;    // Total bytes written
+    uint64_t bytes_read;       // Total bytes read
+    uint64_t compactions;      // Number of compactions
+    uint64_t flushes;         // Number of flushes
+    uint64_t wal_syncs;       // Number of WAL syncs
+} ppdb_storage_stats_t;
+
+// Storage cursor for scanning
+typedef struct ppdb_storage_cursor_s {
+    ppdb_storage_table_t* table;
+    ppdb_engine_txn_t* txn;
+    ppdb_engine_cursor_t* engine_cursor;
+    void* key;
+    size_t key_size;
+    void* value;
+    size_t value_size;
+    bool valid;
+    bool reverse;
+} ppdb_storage_cursor_t;
+
+// Storage maintenance structure
+struct ppdb_storage_maintain_s {
+    ppdb_base_mutex_t* lock;
     bool is_running;
     bool should_stop;
     ppdb_base_async_handle_t* task;
-} ppdb_storage_maintain_t;
-
-// Default configuration values
-#define PPDB_DEFAULT_MEMTABLE_SIZE      (16 * 1024 * 1024)  // 16MB
-#define PPDB_DEFAULT_BLOCK_SIZE         (4 * 1024)          // 4KB
-#define PPDB_DEFAULT_CACHE_SIZE         (64 * 1024 * 1024)  // 64MB
-#define PPDB_DEFAULT_WRITE_BUFFER_SIZE  (4 * 1024 * 1024)   // 4MB
-#define PPDB_DEFAULT_USE_COMPRESSION    true
-#define PPDB_DEFAULT_SYNC_WRITES        false
-
-// Internal storage structure
-struct ppdb_storage_s {
-    ppdb_engine_t* engine;              // Engine instance
-    ppdb_storage_config_t config;       // Storage configuration
-    ppdb_storage_stats_t stats;         // Storage statistics
-    ppdb_engine_txn_t* current_tx;      // Current transaction
-    ppdb_base_mutex_t* lock;            // Global lock
-    ppdb_engine_table_list_t* tables;   // Tables list (managed by engine)
-    ppdb_storage_maintain_t* maintain;   // Maintenance info (pointer)
+    uint64_t last_compact_time;
+    uint64_t last_cleanup_time;
+    uint64_t last_optimize_time;
 };
 
-//-----------------------------------------------------------------------------
-// Function declarations
-//-----------------------------------------------------------------------------
+// Storage table structure
+struct ppdb_storage_table_s {
+    char* name;
+    size_t name_len;
+    ppdb_engine_table_t* engine_table;
+    ppdb_engine_t* engine;
+    ppdb_storage_t* storage;
+    size_t size;
+    bool is_open;
+    ppdb_base_mutex_t* lock;
+    uint64_t last_access_time;
+    uint64_t last_modify_time;
+};
 
-// Storage initialization and cleanup
+// Storage structure
+struct ppdb_storage_s {
+    ppdb_engine_t* engine;
+    ppdb_base_mutex_t* lock;
+    ppdb_engine_txn_t* current_tx;
+    ppdb_engine_table_list_t* tables;
+    ppdb_storage_config_t config;
+    ppdb_storage_stats_t stats;
+    ppdb_storage_maintain_t* maintain;
+    bool initialized;
+    bool shutting_down;
+};
+
+// Storage functions
 ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, const ppdb_storage_config_t* config);
 void ppdb_storage_destroy(ppdb_storage_t* storage);
-void ppdb_storage_get_stats(ppdb_storage_t* storage, ppdb_storage_stats_t* stats);
 
-// Table operations
-ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const char* name, ppdb_storage_table_t** table);
+// Table functions
+ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const void* name_key, ppdb_storage_table_t** table);
+ppdb_error_t ppdb_storage_drop_table(ppdb_storage_t* storage, const void* name_key);
 ppdb_error_t ppdb_storage_get_table(ppdb_storage_t* storage, const void* name_key, ppdb_storage_table_t** table);
-ppdb_error_t ppdb_storage_drop_table(ppdb_storage_t* storage, const char* name);
+void ppdb_storage_table_destroy(ppdb_storage_table_t* table);
 
 // Data operations
-ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table, const void* key, size_t key_size, const void* value, size_t value_size);
-ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size_t key_size, void* value, size_t* value_size);
-ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table, const void* key, size_t key_size);
+ppdb_error_t ppdb_storage_put(ppdb_storage_table_t* table,
+                             const void* key, size_t key_size,
+                             const void* value, size_t value_size);
+ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table,
+                             const void* key, size_t key_size,
+                             void* value, size_t* value_size);
+ppdb_error_t ppdb_storage_delete(ppdb_storage_table_t* table,
+                                const void* key, size_t key_size);
 
-// Maintenance operations
-ppdb_error_t ppdb_storage_flush(ppdb_storage_table_t* table);
-ppdb_error_t ppdb_storage_compact(ppdb_storage_table_t* table);
-ppdb_error_t ppdb_storage_backup(ppdb_storage_t* storage, const char* backup_dir);
-ppdb_error_t ppdb_storage_restore(ppdb_storage_t* storage, const char* backup_dir);
+// Cursor operations
+ppdb_error_t ppdb_storage_cursor_create(ppdb_storage_table_t* table,
+                                       ppdb_storage_cursor_t** cursor);
+void ppdb_storage_cursor_destroy(ppdb_storage_cursor_t* cursor);
+ppdb_error_t ppdb_storage_cursor_seek(ppdb_storage_cursor_t* cursor,
+                                     const void* key, size_t key_size);
+ppdb_error_t ppdb_storage_cursor_next(ppdb_storage_cursor_t* cursor);
+ppdb_error_t ppdb_storage_cursor_prev(ppdb_storage_cursor_t* cursor);
+bool ppdb_storage_cursor_valid(ppdb_storage_cursor_t* cursor);
+ppdb_error_t ppdb_storage_cursor_key(ppdb_storage_cursor_t* cursor,
+                                    void* key, size_t* key_size);
+ppdb_error_t ppdb_storage_cursor_value(ppdb_storage_cursor_t* cursor,
+                                      void* value, size_t* value_size);
 
-// Configuration management
-ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config);
-ppdb_error_t ppdb_storage_config_validate(const ppdb_storage_config_t* config);
-ppdb_error_t ppdb_storage_get_config(ppdb_storage_t* storage, ppdb_storage_config_t* config);
-ppdb_error_t ppdb_storage_update_config(ppdb_storage_t* storage, const ppdb_storage_config_t* config);
+// Statistics functions
+void ppdb_storage_get_stats(ppdb_storage_t* storage, ppdb_storage_stats_t* stats);
+ppdb_error_t ppdb_storage_stats_init(ppdb_storage_stats_t* stats);
+void ppdb_storage_stats_cleanup(ppdb_storage_stats_t* stats);
 
-// Maintenance management
+// Maintenance functions
 ppdb_error_t ppdb_storage_maintain_init(ppdb_storage_t* storage);
 ppdb_error_t ppdb_storage_maintain_cleanup(ppdb_storage_t* storage);
 ppdb_error_t ppdb_storage_maintain_start(ppdb_storage_t* storage);
@@ -156,4 +165,13 @@ ppdb_error_t ppdb_storage_maintain_compact(ppdb_storage_t* storage);
 ppdb_error_t ppdb_storage_maintain_cleanup_expired(ppdb_storage_t* storage);
 ppdb_error_t ppdb_storage_maintain_optimize_indexes(ppdb_storage_t* storage);
 
-#endif // PPDB_INTERNAL_STORAGE_H_ 
+// Configuration functions
+ppdb_error_t ppdb_storage_config_init(ppdb_storage_config_t* config);
+ppdb_error_t ppdb_storage_config_validate(const ppdb_storage_config_t* config);
+ppdb_error_t ppdb_storage_get_config(ppdb_storage_t* storage, ppdb_storage_config_t* config);
+ppdb_error_t ppdb_storage_update_config(ppdb_storage_t* storage, const ppdb_storage_config_t* config);
+
+// Error message conversion
+const char* ppdb_storage_strerror(ppdb_error_t err);
+
+#endif // PPDB_STORAGE_H

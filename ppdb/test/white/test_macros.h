@@ -10,7 +10,7 @@ static int g_test_passed = 0;
 static int g_test_failed = 0;
 
 // 测试宏
-#define TEST_CASE(func) \
+#define RUN_TEST(func) \
     do { \
         printf("Running test: %s\n", #func); \
         g_test_count++; \

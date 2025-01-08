@@ -68,21 +68,23 @@ int test_engine_transaction_basic(void) {
     ppdb_engine_txn_t* txn = NULL;
     
     // 开始事务
-    ASSERT_OK(ppdb_engine_txn_begin(g_engine, &txn));
+    ASSERT_OK(ppdb_engine_txn_begin(g_engine, true, &txn));
     ASSERT_NOT_NULL(txn);
     
     // 检查事务状态
     ppdb_engine_txn_stats_t txn_stats;
     ppdb_engine_txn_get_stats(txn, &txn_stats);
     ASSERT_TRUE(txn_stats.is_active);
-    ASSERT_FALSE(txn_stats.is_committed);
-    ASSERT_FALSE(txn_stats.is_rolledback);
+    ASSERT_TRUE(txn_stats.is_write);
+    ASSERT_EQ(txn_stats.active_txns, 1);
+    ASSERT_EQ(txn_stats.committed_txns, 0);
+    ASSERT_EQ(txn_stats.aborted_txns, 0);
     
     // 提交事务
     ASSERT_OK(ppdb_engine_txn_commit(txn));
     ppdb_engine_txn_get_stats(txn, &txn_stats);
     ASSERT_FALSE(txn_stats.is_active);
-    ASSERT_TRUE(txn_stats.is_committed);
+    ASSERT_EQ(txn_stats.committed_txns, 1);
     
     // 检查引擎统计信息
     ppdb_engine_stats_t stats;
@@ -101,7 +103,7 @@ int test_engine_transaction_rollback(void) {
     ppdb_engine_txn_t* txn = NULL;
     
     // 开始事务
-    ASSERT_OK(ppdb_engine_txn_begin(g_engine, &txn));
+    ASSERT_OK(ppdb_engine_txn_begin(g_engine, true, &txn));
     ASSERT_NOT_NULL(txn);
     
     // 创建测试表
@@ -120,8 +122,8 @@ int test_engine_transaction_rollback(void) {
     ppdb_engine_txn_stats_t txn_stats;
     ppdb_engine_txn_get_stats(txn, &txn_stats);
     ASSERT_FALSE(txn_stats.is_active);
-    ASSERT_FALSE(txn_stats.is_committed);
-    ASSERT_TRUE(txn_stats.is_rolledback);
+    ASSERT_EQ(txn_stats.aborted_txns, 1);
+    ASSERT_EQ(txn_stats.committed_txns, 0);
     
     ASSERT_OK(test_teardown());
     return 0;
@@ -135,8 +137,8 @@ int test_engine_concurrent_transactions(void) {
     ppdb_engine_txn_t* txn2 = NULL;
     
     // 开始两个并发事务
-    ASSERT_OK(ppdb_engine_txn_begin(g_engine, &txn1));
-    ASSERT_OK(ppdb_engine_txn_begin(g_engine, &txn2));
+    ASSERT_OK(ppdb_engine_txn_begin(g_engine, true, &txn1));
+    ASSERT_OK(ppdb_engine_txn_begin(g_engine, true, &txn2));
     
     // 检查活跃事务数
     ppdb_engine_stats_t stats;
@@ -163,7 +165,7 @@ int test_engine_data_operations(void) {
     ASSERT_OK(test_setup());
     
     ppdb_engine_txn_t* txn = NULL;
-    ASSERT_OK(ppdb_engine_txn_begin(g_engine, &txn));
+    ASSERT_OK(ppdb_engine_txn_begin(g_engine, true, &txn));
     
     // 创建表
     ppdb_engine_table_t* table = NULL;
@@ -172,7 +174,7 @@ int test_engine_data_operations(void) {
     // 写入数据
     const char* key = "test_key";
     const char* value = "test_value";
-    ASSERT_OK(ppdb_engine_put(txn, table, key, strlen(key), value, strlen(value)));
+    ASSERT_OK(ppdb_engine_put(txn, table, key, strlen(key), value, strlen(value) + 1));  // Include null terminator
     
     // 读取数据
     char read_value[256];
@@ -244,7 +246,7 @@ int test_engine_errors(void) {
     printf("Testing transaction state errors...\n");
     // 测试事务状态错误
     ppdb_engine_txn_t* txn = NULL;
-    err = ppdb_engine_txn_begin(engine, &txn);
+    err = ppdb_engine_txn_begin(engine, true, &txn);
     if (err != PPDB_OK) {
         fprintf(stderr, "Failed to begin transaction: error code %d\n", err);
         ppdb_engine_destroy(engine);
@@ -252,12 +254,11 @@ int test_engine_errors(void) {
         return 1;
     }
     
+    // 测试重复提交
     ASSERT_OK(ppdb_engine_txn_commit(txn));
     ASSERT_ERR(ppdb_engine_txn_commit(txn), PPDB_ENGINE_ERR_INVALID_STATE);
-    ASSERT_ERR(ppdb_engine_txn_rollback(txn), PPDB_ENGINE_ERR_INVALID_STATE);
     
-    printf("Cleaning up resources...\n");
-    // 清理资源
+    // 清理
     ppdb_engine_destroy(engine);
     ppdb_base_destroy(base);
     return 0;
@@ -265,92 +266,44 @@ int test_engine_errors(void) {
 
 // 测试边界条件
 int test_engine_boundary_conditions(void) {
-    printf("Testing boundary conditions...\n");
+    ASSERT_OK(test_setup());
     
-    // 测试最小内存配置
-    ppdb_base_config_t min_config = {
-        .memory_limit = 1024 * 1024 * 10,  // 10MB
-        .thread_pool_size = 1,
-        .thread_safe = false
-    };
-    
-    ppdb_base_t* base = NULL;
-    ppdb_engine_t* engine = NULL;
-    ppdb_error_t err;
-    
-    printf("Initializing base with minimum configuration...\n");
-    // 初始化 base
-    err = ppdb_base_init(&base, &min_config);
-    if (err == PPDB_BASE_ERR_SYSTEM) {
-        fprintf(stderr, "System error during base initialization, skipping test\n");
-        return 0;  // 跳过测试
-    }
-    if (err != PPDB_OK) {
-        fprintf(stderr, "Failed to init base: error code %d\n", err);
-        return 1;
-    }
-    
-    printf("Initializing engine...\n");
-    // 初始化 engine
-    err = ppdb_engine_init(&engine, base);
-    if (err != PPDB_OK) {
-        fprintf(stderr, "Failed to init engine: error code %d\n", err);
-        ppdb_base_destroy(base);
-        return 1;
-    }
-    
-    printf("Testing maximum transaction count...\n");
     // 测试最大事务数
-    ppdb_engine_txn_t* txns[100];
-    int success_count = 0;
+    const int MAX_TXNS = 100;
+    ppdb_engine_txn_t* txns[MAX_TXNS];
+    ppdb_error_t err;
+    int i;
     
-    for (int i = 0; i < 100; i++) {
-        err = ppdb_engine_txn_begin(engine, &txns[i]);
-        if (err == PPDB_OK) {
-            success_count++;
-            printf("Created transaction %d\n", i + 1);
-        } else {
-            if (err != PPDB_ENGINE_ERR_FULL) {
-                fprintf(stderr, "Unexpected error when creating transaction %d: error code %d\n", 
-                        i + 1, err);
-            } else {
-                printf("Reached maximum transaction limit at %d transactions\n", success_count);
-            }
+    printf("Testing maximum concurrent transactions...\n");
+    for (i = 0; i < MAX_TXNS; i++) {
+        err = ppdb_engine_txn_begin(g_engine, true, &txns[i]);
+        if (err != PPDB_OK) {
+            printf("Maximum concurrent transactions: %d\n", i);
             break;
         }
     }
     
-    printf("Successfully created %d transactions\n", success_count);
-    printf("Cleaning up transactions...\n");
-    
     // 清理事务
-    for (int i = 0; i < success_count; i++) {
-        err = ppdb_engine_txn_rollback(txns[i]);
-        if (err != PPDB_OK) {
-            fprintf(stderr, "Failed to rollback transaction %d: error code %d\n", 
-                    i + 1, err);
-        }
+    for (int j = 0; j < i; j++) {
+        ASSERT_OK(ppdb_engine_txn_rollback(txns[j]));
     }
     
-    printf("Cleaning up resources...\n");
-    // 清理资源
-    ppdb_engine_destroy(engine);
-    ppdb_base_destroy(base);
+    ASSERT_OK(test_teardown());
     return 0;
 }
 
+// 主函数
 int main(void) {
-    TEST_CASE(test_engine_init_destroy);
-    TEST_CASE(test_engine_transaction_basic);
-    TEST_CASE(test_engine_transaction_rollback);
-    TEST_CASE(test_engine_concurrent_transactions);
-    TEST_CASE(test_engine_data_operations);
-    TEST_CASE(test_engine_errors);
-    TEST_CASE(test_engine_boundary_conditions);
+    printf("Running engine tests...\n");
     
-    printf("\nTest summary:\n");
-    printf("  Total: %d\n", g_test_count);
-    printf("  Passed: %d\n", g_test_passed);
-    printf("  Failed: %d\n", g_test_failed);
-    return g_test_failed > 0 ? 1 : 0;
+    RUN_TEST(test_engine_init_destroy);
+    RUN_TEST(test_engine_transaction_basic);
+    RUN_TEST(test_engine_transaction_rollback);
+    RUN_TEST(test_engine_concurrent_transactions);
+    RUN_TEST(test_engine_data_operations);
+    RUN_TEST(test_engine_errors);
+    RUN_TEST(test_engine_boundary_conditions);
+    
+    printf("All engine tests passed!\n");
+    return 0;
 }

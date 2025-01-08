@@ -63,40 +63,38 @@ ppdb_error_t ppdb_storage_maintain_cleanup(ppdb_storage_t* storage) {
 // 维护任务回调函数
 static void maintenance_task(void* arg) {
     ppdb_storage_t* storage = (ppdb_storage_t*)arg;
-    if (!storage) {
-        return;
-    }
+    if (!storage) return;
 
     storage->maintain->is_running = true;
 
     while (!storage->maintain->should_stop) {
-        // 开始事务
+        // Start a write transaction for maintenance
         ppdb_engine_txn_t* tx = NULL;
-        ppdb_error_t err = ppdb_engine_txn_begin(storage->engine, &tx);
-        if (err == PPDB_OK) {
-            err = ppdb_engine_mutex_lock(storage->maintain->mutex);
-            if (err == PPDB_OK) {
-                // 执行维护任务
-                ppdb_storage_maintain_compact(storage);
-                ppdb_storage_maintain_cleanup_expired(storage);
-                ppdb_storage_maintain_optimize_indexes(storage);
-
-                ppdb_engine_mutex_unlock(storage->maintain->mutex);
-            }
-
-            // 提交或回滚事务
-            if (err == PPDB_OK) {
-                err = ppdb_engine_txn_commit(tx);
-                if (err != PPDB_OK) {
-                    ppdb_engine_txn_rollback(tx);
-                }
-            } else {
-                ppdb_engine_txn_rollback(tx);
-            }
+        ppdb_error_t err = ppdb_engine_txn_begin(storage->engine, true, &tx);
+        if (err != PPDB_OK) {
+            continue;
         }
 
-        // 等待下一个维护周期
-        ppdb_engine_sleep(1000); // 1秒
+        // Lock maintenance mutex
+        err = ppdb_base_mutex_lock(storage->maintain->mutex);
+        if (err == PPDB_OK) {
+            // Perform maintenance tasks
+            ppdb_storage_maintain_compact(storage);
+            ppdb_storage_maintain_cleanup_expired(storage);
+            ppdb_storage_maintain_optimize_indexes(storage);
+
+            ppdb_base_mutex_unlock(storage->maintain->mutex);
+        }
+
+        // Commit or rollback transaction
+        if (err == PPDB_OK) {
+            ppdb_engine_txn_commit(tx);
+        } else {
+            ppdb_engine_txn_rollback(tx);
+        }
+
+        // Sleep between maintenance cycles
+        ppdb_base_sleep(1000);  // Sleep for 1 second
     }
 
     storage->maintain->is_running = false;
@@ -176,115 +174,84 @@ static void table_optimize_indexes_fn(ppdb_engine_table_t* table, void* arg) {
 }
 
 ppdb_error_t ppdb_storage_maintain_compact(ppdb_storage_t* storage) {
-    if (!storage) {
-        return PPDB_STORAGE_ERR_PARAM;
-    }
+    if (!storage) return PPDB_STORAGE_ERR_PARAM;
 
     // Lock maintenance mutex
-    ppdb_error_t err = ppdb_engine_mutex_lock(storage->maintain->mutex);
-    if (err != PPDB_OK) {
-        return err;
-    }
+    ppdb_error_t err = ppdb_base_mutex_lock(storage->maintain->mutex);
+    if (err != PPDB_OK) return err;
 
-    // Begin transaction
+    // Start a write transaction
     ppdb_engine_txn_t* tx = NULL;
-    err = ppdb_engine_txn_begin(storage->engine, &tx);
+    err = ppdb_engine_txn_begin(storage->engine, true, &tx);
     if (err != PPDB_OK) {
-        ppdb_engine_mutex_unlock(storage->maintain->mutex);
+        ppdb_base_mutex_unlock(storage->maintain->mutex);
         return err;
     }
 
     // Compact all tables
     ppdb_error_t compact_err = PPDB_OK;
     err = ppdb_engine_table_list_foreach(storage->tables, table_compact_fn, &compact_err);
-    if (err != PPDB_OK || compact_err != PPDB_OK) {
+    if (err != PPDB_OK) {
+        ppdb_base_mutex_unlock(storage->maintain->mutex);
         ppdb_engine_txn_rollback(tx);
-        ppdb_engine_mutex_unlock(storage->maintain->mutex);
-        return err != PPDB_OK ? err : compact_err;
+        return err;
+    }
+
+    // Check for compaction errors
+    if (compact_err != PPDB_OK) {
+        ppdb_base_mutex_unlock(storage->maintain->mutex);
+        ppdb_engine_txn_rollback(tx);
+        return compact_err;
     }
 
     // Commit transaction
     err = ppdb_engine_txn_commit(tx);
-    if (err != PPDB_OK) {
-        ppdb_engine_txn_rollback(tx);
-    }
-
-    ppdb_engine_mutex_unlock(storage->maintain->mutex);
+    ppdb_base_mutex_unlock(storage->maintain->mutex);
     return err;
 }
 
 ppdb_error_t ppdb_storage_maintain_cleanup_expired(ppdb_storage_t* storage) {
-    if (!storage) {
-        return PPDB_STORAGE_ERR_PARAM;
-    }
+    if (!storage) return PPDB_STORAGE_ERR_PARAM;
 
     // Lock maintenance mutex
-    ppdb_error_t err = ppdb_engine_mutex_lock(storage->maintain->mutex);
-    if (err != PPDB_OK) {
-        return err;
-    }
+    ppdb_error_t err = ppdb_base_mutex_lock(storage->maintain->mutex);
+    if (err != PPDB_OK) return err;
 
-    // Begin transaction
+    // Start a write transaction
     ppdb_engine_txn_t* tx = NULL;
-    err = ppdb_engine_txn_begin(storage->engine, &tx);
+    err = ppdb_engine_txn_begin(storage->engine, true, &tx);
     if (err != PPDB_OK) {
-        ppdb_engine_mutex_unlock(storage->maintain->mutex);
+        ppdb_base_mutex_unlock(storage->maintain->mutex);
         return err;
     }
 
-    // Cleanup expired data
-    ppdb_error_t cleanup_err = PPDB_OK;
-    err = ppdb_engine_table_list_foreach(storage->tables, table_cleanup_expired_fn, &cleanup_err);
-    if (err != PPDB_OK || cleanup_err != PPDB_OK) {
-        ppdb_engine_txn_rollback(tx);
-        ppdb_engine_mutex_unlock(storage->maintain->mutex);
-        return err != PPDB_OK ? err : cleanup_err;
-    }
+    // TODO: Implement cleanup of expired data
 
     // Commit transaction
     err = ppdb_engine_txn_commit(tx);
-    if (err != PPDB_OK) {
-        ppdb_engine_txn_rollback(tx);
-    }
-
-    ppdb_engine_mutex_unlock(storage->maintain->mutex);
+    ppdb_base_mutex_unlock(storage->maintain->mutex);
     return err;
 }
 
 ppdb_error_t ppdb_storage_maintain_optimize_indexes(ppdb_storage_t* storage) {
-    if (!storage) {
-        return PPDB_STORAGE_ERR_PARAM;
-    }
+    if (!storage) return PPDB_STORAGE_ERR_PARAM;
 
     // Lock maintenance mutex
-    ppdb_error_t err = ppdb_engine_mutex_lock(storage->maintain->mutex);
-    if (err != PPDB_OK) {
-        return err;
-    }
+    ppdb_error_t err = ppdb_base_mutex_lock(storage->maintain->mutex);
+    if (err != PPDB_OK) return err;
 
-    // Begin transaction
+    // Start a write transaction
     ppdb_engine_txn_t* tx = NULL;
-    err = ppdb_engine_txn_begin(storage->engine, &tx);
+    err = ppdb_engine_txn_begin(storage->engine, true, &tx);
     if (err != PPDB_OK) {
-        ppdb_engine_mutex_unlock(storage->maintain->mutex);
+        ppdb_base_mutex_unlock(storage->maintain->mutex);
         return err;
     }
 
-    // Optimize indexes
-    ppdb_error_t optimize_err = PPDB_OK;
-    err = ppdb_engine_table_list_foreach(storage->tables, table_optimize_indexes_fn, &optimize_err);
-    if (err != PPDB_OK || optimize_err != PPDB_OK) {
-        ppdb_engine_txn_rollback(tx);
-        ppdb_engine_mutex_unlock(storage->maintain->mutex);
-        return err != PPDB_OK ? err : optimize_err;
-    }
+    // TODO: Implement index optimization
 
     // Commit transaction
     err = ppdb_engine_txn_commit(tx);
-    if (err != PPDB_OK) {
-        ppdb_engine_txn_rollback(tx);
-    }
-
-    ppdb_engine_mutex_unlock(storage->maintain->mutex);
+    ppdb_base_mutex_unlock(storage->maintain->mutex);
     return err;
 }

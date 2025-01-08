@@ -56,38 +56,33 @@ ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thre
 }
 
 ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread) {
-    if (!thread || !thread->initialized) {
-        return PPDB_BASE_ERR_PARAM;
-    }
-
-    if (pthread_join(thread->thread, NULL) != 0) {
-        return PPDB_BASE_ERR_SYSTEM;
-    }
-
+    if (!thread) return PPDB_BASE_ERR_PARAM;
+    if (!thread->initialized) return PPDB_BASE_ERR_INTERNAL;
+    
+    int err = pthread_join(thread->thread, NULL);
+    if (err) return PPDB_BASE_ERR_SYSTEM;
+    
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_thread_detach(ppdb_base_thread_t* thread) {
-    if (!thread || !thread->initialized) {
-        return PPDB_BASE_ERR_PARAM;
-    }
-
-    if (pthread_detach(thread->thread) != 0) {
-        return PPDB_BASE_ERR_SYSTEM;
-    }
-
+    if (!thread) return PPDB_BASE_ERR_PARAM;
+    if (!thread->initialized) return PPDB_BASE_ERR_INTERNAL;
+    
+    int err = pthread_detach(thread->thread);
+    if (err) return PPDB_BASE_ERR_SYSTEM;
+    
     return PPDB_OK;
 }
 
-void ppdb_base_yield(void) {
+ppdb_error_t ppdb_base_yield(void) {
     sched_yield();
+    return PPDB_OK;
 }
 
-void ppdb_base_sleep(uint32_t milliseconds) {
-    struct timespec ts;
-    ts.tv_sec = milliseconds / 1000;
-    ts.tv_nsec = (milliseconds % 1000) * 1000000;
-    nanosleep(&ts, NULL);
+ppdb_error_t ppdb_base_sleep(uint32_t milliseconds) {
+    usleep(milliseconds * 1000);
+    return PPDB_OK;
 }
 
 // Mutex functions
@@ -120,14 +115,12 @@ ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex) {
 }
 
 ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex) {
-    if (!mutex || !mutex->initialized) {
-        return PPDB_BASE_ERR_PARAM;
-    }
-
-    if (pthread_mutex_destroy(&mutex->mutex) != 0) {
-        return PPDB_BASE_ERR_SYSTEM;
-    }
-
+    if (!mutex) return PPDB_BASE_ERR_PARAM;
+    if (!mutex->initialized) return PPDB_BASE_ERR_INTERNAL;
+    
+    int err = pthread_mutex_destroy(&mutex->mutex);
+    if (err) return PPDB_BASE_ERR_SYSTEM;
+    
     mutex->initialized = false;
     free(mutex);
     return PPDB_OK;
@@ -158,16 +151,21 @@ ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex) {
 }
 
 ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex) {
-    if (!mutex || !mutex->initialized) {
-        return PPDB_BASE_ERR_PARAM;
-    }
+    if (!mutex) return PPDB_BASE_ERR_PARAM;
+    if (!mutex->initialized) return PPDB_BASE_ERR_INTERNAL;
+    
+    int err = pthread_mutex_trylock(&mutex->mutex);
+    if (err == EBUSY) return PPDB_BASE_ERR_BUSY;
+    if (err) return PPDB_BASE_ERR_SYSTEM;
+    
+    return PPDB_OK;
+}
 
-    int ret = pthread_mutex_trylock(&mutex->mutex);
-    if (ret == EBUSY) {
-        return PPDB_BASE_ERR_BUSY;
-    } else if (ret != 0) {
-        return PPDB_BASE_ERR_SYSTEM;
-    }
-
+ppdb_error_t ppdb_base_thread_destroy(ppdb_base_thread_t* thread) {
+    if (!thread) return PPDB_BASE_ERR_PARAM;
+    if (!thread->initialized) return PPDB_BASE_ERR_INTERNAL;
+    
+    thread->initialized = false;
+    free(thread);
     return PPDB_OK;
 }
