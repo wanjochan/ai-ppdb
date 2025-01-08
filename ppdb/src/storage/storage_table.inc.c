@@ -40,20 +40,24 @@ ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const char* name
         }
     }
 
+    // Verify transaction state
+    if (!storage->current_tx || !storage->current_tx->stats.is_active) {
+        printf("ERROR: Invalid transaction state for table creation\n");
+        return PPDB_STORAGE_ERR_INVALID_STATE;
+    }
+
     printf("    Creating table in engine...\n");
     // Create table in engine
     ppdb_engine_table_t* engine_table = NULL;
     ppdb_error_t err = ppdb_engine_table_create(storage->current_tx, name, &engine_table);
     if (err != PPDB_OK) {
         printf("ERROR: Failed to create table in engine: %d\n", err);
-        rollback_transaction(storage);
         return err;
     }
 
     // Verify engine table creation
     if (!engine_table) {
         printf("ERROR: Engine table creation failed but no error was returned\n");
-        rollback_transaction(storage);
         return PPDB_STORAGE_ERR_INVALID_STATE;
     }
 
@@ -63,7 +67,6 @@ ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const char* name
     if (new_table == NULL) {
         printf("ERROR: Failed to allocate memory for table structure\n");
         ppdb_engine_table_close(engine_table);
-        rollback_transaction(storage);
         return PPDB_STORAGE_ERR_MEMORY;
     }
 
@@ -73,7 +76,6 @@ ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const char* name
         printf("ERROR: Failed to allocate memory for table name\n");
         ppdb_engine_table_close(engine_table);
         free(new_table);
-        rollback_transaction(storage);
         return PPDB_STORAGE_ERR_MEMORY;
     }
 
@@ -87,7 +89,6 @@ ppdb_error_t ppdb_storage_create_table(ppdb_storage_t* storage, const char* name
     *table = new_table;
     printf("    Table creation completed.\n");
 
-    // Note: We don't commit the transaction here, let the caller decide when to commit
     return PPDB_OK;
 }
 
