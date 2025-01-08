@@ -37,104 +37,44 @@ void ppdb_engine_txn_cleanup(ppdb_engine_t* engine) {
 
 ppdb_error_t ppdb_engine_txn_begin(ppdb_engine_t* engine, ppdb_engine_txn_t** txn) {
     if (!engine || !txn) return PPDB_ENGINE_ERR_PARAM;
-    if (*txn) return PPDB_ENGINE_ERR_PARAM;
+    if (*txn) return PPDB_ENGINE_ERR_PARAM;  // Don't allow overwriting existing transaction
 
-    // Create transaction structure
+    // Allocate transaction structure
     ppdb_engine_txn_t* new_txn = malloc(sizeof(ppdb_engine_txn_t));
-    if (!new_txn) return PPDB_ENGINE_ERR_INIT;
+    if (!new_txn) return PPDB_ENGINE_ERR_MEMORY;
 
-    // Initialize transaction structure
-    memset(new_txn, 0, sizeof(ppdb_engine_txn_t));
+    // Initialize transaction
     new_txn->engine = engine;
+    new_txn->is_write = true;  // For now, all transactions are write transactions
+    new_txn->is_active = true;
+    
+    // Initialize statistics
+    ppdb_base_counter_init(&new_txn->stats.reads);
+    ppdb_base_counter_init(&new_txn->stats.writes);
 
-    // Initialize transaction statistics
-    new_txn->stats.reads = NULL;
-    new_txn->stats.writes = NULL;
-    new_txn->stats.is_active = false;
-    new_txn->stats.is_committed = false;
-    new_txn->stats.is_rolledback = false;
-
-    ppdb_error_t err = ppdb_base_counter_create(&new_txn->stats.reads);
-    if (err != PPDB_OK) {
-        free(new_txn);
-        return err;
-    }
-
-    err = ppdb_base_counter_create(&new_txn->stats.writes);
-    if (err != PPDB_OK) {
-        ppdb_base_counter_destroy(new_txn->stats.reads);
-        free(new_txn);
-        return err;
-    }
-
-    // Lock transaction manager
-    err = ppdb_base_mutex_lock(engine->txn_mgr.txn_mutex);
-    if (err != PPDB_OK) {
-        ppdb_base_counter_destroy(new_txn->stats.writes);
-        ppdb_base_counter_destroy(new_txn->stats.reads);
-        free(new_txn);
-        return err;
-    }
-
-    // Assign transaction ID
-    new_txn->id = engine->txn_mgr.next_txn_id++;
-
-    // Add to active transactions list
-    new_txn->next = engine->txn_mgr.active_txns;
-    engine->txn_mgr.active_txns = new_txn;
-
-    // Update statistics
-    ppdb_base_counter_inc(engine->stats.total_txns);
-    ppdb_base_counter_inc(engine->stats.active_txns);
-
-    // Unlock transaction manager
-    err = ppdb_base_mutex_unlock(engine->txn_mgr.txn_mutex);
-    if (err != PPDB_OK) {
-        ppdb_base_counter_dec(engine->stats.active_txns);
-        ppdb_base_counter_dec(engine->stats.total_txns);
-        ppdb_base_counter_destroy(new_txn->stats.writes);
-        ppdb_base_counter_destroy(new_txn->stats.reads);
-        free(new_txn);
-        return err;
-    }
-
-    new_txn->stats.is_active = true;
     *txn = new_txn;
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_engine_txn_commit(ppdb_engine_txn_t* txn) {
     if (!txn) return PPDB_ENGINE_ERR_PARAM;
-    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
+    if (!txn->is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
 
-    ppdb_engine_t* engine = txn->engine;
-
-    // Lock transaction manager
-    ppdb_error_t err = ppdb_base_mutex_lock(engine->txn_mgr.txn_mutex);
+    // Lock engine
+    ppdb_error_t err = ppdb_base_mutex_lock(txn->engine->lock);
     if (err != PPDB_OK) return err;
 
-    // Remove from active transactions list
-    ppdb_engine_txn_t** curr = &engine->txn_mgr.active_txns;
-    while (*curr && *curr != txn) {
-        curr = &(*curr)->next;
-    }
-    if (*curr) {
-        *curr = txn->next;
-    }
+    // Update engine statistics
+    ppdb_base_counter_add(&txn->engine->stats.total_reads, ppdb_base_counter_get(&txn->stats.reads));
+    ppdb_base_counter_add(&txn->engine->stats.total_writes, ppdb_base_counter_get(&txn->stats.writes));
 
-    // Update statistics
-    ppdb_base_counter_dec(engine->stats.active_txns);
+    // Unlock engine
+    ppdb_base_mutex_unlock(txn->engine->lock);
 
-    // Unlock transaction manager
-    ppdb_base_mutex_unlock(engine->txn_mgr.txn_mutex);
+    // Mark transaction as inactive
+    txn->is_active = false;
 
-    // Update transaction state
-    txn->stats.is_active = false;
-    txn->stats.is_committed = true;
-
-    // Cleanup transaction
-    ppdb_base_counter_destroy(txn->stats.reads);
-    ppdb_base_counter_destroy(txn->stats.writes);
+    // Free transaction
     free(txn);
 
     return PPDB_OK;
@@ -142,36 +82,12 @@ ppdb_error_t ppdb_engine_txn_commit(ppdb_engine_txn_t* txn) {
 
 ppdb_error_t ppdb_engine_txn_rollback(ppdb_engine_txn_t* txn) {
     if (!txn) return PPDB_ENGINE_ERR_PARAM;
-    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
+    if (!txn->is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
 
-    ppdb_engine_t* engine = txn->engine;
+    // Mark transaction as inactive
+    txn->is_active = false;
 
-    // Lock transaction manager
-    ppdb_error_t err = ppdb_base_mutex_lock(engine->txn_mgr.txn_mutex);
-    if (err != PPDB_OK) return err;
-
-    // Remove from active transactions list
-    ppdb_engine_txn_t** curr = &engine->txn_mgr.active_txns;
-    while (*curr && *curr != txn) {
-        curr = &(*curr)->next;
-    }
-    if (*curr) {
-        *curr = txn->next;
-    }
-
-    // Update statistics
-    ppdb_base_counter_dec(engine->stats.active_txns);
-
-    // Unlock transaction manager
-    ppdb_base_mutex_unlock(engine->txn_mgr.txn_mutex);
-
-    // Update transaction state
-    txn->stats.is_active = false;
-    txn->stats.is_rolledback = true;
-
-    // Cleanup transaction
-    ppdb_base_counter_destroy(txn->stats.reads);
-    ppdb_base_counter_destroy(txn->stats.writes);
+    // Free transaction
     free(txn);
 
     return PPDB_OK;

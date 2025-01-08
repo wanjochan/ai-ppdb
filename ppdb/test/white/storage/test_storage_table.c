@@ -17,7 +17,11 @@ static void cleanup_resources(void) {
     
     if (storage && storage->current_tx) {
         printf("Warning: Transaction still active during cleanup, rolling back\n");
-        ppdb_engine_txn_rollback(storage->current_tx);
+        err = ppdb_engine_txn_rollback(storage->current_tx);
+        if (err != PPDB_OK) {
+            printf("Error: Failed to rollback transaction: %d, error: %s\n", 
+                   err, ppdb_error_str(err));
+        }
         storage->current_tx = NULL;
     }
     
@@ -106,17 +110,21 @@ static int test_table_create_normal(void) {
     ppdb_error_t err;
     ppdb_engine_txn_t* tx = NULL;
     
-    // Pre-transaction state check
+    // Enhanced pre-transaction validation
     TEST_ASSERT_NULL(storage->current_tx);
     TEST_ASSERT_MEMORY_CLEAN();
     
     printf("Starting transaction for table creation test\n");
     if ((err = ppdb_engine_txn_begin(engine, &tx)) != PPDB_OK) {
-        printf("Error: Failed to begin transaction: %d, error: %s\n", err, ppdb_error_str(err));
+        printf("Error: Failed to begin transaction: %d, error: %s\n", 
+               err, ppdb_error_str(err));
         return -1;
     }
+    
+    // Explicit transaction context setting
     storage->current_tx = tx;
     TEST_ASSERT_NOT_NULL(storage->current_tx);
+    TEST_ASSERT_TRANSACTION_ACTIVE(tx);
     
     // Post-begin transaction state check
     TEST_ASSERT_TRANSACTION_ACTIVE(tx);
@@ -184,10 +192,12 @@ static int test_table_create_invalid(void) {
     TEST_ASSERT_NULL(storage->current_tx);
     printf("Beginning transaction for invalid table creation tests\n");
     
-    err = ppdb_engine_txn_begin(engine, &tx);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    if ((err = ppdb_engine_txn_begin(engine, &tx)) != PPDB_OK) {
+        printf("Error: Failed to begin transaction: %d, error: %s\n", 
+               err, ppdb_error_str(err));
+        return -1;
+    }
     storage->current_tx = tx;
-    TEST_ASSERT_NOT_NULL(storage->current_tx);
     
     printf("Testing NULL storage parameter\n");
     err = ppdb_storage_create_table(NULL, "test_table", &invalid_table);
@@ -205,14 +215,25 @@ static int test_table_create_invalid(void) {
     err = ppdb_storage_create_table(storage, "   ", &invalid_table);
     TEST_ASSERT_EQUALS(PPDB_STORAGE_ERR_PARAM, err);
     
+    // Enhanced transaction cleanup
     printf("Committing transaction\n");
-    err = ppdb_engine_txn_commit(tx);
-    TEST_ASSERT_EQUALS(PPDB_OK, err);
+    if ((err = ppdb_engine_txn_commit(tx)) != PPDB_OK) {
+        printf("Error: Failed to commit transaction: %d, error: %s\n", 
+               err, ppdb_error_str(err));
+        goto rollback;
+    }
     storage->current_tx = NULL;
     TEST_ASSERT_NULL(storage->current_tx);
     
     printf("Test test_table_create_invalid completed successfully\n");
     return 0;
+
+rollback:
+    if ((err = ppdb_engine_txn_rollback(tx)) != PPDB_OK) {
+        printf("Error: Rollback failed: %d, error: %s\n", err, ppdb_error_str(err));
+    }
+    storage->current_tx = NULL;
+    return -1;
 }
 
 // Test table operations

@@ -35,6 +35,7 @@ typedef struct ppdb_storage_value_s {
 #define PPDB_STORAGE_ERR_INTERNAL       (PPDB_STORAGE_ERR_START + 0x0C)
 #define PPDB_STORAGE_ERR_NOT_FOUND      (PPDB_STORAGE_ERR_START + 0x0D)
 #define PPDB_STORAGE_ERR_INVALID_STATE  (PPDB_STORAGE_ERR_START + 0x0E)
+#define PPDB_STORAGE_ERR_BUFFER_FULL    (PPDB_STORAGE_ERR_START + 0x0F)
 
 // Default values
 #define PPDB_DEFAULT_DATA_DIR      "data"
@@ -112,7 +113,7 @@ struct ppdb_storage_s {
     ppdb_engine_txn_t* current_tx;      // Current transaction
     ppdb_base_mutex_t* lock;            // Global lock
     ppdb_engine_table_list_t* tables;   // Tables list (managed by engine)
-    ppdb_storage_maintain_t maintain;    // Maintenance info
+    ppdb_storage_maintain_t* maintain;   // Maintenance info (pointer)
 };
 
 //-----------------------------------------------------------------------------
@@ -148,7 +149,7 @@ ppdb_error_t ppdb_storage_update_config(ppdb_storage_t* storage, const ppdb_stor
 
 // Maintenance management
 ppdb_error_t ppdb_storage_maintain_init(ppdb_storage_t* storage);
-void ppdb_storage_maintain_cleanup(ppdb_storage_t* storage);
+ppdb_error_t ppdb_storage_maintain_cleanup(ppdb_storage_t* storage);
 ppdb_error_t ppdb_storage_maintain_start(ppdb_storage_t* storage);
 ppdb_error_t ppdb_storage_maintain_stop(ppdb_storage_t* storage);
 ppdb_error_t ppdb_storage_maintain_compact(ppdb_storage_t* storage);

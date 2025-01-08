@@ -46,6 +46,15 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
         return err;
     }
 
+    // Initialize table list
+    err = ppdb_engine_table_list_create(e, &e->tables);
+    if (err != PPDB_OK) {
+        ppdb_engine_txn_cleanup(e);
+        ppdb_base_mutex_destroy(e->global_mutex);
+        free(e);
+        return err;
+    }
+
     // Initialize IO manager
     err = ppdb_engine_io_init(e);
     if (err != PPDB_OK) {
@@ -117,6 +126,10 @@ const char* ppdb_engine_strerror(ppdb_error_t err) {
             return "Resource already exists";
         case PPDB_ENGINE_ERR_INVALID_STATE:
             return "Invalid state";
+        case PPDB_ENGINE_ERR_MEMORY:
+            return "Memory allocation failed";
+        case PPDB_ENGINE_ERR_BUFFER_FULL:
+            return "Buffer is too small";
         default:
             return "Unknown engine error";
     }

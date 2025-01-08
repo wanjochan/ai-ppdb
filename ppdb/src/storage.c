@@ -151,3 +151,40 @@ ppdb_error_t ppdb_storage_update_config(ppdb_storage_t* storage, const ppdb_stor
     storage->config = *config;
     return PPDB_OK;
 }
+
+const char* ppdb_storage_strerror(ppdb_error_t err) {
+    switch (err) {
+        case PPDB_STORAGE_ERR_PARAM:
+            return "Invalid parameter";
+        case PPDB_STORAGE_ERR_TABLE:
+            return "Table operation failed";
+        case PPDB_STORAGE_ERR_INDEX:
+            return "Index operation failed";
+        case PPDB_STORAGE_ERR_WAL:
+            return "WAL operation failed";
+        case PPDB_STORAGE_ERR_IO:
+            return "IO operation failed";
+        case PPDB_STORAGE_ERR_ALREADY_RUNNING:
+            return "Storage is already running";
+        case PPDB_STORAGE_ERR_NOT_RUNNING:
+            return "Storage is not running";
+        case PPDB_STORAGE_ERR_TABLE_EXISTS:
+            return "Table already exists";
+        case PPDB_STORAGE_ERR_TABLE_NOT_FOUND:
+            return "Table not found";
+        case PPDB_STORAGE_ERR_CONFIG:
+            return "Configuration error";
+        case PPDB_STORAGE_ERR_MEMORY:
+            return "Memory allocation failed";
+        case PPDB_STORAGE_ERR_INTERNAL:
+            return "Internal error";
+        case PPDB_STORAGE_ERR_NOT_FOUND:
+            return "Resource not found";
+        case PPDB_STORAGE_ERR_INVALID_STATE:
+            return "Invalid state";
+        case PPDB_STORAGE_ERR_BUFFER_FULL:
+            return "Buffer is too small";
+        default:
+            return "Unknown storage error";
+    }
+}

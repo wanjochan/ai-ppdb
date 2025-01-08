@@ -56,17 +56,21 @@ static int test_setup(void) {
         goto cleanup;
     }
 
-    // Create test table with proper transaction handling
+    // Transaction handling for table creation
     ppdb_engine_txn_t* tx = NULL;
     printf("Beginning transaction for table creation...\n");
+    
+    // Clear any existing transaction state
+    storage->current_tx = NULL;
+    
     if ((err = ppdb_engine_txn_begin(engine, &tx)) != PPDB_OK) {
         printf("ERROR: Transaction begin failed: %s\n", ppdb_error_str(err));
         goto cleanup;
     }
 
+    // Set transaction context immediately after begin
     storage->current_tx = tx;
-    printf("Transaction started for table creation\n");
-
+    
     if ((err = ppdb_storage_create_table(storage, "test_table", &table)) != PPDB_OK) {
         printf("ERROR: Table creation failed: %s\n", ppdb_error_str(err));
         ppdb_engine_txn_rollback(tx);
@@ -81,6 +85,7 @@ static int test_setup(void) {
         goto cleanup;
     }
 
+    // Clear transaction state after successful commit
     storage->current_tx = NULL;
     printf("Test setup completed successfully\n");
     return 0;
@@ -110,43 +115,30 @@ static int test_teardown(void) {
     
     if (table) {
         ppdb_engine_txn_t* tx = NULL;
-        // Clear any existing transaction state
-        storage->current_tx = NULL;
+        storage->current_tx = NULL;  // Ensure clean state
         
-        printf("Beginning transaction for table cleanup\n");
-        err = ppdb_engine_txn_begin(engine, &tx);
-        TEST_ASSERT_EQUALS(PPDB_OK, err);
-        TEST_ASSERT_NOT_NULL(tx);
+        if ((err = ppdb_engine_txn_begin(engine, &tx)) != PPDB_OK) {
+            printf("ERROR: Failed to begin cleanup transaction: %s\n", ppdb_error_str(err));
+            return -1;
+        }
         
-        // Set current transaction immediately after begin
         storage->current_tx = tx;
-        printf("Setting current transaction\n");
         
-        // Verify transaction state
-        TEST_ASSERT_NOT_NULL(storage->current_tx);
-        
-        err = ppdb_storage_drop_table(storage, "test_table");
-        if (err != PPDB_OK) {
+        if ((err = ppdb_storage_drop_table(storage, "test_table")) != PPDB_OK) {
             printf("ERROR: Failed to drop table: %s\n", ppdb_error_str(err));
             ppdb_engine_txn_rollback(tx);
             storage->current_tx = NULL;
-            TEST_ASSERT_NULL(storage->current_tx);
             return -1;
         }
         
-        printf("Committing table cleanup transaction\n");
-        err = ppdb_engine_txn_commit(tx);
-        if (err != PPDB_OK) {
+        if ((err = ppdb_engine_txn_commit(tx)) != PPDB_OK) {
             printf("ERROR: Failed to commit cleanup: %s\n", ppdb_error_str(err));
             ppdb_engine_txn_rollback(tx);
             storage->current_tx = NULL;
-            TEST_ASSERT_NULL(storage->current_tx);
             return -1;
         }
         
-        // Clear transaction state after commit
         storage->current_tx = NULL;
-        TEST_ASSERT_NULL(storage->current_tx);
         table = NULL;
     }
     

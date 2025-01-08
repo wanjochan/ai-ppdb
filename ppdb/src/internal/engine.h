@@ -9,6 +9,7 @@ typedef struct ppdb_engine_s ppdb_engine_t;
 typedef struct ppdb_engine_txn_s ppdb_engine_txn_t;
 typedef struct ppdb_engine_table_s ppdb_engine_table_t;
 typedef struct ppdb_engine_cursor_s ppdb_engine_cursor_t;
+typedef struct ppdb_engine_table_list_s ppdb_engine_table_list_t;
 
 // Statistics
 typedef struct ppdb_engine_stats_s {
@@ -67,31 +68,33 @@ struct ppdb_engine_cursor_s {
 #define PPDB_ENGINE_ERR_EXISTS     (PPDB_ENGINE_ERR_START + 0x00B)
 #define PPDB_ENGINE_ERR_INVALID_STATE (PPDB_ENGINE_ERR_START + 0x00C)
 #define PPDB_ENGINE_ERR_MEMORY     (PPDB_ENGINE_ERR_START + 0x00D)
+#define PPDB_ENGINE_ERR_BUFFER_FULL (PPDB_ENGINE_ERR_START + 0x00E)
 
 // Error message conversion function
 const char* ppdb_engine_strerror(ppdb_error_t err);
 
-// Engine type
+// Transaction manager structure
+typedef struct ppdb_engine_txn_mgr_s {
+    ppdb_base_mutex_t* txn_mutex;  // Transaction manager mutex
+    uint64_t next_txn_id;         // Next transaction ID
+    ppdb_engine_txn_t* active_txns; // Active transactions list
+} ppdb_engine_txn_mgr_t;
+
+// IO manager structure
+typedef struct ppdb_engine_io_mgr_s {
+    ppdb_base_io_manager_t* io_mgr;  // IO manager instance
+    ppdb_base_thread_t* io_thread;   // IO thread
+    bool io_running;                 // IO thread running flag
+} ppdb_engine_io_mgr_t;
+
+// Engine structure
 struct ppdb_engine_s {
-    ppdb_base_t* base;                // Using ppdb_base_t from base.h
-    ppdb_base_mutex_t* global_mutex;  // Using ppdb_base_mutex_t from base.h
-
-    // 事务管理
-    struct {
-        ppdb_base_mutex_t* txn_mutex;
-        uint64_t next_txn_id;
-        ppdb_engine_txn_t* active_txns;
-    } txn_mgr;
-
-    // IO管理
-    struct {
-        ppdb_base_io_manager_t* io_mgr;
-        ppdb_base_thread_t* io_thread;
-        bool io_running;
-    } io_mgr;
-
-    // 统计信息
-    ppdb_engine_stats_t stats;
+    ppdb_base_t* base;            // Base layer instance
+    ppdb_base_mutex_t* global_mutex; // Global mutex
+    ppdb_engine_stats_t stats;    // Engine statistics
+    ppdb_engine_txn_mgr_t txn_mgr; // Transaction manager
+    ppdb_engine_io_mgr_t io_mgr;   // IO manager
+    ppdb_engine_table_list_t* tables; // Table list
 };
 
 // Engine-specific function declarations
