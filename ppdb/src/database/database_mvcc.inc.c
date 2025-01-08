@@ -17,11 +17,11 @@ static int database_snapshot_create(ppdb_database_t* db, ppdb_database_snapshot_
         return PPDB_ERR_NOMEM;
     }
 
-    pthread_mutex_lock(&db->mutex);
+    ppdb_base_mutex_lock(&db->mutex);
     (*snapshot)->txn_id = db->stats.next_txn_id++;
     (*snapshot)->min_active_txn_id = db->stats.min_active_txn_id;
     (*snapshot)->max_committed_txn_id = db->stats.max_committed_txn_id;
-    pthread_mutex_unlock(&db->mutex);
+    ppdb_base_mutex_unlock(&db->mutex);
 
     return PPDB_OK;
 }
@@ -54,9 +54,9 @@ int ppdb_database_mvcc_commit_txn(ppdb_database_t* db, ppdb_database_txn_t* txn)
         return PPDB_ERR_PARAM;
     }
 
-    pthread_mutex_lock(&db->mutex);
+    ppdb_base_mutex_lock(&db->mutex);
     db->stats.max_committed_txn_id = txn->snapshot->txn_id;
-    pthread_mutex_unlock(&db->mutex);
+    ppdb_base_mutex_unlock(&db->mutex);
 
     return PPDB_OK;
 }
@@ -78,4 +78,4 @@ bool ppdb_database_mvcc_is_visible(ppdb_database_snapshot_t* snapshot, uint64_t 
     // Check if version is visible to this snapshot
     return version <= snapshot->max_committed_txn_id &&
            version < snapshot->txn_id;
-} 
+}

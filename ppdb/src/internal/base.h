@@ -246,15 +246,21 @@ ppdb_error_t ppdb_base_async_cancel(ppdb_base_async_handle_t* handle);
 
 // Thread structure
 typedef struct ppdb_base_thread_s {
-    pthread_t thread;
+    ppdb_base_thread_t thread;
     bool initialized;
 } ppdb_base_thread_t;
 
 // Mutex structure
 typedef struct ppdb_base_mutex_s {
-    pthread_mutex_t mutex;
+    ppdb_base_mutex_t mutex;
     bool initialized;
 } ppdb_base_mutex_t;
+
+// RWLock structure
+typedef struct ppdb_base_rwlock_s {
+    ppdb_base_rwlock_t rwlock;
+    bool initialized;
+} ppdb_base_rwlock_t;
 
 // Async task structure
 typedef struct ppdb_base_async_task_s {

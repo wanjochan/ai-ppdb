@@ -14,7 +14,7 @@ typedef struct ppdb_database_wal {
     char* path;
     int fd;
     uint64_t size;
-    pthread_mutex_t mutex;
+    ppdb_base_mutex_t mutex;
 } ppdb_database_wal_t;
 
 static int database_wal_init(ppdb_database_wal_t** wal, const char* path) {
@@ -40,7 +40,7 @@ static int database_wal_init(ppdb_database_wal_t** wal, const char* path) {
         return PPDB_ERR_IO;
     }
 
-    pthread_mutex_init(&(*wal)->mutex, NULL);
+    ppdb_base_mutex_create(&(*wal)->mutex, NULL);
     (*wal)->size = lseek((*wal)->fd, 0, SEEK_END);
 
     return PPDB_OK;
@@ -59,7 +59,7 @@ static void database_wal_cleanup(ppdb_database_wal_t* wal) {
         free(wal->path);
     }
 
-    pthread_mutex_destroy(&wal->mutex);
+    ppdb_base_mutex_destroy(&wal->mutex);
 }
 
 int ppdb_database_wal_append(ppdb_database_wal_t* wal, ppdb_database_txn_t* txn,
@@ -90,10 +90,10 @@ int ppdb_database_wal_append(ppdb_database_wal_t* wal, ppdb_database_txn_t* txn,
     }
 
     // Write to WAL file
-    pthread_mutex_lock(&wal->mutex);
+    ppdb_base_mutex_lock(&wal->mutex);
     ssize_t written = write(wal->fd, entry, entry_size);
     if (written < 0 || (size_t)written != entry_size) {
-        pthread_mutex_unlock(&wal->mutex);
+        ppdb_base_mutex_unlock(&wal->mutex);
         free(entry);
         return PPDB_ERR_IO;
     }
@@ -102,7 +102,7 @@ int ppdb_database_wal_append(ppdb_database_wal_t* wal, ppdb_database_txn_t* txn,
     fsync(wal->fd);
 
     wal->size += entry_size;
-    pthread_mutex_unlock(&wal->mutex);
+    ppdb_base_mutex_unlock(&wal->mutex);
 
     free(entry);
     return PPDB_OK;
@@ -113,14 +113,14 @@ int ppdb_database_wal_truncate(ppdb_database_wal_t* wal, uint64_t size) {
         return PPDB_ERR_PARAM;
     }
 
-    pthread_mutex_lock(&wal->mutex);
+    ppdb_base_mutex_lock(&wal->mutex);
     if (ftruncate(wal->fd, size) != 0) {
-        pthread_mutex_unlock(&wal->mutex);
+        ppdb_base_mutex_unlock(&wal->mutex);
         return PPDB_ERR_IO;
     }
 
     wal->size = size;
-    pthread_mutex_unlock(&wal->mutex);
+    ppdb_base_mutex_unlock(&wal->mutex);
     return PPDB_OK;
 }
 

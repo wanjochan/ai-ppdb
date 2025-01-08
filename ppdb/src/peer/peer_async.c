@@ -1,5 +1,6 @@
 #include "peer_internal.h"
 #include "../internal/database.h"
+#include "internal/base.h"
 
 //-----------------------------------------------------------------------------
 // Static Functions
@@ -156,9 +157,9 @@ ppdb_error_t ppdb_peer_async_handle_request(ppdb_peer_connection_t* conn,
         return PPDB_ERR_PARAM;
     }
 
-    pthread_mutex_lock(&conn->mutex);
-    conn->current_req = *req;
-    pthread_mutex_unlock(&conn->mutex);
+    ppdb_base_mutex_lock(&conn->mutex);
+   conn->current_req = *req;
+    ppdb_base_mutex_unlock(&conn->mutex);
 
     ppdb_error_t err;
     switch (req->type) {
@@ -193,12 +194,12 @@ void ppdb_peer_async_complete(ppdb_peer_connection_t* conn,
         return;
     }
 
-    pthread_mutex_lock(&conn->mutex);
+    ppdb_base_mutex_lock(&conn->mutex);
 
     // Send response
     if (conn->response_cb) {
         conn->response_cb(conn, error, resp);
     }
 
-    pthread_mutex_unlock(&conn->mutex);
+    ppdb_base_mutex_unlock(&conn->mutex);
 }

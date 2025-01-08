@@ -23,7 +23,7 @@ typedef struct ppdb_net_server_s {
     size_t max_conns;              // 最大连接数
     size_t curr_conns;             // 当前连接数
     bool is_running;               // 是否运行中
-    pthread_t* io_threads;         // IO线程数组
+    ppdb_base_thread_t* io_threads;  // IO线程数组
     size_t io_thread_count;        // IO线程数量
 } ppdb_net_server_t;
 
@@ -171,7 +171,7 @@ ppdb_error_t ppdb_base_net_server_create(ppdb_net_server_t** server,
     }
     
     // 分配IO线程数组
-    s->io_threads = calloc(config->io_threads, sizeof(pthread_t));
+    s->io_threads = calloc(config->io_threads, sizeof(ppdb_base_thread_t));
     if (!s->io_threads) {
         free(s->conns);
         free(s);
@@ -219,7 +219,7 @@ ppdb_error_t ppdb_base_net_server_start(ppdb_net_server_t* server) {
     // 启动IO线程
     server->is_running = true;
     for (size_t i = 0; i < server->io_thread_count; i++) {
-        if (pthread_create(&server->io_threads[i], NULL, io_thread_func, server) != 0) {
+        if (ppdb_base_thread_create(&server->io_threads[i], io_thread_func, server) != PPDB_OK) {
             server->is_running = false;
             close(server->listen_fd);
             return PPDB_ERR_NETWORK;
@@ -237,7 +237,7 @@ ppdb_error_t ppdb_base_net_server_stop(ppdb_net_server_t* server) {
     // 停止IO线程
     server->is_running = false;
     for (size_t i = 0; i < server->io_thread_count; i++) {
-        pthread_join(server->io_threads[i], NULL);
+        ppdb_base_thread_join(server->io_threads[i], NULL);
     }
     
     // 关闭所有连接

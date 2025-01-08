@@ -13,8 +13,8 @@ static int database_table_init_internal(ppdb_database_table_t* table, const char
     table->stats = (ppdb_database_table_stats_t){0};
 
     // Initialize table locks
-    pthread_mutex_init(&table->mutex, NULL);
-    pthread_rwlock_init(&table->rwlock, NULL);
+    ppdb_base_mutex_create(&table->mutex, NULL);
+    ppdb_base_rwlock_create(&table->rwlock, NULL);
 
     // Initialize table components
     table->primary_index = NULL;
@@ -41,8 +41,8 @@ static void database_table_cleanup_internal(ppdb_database_table_t* table) {
     }
 
     // Cleanup locks
-    pthread_mutex_destroy(&table->mutex);
-    pthread_rwlock_destroy(&table->rwlock);
+    ppdb_base_mutex_destroy(&table->mutex);
+    ppdb_base_rwlock_destroy(&table->rwlock);
 }
 
 int ppdb_database_table_create(ppdb_database_t* db, const char* name, ppdb_database_table_t** table) {

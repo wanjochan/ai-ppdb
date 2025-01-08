@@ -20,6 +20,9 @@ if "%TARGET%"=="test42" (
 ) else if "%TARGET%"=="sync_perf" (
     call "%~dp0\build_sync_perf.bat" %BUILD_MODE%
     exit /b !errorlevel!
+) else if "%TARGET%"=="async_perf" (
+    call "%~dp0\build_async_perf.bat" %BUILD_MODE%
+    exit /b !errorlevel!
 ) else if "%TARGET%"=="base" (
     call "%~dp0\build_base.bat" %BUILD_MODE%
     exit /b !errorlevel!
@@ -63,6 +66,6 @@ if "%TARGET%"=="test42" (
     exit /b !errorlevel!
 ) else (
     echo Error: Unknown target %TARGET%
-    echo Available targets: test42, sync_perf, base, database, peer, ppdb, all
+    echo Available targets: test42, sync_perf, async_perf, base, database, peer, ppdb, all
     exit /b 1
 ) 

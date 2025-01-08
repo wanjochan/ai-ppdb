@@ -42,14 +42,14 @@ int ppdb_database_maintain_compact(ppdb_database_t* db) {
     }
 
     // Lock database for maintenance
-    pthread_rwlock_wrlock(&db->rwlock);
+    ppdb_base_rwlock_wrlock(&db->rwlock);
 
     // Compact tables
     ppdb_database_table_t* tables = NULL;
     size_t table_count = 0;
     ret = database_table_manager_get_tables(db->table_manager, &tables, &table_count);
     if (ret != PPDB_OK) {
-        pthread_rwlock_unlock(&db->rwlock);
+        ppdb_base_rwlock_unlock(&db->rwlock);
         return ret;
     }
 
@@ -58,7 +58,7 @@ int ppdb_database_maintain_compact(ppdb_database_t* db) {
         ret = database_table_compact(&tables[i]);
         if (ret != PPDB_OK) {
             free(tables);
-            pthread_rwlock_unlock(&db->rwlock);
+            ppdb_base_rwlock_unlock(&db->rwlock);
             return ret;
         }
 
@@ -66,13 +66,13 @@ int ppdb_database_maintain_compact(ppdb_database_t* db) {
         ret = database_table_rebuild_indexes(&tables[i]);
         if (ret != PPDB_OK) {
             free(tables);
-            pthread_rwlock_unlock(&db->rwlock);
+            ppdb_base_rwlock_unlock(&db->rwlock);
             return ret;
         }
     }
 
     free(tables);
-    pthread_rwlock_unlock(&db->rwlock);
+    ppdb_base_rwlock_unlock(&db->rwlock);
     return PPDB_OK;
 }
 
@@ -88,14 +88,14 @@ int ppdb_database_maintain_verify(ppdb_database_t* db) {
     }
 
     // Lock database for verification
-    pthread_rwlock_rdlock(&db->rwlock);
+    ppdb_base_rwlock_rdlock(&db->rwlock);
 
     // Verify tables
     ppdb_database_table_t* tables = NULL;
     size_t table_count = 0;
     ret = database_table_manager_get_tables(db->table_manager, &tables, &table_count);
     if (ret != PPDB_OK) {
-        pthread_rwlock_unlock(&db->rwlock);
+        ppdb_base_rwlock_unlock(&db->rwlock);
         return ret;
     }
 
@@ -104,7 +104,7 @@ int ppdb_database_maintain_verify(ppdb_database_t* db) {
         ret = database_table_verify(&tables[i]);
         if (ret != PPDB_OK) {
             free(tables);
-            pthread_rwlock_unlock(&db->rwlock);
+            ppdb_base_rwlock_unlock(&db->rwlock);
             return ret;
         }
 
@@ -112,13 +112,13 @@ int ppdb_database_maintain_verify(ppdb_database_t* db) {
         ret = database_table_verify_indexes(&tables[i]);
         if (ret != PPDB_OK) {
             free(tables);
-            pthread_rwlock_unlock(&db->rwlock);
+            ppdb_base_rwlock_unlock(&db->rwlock);
             return ret;
         }
     }
 
     free(tables);
-    pthread_rwlock_unlock(&db->rwlock);
+    ppdb_base_rwlock_unlock(&db->rwlock);
     return PPDB_OK;
 }
 
@@ -134,11 +134,11 @@ int ppdb_database_maintain_backup(ppdb_database_t* db, const char* backup_dir) {
     }
 
     // Lock database for backup
-    pthread_rwlock_rdlock(&db->rwlock);
+    ppdb_base_rwlock_rdlock(&db->rwlock);
 
     // Create backup directory
     if (mkdir(backup_dir, 0755) != 0) {
-        pthread_rwlock_unlock(&db->rwlock);
+        ppdb_base_rwlock_unlock(&db->rwlock);
         return PPDB_ERR_IO;
     }
 
@@ -147,7 +147,7 @@ int ppdb_database_maintain_backup(ppdb_database_t* db, const char* backup_dir) {
     size_t table_count = 0;
     ret = database_table_manager_get_tables(db->table_manager, &tables, &table_count);
     if (ret != PPDB_OK) {
-        pthread_rwlock_unlock(&db->rwlock);
+        ppdb_base_rwlock_unlock(&db->rwlock);
         return ret;
     }
 
@@ -159,12 +159,12 @@ int ppdb_database_maintain_backup(ppdb_database_t* db, const char* backup_dir) {
         ret = database_table_backup(&tables[i], table_backup_path);
         if (ret != PPDB_OK) {
             free(tables);
-            pthread_rwlock_unlock(&db->rwlock);
+            ppdb_base_rwlock_unlock(&db->rwlock);
             return ret;
         }
     }
 
     free(tables);
-    pthread_rwlock_unlock(&db->rwlock);
+    ppdb_base_rwlock_unlock(&db->rwlock);
     return PPDB_OK;
-} 
+}

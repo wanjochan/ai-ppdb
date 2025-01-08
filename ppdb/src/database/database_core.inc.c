@@ -13,8 +13,8 @@ static int database_init_internal(ppdb_database_t* db) {
     db->stats = (ppdb_database_stats_t){0};
 
     // Initialize locks
-    pthread_mutex_init(&db->mutex, NULL);
-    pthread_rwlock_init(&db->rwlock, NULL);
+    ppdb_base_mutex_create(&db->mutex, NULL);
+    ppdb_base_rwlock_create(&db->rwlock, NULL);
 
     return PPDB_OK;
 }
@@ -36,8 +36,8 @@ static void database_cleanup_internal(ppdb_database_t* db) {
     }
 
     // Cleanup locks
-    pthread_mutex_destroy(&db->mutex);
-    pthread_rwlock_destroy(&db->rwlock);
+    ppdb_base_mutex_destroy(&db->mutex);
+    ppdb_base_rwlock_destroy(&db->rwlock);
 }
 
 int ppdb_database_init(ppdb_database_t** db, ppdb_base_t* base) {

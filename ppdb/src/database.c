@@ -4,6 +4,7 @@
 
 #include <cosmopolitan.h>
 #include "internal/database.h"
+#include "internal/base.h"
 
 // Include implementations
 #include "database/database_core.inc.c"
@@ -19,8 +20,8 @@ struct ppdb_database_s {
     ppdb_database_txn_manager_t* txn_manager;
     ppdb_database_index_manager_t* index_manager;
     ppdb_database_stats_t stats;
-    pthread_rwlock_t rwlock;
-    pthread_mutex_t mutex;
+    ppdb_base_rwlock_t rwlock;
+    ppdb_base_mutex_t mutex;
 };
 
 // Transaction structure

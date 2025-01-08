@@ -4,6 +4,7 @@
 #include <cosmopolitan.h>
 #include "../internal/peer.h"
 #include "../internal/database.h"
+#include "internal/base.h"
 
 // Connection state
 typedef struct ppdb_connection_state {
@@ -13,7 +14,7 @@ typedef struct ppdb_connection_state {
     int socket;                     // Socket descriptor
     void* proto_data;               // Protocol-specific data
     bool connected;                 // Connection status
-    pthread_mutex_t mutex;          // Connection mutex
+    ppdb_base_mutex_t mutex;        // Connection mutex
 } ppdb_connection_state_t;
 
 // Create connection
@@ -34,7 +35,7 @@ ppdb_error_t ppdb_connection_create(ppdb_ctx_t* ctx, ppdb_connection_state_t** c
     state->socket = -1;
 
     // Initialize mutex
-    if (pthread_mutex_init(&state->mutex, NULL) != 0) {
+    if (ppdb_base_mutex_create(&state->mutex) != 0) {
         free(state);
         return PPDB_ERR_MUTEX;
     }
@@ -42,7 +43,7 @@ ppdb_error_t ppdb_connection_create(ppdb_ctx_t* ctx, ppdb_connection_state_t** c
     // Create transaction
     ppdb_error_t err = ppdb_database_txn_begin(ctx->db, NULL, 0, &state->txn);
     if (err != PPDB_OK) {
-        pthread_mutex_destroy(&state->mutex);
+        ppdb_base_mutex_destroy(&state->mutex);
         free(state);
         return err;
     }
@@ -65,7 +66,7 @@ void ppdb_connection_destroy(ppdb_connection_state_t* conn) {
         close(conn->socket);
     }
 
-    pthread_mutex_destroy(&conn->mutex);
+    ppdb_base_mutex_destroy(&conn->mutex);
     free(conn);
 }
 
@@ -75,10 +76,10 @@ ppdb_error_t ppdb_connection_set_socket(ppdb_connection_state_t* conn, int socke
         return PPDB_ERR_PARAM;
     }
 
-    pthread_mutex_lock(&conn->mutex);
+    ppdb_base_mutex_lock(&conn->mutex);
     conn->socket = socket;
     conn->connected = true;
-    pthread_mutex_unlock(&conn->mutex);
+    ppdb_base_mutex_unlock(&conn->mutex);
 
     return PPDB_OK;
 }
@@ -89,15 +90,15 @@ ppdb_error_t ppdb_connection_send(ppdb_connection_state_t* conn, const void* dat
         return PPDB_ERR_PARAM;
     }
 
-    pthread_mutex_lock(&conn->mutex);
+    ppdb_base_mutex_lock(&conn->mutex);
 
     if (!conn->connected || conn->socket < 0) {
-        pthread_mutex_unlock(&conn->mutex);
+        ppdb_base_mutex_unlock(&conn->mutex);
         return PPDB_ERR_NOT_CONNECTED;
     }
 
     ssize_t sent = send(conn->socket, data, size, 0);
-    pthread_mutex_unlock(&conn->mutex);
+    ppdb_base_mutex_unlock(&conn->mutex);
 
     if (sent < 0) {
         return PPDB_ERR_IO;
@@ -112,15 +113,15 @@ ppdb_error_t ppdb_connection_recv(ppdb_connection_state_t* conn, void* data, siz
         return PPDB_ERR_PARAM;
     }
 
-    pthread_mutex_lock(&conn->mutex);
+    ppdb_base_mutex_lock(&conn->mutex);
 
     if (!conn->connected || conn->socket < 0) {
-        pthread_mutex_unlock(&conn->mutex);
+        ppdb_base_mutex_unlock(&conn->mutex);
         return PPDB_ERR_NOT_CONNECTED;
     }
 
     ssize_t received = recv(conn->socket, data, size, 0);
-    pthread_mutex_unlock(&conn->mutex);
+    ppdb_base_mutex_unlock(&conn->mutex);
 
     if (received < 0) {
         return PPDB_ERR_IO;
@@ -135,7 +136,7 @@ void ppdb_connection_close(ppdb_connection_state_t* conn) {
         return;
     }
 
-    pthread_mutex_lock(&conn->mutex);
+    ppdb_base_mutex_lock(&conn->mutex);
 
     if (conn->socket >= 0) {
         close(conn->socket);
@@ -143,7 +144,7 @@ void ppdb_connection_close(ppdb_connection_state_t* conn) {
     }
 
     conn->connected = false;
-    pthread_mutex_unlock(&conn->mutex);
+    ppdb_base_mutex_unlock(&conn->mutex);
 }
 
 #endif // PPDB_PEER_CONNECTION_INC_C_

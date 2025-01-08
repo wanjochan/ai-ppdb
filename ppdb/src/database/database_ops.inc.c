@@ -27,10 +27,10 @@ int ppdb_database_put(ppdb_database_t* db, ppdb_database_txn_t* txn,
     }
 
     // Update stats
-    pthread_mutex_lock(&db->mutex);
+    ppdb_base_mutex_lock(&db->mutex);
     db->stats.write_ops++;
     db->stats.bytes_written += key_size + value_size;
-    pthread_mutex_unlock(&db->mutex);
+    ppdb_base_mutex_unlock(&db->mutex);
 
     return PPDB_OK;
 }
@@ -58,11 +58,11 @@ int ppdb_database_get(ppdb_database_t* db, ppdb_database_txn_t* txn,
     ret = database_write_set_get(txn->write_set, table, key, key_size, value, value_size);
     if (ret == PPDB_OK) {
         // Update stats
-        pthread_mutex_lock(&db->mutex);
+        ppdb_base_mutex_lock(&db->mutex);
         db->stats.read_ops++;
         db->stats.write_set_hits++;
         db->stats.bytes_read += key_size + *value_size;
-        pthread_mutex_unlock(&db->mutex);
+        ppdb_base_mutex_unlock(&db->mutex);
         return PPDB_OK;
     }
 
@@ -84,19 +84,19 @@ int ppdb_database_get(ppdb_database_t* db, ppdb_database_txn_t* txn,
         }
 
         // Update stats
-        pthread_mutex_lock(&db->mutex);
+        ppdb_base_mutex_lock(&db->mutex);
         db->stats.read_ops++;
         db->stats.memtable_hits++;
         db->stats.bytes_read += key_size + *value_size;
-        pthread_mutex_unlock(&db->mutex);
+        ppdb_base_mutex_unlock(&db->mutex);
         return PPDB_OK;
     }
 
     // Not found
-    pthread_mutex_lock(&db->mutex);
+    ppdb_base_mutex_lock(&db->mutex);
     db->stats.read_ops++;
     db->stats.read_misses++;
-    pthread_mutex_unlock(&db->mutex);
+    ppdb_base_mutex_unlock(&db->mutex);
     return PPDB_ERR_NOT_FOUND;
 }
 
@@ -125,11 +125,11 @@ int ppdb_database_delete(ppdb_database_t* db, ppdb_database_txn_t* txn,
     }
 
     // Update stats
-    pthread_mutex_lock(&db->mutex);
+    ppdb_base_mutex_lock(&db->mutex);
     db->stats.delete_ops++;
-    pthread_mutex_unlock(&db->mutex);
+    ppdb_base_mutex_unlock(&db->mutex);
 
-    return PPDB_OK;
+   return PPDB_OK;
 }
 
 int ppdb_database_exists(ppdb_database_t* db, ppdb_database_txn_t* txn,

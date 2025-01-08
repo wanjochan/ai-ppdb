@@ -9,7 +9,7 @@ typedef struct ppdb_database_table_node {
 typedef struct ppdb_database_table_list {
     ppdb_database_table_node_t* head;
     size_t size;
-    pthread_mutex_t mutex;
+    ppdb_base_mutex_t mutex;
 } ppdb_database_table_list_t;
 
 static int database_table_list_init(ppdb_database_table_list_t** list) {
@@ -24,7 +24,7 @@ static int database_table_list_init(ppdb_database_table_list_t** list) {
 
     (*list)->head = NULL;
     (*list)->size = 0;
-    pthread_mutex_init(&(*list)->mutex, NULL);
+    ppdb_base_mutex_create(&(*list)->mutex);
 
     return PPDB_OK;
 }
@@ -42,7 +42,7 @@ static void database_table_list_cleanup(ppdb_database_table_list_t* list) {
         current = next;
     }
 
-    pthread_mutex_destroy(&list->mutex);
+    ppdb_base_mutex_destroy(&list->mutex);
 }
 
 int ppdb_database_table_list_add(ppdb_database_table_list_t* list, ppdb_database_table_t* table) {
@@ -57,11 +57,11 @@ int ppdb_database_table_list_add(ppdb_database_table_list_t* list, ppdb_database
 
     node->table = table;
     
-    pthread_mutex_lock(&list->mutex);
+    ppdb_base_mutex_lock(&list->mutex);
     node->next = list->head;
     list->head = node;
     list->size++;
-    pthread_mutex_unlock(&list->mutex);
+    ppdb_base_mutex_unlock(&list->mutex);
 
     return PPDB_OK;
 }
@@ -71,7 +71,7 @@ int ppdb_database_table_list_remove(ppdb_database_table_list_t* list, const char
         return PPDB_ERR_PARAM;
     }
 
-    pthread_mutex_lock(&list->mutex);
+    ppdb_base_mutex_lock(&list->mutex);
 
     ppdb_database_table_node_t* current = list->head;
     ppdb_database_table_node_t* prev = NULL;
@@ -85,14 +85,14 @@ int ppdb_database_table_list_remove(ppdb_database_table_list_t* list, const char
             }
             list->size--;
             free(current);
-            pthread_mutex_unlock(&list->mutex);
+            ppdb_base_mutex_unlock(&list->mutex);
             return PPDB_OK;
         }
         prev = current;
         current = current->next;
     }
 
-    pthread_mutex_unlock(&list->mutex);
+    ppdb_base_mutex_unlock(&list->mutex);
     return PPDB_ERR_NOT_FOUND;
 }
 
@@ -101,19 +101,19 @@ int ppdb_database_table_list_find(ppdb_database_table_list_t* list, const char* 
         return PPDB_ERR_PARAM;
     }
 
-    pthread_mutex_lock(&list->mutex);
+    ppdb_base_mutex_lock(&list->mutex);
 
     ppdb_database_table_node_t* current = list->head;
     while (current) {
         if (strcmp(current->table->name, name) == 0) {
             *table = current->table;
-            pthread_mutex_unlock(&list->mutex);
+            ppdb_base_mutex_unlock(&list->mutex);
             return PPDB_OK;
         }
         current = current->next;
     }
 
-    pthread_mutex_unlock(&list->mutex);
+    ppdb_base_mutex_unlock(&list->mutex);
     return PPDB_ERR_NOT_FOUND;
 }
 

@@ -13,8 +13,8 @@ typedef struct ppdb_database_memkv_entry {
 typedef struct ppdb_database_memkv {
     ppdb_database_memkv_entry_t* entries;
     size_t size;
-    pthread_mutex_t mutex;
-    pthread_rwlock_t rwlock;
+    ppdb_base_mutex_t mutex;
+    ppdb_base_rwlock_t rwlock;
 } ppdb_database_memkv_t;
 
 static int database_memkv_init(ppdb_database_memkv_t** memkv) {
@@ -30,8 +30,8 @@ static int database_memkv_init(ppdb_database_memkv_t** memkv) {
     (*memkv)->entries = NULL;
     (*memkv)->size = 0;
 
-    pthread_mutex_init(&(*memkv)->mutex, NULL);
-    pthread_rwlock_init(&(*memkv)->rwlock, NULL);
+    ppdb_base_mutex_create(&(*memkv)->mutex, NULL);
+    ppdb_base_rwlock_create(&(*memkv)->rwlock, NULL);
 
     return PPDB_OK;
 }
@@ -50,8 +50,8 @@ static void database_memkv_cleanup(ppdb_database_memkv_t* memkv) {
         current = next;
     }
 
-    pthread_mutex_destroy(&memkv->mutex);
-    pthread_rwlock_destroy(&memkv->rwlock);
+    ppdb_base_mutex_destroy(&memkv->mutex);
+    ppdb_base_rwlock_destroy(&memkv->rwlock);
 }
 
 int ppdb_database_memkv_put(ppdb_database_memkv_t* memkv, const void* key, size_t key_size, const void* value, size_t value_size, uint64_t version) {
@@ -79,11 +79,11 @@ int ppdb_database_memkv_put(ppdb_database_memkv_t* memkv, const void* key, size_
     entry->value_size = value_size;
     entry->version = version;
 
-    pthread_rwlock_wrlock(&memkv->rwlock);
+    ppdb_base_rwlock_wrlock(&memkv->rwlock);
     entry->next = memkv->entries;
     memkv->entries = entry;
     memkv->size++;
-    pthread_rwlock_unlock(&memkv->rwlock);
+    ppdb_base_rwlock_unlock(&memkv->rwlock);
 
     return PPDB_OK;
 }
@@ -93,26 +93,26 @@ int ppdb_database_memkv_get(ppdb_database_memkv_t* memkv, const void* key, size_
         return PPDB_ERR_PARAM;
     }
 
-    pthread_rwlock_rdlock(&memkv->rwlock);
+    ppdb_base_rwlock_rdlock(&memkv->rwlock);
 
     ppdb_database_memkv_entry_t* current = memkv->entries;
     while (current) {
         if (current->key_size == key_size && memcmp(current->key, key, key_size) == 0) {
             *value = malloc(current->value_size);
             if (!*value) {
-                pthread_rwlock_unlock(&memkv->rwlock);
+                ppdb_base_rwlock_unlock(&memkv->rwlock);
                 return PPDB_ERR_NOMEM;
             }
             memcpy(*value, current->value, current->value_size);
             *value_size = current->value_size;
             *version = current->version;
-            pthread_rwlock_unlock(&memkv->rwlock);
+            ppdb_base_rwlock_unlock(&memkv->rwlock);
             return PPDB_OK;
         }
         current = current->next;
     }
 
-    pthread_rwlock_unlock(&memkv->rwlock);
+    ppdb_base_rwlock_unlock(&memkv->rwlock);
     return PPDB_ERR_NOT_FOUND;
 }
 
