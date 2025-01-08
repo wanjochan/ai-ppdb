@@ -29,6 +29,8 @@ if not "%TEST_MODE%"=="notest" (
         test_storage_data.c
         test_storage_table.c
         test_storage_maintain.c
+        test_storage_skiplist_lockfree.c
+        test_storage_memkv.c
     ) do (
         echo Building %%f...
         %GCC% %CFLAGS% "%BUILD_DIR%\storage.o" "%BUILD_DIR%\base.o" "%BUILD_DIR%\engine.o" "%PPDB_DIR%\test\white\test_framework.c" "%PPDB_DIR%\test\white\storage\%%f" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%~nf.exe.dbg"
