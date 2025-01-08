@@ -49,15 +49,4 @@ void ppdb_engine_get_stats(ppdb_engine_t* engine, ppdb_engine_stats_t* stats) {
 
     // Copy statistics
     *stats = engine->stats;
-}
-
-void ppdb_engine_txn_get_stats(ppdb_engine_txn_t* txn, ppdb_engine_txn_stats_t* stats) {
-    if (!txn || !stats) return;
-
-    // Copy transaction statistics
-    stats->reads = txn->stats.reads;
-    stats->writes = txn->stats.writes;
-    stats->is_active = txn->stats.is_active;
-    stats->is_committed = txn->stats.is_committed;
-    stats->is_rolledback = txn->stats.is_rolledback;
 } 

@@ -9,6 +9,7 @@
 #include "internal/engine.h"
 
 // Include implementation files
+#include "engine/engine_struct.inc.c"
 #include "engine/engine_txn.inc.c"
 #include "engine/engine_table.inc.c"
 #include "engine/engine_table_list.inc.c"

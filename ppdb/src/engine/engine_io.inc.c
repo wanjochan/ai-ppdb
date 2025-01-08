@@ -63,11 +63,13 @@ static void ppdb_engine_io_thread(void* arg) {
 
 // Put operation
 ppdb_error_t ppdb_engine_put(ppdb_engine_txn_t* txn, ppdb_engine_table_t* table,
-                            const void* key, size_t key_size,
-                            const void* value, size_t value_size) {
+                         const void* key, size_t key_size,
+                         const void* value, size_t value_size) {
     if (!txn || !table || !key || !value) return PPDB_ENGINE_ERR_PARAM;
-    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
     if (key_size == 0 || value_size == 0) return PPDB_ENGINE_ERR_PARAM;
+    if (!txn->stats.is_active || txn->stats.is_committed || txn->stats.is_rolledback) {
+        return PPDB_ENGINE_ERR_INVALID_STATE;
+    }
 
     // Check if table is open
     if (!table->is_open) return PPDB_ENGINE_ERR_INVALID_STATE;
@@ -76,26 +78,62 @@ ppdb_error_t ppdb_engine_put(ppdb_engine_txn_t* txn, ppdb_engine_table_t* table,
     ppdb_error_t err = ppdb_base_mutex_lock(table->lock);
     if (err != PPDB_OK) return err;
 
-    // Write table data
-    // TODO: Implement actual storage operation
-    // For now, just update counters
+    // Allocate memory for key-value pair
+    void* key_copy = malloc(key_size);
+    void* value_copy = malloc(value_size);
+    
+    if (!key_copy || !value_copy) {
+        if (key_copy) free(key_copy);
+        if (value_copy) free(value_copy);
+        ppdb_base_mutex_unlock(table->lock);
+        return PPDB_ENGINE_ERR_MEMORY;
+    }
+
+    // Copy key and value
+    memcpy(key_copy, key, key_size);
+    memcpy(value_copy, value, value_size);
+
+    // Create new entry
+    ppdb_engine_entry_t* entry = malloc(sizeof(ppdb_engine_entry_t));
+    if (!entry) {
+        free(key_copy);
+        free(value_copy);
+        ppdb_base_mutex_unlock(table->lock);
+        return PPDB_ENGINE_ERR_MEMORY;
+    }
+
+    // Initialize entry
+    entry->key = key_copy;
+    entry->key_size = key_size;
+    entry->value = value_copy;
+    entry->value_size = value_size;
+    entry->next = NULL;
+
+    // Add to table's entry list
+    if (!table->entries) {
+        table->entries = entry;
+    } else {
+        entry->next = table->entries;
+        table->entries = entry;
+    }
+
+    // Update table statistics
     table->size++;
     ppdb_base_counter_inc(txn->stats.writes);
-    err = PPDB_OK;
 
     // Unlock table
     ppdb_base_mutex_unlock(table->lock);
 
-    return err;
+    return PPDB_OK;
 }
 
 // Get operation
 ppdb_error_t ppdb_engine_get(ppdb_engine_txn_t* txn, ppdb_engine_table_t* table,
-                            const void* key, size_t key_size,
-                            void* value, size_t* value_size) {
+                         const void* key, size_t key_size,
+                         void* value, size_t* value_size) {
     if (!txn || !table || !key || !value || !value_size) return PPDB_ENGINE_ERR_PARAM;
-    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
     if (key_size == 0) return PPDB_ENGINE_ERR_PARAM;
+    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
 
     // Check if table is open
     if (!table->is_open) return PPDB_ENGINE_ERR_INVALID_STATE;
@@ -104,40 +142,40 @@ ppdb_error_t ppdb_engine_get(ppdb_engine_txn_t* txn, ppdb_engine_table_t* table,
     ppdb_error_t err = ppdb_base_mutex_lock(table->lock);
     if (err != PPDB_OK) return err;
 
-    // Read table data
-    // TODO: Implement actual storage operation
-    // For now, just return a dummy value for testing
-    if (table->size == 0) {
-        ppdb_base_mutex_unlock(table->lock);
-        return PPDB_ENGINE_ERR_NOT_FOUND;
+    // Search for the key
+    ppdb_engine_entry_t* entry = table->entries;
+    while (entry) {
+        if (entry->key_size == key_size && memcmp(entry->key, key, key_size) == 0) {
+            // Found the key, check buffer size
+            if (*value_size < entry->value_size) {
+                *value_size = entry->value_size;
+                ppdb_base_mutex_unlock(table->lock);
+                return PPDB_ENGINE_ERR_BUFFER_FULL;
+            }
+
+            // Copy value
+            memcpy(value, entry->value, entry->value_size);
+            *value_size = entry->value_size;
+            ppdb_base_counter_inc(txn->stats.reads);
+
+            // Unlock table
+            ppdb_base_mutex_unlock(table->lock);
+            return PPDB_OK;
+        }
+        entry = entry->next;
     }
 
-    const char* dummy_value = "test_value";
-    size_t dummy_size = strlen(dummy_value) + 1;
-    
-    // Check buffer size
-    if (*value_size < dummy_size) {
-        ppdb_base_mutex_unlock(table->lock);
-        return PPDB_ENGINE_ERR_BUFFER_FULL;
-    }
-    
-    memcpy(value, dummy_value, dummy_size);
-    *value_size = dummy_size;
-    ppdb_base_counter_inc(txn->stats.reads);
-    err = PPDB_OK;
-
-    // Unlock table
+    // Key not found
     ppdb_base_mutex_unlock(table->lock);
-
-    return err;
+    return PPDB_ENGINE_ERR_NOT_FOUND;
 }
 
 // Delete operation
 ppdb_error_t ppdb_engine_delete(ppdb_engine_txn_t* txn, ppdb_engine_table_t* table,
-                               const void* key, size_t key_size) {
+                            const void* key, size_t key_size) {
     if (!txn || !table || !key) return PPDB_ENGINE_ERR_PARAM;
-    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
     if (key_size == 0) return PPDB_ENGINE_ERR_PARAM;
+    if (!txn->stats.is_active) return PPDB_ENGINE_ERR_INVALID_STATE;
 
     // Check if table is open
     if (!table->is_open) return PPDB_ENGINE_ERR_INVALID_STATE;
@@ -146,21 +184,33 @@ ppdb_error_t ppdb_engine_delete(ppdb_engine_txn_t* txn, ppdb_engine_table_t* tab
     ppdb_error_t err = ppdb_base_mutex_lock(table->lock);
     if (err != PPDB_OK) return err;
 
-    // Delete table data
-    // TODO: Implement actual storage operation
-    // For now, just update counters
-    if (table->size > 0) {
-        table->size = 0;  // Set size to 0 to simulate complete deletion
-        ppdb_base_counter_inc(txn->stats.writes);
-        err = PPDB_OK;
-    } else {
-        err = PPDB_ENGINE_ERR_NOT_FOUND;
+    // Search for the key
+    ppdb_engine_entry_t** curr = &table->entries;
+    while (*curr) {
+        if ((*curr)->key_size == key_size && memcmp((*curr)->key, key, key_size) == 0) {
+            // Found the key, remove it
+            ppdb_engine_entry_t* entry = *curr;
+            *curr = entry->next;
+
+            // Free entry data
+            free(entry->key);
+            free(entry->value);
+            free(entry);
+
+            // Update statistics
+            table->size--;
+            ppdb_base_counter_inc(txn->stats.writes);
+
+            // Unlock table
+            ppdb_base_mutex_unlock(table->lock);
+            return PPDB_OK;
+        }
+        curr = &(*curr)->next;
     }
 
-    // Unlock table
+    // Key not found
     ppdb_base_mutex_unlock(table->lock);
-
-    return err;
+    return PPDB_ENGINE_ERR_NOT_FOUND;
 }
 
 // Maintenance operations

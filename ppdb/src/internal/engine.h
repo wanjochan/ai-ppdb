@@ -36,6 +36,15 @@ struct ppdb_engine_txn_s {
     ppdb_engine_txn_t* next;      // Next transaction in list
 };
 
+// Entry structure
+typedef struct ppdb_engine_entry_s {
+    void* key;                     // Key data
+    size_t key_size;              // Key size
+    void* value;                   // Value data
+    size_t value_size;            // Value size
+    struct ppdb_engine_entry_s* next; // Next entry in list
+} ppdb_engine_entry_t;
+
 // Table structure
 struct ppdb_engine_table_s {
     char* name;                    // Table name
@@ -44,6 +53,7 @@ struct ppdb_engine_table_s {
     ppdb_base_mutex_t* lock;      // Table lock
     uint64_t size;                // Number of records
     bool is_open;                 // Table open state
+    ppdb_engine_entry_t* entries; // List of entries
 };
 
 // Cursor structure

@@ -14,44 +14,44 @@ static int ppdb_engine_compare_table_name(const void* a, const void* b) {
     return strcmp(table_a->name, table_b->name);
 }
 
-// Create table list
+// Table list operations
 ppdb_error_t ppdb_engine_table_list_create(ppdb_engine_t* engine, ppdb_engine_table_list_t** list) {
     if (!engine || !list) return PPDB_ENGINE_ERR_PARAM;
-    if (*list) return PPDB_ENGINE_ERR_PARAM;
+    if (*list) return PPDB_ENGINE_ERR_PARAM;  // Don't allow overwriting existing list
 
     // Allocate list structure
-    ppdb_engine_table_list_t* l = malloc(sizeof(ppdb_engine_table_list_t));
-    if (!l) return PPDB_ENGINE_ERR_MEMORY;
+    ppdb_engine_table_list_t* new_list = malloc(sizeof(ppdb_engine_table_list_t));
+    if (!new_list) return PPDB_ENGINE_ERR_MEMORY;
 
-    // Initialize structure
-    memset(l, 0, sizeof(ppdb_engine_table_list_t));
-    l->engine = engine;
+    // Initialize list structure
+    memset(new_list, 0, sizeof(ppdb_engine_table_list_t));
+    new_list->engine = engine;
+    new_list->skiplist = NULL;
 
-    // Create mutex
-    ppdb_error_t err = ppdb_engine_mutex_create(&l->lock);
+    // Create list mutex
+    ppdb_error_t err = ppdb_base_mutex_create(&new_list->lock);
     if (err != PPDB_OK) {
-        free(l);
+        free(new_list);
         return err;
     }
 
     // Create skiplist
-    err = ppdb_base_skiplist_create(&l->skiplist, ppdb_engine_compare_table_name);
+    err = ppdb_base_skiplist_create(&new_list->skiplist, ppdb_engine_compare_table_name);
     if (err != PPDB_OK) {
-        ppdb_engine_mutex_destroy(l->lock);
-        free(l);
+        ppdb_base_mutex_destroy(new_list->lock);
+        free(new_list);
         return err;
     }
 
-    *list = l;
+    *list = new_list;
     return PPDB_OK;
 }
 
-// Destroy table list
 ppdb_error_t ppdb_engine_table_list_destroy(ppdb_engine_table_list_t* list) {
     if (!list) return PPDB_ENGINE_ERR_PARAM;
 
     // Lock list
-    ppdb_error_t err = ppdb_engine_mutex_lock(list->lock);
+    ppdb_error_t err = ppdb_base_mutex_lock(list->lock);
     if (err != PPDB_OK) return err;
 
     // Destroy skiplist
@@ -60,81 +60,81 @@ ppdb_error_t ppdb_engine_table_list_destroy(ppdb_engine_table_list_t* list) {
         list->skiplist = NULL;
     }
 
-    // Unlock and destroy mutex
-    ppdb_engine_mutex_unlock(list->lock);
-    ppdb_engine_mutex_destroy(list->lock);
+    // Unlock and destroy list mutex
+    ppdb_base_mutex_unlock(list->lock);
+    ppdb_base_mutex_destroy(list->lock);
 
-    // Free structure
+    // Free list structure
     free(list);
     return PPDB_OK;
 }
 
-// Add table to list
 ppdb_error_t ppdb_engine_table_list_add(ppdb_engine_table_list_t* list, ppdb_engine_table_t* table) {
     if (!list || !table) return PPDB_ENGINE_ERR_PARAM;
 
     // Lock list
-    ppdb_error_t err = ppdb_engine_mutex_lock(list->lock);
+    ppdb_error_t err = ppdb_base_mutex_lock(list->lock);
     if (err != PPDB_OK) return err;
 
     // Check if table already exists
     ppdb_engine_table_t* existing = NULL;
-    err = ppdb_base_skiplist_find(list->skiplist, table, (void**)&existing);
-    if (err == PPDB_OK) {
-        ppdb_engine_mutex_unlock(list->lock);
+    err = ppdb_base_skiplist_find(list->skiplist, table->name, (void**)&existing);
+    if (err == PPDB_OK && existing) {
+        ppdb_base_mutex_unlock(list->lock);
         return PPDB_ENGINE_ERR_EXISTS;
     }
 
     // Add table to skiplist
-    err = ppdb_base_skiplist_insert(list->skiplist, table, table);
-    
+    err = ppdb_base_skiplist_insert(list->skiplist, table->name, table);
+    if (err != PPDB_OK) {
+        ppdb_base_mutex_unlock(list->lock);
+        return err;
+    }
+
     // Unlock list
-    ppdb_engine_mutex_unlock(list->lock);
-    return err;
+    ppdb_base_mutex_unlock(list->lock);
+
+    return PPDB_OK;
 }
 
-// Remove table from list
 ppdb_error_t ppdb_engine_table_list_remove(ppdb_engine_table_list_t* list, const char* name) {
     if (!list || !name) return PPDB_ENGINE_ERR_PARAM;
 
     // Lock list
-    ppdb_error_t err = ppdb_engine_mutex_lock(list->lock);
+    ppdb_error_t err = ppdb_base_mutex_lock(list->lock);
     if (err != PPDB_OK) return err;
 
-    // Create temporary table for lookup
-    ppdb_engine_table_t temp = {
-        .name = (char*)name,
-        .name_len = strlen(name)
-    };
-
     // Remove table from skiplist
-    err = ppdb_base_skiplist_remove(list->skiplist, &temp);
+    err = ppdb_base_skiplist_remove(list->skiplist, name);
+    if (err != PPDB_OK) {
+        ppdb_base_mutex_unlock(list->lock);
+        return err;
+    }
 
     // Unlock list
-    ppdb_engine_mutex_unlock(list->lock);
-    return err;
+    ppdb_base_mutex_unlock(list->lock);
+
+    return PPDB_OK;
 }
 
-// Find table in list
-ppdb_error_t ppdb_engine_table_list_find(ppdb_engine_table_list_t* list, const char* name, ppdb_engine_table_t** table) {
+ppdb_error_t ppdb_engine_table_list_find(ppdb_engine_table_list_t* list, const char* name,
+                                     ppdb_engine_table_t** table) {
     if (!list || !name || !table) return PPDB_ENGINE_ERR_PARAM;
 
     // Lock list
-    ppdb_error_t err = ppdb_engine_mutex_lock(list->lock);
+    ppdb_error_t err = ppdb_base_mutex_lock(list->lock);
     if (err != PPDB_OK) return err;
 
-    // Create temporary table for lookup
-    ppdb_engine_table_t temp = {
-        .name = (char*)name,
-        .name_len = strlen(name)
-    };
-
     // Find table in skiplist
-    err = ppdb_base_skiplist_find(list->skiplist, &temp, (void**)table);
+    err = ppdb_base_skiplist_find(list->skiplist, name, (void**)table);
+    if (err != PPDB_OK) {
+        *table = NULL;
+    }
 
     // Unlock list
-    ppdb_engine_mutex_unlock(list->lock);
-    return err;
+    ppdb_base_mutex_unlock(list->lock);
+
+    return PPDB_OK;
 }
 
 // Iterate over tables in list
