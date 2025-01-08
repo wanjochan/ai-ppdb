@@ -117,43 +117,102 @@ static Value eval_if(Node* node, Env* env);
 static Value eval_local(Node* node, Env* env);
 static Value eval_lambda(Node* node, Env* env);
 static Node* parse_expr(Parser* p);
+static bool env_add(Env* env, const char* name, Value value);
+static Value* env_get(Env* env, const char* name);
+static Env* new_env(Env* parent);
+static void free_env(Env* env);
+
+// 内置函数声明
+static Value builtin_add(Node* node, Env* env);
+static Value builtin_sub(Node* node, Env* env);
+static Value builtin_mul(Node* node, Env* env);
+static Value builtin_div(Node* node, Env* env);
+static Value builtin_mod(Node* node, Env* env);
 
 //-----------------------------------------------------------------------------
-// 内置函数定义
+// 函数注册表
 //-----------------------------------------------------------------------------
 
 // 内置函数类型
 typedef Value (*BuiltinFunc)(Node*, Env*);
 
-// 内置函数注册表项
+// 特殊形式类型
+typedef Value (*SpecialFormFunc)(Node*, Env*);
+
+// 符号类型
+typedef enum {
+    SYM_BUILTIN,    // 内置函数
+    SYM_SPECIAL     // 特殊形式
+} SymbolType;
+
+// 符号表项
 typedef struct {
     char name[32];
-    BuiltinFunc func;
-} BuiltinEntry;
+    SymbolType type;
+    union {
+        BuiltinFunc builtin;
+        SpecialFormFunc special;
+    } func;
+} SymbolEntry;
 
-// 内置函数注册表
-static BuiltinEntry builtin_funcs[32] = {0};
-static size_t builtin_func_count = 0;
+// 符号注册表
+static SymbolEntry symbol_table[64] = {0};
+static size_t symbol_count = 0;
 
 // 注册内置函数
 static bool register_builtin(const char* name, BuiltinFunc func) {
-    if (builtin_func_count >= 32) return false;
+    if (symbol_count >= 64) return false;
     
-    strncpy(builtin_funcs[builtin_func_count].name, name, sizeof(builtin_funcs[0].name) - 1);
-    builtin_funcs[builtin_func_count].func = func;
-    builtin_func_count++;
+    SymbolEntry* entry = &symbol_table[symbol_count++];
+    strncpy(entry->name, name, sizeof(entry->name) - 1);
+    entry->type = SYM_BUILTIN;
+    entry->func.builtin = func;
     return true;
 }
 
-// 查找内置函数
-static BuiltinFunc lookup_builtin(const char* name) {
-    for (size_t i = 0; i < builtin_func_count; i++) {
-        if (strcmp(builtin_funcs[i].name, name) == 0) {
-            return builtin_funcs[i].func;
+// 注册特殊形式
+static bool register_special(const char* name, SpecialFormFunc func) {
+    if (symbol_count >= 64) return false;
+    
+    SymbolEntry* entry = &symbol_table[symbol_count++];
+    strncpy(entry->name, name, sizeof(entry->name) - 1);
+    entry->type = SYM_SPECIAL;
+    entry->func.special = func;
+    return true;
+}
+
+// 查找符号
+static SymbolEntry* lookup_symbol(const char* name) {
+    for (size_t i = 0; i < symbol_count; i++) {
+        if (strcmp(symbol_table[i].name, name) == 0) {
+            return &symbol_table[i];
         }
     }
     return NULL;
 }
+
+// 初始化所有符号
+static bool init_symbols(void) {
+    bool ok = true;
+    
+    // 注册内置函数
+    ok &= register_builtin("+", builtin_add);
+    ok &= register_builtin("-", builtin_sub);
+    ok &= register_builtin("*", builtin_mul);
+    ok &= register_builtin("/", builtin_div);
+    ok &= register_builtin("mod", builtin_mod);
+    
+    // 注册特殊形式 - 直接使用 eval_xxx 函数
+    ok &= register_special("if", eval_if);
+    ok &= register_special("lambda", eval_lambda);
+    ok &= register_special("local", eval_local);
+    
+    return ok;
+}
+
+//-----------------------------------------------------------------------------
+// 内置函数定义
+//-----------------------------------------------------------------------------
 
 // 内置函数实现
 static Value builtin_add(Node* node, Env* env) {
@@ -242,16 +301,7 @@ static Value builtin_mod(Node* node, Env* env) {
     return (Value){.type = VAL_NUM, .data.num = fmod(arg1.data.num, arg2.data.num)};
 }
 
-// 初始化所有内置函数
-static bool init_builtins(void) {
-    bool ok = true;
-    ok &= register_builtin("+", builtin_add);
-    ok &= register_builtin("-", builtin_sub);
-    ok &= register_builtin("*", builtin_mul);
-    ok &= register_builtin("/", builtin_div);
-    ok &= register_builtin("mod", builtin_mod);
-    return ok;
-}
+// ... rest of the code ...
 
 //-----------------------------------------------------------------------------
 // 工具函数
@@ -352,8 +402,7 @@ static Env* new_env(Env* parent) {
     Env* env = (Env*)calloc(1, sizeof(Env));
     if (env) {
         env->parent = parent;
-        env->depth = parent ? parent->depth + 1 : 0;  // 计算当前深度
-        // 如果有父环境,增加引用计数
+        env->depth = parent ? parent->depth + 1 : 0;
         if (parent) parent->ref_count++;
     }
     return env;
@@ -363,16 +412,12 @@ static Env* new_env(Env* parent) {
 static void free_env(Env* env) {
     if (!env) return;
     
-    // 减少引用计数
     if (env->ref_count > 0) {
         env->ref_count--;
         return;
     }
     
-    // 释放父环境
     if (env->parent) free_env(env->parent);
-    
-    // 释放本环境
     free(env);
 }
 
@@ -394,13 +439,11 @@ static bool env_add(Env* env, const char* name, Value value) {
 static Value* env_get(Env* env, const char* name) {
     if (!env || !name) return NULL;
     
-    // 先在当前环境中查找
     for (size_t i = 0; i < MAX_VARS; i++) {
         if (env->vars[i].name[0] && strcmp(env->vars[i].name, name) == 0)
             return &env->vars[i].value;
     }
     
-    // 如果没找到,在父环境中查找
     return env->parent ? env_get(env->parent, name) : NULL;
 }
 
@@ -730,11 +773,73 @@ static size_t g_recursion_depth = 0;
 static Value eval_call(Node* node, Env* env) {
     if (!node || !env) return (Value){.type = VAL_ERR, .data.err = "Invalid call"};
     
-    // 检查是否是内置函数
-    BuiltinFunc builtin = lookup_builtin(node->data.call.name);
-    if (builtin) return builtin(node, env);
+    // 查找符号
+    SymbolEntry* symbol = lookup_symbol(node->data.call.name);
+    if (symbol) {
+        // 根据符号类型调用相应的处理函数
+        if (symbol->type == SYM_BUILTIN) {
+            return symbol->func.builtin(node, env);
+        } else {
+            // 对于特殊形式，我们需要将 NODE_CALL 转换为对应的节点类型
+            NodeType special_type;
+            if (strcmp(node->data.call.name, "if") == 0) {
+                if (node->data.call.arg_count != 3)
+                    return (Value){.type = VAL_ERR, .data.err = "If requires 3 arguments"};
+                Node* if_node = new_node(NODE_IF);
+                if (!if_node) return (Value){.type = VAL_ERR, .data.err = "Out of memory"};
+                if_node->data.if_expr.cond = node->data.call.args[0];
+                if_node->data.if_expr.then_expr = node->data.call.args[1];
+                if_node->data.if_expr.else_expr = node->data.call.args[2];
+                Value result = symbol->func.special(if_node, env);
+                if_node->data.if_expr.cond = NULL;  // 防止 free_node 释放参数
+                if_node->data.if_expr.then_expr = NULL;
+                if_node->data.if_expr.else_expr = NULL;
+                free_node(if_node);
+                return result;
+            }
+            else if (strcmp(node->data.call.name, "lambda") == 0) {
+                if (node->data.call.arg_count != 2)
+                    return (Value){.type = VAL_ERR, .data.err = "Lambda requires 2 arguments"};
+                Node* lambda_node = new_node(NODE_LAMBDA);
+                if (!lambda_node) return (Value){.type = VAL_ERR, .data.err = "Out of memory"};
+                // 第一个参数应该是符号
+                if (node->data.call.args[0]->type != NODE_SYM)
+                    return (Value){.type = VAL_ERR, .data.err = "Lambda parameter must be a symbol"};
+                strncpy(lambda_node->data.lambda.param, 
+                       node->data.call.args[0]->data.sym, 
+                       sizeof(lambda_node->data.lambda.param) - 1);
+                lambda_node->data.lambda.body = node->data.call.args[1];
+                Value result = symbol->func.special(lambda_node, env);
+                lambda_node->data.lambda.body = NULL;  // 防止 free_node 释放参数
+                free_node(lambda_node);
+                return result;
+            }
+            else if (strcmp(node->data.call.name, "local") == 0) {
+                if (node->data.call.arg_count < 2)
+                    return (Value){.type = VAL_ERR, .data.err = "Local requires at least 2 arguments"};
+                Node* local_node = new_node(NODE_LOCAL);
+                if (!local_node) return (Value){.type = VAL_ERR, .data.err = "Out of memory"};
+                // 第一个参数应该是符号
+                if (node->data.call.args[0]->type != NODE_SYM)
+                    return (Value){.type = VAL_ERR, .data.err = "Local name must be a symbol"};
+                strncpy(local_node->data.local.name, 
+                       node->data.call.args[0]->data.sym, 
+                       sizeof(local_node->data.local.name) - 1);
+                local_node->data.local.value = node->data.call.args[1];
+                if (node->data.call.arg_count > 2) {
+                    local_node->data.local.next = node->data.call.args[2];
+                }
+                Value result = symbol->func.special(local_node, env);
+                local_node->data.local.value = NULL;  // 防止 free_node 释放参数
+                local_node->data.local.next = NULL;
+                free_node(local_node);
+                return result;
+            }
+            return (Value){.type = VAL_ERR, .data.err = "Unknown special form"};
+        }
+    }
     
-    // 获取用户定义函数
+    // 处理用户定义函数
     Value* fun = env_get(env, node->data.call.name);
     if (!fun) return (Value){.type = VAL_ERR, .data.err = "Function not found"};
     if (fun->type != VAL_FUN) return (Value){.type = VAL_ERR, .data.err = "Not a function"};
@@ -877,9 +982,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    // 初始化内置函数
-    if (!init_builtins()) {
-        fprintf(stderr, "Failed to initialize builtin functions\n");
+    // 初始化符号表
+    if (!init_symbols()) {
+        fprintf(stderr, "Failed to initialize symbols\n");
         return 1;
     }
     
