@@ -38,6 +38,7 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, 
     memset(s, 0, sizeof(ppdb_storage_t));
     s->engine = engine;
     s->config = *config;
+    s->current_tx = NULL;
 
     // Initialize lock
     err = ppdb_engine_mutex_create(&s->lock);
@@ -78,6 +79,12 @@ ppdb_error_t ppdb_storage_init(ppdb_storage_t** storage, ppdb_engine_t* engine, 
 
 void ppdb_storage_destroy(ppdb_storage_t* storage) {
     if (!storage) return;
+
+    // Rollback any active transaction
+    if (storage->current_tx) {
+        ppdb_engine_txn_rollback(storage->current_tx);
+        storage->current_tx = NULL;
+    }
 
     // Stop and cleanup maintenance
     ppdb_storage_maintain_cleanup(storage);

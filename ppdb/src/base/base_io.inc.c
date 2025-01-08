@@ -1,121 +1,169 @@
 /*
- * base_io.inc.c - IO Operations Implementation
+ * base_io.inc.c - Base IO Manager Implementation
  */
 
 #include <cosmopolitan.h>
 #include "internal/base.h"
 
-// Worker thread function
-static void io_worker_thread(void* arg) {
-    ppdb_base_io_manager_t* manager = (ppdb_base_io_manager_t*)arg;
-    struct ppdb_base_io_request_s* request;
+// IO manager thread function
+static void ppdb_base_io_thread(void* arg) {
+    ppdb_base_io_manager_t* mgr = (ppdb_base_io_manager_t*)arg;
+    while (mgr->running) {
+        // Lock IO manager
+        ppdb_base_mutex_lock(mgr->mutex);
 
-    while (manager->running) {
-        ppdb_base_mutex_lock(manager->mutex);
-        request = manager->requests;
-        if (request) {
-            manager->requests = request->next;
-        }
-        ppdb_base_mutex_unlock(manager->mutex);
-
-        if (request) {
-            request->func(request->arg);
-            free(request);
+        // Process IO requests
+        struct ppdb_base_io_request_s* req = mgr->requests;
+        if (req) {
+            // Remove request from queue
+            mgr->requests = req->next;
+            
+            // Unlock IO manager before processing request
+            ppdb_base_mutex_unlock(mgr->mutex);
+            
+            // Process request
+            if (req->func) {
+                req->func(req->arg);
+            }
+            
+            // Free request
+            free(req);
         } else {
-            ppdb_base_sleep(1); // Sleep for 1ms when no requests
+            // No requests, unlock and sleep
+            ppdb_base_mutex_unlock(mgr->mutex);
+            ppdb_base_sleep(1);  // Sleep for 1ms
         }
     }
 }
 
 // Create IO manager
-ppdb_error_t ppdb_base_io_manager_create(ppdb_base_io_manager_t** manager) {
-    if (!manager) {
-        return PPDB_BASE_ERR_PARAM;
-    }
+ppdb_error_t ppdb_base_io_manager_create(ppdb_base_io_manager_t** mgr) {
+    if (!mgr) return PPDB_BASE_ERR_PARAM;
 
-    ppdb_base_io_manager_t* new_manager = (ppdb_base_io_manager_t*)malloc(sizeof(ppdb_base_io_manager_t));
-    if (!new_manager) {
-        return PPDB_BASE_ERR_MEMORY;
-    }
+    // Allocate IO manager
+    ppdb_base_io_manager_t* new_mgr = malloc(sizeof(ppdb_base_io_manager_t));
+    if (!new_mgr) return PPDB_BASE_ERR_MEMORY;
 
-    memset(new_manager, 0, sizeof(ppdb_base_io_manager_t));
+    // Initialize IO manager
+    new_mgr->mutex = NULL;
+    new_mgr->worker = NULL;
+    new_mgr->requests = NULL;
+    new_mgr->running = false;
 
     // Create mutex
-    ppdb_error_t err = ppdb_base_mutex_create(&new_manager->mutex);
+    ppdb_error_t err = ppdb_base_mutex_create(&new_mgr->mutex);
     if (err != PPDB_OK) {
-        free(new_manager);
+        free(new_mgr);
         return err;
     }
 
-    // Create worker thread
-    new_manager->running = true;
-    err = ppdb_base_thread_create(&new_manager->worker, io_worker_thread, new_manager);
+    // Start worker thread
+    new_mgr->running = true;
+    err = ppdb_base_thread_create(&new_mgr->worker, ppdb_base_io_thread, new_mgr);
     if (err != PPDB_OK) {
-        ppdb_base_mutex_destroy(new_manager->mutex);
-        free(new_manager);
+        ppdb_base_mutex_destroy(new_mgr->mutex);
+        free(new_mgr);
         return err;
     }
 
-    *manager = new_manager;
+    *mgr = new_mgr;
     return PPDB_OK;
 }
 
 // Destroy IO manager
-ppdb_error_t ppdb_base_io_manager_destroy(ppdb_base_io_manager_t* manager) {
-    if (!manager) {
-        return PPDB_BASE_ERR_PARAM;
-    }
+ppdb_error_t ppdb_base_io_manager_destroy(ppdb_base_io_manager_t* mgr) {
+    if (!mgr) return PPDB_BASE_ERR_PARAM;
 
     // Stop worker thread
-    manager->running = false;
-    if (manager->worker) {
-        ppdb_base_thread_join(manager->worker);
-        free(manager->worker);
+    if (mgr->running) {
+        mgr->running = false;
+        if (mgr->worker) {
+            ppdb_base_thread_join(mgr->worker);
+            ppdb_base_thread_destroy(mgr->worker);
+        }
     }
 
-    // Clean up remaining requests
-    struct ppdb_base_io_request_s* request = manager->requests;
-    while (request) {
-        struct ppdb_base_io_request_s* next = request->next;
-        free(request);
-        request = next;
+    // Free pending requests
+    ppdb_base_mutex_lock(mgr->mutex);
+    while (mgr->requests) {
+        struct ppdb_base_io_request_s* req = mgr->requests;
+        mgr->requests = req->next;
+        free(req);
+    }
+    ppdb_base_mutex_unlock(mgr->mutex);
+
+    // Destroy mutex
+    if (mgr->mutex) {
+        ppdb_base_mutex_destroy(mgr->mutex);
     }
 
-    // Clean up mutex
-    if (manager->mutex) {
-        ppdb_base_mutex_destroy(manager->mutex);
-    }
-
-    free(manager);
+    // Free IO manager
+    free(mgr);
     return PPDB_OK;
 }
 
-// Submit IO request
-ppdb_error_t ppdb_base_io_submit(ppdb_base_io_manager_t* manager, ppdb_base_io_func_t func, void* arg) {
-    if (!manager || !func) {
-        return PPDB_BASE_ERR_PARAM;
-    }
+// Process IO requests
+ppdb_error_t ppdb_base_io_manager_process(ppdb_base_io_manager_t* mgr) {
+    if (!mgr) return PPDB_BASE_ERR_PARAM;
 
-    struct ppdb_base_io_request_s* request = (struct ppdb_base_io_request_s*)malloc(sizeof(struct ppdb_base_io_request_s));
-    if (!request) {
-        return PPDB_BASE_ERR_MEMORY;
-    }
+    // Lock IO manager
+    ppdb_error_t err = ppdb_base_mutex_lock(mgr->mutex);
+    if (err != PPDB_OK) return err;
 
-    request->func = func;
-    request->arg = arg;
-    request->next = NULL;
+    // Process all pending requests
+    while (mgr->requests) {
+        // Get next request
+        struct ppdb_base_io_request_s* req = mgr->requests;
+        mgr->requests = req->next;
 
-    ppdb_base_mutex_lock(manager->mutex);
-    if (!manager->requests) {
-        manager->requests = request;
-    } else {
-        struct ppdb_base_io_request_s* current = manager->requests;
-        while (current->next) {
-            current = current->next;
+        // Unlock IO manager before processing request
+        ppdb_base_mutex_unlock(mgr->mutex);
+
+        // Process request
+        if (req->func) {
+            req->func(req->arg);
         }
-        current->next = request;
+
+        // Free request
+        free(req);
+
+        // Lock IO manager for next iteration
+        err = ppdb_base_mutex_lock(mgr->mutex);
+        if (err != PPDB_OK) return err;
     }
-    ppdb_base_mutex_unlock(manager->mutex);
+
+    // Unlock IO manager
+    ppdb_base_mutex_unlock(mgr->mutex);
+    return PPDB_OK;
+}
+
+// Schedule IO request
+ppdb_error_t ppdb_base_io_manager_schedule(ppdb_base_io_manager_t* mgr,
+                                         ppdb_base_io_func_t func,
+                                         void* arg) {
+    if (!mgr || !func) return PPDB_BASE_ERR_PARAM;
+
+    // Create request
+    struct ppdb_base_io_request_s* req = malloc(sizeof(struct ppdb_base_io_request_s));
+    if (!req) return PPDB_BASE_ERR_MEMORY;
+
+    // Initialize request
+    req->func = func;
+    req->arg = arg;
+    req->next = NULL;
+
+    // Add request to queue
+    ppdb_base_mutex_lock(mgr->mutex);
+    if (!mgr->requests) {
+        mgr->requests = req;
+    } else {
+        struct ppdb_base_io_request_s* last = mgr->requests;
+        while (last->next) {
+            last = last->next;
+        }
+        last->next = req;
+    }
+    ppdb_base_mutex_unlock(mgr->mutex);
 
     return PPDB_OK;
 } 

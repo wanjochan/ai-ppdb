@@ -6,6 +6,7 @@
 #ifndef PPDB_STORAGE_OPS_DECLARATIONS
 #define PPDB_STORAGE_OPS_DECLARATIONS
 static ppdb_error_t begin_write_transaction(ppdb_storage_t* storage);
+static ppdb_error_t begin_read_transaction(ppdb_storage_t* storage);
 static ppdb_error_t commit_transaction(ppdb_storage_t* storage);
 static ppdb_error_t rollback_transaction(ppdb_storage_t* storage);
 #endif
@@ -13,23 +14,71 @@ static ppdb_error_t rollback_transaction(ppdb_storage_t* storage);
 // Begin a write transaction
 static ppdb_error_t begin_write_transaction(ppdb_storage_t* storage) {
     if (!storage) return PPDB_STORAGE_ERR_PARAM;
+    if (!storage->engine) return PPDB_STORAGE_ERR_INVALID_STATE;
     
-    // If there's already an active transaction, return success
+    // If there's already an active transaction, verify its state
     if (storage->current_tx) {
-        return PPDB_OK;
+        if (storage->current_tx->stats.is_active) {
+            return PPDB_OK;  // Already have an active transaction
+        } else {
+            // Clean up the inactive transaction
+            ppdb_engine_txn_rollback(storage->current_tx);
+            storage->current_tx = NULL;
+        }
     }
 
     // Begin new transaction
     ppdb_error_t err = ppdb_engine_txn_begin(storage->engine, &storage->current_tx);
     if (err != PPDB_OK) {
-        printf("ERROR: Failed to begin write transaction: %d\n", err);
+        printf("ERROR: Failed to begin write transaction (code: %d)\n", err);
         storage->current_tx = NULL;  // Ensure clean state
         return err;
     }
 
     // Verify transaction state
-    if (!storage->current_tx) {
+    if (!storage->current_tx || !storage->current_tx->stats.is_active) {
         printf("ERROR: Transaction creation failed but no error was returned\n");
+        if (storage->current_tx) {
+            ppdb_engine_txn_rollback(storage->current_tx);
+            storage->current_tx = NULL;
+        }
+        return PPDB_STORAGE_ERR_INVALID_STATE;
+    }
+
+    return PPDB_OK;
+}
+
+// Begin a read transaction
+static ppdb_error_t begin_read_transaction(ppdb_storage_t* storage) {
+    if (!storage) return PPDB_STORAGE_ERR_PARAM;
+    if (!storage->engine) return PPDB_STORAGE_ERR_INVALID_STATE;
+    
+    // If there's already an active transaction, verify its state
+    if (storage->current_tx) {
+        if (storage->current_tx->stats.is_active) {
+            return PPDB_OK;  // Already have an active transaction
+        } else {
+            // Clean up the inactive transaction
+            ppdb_engine_txn_rollback(storage->current_tx);
+            storage->current_tx = NULL;
+        }
+    }
+
+    // Begin new transaction
+    ppdb_error_t err = ppdb_engine_txn_begin(storage->engine, &storage->current_tx);
+    if (err != PPDB_OK) {
+        printf("ERROR: Failed to begin read transaction (code: %d)\n", err);
+        storage->current_tx = NULL;  // Ensure clean state
+        return err;
+    }
+
+    // Verify transaction state
+    if (!storage->current_tx || !storage->current_tx->stats.is_active) {
+        printf("ERROR: Transaction creation failed but no error was returned\n");
+        if (storage->current_tx) {
+            ppdb_engine_txn_rollback(storage->current_tx);
+            storage->current_tx = NULL;
+        }
         return PPDB_STORAGE_ERR_INVALID_STATE;
     }
 
@@ -40,13 +89,14 @@ static ppdb_error_t begin_write_transaction(ppdb_storage_t* storage) {
 static ppdb_error_t commit_transaction(ppdb_storage_t* storage) {
     if (!storage) return PPDB_STORAGE_ERR_PARAM;
     if (!storage->current_tx) return PPDB_OK; // Nothing to commit
+    if (!storage->current_tx->stats.is_active) return PPDB_STORAGE_ERR_INVALID_STATE;
 
     ppdb_engine_txn_t* tx = storage->current_tx;
     storage->current_tx = NULL;  // Clear transaction state before commit
     
     ppdb_error_t err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        printf("ERROR: Failed to commit transaction: %d\n", err);
+        printf("ERROR: Failed to commit transaction (code: %d)\n", err);
         storage->current_tx = tx;  // Restore transaction state on error
         return err;
     }
@@ -58,13 +108,14 @@ static ppdb_error_t commit_transaction(ppdb_storage_t* storage) {
 static ppdb_error_t rollback_transaction(ppdb_storage_t* storage) {
     if (!storage) return PPDB_STORAGE_ERR_PARAM;
     if (!storage->current_tx) return PPDB_OK; // Nothing to rollback
+    if (!storage->current_tx->stats.is_active) return PPDB_STORAGE_ERR_INVALID_STATE;
 
     ppdb_engine_txn_t* tx = storage->current_tx;
     storage->current_tx = NULL;  // Clear transaction state before rollback
     
     ppdb_error_t err = ppdb_engine_txn_rollback(tx);
     if (err != PPDB_OK) {
-        printf("ERROR: Failed to rollback transaction: %d\n", err);
+        printf("ERROR: Failed to rollback transaction (code: %d)\n", err);
         storage->current_tx = tx;  // Restore transaction state on error
         return err;
     }
@@ -100,8 +151,8 @@ ppdb_error_t ppdb_storage_get(ppdb_storage_table_t* table, const void* key, size
     if (key_size == 0) return PPDB_STORAGE_ERR_PARAM;
     if (!table->storage) return PPDB_STORAGE_ERR_PARAM;
 
-    // Begin transaction if needed
-    ppdb_error_t err = begin_write_transaction(table->storage);
+    // Begin read transaction if needed
+    ppdb_error_t err = begin_read_transaction(table->storage);
     if (err != PPDB_OK) {
         return err;
     }

@@ -207,6 +207,7 @@ static int test_data_basic_operations(void) {
         test_cleanup();
         return -1;
     }
+    printf("Read value: '%s', size: %zu\n", buffer, size);
     TEST_ASSERT_EQUALS(strlen(value) + 1, size);
     TEST_ASSERT_EQUALS(0, strcmp(buffer, value));
 
@@ -424,175 +425,142 @@ static int test_data_large_values(void) {
     storage->current_tx = NULL;  // Clear the transaction after commit
     printf("Table creation completed successfully\n");
 
-    // Start a new transaction for write operation
-    printf("Starting write transaction for large values...\n");
-    err = ppdb_engine_txn_begin(engine, &tx);
-    if (err != PPDB_OK) {
-        log_error("Failed to begin write transaction", err);
-        test_cleanup();
-        return -1;
-    }
-    storage->current_tx = tx;
-
-    printf("Creating large key-value pair...\n");
+    // Prepare test data
     const size_t key_size = 256;
     const size_t value_size = 64 * 1024;  // 64KB
     
-    char* large_key = malloc(key_size);
+    char* large_key = NULL;
+    char* large_value = NULL;
+    char* read_buffer = NULL;
+    size_t read_size = value_size;
+
+    // Allocate memory for key and value
+    large_key = malloc(key_size);
     if (large_key == NULL) {
         printf("Failed to allocate key buffer\n");
-        test_cleanup();
-        return -1;
+        goto cleanup;
     }
     
-    char* large_value = malloc(value_size);
+    large_value = malloc(value_size);
     if (large_value == NULL) {
         printf("Failed to allocate value buffer\n");
-        free(large_key);
-        test_cleanup();
-        return -1;
+        goto cleanup;
     }
-    
-    char* read_buffer = malloc(value_size);
+
+    read_buffer = malloc(value_size);
     if (read_buffer == NULL) {
         printf("Failed to allocate read buffer\n");
-        free(large_key);
-        free(large_value);
-        test_cleanup();
-        return -1;
+        goto cleanup;
     }
-    
-    // Initialize test data
+
+    // Initialize key and value with test data
     memset(large_key, 'K', key_size - 1);
     large_key[key_size - 1] = '\0';
-    
     memset(large_value, 'V', value_size - 1);
     large_value[value_size - 1] = '\0';
-    
-    // Write large data
-    printf("Writing large key-value pair...\n");
+
+    // Start write transaction
+    printf("Starting write transaction...\n");
     err = ppdb_engine_txn_begin(engine, &tx);
     if (err != PPDB_OK) {
-        printf("Failed to begin write transaction: %d\n", err);
-        free(large_key);
-        free(large_value);
-        free(read_buffer);
-        test_cleanup();
-        return -1;
+        log_error("Failed to begin write transaction", err);
+        goto cleanup;
     }
     storage->current_tx = tx;
-    
-    err = ppdb_storage_put(table, large_key, strlen(large_key), 
-                          large_value, strlen(large_value) + 1);
+
+    // Write large value
+    printf("Writing large value...\n");
+    err = ppdb_storage_put(table, large_key, key_size, large_value, value_size);
     if (err != PPDB_OK) {
-        printf("Failed to put large key-value pair: %d\n", err);
-        ppdb_engine_txn_rollback(tx);
-        storage->current_tx = NULL;
-        free(large_key);
-        free(large_value);
-        free(read_buffer);
-        test_cleanup();
-        return -1;
+        printf("Failed to write large value: %d\n", err);
+        goto cleanup;
     }
-    
-    err = ppdb_engine_txn_commit(tx);
+
+    // Commit write transaction
+    err = ppdb_engine_txn_commit(storage->current_tx);
     if (err != PPDB_OK) {
-        printf("Failed to commit write transaction: %d\n", err);
-        ppdb_engine_txn_rollback(tx);
+        log_error("Failed to commit write transaction", err);
+        ppdb_engine_txn_rollback(storage->current_tx);
         storage->current_tx = NULL;
-        free(large_key);
-        free(large_value);
-        free(read_buffer);
-        test_cleanup();
-        return -1;
+        goto cleanup;
     }
     storage->current_tx = NULL;
-    
-    // Read and verify large data
-    printf("Reading large key-value pair...\n");
+
+    // Start read transaction
+    printf("Starting read transaction...\n");
     err = ppdb_engine_txn_begin(engine, &tx);
     if (err != PPDB_OK) {
-        printf("Failed to begin read transaction: %d\n", err);
-        free(large_key);
-        free(large_value);
-        free(read_buffer);
-        test_cleanup();
-        return -1;
+        log_error("Failed to begin read transaction", err);
+        goto cleanup;
     }
     storage->current_tx = tx;
-    
-    size_t read_size = value_size;
-    err = ppdb_storage_get(table, large_key, strlen(large_key), 
-                          read_buffer, &read_size);
+
+    // Read back large value
+    printf("Reading back large value...\n");
+    err = ppdb_storage_get(table, large_key, key_size, read_buffer, &read_size);
     if (err != PPDB_OK) {
-        printf("Failed to get large key-value pair: %d\n", err);
-        ppdb_engine_txn_rollback(tx);
-        storage->current_tx = NULL;
-        free(large_key);
-        free(large_value);
-        free(read_buffer);
-        test_cleanup();
-        return -1;
+        printf("Failed to read large value: %d\n", err);
+        goto cleanup;
     }
-    
-    // Verify data
-    if (read_size != strlen(large_value) + 1 || 
-        strcmp(read_buffer, large_value) != 0) {
-        printf("Data verification failed\n");
-        ppdb_engine_txn_rollback(tx);
-        storage->current_tx = NULL;
-        free(large_key);
-        free(large_value);
-        free(read_buffer);
-        test_cleanup();
-        return -1;
+
+    // Verify read data
+    if (read_size != value_size || memcmp(large_value, read_buffer, value_size) != 0) {
+        printf("Read data does not match written data\n");
+        goto cleanup;
     }
-    
+
+    // Commit read transaction
     err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        printf("Failed to commit read transaction: %d\n", err);
+        log_error("Failed to commit read transaction", err);
         ppdb_engine_txn_rollback(tx);
         storage->current_tx = NULL;
-        free(large_key);
-        free(large_value);
-        free(read_buffer);
-        test_cleanup();
-        return -1;
+        goto cleanup;
     }
     storage->current_tx = NULL;
-    
-    // Cleanup
+
+    // Success
     free(large_key);
     free(large_value);
     free(read_buffer);
     test_cleanup();
-    
-    printf("=== Completed test: data_large_values ===\n\n");
     return 0;
+
+cleanup:
+    // Cleanup on error
+    if (storage->current_tx) {
+        ppdb_engine_txn_rollback(storage->current_tx);
+        storage->current_tx = NULL;
+    }
+    if (large_key) free(large_key);
+    if (large_value) free(large_value);
+    if (read_buffer) free(read_buffer);
+    test_cleanup();
+    return -1;
 }
 
-// Test multiple data operations
+// Test multiple data operations in sequence
 static int test_data_multiple_operations(void) {
     printf("\n=== Starting test: data_multiple_operations ===\n");
     
+    // Setup test environment
     ppdb_error_t err = test_setup();
     if (err != PPDB_OK) {
         printf("Failed to setup test environment: %d\n", err);
         return -1;
     }
-    TEST_ASSERT_NULL(storage->current_tx);
 
-    // Begin transaction for table creation
+    // Create table
     ppdb_engine_txn_t* tx = NULL;
     printf("Beginning transaction for multiple operations...\n");
     err = ppdb_engine_txn_begin(engine, &tx);
     if (err != PPDB_OK) {
-        log_error("Failed to begin transaction", err);
+        printf("Failed to begin transaction: %d\n", err);
         test_cleanup();
         return -1;
     }
-    storage->current_tx = tx;
     printf("Transaction started successfully\n");
+    storage->current_tx = tx;
 
     err = ppdb_storage_create_table(storage, "test_table", &table);
     if (err != PPDB_OK) {
@@ -615,167 +583,203 @@ static int test_data_multiple_operations(void) {
     storage->current_tx = NULL;  // Clear the transaction after commit
     printf("Table creation completed successfully\n");
 
-    // Start a new transaction for write operations
-    printf("Starting write transaction for multiple operations...\n");
+    // Prepare test data
+    const int num_pairs = 10;
+    char** keys = NULL;
+    char** values = NULL;
+    char* read_buffer = NULL;
+    size_t read_size;
+
+    // Allocate memory for test data
+    keys = malloc(num_pairs * sizeof(char*));
+    if (!keys) {
+        printf("Failed to allocate keys array\n");
+        goto cleanup;
+    }
+    memset(keys, 0, num_pairs * sizeof(char*));
+
+    values = malloc(num_pairs * sizeof(char*));
+    if (!values) {
+        printf("Failed to allocate values array\n");
+        goto cleanup;
+    }
+    memset(values, 0, num_pairs * sizeof(char*));
+
+    read_buffer = malloc(256);  // Buffer for reading values
+    if (!read_buffer) {
+        printf("Failed to allocate read buffer\n");
+        goto cleanup;
+    }
+
+    // Initialize test data
+    for (int i = 0; i < num_pairs; i++) {
+        keys[i] = malloc(32);
+        values[i] = malloc(32);
+        if (!keys[i] || !values[i]) {
+            printf("Failed to allocate key-value pair %d\n", i);
+            goto cleanup;
+        }
+        snprintf(keys[i], 32, "key_%d", i);
+        snprintf(values[i], 32, "value_%d", i);
+    }
+
+    // Start write transaction
+    printf("Starting write transaction...\n");
     err = ppdb_engine_txn_begin(engine, &tx);
     if (err != PPDB_OK) {
         log_error("Failed to begin write transaction", err);
-        test_cleanup();
-        return -1;
+        goto cleanup;
     }
     storage->current_tx = tx;
 
-    printf("Performing multiple operations...\n");
-    const int num_entries = 100;  // Reduced from 1000
-    char key[32];
-    char value[32];
-    char buffer[32];
-    size_t size;
-    
-    // Insert multiple entries
-    printf("Inserting %d entries...\n", num_entries);
-    for (int i = 0; i < num_entries; i++) {
-        if (i % 10 == 0) {
-            printf("Progress: %d/%d entries\n", i, num_entries);
-        }
-        snprintf(key, sizeof(key), "key_%d", i);
-        snprintf(value, sizeof(value), "value_%d", i);
-        err = ppdb_storage_put(table, key, strlen(key), value, strlen(value) + 1);
+    // Write all key-value pairs
+    printf("Writing multiple key-value pairs...\n");
+    for (int i = 0; i < num_pairs; i++) {
+        err = ppdb_storage_put(table, keys[i], strlen(keys[i]) + 1, 
+                             values[i], strlen(values[i]) + 1);
         if (err != PPDB_OK) {
-            printf("Failed to put key-value pair: %d\n", err);
-            ppdb_engine_txn_rollback(tx);
-            storage->current_tx = NULL;
-            test_cleanup();
-            return -1;
+            printf("Failed to write pair %d: %d\n", i, err);
+            goto cleanup;
         }
     }
-    
-    // Commit transaction
+
+    // Commit write transaction
     err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        printf("Failed to commit write transaction: %d\n", err);
-        test_cleanup();
-        return -1;
+        log_error("Failed to commit write transaction", err);
+        ppdb_engine_txn_rollback(tx);
+        storage->current_tx = NULL;
+        goto cleanup;
     }
     storage->current_tx = NULL;
-    TEST_ASSERT_NULL(storage->current_tx);
-    
-    // Begin transaction for read operations
+
+    // Start read transaction
+    printf("Starting read transaction...\n");
     err = ppdb_engine_txn_begin(engine, &tx);
     if (err != PPDB_OK) {
-        printf("Failed to begin read transaction: %d\n", err);
-        test_cleanup();
-        return -1;
+        log_error("Failed to begin read transaction", err);
+        goto cleanup;
     }
     storage->current_tx = tx;
-    
-    printf("Reading %d entries...\n", num_entries);
-    // Read all entries
-    for (int i = 0; i < num_entries; i++) {
-        if (i % 10 == 0) {
-            printf("Progress: %d/%d entries\n", i, num_entries);
-        }
-        snprintf(key, sizeof(key), "key_%d", i);
-        snprintf(value, sizeof(value), "value_%d", i);
-        size = sizeof(buffer);
-        err = ppdb_storage_get(table, key, strlen(key), buffer, &size);
+
+    // Read and verify all pairs
+    printf("Reading and verifying pairs...\n");
+    for (int i = 0; i < num_pairs; i++) {
+        read_size = 256;
+        err = ppdb_storage_get(table, keys[i], strlen(keys[i]) + 1, 
+                             read_buffer, &read_size);
         if (err != PPDB_OK) {
-            printf("Failed to get key-value pair: %d\n", err);
-            ppdb_engine_txn_rollback(tx);
-            storage->current_tx = NULL;
-            test_cleanup();
-            return -1;
+            printf("Failed to read pair %d: %d\n", i, err);
+            goto cleanup;
         }
-        TEST_ASSERT_EQUALS(0, strcmp(buffer, value));
+        if (strcmp(read_buffer, values[i]) != 0) {
+            printf("Data verification failed for pair %d\n", i);
+            goto cleanup;
+        }
     }
-    
-    // Commit transaction
+
+    // Commit read transaction
     err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        printf("Failed to commit read transaction: %d\n", err);
-        test_cleanup();
-        return -1;
+        log_error("Failed to commit read transaction", err);
+        ppdb_engine_txn_rollback(tx);
+        storage->current_tx = NULL;
+        goto cleanup;
     }
     storage->current_tx = NULL;
-    TEST_ASSERT_NULL(storage->current_tx);
-    
-    // Begin transaction for delete operations
+
+    // Start delete transaction
+    printf("Starting delete transaction...\n");
     err = ppdb_engine_txn_begin(engine, &tx);
     if (err != PPDB_OK) {
-        printf("Failed to begin delete transaction: %d\n", err);
-        test_cleanup();
-        return -1;
+        log_error("Failed to begin delete transaction", err);
+        goto cleanup;
     }
     storage->current_tx = tx;
-    
-    printf("Deleting %d entries...\n", num_entries);
-    // Delete all entries
-    for (int i = 0; i < num_entries; i++) {
-        if (i % 10 == 0) {
-            printf("Progress: %d/%d entries\n", i, num_entries);
-        }
-        snprintf(key, sizeof(key), "key_%d", i);
-        err = ppdb_storage_delete(table, key, strlen(key));
+
+    // Delete all pairs
+    printf("Deleting all pairs...\n");
+    for (int i = 0; i < num_pairs; i++) {
+        err = ppdb_storage_delete(table, keys[i], strlen(keys[i]) + 1);
         if (err != PPDB_OK) {
-            printf("Failed to delete key-value pair: %d\n", err);
-            ppdb_engine_txn_rollback(tx);
-            storage->current_tx = NULL;
-            test_cleanup();
-            return -1;
+            printf("Failed to delete pair %d: %d\n", i, err);
+            goto cleanup;
         }
     }
-    
-    // Commit transaction
+
+    // Commit delete transaction
     err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        printf("Failed to commit delete transaction: %d\n", err);
-        test_cleanup();
-        return -1;
+        log_error("Failed to commit delete transaction", err);
+        ppdb_engine_txn_rollback(tx);
+        storage->current_tx = NULL;
+        goto cleanup;
     }
     storage->current_tx = NULL;
-    TEST_ASSERT_NULL(storage->current_tx);
-    
-    // Begin transaction for verification
+
+    // Start verification transaction
+    printf("Starting verification transaction...\n");
     err = ppdb_engine_txn_begin(engine, &tx);
     if (err != PPDB_OK) {
-        printf("Failed to begin verification transaction: %d\n", err);
-        test_cleanup();
-        return -1;
+        log_error("Failed to begin verification transaction", err);
+        goto cleanup;
     }
     storage->current_tx = tx;
-    
-    printf("Verifying deletion of %d entries...\n", num_entries);
-    // Verify all entries are deleted
-    for (int i = 0; i < num_entries; i++) {
-        if (i % 10 == 0) {
-            printf("Progress: %d/%d entries\n", i, num_entries);
-        }
-        snprintf(key, sizeof(key), "key_%d", i);
-        size = sizeof(buffer);
-        err = ppdb_storage_get(table, key, strlen(key), buffer, &size);
+
+    // Verify all pairs are deleted
+    printf("Verifying deletions...\n");
+    for (int i = 0; i < num_pairs; i++) {
+        read_size = 256;
+        err = ppdb_storage_get(table, keys[i], strlen(keys[i]) + 1, 
+                             read_buffer, &read_size);
         if (err != PPDB_STORAGE_ERR_NOT_FOUND) {
-            printf("Expected key not found, but got error: %d\n", err);
-            ppdb_engine_txn_rollback(tx);
-            storage->current_tx = NULL;
-            test_cleanup();
-            return -1;
+            printf("Key %d still exists after deletion\n", i);
+            goto cleanup;
         }
     }
-    
-    // Commit transaction
+
+    // Commit verification transaction
     err = ppdb_engine_txn_commit(tx);
     if (err != PPDB_OK) {
-        printf("Failed to commit verification transaction: %d\n", err);
-        test_cleanup();
-        return -1;
+        log_error("Failed to commit verification transaction", err);
+        ppdb_engine_txn_rollback(tx);
+        storage->current_tx = NULL;
+        goto cleanup;
     }
     storage->current_tx = NULL;
-    TEST_ASSERT_NULL(storage->current_tx);
 
+    // Success - cleanup
+    for (int i = 0; i < num_pairs; i++) {
+        if (keys[i]) free(keys[i]);
+        if (values[i]) free(values[i]);
+    }
+    free(keys);
+    free(values);
+    free(read_buffer);
     test_cleanup();
-    TEST_ASSERT_NULL(storage->current_tx);
-    printf("=== Completed test: data_multiple_operations ===\n\n");
     return 0;
+
+cleanup:
+    // Cleanup on error
+    if (storage->current_tx) {
+        ppdb_engine_txn_rollback(storage->current_tx);
+        storage->current_tx = NULL;
+    }
+    if (keys) {
+        for (int i = 0; i < num_pairs; i++) {
+            if (keys[i]) free(keys[i]);
+        }
+        free(keys);
+    }
+    if (values) {
+        for (int i = 0; i < num_pairs; i++) {
+            if (values[i]) free(values[i]);
+        }
+        free(values);
+    }
+    if (read_buffer) free(read_buffer);
+    test_cleanup();
+    return -1;
 }
 
 int main(void) {

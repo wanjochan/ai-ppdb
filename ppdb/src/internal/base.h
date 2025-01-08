@@ -280,9 +280,12 @@ ppdb_error_t ppdb_base_async_cleanup(ppdb_base_async_loop_t* loop);
 ppdb_error_t ppdb_base_async_submit(ppdb_base_async_loop_t* loop, ppdb_base_async_func_t func, void* arg);
 
 // IO functions
-ppdb_error_t ppdb_base_io_manager_create(ppdb_base_io_manager_t** manager);
-ppdb_error_t ppdb_base_io_manager_destroy(ppdb_base_io_manager_t* manager);
-ppdb_error_t ppdb_base_io_submit(ppdb_base_io_manager_t* manager, ppdb_base_io_func_t func, void* arg);
+ppdb_error_t ppdb_base_io_manager_create(ppdb_base_io_manager_t** mgr);
+ppdb_error_t ppdb_base_io_manager_destroy(ppdb_base_io_manager_t* mgr);
+ppdb_error_t ppdb_base_io_manager_process(ppdb_base_io_manager_t* mgr);
+ppdb_error_t ppdb_base_io_manager_schedule(ppdb_base_io_manager_t* mgr,
+                                         ppdb_base_io_func_t func,
+                                         void* arg);
 
 // Utility functions
 bool ppdb_base_str_equal(const char* s1, const char* s2);

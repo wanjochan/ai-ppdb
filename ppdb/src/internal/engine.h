@@ -25,6 +25,7 @@ typedef struct ppdb_engine_txn_stats_s {
     bool is_active;
     bool is_committed;
     bool is_rolledback;
+    ppdb_error_t error_state;  // Current error state of the transaction
 } ppdb_engine_txn_stats_t;
 
 // Transaction structure

@@ -38,9 +38,19 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
         return err;
     }
 
+    // Initialize statistics
+    memset(&e->stats, 0, sizeof(ppdb_engine_stats_t));
+    err = ppdb_engine_stats_init(&e->stats);
+    if (err != PPDB_OK) {
+        ppdb_base_mutex_destroy(e->global_mutex);
+        free(e);
+        return err;
+    }
+
     // Initialize transaction manager
     err = ppdb_engine_txn_init(e);
     if (err != PPDB_OK) {
+        ppdb_engine_stats_cleanup(&e->stats);
         ppdb_base_mutex_destroy(e->global_mutex);
         free(e);
         return err;
@@ -50,6 +60,7 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     err = ppdb_engine_table_list_create(e, &e->tables);
     if (err != PPDB_OK) {
         ppdb_engine_txn_cleanup(e);
+        ppdb_engine_stats_cleanup(&e->stats);
         ppdb_base_mutex_destroy(e->global_mutex);
         free(e);
         return err;
@@ -58,18 +69,9 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
     // Initialize IO manager
     err = ppdb_engine_io_init(e);
     if (err != PPDB_OK) {
+        ppdb_engine_table_list_destroy(e->tables);
         ppdb_engine_txn_cleanup(e);
-        ppdb_base_mutex_destroy(e->global_mutex);
-        free(e);
-        return err;
-    }
-
-    // Initialize statistics
-    memset(&e->stats, 0, sizeof(ppdb_engine_stats_t));
-    err = ppdb_engine_stats_init(&e->stats);
-    if (err != PPDB_OK) {
-        ppdb_engine_io_cleanup(e);
-        ppdb_engine_txn_cleanup(e);
+        ppdb_engine_stats_cleanup(&e->stats);
         ppdb_base_mutex_destroy(e->global_mutex);
         free(e);
         return err;
@@ -82,21 +84,27 @@ ppdb_error_t ppdb_engine_init(ppdb_engine_t** engine, ppdb_base_t* base) {
 void ppdb_engine_destroy(ppdb_engine_t* engine) {
     if (!engine) return;
 
-    // Cleanup statistics
-    ppdb_engine_stats_cleanup(&engine->stats);
-
     // Cleanup IO manager
     ppdb_engine_io_cleanup(engine);
+
+    // Cleanup table list
+    if (engine->tables) {
+        ppdb_engine_table_list_destroy(engine->tables);
+        engine->tables = NULL;
+    }
 
     // Cleanup transaction manager
     ppdb_engine_txn_cleanup(engine);
 
-    // Destroy global mutex
+    // Cleanup statistics
+    ppdb_engine_stats_cleanup(&engine->stats);
+
+    // Cleanup global mutex
     if (engine->global_mutex) {
         ppdb_base_mutex_destroy(engine->global_mutex);
+        engine->global_mutex = NULL;
     }
 
-    // Free engine structure
     free(engine);
 }
 

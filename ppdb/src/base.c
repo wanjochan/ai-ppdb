@@ -18,6 +18,7 @@ typedef int ppdb_error_t;
 #include "base/base_async.inc.c"
 #include "base/base_spinlock.inc.c"
 #include "base/base_counter.inc.c"
+#include "base/base_io.inc.c"
 
 // Global state
 static _Atomic(bool) base_initialized = false;
