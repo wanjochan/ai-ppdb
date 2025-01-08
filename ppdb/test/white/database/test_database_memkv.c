@@ -41,7 +41,7 @@ static ppdb_error_t test_setup(void) {
     return PPDB_OK;
 }
 
-// Test basic storage operations
+// Test basic operations
 static int test_memkv_basic(void) {
     printf("\n=== Starting test: memkv_basic ===\n");
     
@@ -107,7 +107,7 @@ static int test_memkv_limits(void) {
     large_value[2047] = '\0';
 
     err = ppdb_put(txn, key, strlen(key), large_value, 2048);
-    TEST_ASSERT_EQUALS(PPDB_DATABASE_ERR_STORAGE, err);
+    TEST_ASSERT_EQUALS(PPDB_DATABASE_ERR_FULL, err);
 
     ppdb_base_free(large_value);
 

@@ -1,28 +1,38 @@
 #include <cosmopolitan.h>
 #include "internal/peer.h"
-#include "internal/storage.h"
-#include "peer/peer_memcached.inc.c"
-#include "peer/peer_redis.inc.c"
-#include "peer/peer_conn.inc.c"
-
-// Global state
-static bool g_initialized = false;
+#include "internal/database.h"
 
 // Initialize peer layer
-int peer_init(void) {
-    if (g_initialized) {
-        return PPDB_OK;
-    }
-    g_initialized = true;
+ppdb_error_t ppdb_peer_init(void) {
     return PPDB_OK;
 }
 
 // Cleanup peer layer
-void peer_cleanup(void) {
-    if (!g_initialized) {
+void ppdb_peer_cleanup(void) {
+}
+
+// Create peer instance
+ppdb_error_t ppdb_peer_create(ppdb_ctx_t* ctx, ppdb_peer_t** peer) {
+    if (!ctx || !peer) {
+        return PPDB_ERR_PARAM;
+    }
+
+    *peer = calloc(1, sizeof(ppdb_peer_t));
+    if (!*peer) {
+        return PPDB_ERR_MEMORY;
+    }
+
+    (*peer)->ctx = ctx;
+    return PPDB_OK;
+}
+
+// Destroy peer instance
+void ppdb_peer_destroy(ppdb_peer_t* peer) {
+    if (!peer) {
         return;
     }
-    g_initialized = false;
+
+    free(peer);
 }
 
 // Check if peer layer is initialized

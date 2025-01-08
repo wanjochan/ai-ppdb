@@ -1,7 +1,6 @@
 #include <cosmopolitan.h>
 #include "../test_framework.h"
 #include "internal/peer.h"
-#include "internal/storage.h"
 
 // Test cases
 static int test_peer_memcached_basic(void) {

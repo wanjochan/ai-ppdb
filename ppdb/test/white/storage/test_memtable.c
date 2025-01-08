@@ -1,6 +1,5 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
-#include "internal/storage.h"
 #include "test_common.h"
 
 // Test configuration
@@ -10,7 +9,7 @@
 
 // Thread context
 typedef struct {
-    ppdb_storage_table_t* table;
+    ppdb_database_table_t* table;
     int thread_id;
     bool success;
 } thread_ctx_t;
@@ -28,7 +27,7 @@ static void concurrent_worker(void* arg) {
         snprintf(value, sizeof(value), "value_%d_%d", ctx->thread_id, j);
 
         // Put operation
-        if (ppdb_storage_put(ctx->table, key, strlen(key), value, strlen(value)) != PPDB_OK) {
+        if (ppdb_database_put(ctx->table, key, strlen(key), value, strlen(value)) != PPDB_OK) {
             ctx->success = false;
             return;
         }
@@ -36,7 +35,7 @@ static void concurrent_worker(void* arg) {
         // Get operation
         char result[32];
         size_t size = sizeof(result);
-        if (ppdb_storage_get(ctx->table, key, strlen(key), result, &size) != PPDB_OK) {
+        if (ppdb_database_get(ctx->table, key, strlen(key), result, &size) != PPDB_OK) {
             ctx->success = false;
             return;
         }
@@ -52,8 +51,8 @@ static void concurrent_worker(void* arg) {
 // Test basic operations
 static void test_memtable_basic(void) {
     ppdb_base_t* base = NULL;
-    ppdb_storage_t* storage = NULL;
-    ppdb_storage_table_t* table = NULL;
+    ppdb_database_t* database = NULL;
+    ppdb_database_table_t* table = NULL;
 
     // Initialize base layer
     ppdb_base_config_t base_config = {
@@ -63,8 +62,8 @@ static void test_memtable_basic(void) {
     };
     ASSERT_EQ(ppdb_base_init(&base, &base_config), PPDB_OK);
 
-    // Initialize storage layer
-    ppdb_storage_config_t storage_config = {
+    // Initialize database layer
+    ppdb_database_config_t database_config = {
         .memtable_size = TABLE_SIZE,
         .block_size = PPDB_DEFAULT_BLOCK_SIZE,
         .cache_size = PPDB_DEFAULT_CACHE_SIZE,
@@ -73,32 +72,32 @@ static void test_memtable_basic(void) {
         .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
         .sync_writes = PPDB_DEFAULT_SYNC_WRITES
     };
-    ASSERT_EQ(ppdb_storage_init(&storage, base, &storage_config), PPDB_OK);
+    ASSERT_EQ(ppdb_database_init(&database, base, &database_config), PPDB_OK);
 
     // Create table
-    ASSERT_EQ(ppdb_storage_table_create(storage, "test_table", &table), PPDB_OK);
+    ASSERT_EQ(ppdb_database_table_create(database, "test_table", &table), PPDB_OK);
 
     // Basic operations
     const char* key = "test_key";
     const char* value = "test_value";
-    ASSERT_EQ(ppdb_storage_put(table, key, strlen(key), value, strlen(value)), PPDB_OK);
+    ASSERT_EQ(ppdb_database_put(table, key, strlen(key), value, strlen(value)), PPDB_OK);
 
     char buffer[256];
     size_t size = sizeof(buffer);
-    ASSERT_EQ(ppdb_storage_get(table, key, strlen(key), buffer, &size), PPDB_OK);
+    ASSERT_EQ(ppdb_database_get(table, key, strlen(key), buffer, &size), PPDB_OK);
     ASSERT_EQ(memcmp(buffer, value, strlen(value)), 0);
 
     // Cleanup
-    ppdb_storage_table_destroy(table);
-    ppdb_storage_destroy(storage);
+    ppdb_database_table_destroy(table);
+    ppdb_database_destroy(database);
     ppdb_base_destroy(base);
 }
 
 // Test concurrent operations
 static void test_memtable_concurrent(void) {
     ppdb_base_t* base = NULL;
-    ppdb_storage_t* storage = NULL;
-    ppdb_storage_table_t* table = NULL;
+    ppdb_database_t* database = NULL;
+    ppdb_database_table_t* table = NULL;
     ppdb_base_thread_t* threads[NUM_THREADS];
     thread_ctx_t thread_ctx[NUM_THREADS];
 
@@ -110,8 +109,8 @@ static void test_memtable_concurrent(void) {
     };
     ASSERT_EQ(ppdb_base_init(&base, &base_config), PPDB_OK);
 
-    // Initialize storage layer
-    ppdb_storage_config_t storage_config = {
+    // Initialize databaselayer
+    ppdb_database_config_t database_config = {
         .memtable_size = TABLE_SIZE,
         .block_size = PPDB_DEFAULT_BLOCK_SIZE,
         .cache_size = PPDB_DEFAULT_CACHE_SIZE,
@@ -120,10 +119,10 @@ static void test_memtable_concurrent(void) {
         .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
         .sync_writes = PPDB_DEFAULT_SYNC_WRITES
     };
-    ASSERT_EQ(ppdb_storage_init(&storage, base, &storage_config), PPDB_OK);
+    ASSERT_EQ(ppdb_database_init(&database, base, &database_config), PPDB_OK);
 
     // Create table
-    ASSERT_EQ(ppdb_storage_table_create(storage, "test_table", &table), PPDB_OK);
+    ASSERT_EQ(ppdb_database_table_create(database, "test_table", &table), PPDB_OK);
 
     // Create threads
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -146,18 +145,18 @@ static void test_memtable_concurrent(void) {
             size_t size = sizeof(result);
             snprintf(key, sizeof(key), "key_%d_%d", i, j);
             snprintf(value, sizeof(value), "value_%d_%d", i, j);
-            ASSERT_EQ(ppdb_storage_get(table, key, strlen(key), result, &size), PPDB_OK);
+            ASSERT_EQ(ppdb_database_get(table, key,strlen(key), result, &size), PPDB_OK);
             ASSERT_EQ(memcmp(result, value, strlen(value)), 0);
         }
     }
 
     // Cleanup
-    ppdb_storage_table_destroy(table);
-    ppdb_storage_destroy(storage);
+    ppdb_database_table_destroy(table);
+    ppdb_database_destroy(database);
     ppdb_base_destroy(base);
 }
 
-int main(void) {
+intmain(void) {
     printf("Running memtable tests...\n");
     test_memtable_basic();
     test_memtable_concurrent();

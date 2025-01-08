@@ -3,7 +3,7 @@
 
 #include <cosmopolitan.h>
 #include "../internal/peer.h"
-#include "../internal/storage.h"
+#include "../internal/database.h"
 
 // Buffer size for responses
 #define MEMCACHED_RESPONSE_BUFFER_SIZE 1024
@@ -41,6 +41,7 @@ typedef struct {
     memcached_parser_t parser;
     char buffer[MEMCACHED_RESPONSE_BUFFER_SIZE];
     size_t buffer_size;
+    ppdb_database_txn_t* txn;  // Add transaction handle
 } memcached_proto_t;
 
 // Forward declarations
@@ -205,78 +206,54 @@ static ppdb_error_t memcached_parse_command(memcached_proto_t* p, char* line) {
 
 // Handle GET command
 static ppdb_error_t memcached_handle_get(memcached_proto_t* p, ppdb_handle_t conn) {
-    fprintf(stderr, "Handling GET command for key: %s\n", p->parser.key);
-    
-    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
+    void* value = NULL;
     size_t value_size = 0;
-    char value_buffer[MEMCACHED_RESPONSE_BUFFER_SIZE];
     
-    // Get value from storage
-    ppdb_error_t err = ppdb_storage_get(state->storage, p->parser.key, p->parser.key_size,
-                                      value_buffer, &value_size);
-    if (err != PPDB_OK) {
-        if (err == PPDB_ERR_NOT_FOUND) {
-            fprintf(stderr, "Key not found: %s\n", p->parser.key);
-            return ppdb_conn_send(conn, "END\r\n", 5);
-        }
-        fprintf(stderr, "Storage error during GET: %d\n", err);
-        return err;
+    // Use database layer get operation
+    ppdb_error_t err = ppdb_database_get(conn->ctx->db, p->txn, "default", 
+                                        p->parser.key, p->parser.key_size,
+                                        &value, &value_size);
+    
+    if (err == PPDB_OK) {
+        err = memcached_send_value(conn, p->parser.key, p->parser.key_size,
+                                 value, value_size, p->parser.flags);
+        free(value);
+    } else if (err == PPDB_ERR_NOT_FOUND) {
+        err = memcached_send_not_found(conn);
     }
-
-    fprintf(stderr, "Found value for key %s (size: %zu)\n", p->parser.key, value_size);
-    return memcached_send_value(conn, p->parser.key, p->parser.key_size, value_buffer, value_size, p->parser.flags);
+    
+    return err;
 }
 
 // Handle SET command
 static ppdb_error_t memcached_handle_set(memcached_proto_t* p, ppdb_handle_t conn) {
-    fprintf(stderr, "Handling SET command for key: %s (value size: %zu)\n", 
-            p->parser.key, p->parser.value_size);
+    // Use database layer put operation
+    ppdb_error_t err = ppdb_database_put(conn->ctx->db, p->txn, "default",
+                                        p->parser.key, p->parser.key_size,
+                                        p->parser.value, p->parser.value_size);
     
-    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
-    
-    // Store value in storage
-    ppdb_error_t err = ppdb_storage_put(state->storage, p->parser.key, p->parser.key_size,
-                                      p->parser.value, p->parser.value_size);
-    if (err != PPDB_OK) {
-        fprintf(stderr, "Storage error during SET: %d\n", err);
-        return err;
+    if (err == PPDB_OK) {
+        err = memcached_send_stored(conn);
+    } else {
+        err = memcached_send_not_stored(conn);
     }
-
-    fprintf(stderr, "Successfully stored value for key: %s\n", p->parser.key);
     
-    // Send response
-    if (!p->parser.noreply) {
-        return memcached_send_stored(conn);
-    }
-    return PPDB_OK;
+    return err;
 }
 
 // Handle DELETE command
 static ppdb_error_t memcached_handle_delete(memcached_proto_t* p, ppdb_handle_t conn) {
-    fprintf(stderr, "Handling DELETE command for key: %s\n", p->parser.key);
+    // Use database layer delete operation
+    ppdb_error_t err = ppdb_database_delete(conn->ctx->db, p->txn, "default",
+                                          p->parser.key, p->parser.key_size);
     
-    ppdb_conn_state_t* state = (ppdb_conn_state_t*)conn;
-    
-    // Delete value from storage
-    ppdb_error_t err = ppdb_storage_delete(state->storage, p->parser.key, p->parser.key_size);
-    if (err != PPDB_OK) {
-        if (err == PPDB_ERR_NOT_FOUND) {
-            fprintf(stderr, "Key not found for deletion: %s\n", p->parser.key);
-            if (!p->parser.noreply) {
-                return memcached_send_not_found(conn);
-            }
-            return PPDB_OK;
-        }
-        fprintf(stderr, "Storage error during DELETE: %d\n", err);
-        return err;
+    if (err == PPDB_OK) {
+        err = memcached_send_deleted(conn);
+    } else if (err == PPDB_ERR_NOT_FOUND) {
+        err = memcached_send_not_found(conn);
     }
-
-    fprintf(stderr, "Successfully deleted key: %s\n", p->parser.key);
     
-    if (!p->parser.noreply) {
-        return memcached_send_deleted(conn);
-    }
-    return PPDB_OK;
+    return err;
 }
 
 // Handle incoming data

@@ -3,19 +3,6 @@
 ## 目录结构
 ```
 test/
-├── unit/              # 单元测试
-│   ├── kvstore/      # 存储引擎测试
-│   ├── memtable/     # 内存表测试
-│   └── wal/          # WAL测试
-├── integration/       # 集成测试
-│   └── storage/      # 存储系统测试
-├── system/           # 系统测试
-│   ├── cli/          # 命令行接口测试
-│   ├── http/         # HTTP API测试
-│   └── stress/       # 压力测试
-└── acceptance/       # 验收测试
-    ├── scenarios/    # 场景测试
-    └── performance/  # 性能验收
 ```
 
 ## 快速开始

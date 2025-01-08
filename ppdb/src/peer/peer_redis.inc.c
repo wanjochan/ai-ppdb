@@ -3,7 +3,7 @@
 
 #include <cosmopolitan.h>
 #include "../internal/peer.h"
-#include "../internal/storage.h"
+#include "../internal/database.h"
 
 // Buffer size for responses
 #define REDIS_RESPONSE_BUFFER_SIZE 1024
@@ -32,6 +32,7 @@ typedef struct {
     redis_parser_t parser;
     char buffer[REDIS_RESPONSE_BUFFER_SIZE];
     size_t buffer_size;
+    ppdb_database_txn_t* txn;
 } redis_proto_t;
 
 // Forward declarations
@@ -159,52 +160,53 @@ static ppdb_error_t redis_parse_command(redis_proto_t* p, char* line) {
 
 // Handle GET command
 static ppdb_error_t redis_handle_get(redis_proto_t* p, ppdb_handle_t conn) {
-    ppdb_peer_connection_t* connection = (ppdb_peer_connection_t*)(uintptr_t)conn;
+    void* value = NULL;
     size_t value_size = 0;
-    char value_buffer[REDIS_RESPONSE_BUFFER_SIZE];
     
-    // Get value from storage
-    ppdb_error_t err = ppdb_storage_get(connection->storage, p->parser.key, p->parser.key_size,
-                                      value_buffer, &value_size);
-    if (err != PPDB_OK) {
-        if (err == PPDB_ERR_NOT_FOUND) {
-            return redis_send_null(conn);
-        }
-        return err;
+    // Use database layer get operation
+    ppdb_error_t err = ppdb_database_get(conn->ctx->db, p->txn, "default", 
+                                        p->parser.key, p->parser.key_size,
+                                        &value, &value_size);
+    
+    if (err == PPDB_OK) {
+        err = redis_send_bulk_string(conn, value, value_size);
+        free(value);
+    } else if (err == PPDB_ERR_NOT_FOUND) {
+        err = redis_send_null(conn);
     }
-
-    return redis_send_bulk_string(conn, value_buffer, value_size);
+    
+    return err;
 }
 
 // Handle SET command
 static ppdb_error_t redis_handle_set(redis_proto_t* p, ppdb_handle_t conn) {
-    ppdb_peer_connection_t* connection = (ppdb_peer_connection_t*)(uintptr_t)conn;
+    // Use database layer put operation
+    ppdb_error_t err = ppdb_database_put(conn->ctx->db, p->txn, "default",
+                                        p->parser.key, p->parser.key_size,
+                                        p->parser.value, p->parser.value_size);
     
-    // Store value in storage
-    ppdb_error_t err = ppdb_storage_put(connection->storage, p->parser.key, p->parser.key_size,
-                                      p->parser.value, p->parser.value_size);
-    if (err != PPDB_OK) {
-        return err;
+    if (err == PPDB_OK) {
+        err = redis_send_simple_string(conn, "OK");
+    } else {
+        err = redis_send_error(conn, "ERR Failed to set value");
     }
-
-    // Send response
-    return redis_send_simple_string(conn, "OK");
+    
+    return err;
 }
 
 // Handle DEL command
 static ppdb_error_t redis_handle_del(redis_proto_t* p, ppdb_handle_t conn) {
-    ppdb_peer_connection_t* connection = (ppdb_peer_connection_t*)(uintptr_t)conn;
+    // Use database layer delete operation
+    ppdb_error_t err = ppdb_database_delete(conn->ctx->db, p->txn, "default",
+                                          p->parser.key, p->parser.key_size);
     
-    // Delete value from storage
-    ppdb_error_t err = ppdb_storage_delete(connection->storage, p->parser.key, p->parser.key_size);
-    if (err != PPDB_OK) {
-        if (err == PPDB_ERR_NOT_FOUND) {
-            return redis_send_integer(conn, 0);
-        }
-        return err;
+    if (err == PPDB_OK) {
+        err = redis_send_integer(conn, 1);
+    } else if (err == PPDB_ERR_NOT_FOUND) {
+        err = redis_send_integer(conn, 0);
     }
-
-    return redis_send_integer(conn, 1);
+    
+    return err;
 }
 
 // Handle incoming data

@@ -1,203 +1,133 @@
-#include "peer_internal.h"
+#include <cosmopolitan.h>
+#include "../internal/peer.h"
+#include "../internal/database.h"
 
-//-----------------------------------------------------------------------------
-// Constants
-//-----------------------------------------------------------------------------
+// Connection state
+typedef struct ppdb_conn_state {
+    ppdb_ctx_t* ctx;                // Database context
+    ppdb_database_txn_t* txn;       // Current transaction
+    ppdb_database_table_t* table;   // Current table
+    int socket;                     // Socket descriptor
+    void* proto_data;               // Protocol-specific data
+    bool connected;                 // Connection status
+} ppdb_conn_state_t;
 
-#define PPDB_CONN_READ_BUF_SIZE  8192
-#define PPDB_CONN_WRITE_BUF_SIZE 8192
-
-//-----------------------------------------------------------------------------
-// Static Functions
-//-----------------------------------------------------------------------------
-
-static void cleanup_request(ppdb_peer_request_t* req) {
-    if (!req) return;
-
-    if (req->key.extended_data) {
-        ppdb_engine_free(req->key.extended_data);
-        req->key.extended_data = NULL;
-    }
-    if (req->value.extended_data) {
-        ppdb_engine_free(req->value.extended_data);
-        req->value.extended_data = NULL;
-    }
-}
-
-static void cleanup_response(ppdb_peer_response_t* resp) {
-    if (!resp) return;
-
-    if (resp->value.extended_data) {
-        ppdb_engine_free(resp->value.extended_data);
-        resp->value.extended_data = NULL;
-    }
-}
-
-static void on_read(ppdb_engine_async_handle_t* handle, int status) {
-    ppdb_peer_connection_t* conn = handle->user_data;
-    if (!conn) return;
-
-    if (status != 0) {
-        // Read error
-        ppdb_peer_async_complete(conn, PPDB_ERR_IO, NULL);
-        return;
-    }
-
-    // Parse protocol data
-    ppdb_error_t err = ppdb_peer_proto_parse(conn, 
-                                           conn->read.buf + conn->read.pos,
-                                           conn->read.size - conn->read.pos);
-    if (err != PPDB_OK) {
-        ppdb_peer_async_complete(conn, err, NULL);
-        return;
-    }
-
-    // Continue reading if needed
-    if (conn->proto_state != PPDB_PEER_PROTO_COMPLETE) {
-        ppdb_peer_conn_start_read(conn);
-        return;
-    }
-
-    // Handle complete request
-    err = ppdb_peer_async_handle_request(conn, &conn->current_req);
-    if (err != PPDB_OK) {
-        ppdb_peer_async_complete(conn, err, NULL);
-        return;
-    }
-}
-
-static void on_write(ppdb_engine_async_handle_t* handle, int status) {
-    ppdb_peer_connection_t* conn = handle->user_data;
-    if (!conn) return;
-
-    if (status != 0) {
-        // Write error
-        ppdb_peer_async_complete(conn, PPDB_ERR_IO, NULL);
-        return;
-    }
-
-    // Reset write buffer
-    conn->write.pos = 0;
-    conn->write.size = 0;
-
-    // Start reading next request
-    ppdb_peer_conn_start_read(conn);
-}
-
-//-----------------------------------------------------------------------------
-// Public Functions
-//-----------------------------------------------------------------------------
-
-ppdb_error_t ppdb_peer_conn_create(ppdb_peer_t* peer, ppdb_peer_connection_t** conn) {
-    if (!peer || !conn) {
+// Create connection
+ppdb_error_t ppdb_conn_create(ppdb_handle_t* conn, const peer_ops_t* ops, ppdb_ctx_t* ctx) {
+    if (!conn || !ops || !ctx) {
         return PPDB_ERR_PARAM;
     }
 
-    // Allocate connection structure
-    *conn = ppdb_engine_malloc(sizeof(ppdb_peer_connection_t));
-    if (!*conn) {
+    // Allocate connection state
+    ppdb_conn_state_t* state = calloc(1, sizeof(ppdb_conn_state_t));
+    if (!state) {
         return PPDB_ERR_MEMORY;
     }
 
-    // Initialize connection
-    (*conn)->peer = peer;
-    (*conn)->proto_state = PPDB_PEER_PROTO_INIT;
-    (*conn)->callback = NULL;
-    (*conn)->user_data = NULL;
+    // Initialize state
+    state->ctx = ctx;
+    state->connected = false;
+    state->socket = -1;
 
-    // Create async handle
-    ppdb_error_t err = ppdb_engine_async_handle_create(peer->engine, &(*conn)->handle);
+    // Create transaction
+    ppdb_error_t err = ppdb_database_txn_begin(ctx->db, NULL, 0, &state->txn);
     if (err != PPDB_OK) {
-        ppdb_engine_free(*conn);
-        *conn = NULL;
+        free(state);
         return err;
     }
 
-    // Set user data
-    (*conn)->handle->user_data = *conn;
-
-    // Allocate read buffer
-    (*conn)->read.buf = ppdb_engine_malloc(PPDB_CONN_READ_BUF_SIZE);
-    if (!(*conn)->read.buf) {
-        ppdb_peer_conn_destroy(*conn);
-        *conn = NULL;
+    // Create handle
+    *conn = calloc(1, sizeof(struct ppdb_handle));
+    if (!*conn) {
+        ppdb_database_txn_abort(state->txn);
+        free(state);
         return PPDB_ERR_MEMORY;
     }
-    (*conn)->read.size = PPDB_CONN_READ_BUF_SIZE;
 
-    // Allocate write buffer
-    (*conn)->write.buf = ppdb_engine_malloc(PPDB_CONN_WRITE_BUF_SIZE);
-    if (!(*conn)->write.buf) {
-        ppdb_peer_conn_destroy(*conn);
-        *conn = NULL;
-        return PPDB_ERR_MEMORY;
-    }
-    (*conn)->write.size = PPDB_CONN_WRITE_BUF_SIZE;
-
-    // Update peer stats
-    ppdb_engine_mutex_lock(peer->mutex);
-    peer->stats.total_connections++;
-    peer->stats.active_connections++;
-    ppdb_engine_mutex_unlock(peer->mutex);
+    // Initialize handle
+    (*conn)->ctx = ctx;
+    (*conn)->state = state;
+    (*conn)->txn = state->txn;
 
     return PPDB_OK;
 }
 
-void ppdb_peer_conn_destroy(ppdb_peer_connection_t* conn) {
-    if (!conn) return;
-
-    // Update peer stats
-    if (conn->peer) {
-        ppdb_engine_mutex_lock(conn->peer->mutex);
-        conn->peer->stats.active_connections--;
-        ppdb_engine_mutex_unlock(conn->peer->mutex);
+// Destroy connection
+void ppdb_conn_destroy(ppdb_handle_t conn) {
+    if (!conn) {
+        return;
     }
 
-    // Cleanup request/response data
-    cleanup_request(&conn->current_req);
-    cleanup_response(&conn->current_resp);
-
-    // Free buffers
-    if (conn->read.buf) {
-        ppdb_engine_free(conn->read.buf);
-    }
-    if (conn->write.buf) {
-        ppdb_engine_free(conn->write.buf);
+    if (conn->state) {
+        if (conn->state->txn) {
+            ppdb_database_txn_abort(conn->state->txn);
+        }
+        if (conn->state->socket >= 0) {
+            close(conn->state->socket);
+        }
+        free(conn->state);
     }
 
-    // Destroy async handle
-    if (conn->handle) {
-        ppdb_engine_async_handle_destroy(conn->handle);
-    }
-
-    ppdb_engine_free(conn);
+    free(conn);
 }
 
-ppdb_error_t ppdb_peer_conn_start_read(ppdb_peer_connection_t* conn) {
-    if (!conn || !conn->handle) {
+// Set socket
+ppdb_error_t ppdb_conn_set_socket(ppdb_handle_t conn, int socket) {
+    if (!conn || !conn->state || socket < 0) {
         return PPDB_ERR_PARAM;
     }
 
-    // Reset read buffer if needed
-    if (conn->read.pos >= conn->read.size) {
-        conn->read.pos = 0;
-    }
-
-    // Start async read
-    return ppdb_engine_async_read(conn->handle,
-                              conn->read.buf + conn->read.pos,
-                              conn->read.size - conn->read.pos,
-                              on_read);
+    conn->state->socket = socket;
+    conn->state->connected = true;
+    return PPDB_OK;
 }
 
-ppdb_error_t ppdb_peer_conn_start_write(ppdb_peer_connection_t* conn) {
-    if (!conn || !conn->handle) {
+// Send data
+ppdb_error_t ppdb_conn_send(ppdb_handle_t conn, const void* data, size_t size) {
+    if (!conn || !conn->state || !data || !size) {
         return PPDB_ERR_PARAM;
     }
 
-    // Start async write
-    return ppdb_engine_async_write(conn->handle,
-                               conn->write.buf + conn->write.pos,
-                               conn->write.size - conn->write.pos,
-                               on_write);
+    if (!conn->state->connected || conn->state->socket < 0) {
+        return PPDB_ERR_NOT_CONNECTED;
+    }
+
+    ssize_t sent = send(conn->state->socket, data, size, 0);
+    if (sent < 0) {
+        return PPDB_ERR_IO;
+    }
+
+    return PPDB_OK;
+}
+
+// Receive data
+ppdb_error_t ppdb_conn_recv(ppdb_handle_t conn, void* data, size_t size) {
+    if (!conn || !conn->state || !data || !size) {
+        return PPDB_ERR_PARAM;
+    }
+
+    if (!conn->state->connected || conn->state->socket < 0) {
+        return PPDB_ERR_NOT_CONNECTED;
+    }
+
+    ssize_t received = recv(conn->state->socket, data, size, 0);
+    if (received < 0) {
+        return PPDB_ERR_IO;
+    }
+
+    return PPDB_OK;
+}
+
+// Close connection
+void ppdb_conn_close(ppdb_handle_t conn) {
+    if (!conn || !conn->state) {
+        return;
+    }
+
+    if (conn->state->socket >= 0) {
+        close(conn->state->socket);
+        conn->state->socket = -1;
+    }
+
+    conn->state->connected = false;
 }

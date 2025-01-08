@@ -8,7 +8,7 @@
 #include <cosmopolitan.h>
 #include "../test_framework.h"
 #include "internal/base.h"
-#include "internal/storage.h"
+#include "internal/database.h"
 
 // 测试配置
 #define NUM_SHARDS 8
@@ -20,7 +20,7 @@
 
 // 线程参数结构
 typedef struct {
-    ppdb_storage_table_t* table;
+    ppdb_database_table_t* table;
     int thread_id;
     size_t num_ops;
 } thread_args_t;
@@ -37,7 +37,7 @@ static void concurrent_worker(void* arg) {
         snprintf(value_data, sizeof(value_data), "value_%d_%zu", args->thread_id, i);
         
         // 执行操作
-        ppdb_error_t err = ppdb_storage_put(args->table, key_data, strlen(key_data), 
+        ppdb_error_t err = ppdb_database_put(args->table, key_data, strlen(key_data), 
                                           value_data, strlen(value_data));
         if (err != PPDB_OK) {
             printf("Put operation failed in thread %d\n", args->thread_id);
@@ -47,7 +47,7 @@ static void concurrent_worker(void* arg) {
         // 验证写入
         char result[VALUE_SIZE];
         size_t size = sizeof(result);
-        err = ppdb_storage_get(args->table, key_data, strlen(key_data), result, &size);
+        err = ppdb_database_get(args->table, key_data, strlen(key_data), result, &size);
         if (err != PPDB_OK) {
             printf("Get operation failed in thread %d\n", args->thread_id);
             continue;
@@ -64,8 +64,8 @@ static void concurrent_worker(void* arg) {
 // 基本操作测试
 static void test_basic_ops(void) {
     ppdb_base_t* base = NULL;
-    ppdb_storage_t* storage = NULL;
-    ppdb_storage_table_t* table = NULL;
+    ppdb_database_t* database = NULL;
+    ppdb_database_table_t* table = NULL;
 
     // 初始化基础层
     ppdb_base_config_t base_config = {
@@ -75,8 +75,8 @@ static void test_basic_ops(void) {
     };
     TEST_ASSERT_EQUALS(ppdb_base_init(&base, &base_config), PPDB_OK);
 
-    // 初始化存储层
-    ppdb_storage_config_t storage_config = {
+    // 初始化数据库层
+    ppdb_database_config_t database_config = {
         .memtable_size = TABLE_SIZE,
         .block_size = PPDB_DEFAULT_BLOCK_SIZE,
         .cache_size = PPDB_DEFAULT_CACHE_SIZE,
@@ -85,32 +85,32 @@ static void test_basic_ops(void) {
         .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
         .sync_writes = PPDB_DEFAULT_SYNC_WRITES
     };
-    TEST_ASSERT_EQUALS(ppdb_storage_init(&storage, base, &storage_config), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_database_init(&database, base, &database_config), PPDB_OK);
 
     // 创建表
-    TEST_ASSERT_EQUALS(ppdb_storage_table_create(storage, "test_table", &table), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_database_table_create(database, "test_table", &table), PPDB_OK);
 
     // 基本操作测试
     const char* key = "test_key";
     const char* value = "test_value";
-    TEST_ASSERT_EQUALS(ppdb_storage_put(table, key, strlen(key), value, strlen(value)), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_database_put(table, key, strlen(key), value, strlen(value)), PPDB_OK);
 
     char result[256];
     size_t size = sizeof(result);
-    TEST_ASSERT_EQUALS(ppdb_storage_get(table, key, strlen(key), result, &size), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_database_get(table, key, strlen(key), result, &size), PPDB_OK);
     TEST_ASSERT_EQUALS(memcmp(result, value, strlen(value)), 0);
 
     // 清理
-    ppdb_storage_table_destroy(table);
-    ppdb_storage_destroy(storage);
+    ppdb_database_table_destroy(table);
+   ppdb_database_destroy(database);
     ppdb_base_destroy(base);
 }
 
 // 并发操作测试
 static void test_concurrent_ops(void) {
     ppdb_base_t* base = NULL;
-    ppdb_storage_t* storage = NULL;
-    ppdb_storage_table_t* table = NULL;
+    ppdb_database_t* database = NULL;
+    ppdb_database_table_t* table = NULL;
     ppdb_base_thread_t* threads[NUM_THREADS];
     thread_args_t args[NUM_THREADS];
 
@@ -122,8 +122,8 @@ static void test_concurrent_ops(void) {
     };
     TEST_ASSERT_EQUALS(ppdb_base_init(&base, &base_config), PPDB_OK);
 
-    // 初始化存储层
-    ppdb_storage_config_t storage_config = {
+    // 初始化数据库层
+    ppdb_database_config_t database_config = {
         .memtable_size = TABLE_SIZE,
         .block_size = PPDB_DEFAULT_BLOCK_SIZE,
         .cache_size = PPDB_DEFAULT_CACHE_SIZE,
@@ -132,10 +132,10 @@ static void test_concurrent_ops(void) {
         .use_compression = PPDB_DEFAULT_USE_COMPRESSION,
         .sync_writes = PPDB_DEFAULT_SYNC_WRITES
     };
-    TEST_ASSERT_EQUALS(ppdb_storage_init(&storage, base, &storage_config), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_database_init(&database, base, &database_config), PPDB_OK);
 
     // 创建表
-    TEST_ASSERT_EQUALS(ppdb_storage_table_create(storage, "test_table", &table), PPDB_OK);
+    TEST_ASSERT_EQUALS(ppdb_database_table_create(database, "test_table", &table), PPDB_OK);
 
     // 创建线程
     for (int i = 0; i < NUM_THREADS; i++) {
@@ -151,8 +151,8 @@ static void test_concurrent_ops(void) {
     }
 
     // 清理
-    ppdb_storage_table_destroy(table);
-    ppdb_storage_destroy(storage);
+    ppdb_database_table_destroy(table);
+   ppdb_database_destroy(database);
     ppdb_base_destroy(base);
 }
 

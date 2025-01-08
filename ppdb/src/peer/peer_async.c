@@ -1,10 +1,11 @@
 #include "peer_internal.h"
+#include "../internal/database.h"
 
 //-----------------------------------------------------------------------------
 // Static Functions
 //-----------------------------------------------------------------------------
 
-static void on_engine_complete(ppdb_error_t error, void* result, void* user_data) {
+static void on_database_complete(ppdb_error_t error, void* result, void* user_data) {
     ppdb_peer_connection_t* conn = user_data;
     if (!conn) return;
 
@@ -19,7 +20,7 @@ static void on_engine_complete(ppdb_error_t error, void* result, void* user_data
         if (data->size <= sizeof(resp.value.inline_data)) {
             memcpy(resp.value.inline_data, data->inline_data, data->size);
         } else {
-            resp.value.extended_data = ppdb_engine_malloc(data->size);
+            resp.value.extended_data = malloc(data->size);
             if (!resp.value.extended_data) {
                 resp.error = PPDB_ERR_MEMORY;
             } else {
@@ -31,7 +32,7 @@ static void on_engine_complete(ppdb_error_t error, void* result, void* user_data
             }
         }
         resp.value.size = data->size;
-        ppdb_engine_free(result);
+        free(result);
     }
 
     // Send response
@@ -41,87 +42,107 @@ static void on_engine_complete(ppdb_error_t error, void* result, void* user_data
 static ppdb_error_t handle_get(ppdb_peer_connection_t* conn,
                              const ppdb_peer_request_t* req) {
     ppdb_peer_t* peer = conn->peer;
-    if (!peer || !peer->engine) {
+    if (!peer || !peer->db) {
         return PPDB_ERR_INTERNAL;
     }
 
     // Start async get operation
-    return ppdb_engine_async_get(peer->engine,
-                               &req->key,
-                               on_engine_complete,
-                               conn);
+    return ppdb_database_get(peer->db,
+                           conn->txn,
+                           "default",
+                           req->key.data,
+                           req->key.size,
+                           &req->value.data,
+                           &req->value.size);
 }
 
 static ppdb_error_t handle_set(ppdb_peer_connection_t* conn,
                              const ppdb_peer_request_t* req) {
     ppdb_peer_t* peer = conn->peer;
-    if (!peer || !peer->engine) {
+    if (!peer || !peer->db) {
         return PPDB_ERR_INTERNAL;
     }
 
     // Start async set operation
-    return ppdb_engine_async_put(peer->engine,
-                               &req->key,
-                               &req->value,
-                               on_engine_complete,
-                               conn);
+    return ppdb_database_put(peer->db,
+                           conn->txn,
+                           "default",
+                           req->key.data,
+                           req->key.size,
+                           req->value.data,
+                           req->value.size);
 }
 
 static ppdb_error_t handle_delete(ppdb_peer_connection_t* conn,
                                 const ppdb_peer_request_t* req) {
     ppdb_peer_t* peer = conn->peer;
-    if (!peer || !peer->engine) {
+    if (!peer || !peer->db) {
         return PPDB_ERR_INTERNAL;
     }
 
     // Start async delete operation
-    return ppdb_engine_async_delete(peer->engine,
-                                  &req->key,
-                                  on_engine_complete,
-                                  conn);
+    return ppdb_database_delete(peer->db,
+                              conn->txn,
+                              "default",
+                              req->key.data,
+                              req->key.size);
 }
 
 static ppdb_error_t handle_stats(ppdb_peer_connection_t* conn,
                                const ppdb_peer_request_t* req) {
     ppdb_peer_t* peer = conn->peer;
-    if (!peer) {
+    if (!peer || !peer->db) {
         return PPDB_ERR_INTERNAL;
     }
 
-    // Prepare stats buffer
-    char* stats = ppdb_engine_malloc(1024);
-    if (!stats) {
+    // Get database stats
+    ppdb_database_stats_t stats;
+    ppdb_error_t err = ppdb_database_get_stats(peer->db, &stats);
+    if (err != PPDB_OK) {
+        return err;
+    }
+
+    // Format stats string
+    char* stats_str = malloc(1024);
+    if (!stats_str) {
         return PPDB_ERR_MEMORY;
     }
 
-    // Get stats
-    ppdb_error_t err = ppdb_peer_get_stats(peer, stats, 1024);
-    if (err != PPDB_OK) {
-        ppdb_engine_free(stats);
-        return err;
+    int len = snprintf(stats_str, 1024,
+        "total_txns: %lu\n"
+        "committed_txns: %lu\n"
+        "aborted_txns: %lu\n"
+        "conflicts: %lu\n"
+        "deadlocks: %lu\n"
+        "cache_hits: %lu\n"
+        "cache_misses: %lu\n"
+        "bytes_written: %lu\n"
+        "bytes_read: %lu\n",
+        stats.total_txns,
+        stats.committed_txns,
+        stats.aborted_txns,
+        stats.conflicts,
+        stats.deadlocks,
+        stats.cache_hits,
+        stats.cache_misses,
+        stats.bytes_written,
+        stats.bytes_read);
+
+    if (len < 0 || len >= 1024) {
+        free(stats_str);
+        return PPDB_ERR_BUFFER_FULL;
     }
 
     // Prepare response
     ppdb_peer_response_t resp = {0};
     resp.error = PPDB_OK;
-    resp.flags = req->flags;
-    resp.cas = req->cas;
-
-    size_t stats_len = strlen(stats);
-    if (stats_len <= sizeof(resp.value.inline_data)) {
-        memcpy(resp.value.inline_data, stats, stats_len);
-    } else {
-        resp.value.extended_data = stats;
-        stats = NULL;  // Transfer ownership
-    }
-    resp.value.size = stats_len;
+    resp.value.extended_data = stats_str;
+    resp.value.size = len;
 
     // Send response
     ppdb_peer_async_complete(conn, PPDB_OK, &resp);
 
-    if (stats) {
-        ppdb_engine_free(stats);
-    }
+    free(stats_str);
     return PPDB_OK;
 }
 
@@ -135,40 +156,31 @@ ppdb_error_t ppdb_peer_async_handle_request(ppdb_peer_connection_t* conn,
         return PPDB_ERR_PARAM;
     }
 
-    ppdb_peer_t* peer = conn->peer;
-    if (!peer) {
-        return PPDB_ERR_INTERNAL;
-    }
+    pthread_mutex_lock(&conn->mutex);
+    conn->current_req = *req;
+    pthread_mutex_unlock(&conn->mutex);
 
-    // Update request stats
-    ppdb_engine_mutex_lock(peer->mutex);
-    peer->stats.total_requests++;
-    ppdb_engine_mutex_unlock(peer->mutex);
-
-    // Handle request based on type
     ppdb_error_t err;
     switch (req->type) {
-        case PPDB_PEER_REQ_GET:
+        case PPDB_REQ_GET:
             err = handle_get(conn, req);
             break;
-        case PPDB_PEER_REQ_SET:
+
+        case PPDB_REQ_SET:
             err = handle_set(conn, req);
             break;
-        case PPDB_PEER_REQ_DELETE:
+
+        case PPDB_REQ_DELETE:
             err = handle_delete(conn, req);
             break;
-        case PPDB_PEER_REQ_STATS:
+
+        case PPDB_REQ_STATS:
             err = handle_stats(conn, req);
             break;
-        default:
-            err = PPDB_ERR_PROTOCOL;
-            break;
-    }
 
-    if (err != PPDB_OK) {
-        ppdb_engine_mutex_lock(peer->mutex);
-        peer->stats.failed_requests++;
-        ppdb_engine_mutex_unlock(peer->mutex);
+        default:
+            err = PPDB_ERR_INVALID_REQUEST;
+            break;
     }
 
     return err;
@@ -177,27 +189,16 @@ ppdb_error_t ppdb_peer_async_handle_request(ppdb_peer_connection_t* conn,
 void ppdb_peer_async_complete(ppdb_peer_connection_t* conn,
                             ppdb_error_t error,
                             const ppdb_peer_response_t* resp) {
-    if (!conn) return;
-
-    // Call user callback if set
-    if (conn->callback) {
-        conn->callback(conn, resp, conn->user_data);
+    if (!conn) {
+        return;
     }
 
-    // Format and send response
-    if (resp) {
-        size_t len = conn->write.size;
-        ppdb_error_t err = ppdb_peer_proto_format(conn, resp, conn->write.buf, &len);
-        if (err == PPDB_OK) {
-            conn->write.size = len;
-            ppdb_peer_conn_start_write(conn);
-        }
+    pthread_mutex_lock(&conn->mutex);
+
+    // Send response
+    if (conn->response_cb) {
+        conn->response_cb(conn, error, resp);
     }
 
-    // Reset state
-    conn->proto_state = PPDB_PEER_PROTO_INIT;
-    conn->callback = NULL;
-    conn->user_data = NULL;
-    cleanup_request(&conn->current_req);
-    cleanup_response(&conn->current_resp);
+    pthread_mutex_unlock(&conn->mutex);
 }

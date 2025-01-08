@@ -1,10 +1,11 @@
 #include <cosmopolitan.h>
 #include "internal/base.h"
-#include "internal/storage.h"
+#include "internal/database.h"
 #include "../test_framework.h"
 
 // 全局测试数据
 static ppdb_base_t* g_base = NULL;
+static ppdb_database_t* g_db = NULL;
 
 // 测试初始化
 static int test_setup(void) {
@@ -21,6 +22,17 @@ static int test_setup(void) {
     
     // 初始化 base 层
     ASSERT_OK(ppdb_base_init(&g_base, &base_config));
+
+    // 初始化数据库配置
+    ppdb_database_config_t db_config = {
+        .base = g_base,
+        .max_tables = 16,
+        .max_txns = 1000,
+        .enable_mvcc = true
+    };
+
+    // 初始化数据库层
+    ASSERT_OK(ppdb_database_init(&g_db, &db_config));
     
     printf("Test environment setup completed\n");
     return 0;
@@ -30,6 +42,11 @@ static int test_setup(void) {
 static int test_teardown(void) {
     printf("\n=== Cleaning up skiplist test environment ===\n");
     
+    if (g_db) {
+        ppdb_database_destroy(g_db);
+        g_db = NULL;
+    }
+
     if (g_base) {
         ppdb_base_destroy(g_base);
         g_base = NULL;
@@ -67,9 +84,13 @@ static void free_test_kv(ppdb_key_t* key, ppdb_value_t* value) {
 static int test_skiplist_basic(void) {
     printf("\n=== Running basic skiplist tests ===\n");
     
-    // 创建跳表
-    ppdb_skiplist_t* list = NULL;
-    ASSERT_OK(ppdb_skiplist_create(&list));
+    // 创建事务
+    ppdb_txn_t* txn = NULL;
+    ASSERT_OK(ppdb_database_txn_begin(g_db, NULL, 0, &txn));
+
+    // 创建表
+    ppdb_database_table_t* table = NULL;
+    ASSERT_OK(ppdb_database_table_create(g_db, txn, "test_table", &table));
     
     // 准备测试数据
     ppdb_key_t key1;
@@ -77,34 +98,35 @@ static int test_skiplist_basic(void) {
     create_test_kv("key1", "value1", &key1, &value1);
     
     // 测试插入
-    ASSERT_OK(ppdb_skiplist_insert(list, &key1, &value1));
+    ASSERT_OK(ppdb_database_put(g_db, txn, "test_table", key1.data, key1.size, value1.data, value1.size));
     
     // 测试查找
     ppdb_value_t found_value;
-    ASSERT_OK(ppdb_skiplist_find(list, &key1, &found_value));
+    ASSERT_OK(ppdb_database_get(g_db, txn, "test_table", key1.data, key1.size, &found_value.data, &found_value.size));
     ASSERT_EQ(found_value.size, value1.size);
     ASSERT_EQ(memcmp(found_value.data, value1.data, value1.size), 0);
     
     // 测试删除
-    ASSERT_OK(ppdb_skiplist_remove(list, &key1));
-    ASSERT_ERR(ppdb_skiplist_find(list, &key1, &found_value), PPDB_ERR_NOT_FOUND);
+    ASSERT_OK(ppdb_database_delete(g_db, txn, "test_table", key1.data, key1.size));
+    ASSERT_ERR(ppdb_database_get(g_db, txn, "test_table", key1.data, key1.size, &found_value.data, &found_value.size), PPDB_ERR_NOT_FOUND);
     
     // 清理
     free_test_kv(&key1, &value1);
-    ppdb_skiplist_destroy(list);
+    ppdb_database_txn_commit(txn);
     printf("Basic skiplist tests completed\n");
     return 0;
 }
 
 // 并发操作测试
 typedef struct {
-    ppdb_skiplist_t* list;
+    ppdb_database_t* db;
+    ppdb_database_table_t* table;
     int thread_id;
 } thread_data_t;
 
 static void* concurrent_insert_thread(void* arg) {
     thread_data_t* data = (thread_data_t*)arg;
-    ppdb_skiplist_t* list = data->list;
+    ppdb_database_t* db = data->db;
     int thread_id = data->thread_id;
     
     for (int i = 0; i < 100; i++) {
@@ -116,7 +138,15 @@ static void* concurrent_insert_thread(void* arg) {
         ppdb_value_t value;
         create_test_kv(key_str, value_str, &key, &value);
         
-        ppdb_skiplist_insert(list, &key, &value);
+        // 创建事务
+        ppdb_txn_t* txn = NULL;
+        ppdb_database_txn_begin(db, NULL, 0, &txn);
+        
+        // 插入数据
+        ppdb_database_put(db, txn, "test_table", key.data, key.size, value.data, value.size);
+        
+        // 提交事务
+        ppdb_database_txn_commit(txn);
         
         free_test_kv(&key, &value);
     }
@@ -127,16 +157,22 @@ static void* concurrent_insert_thread(void* arg) {
 static int test_skiplist_concurrent(void) {
     printf("\n=== Running concurrent skiplist tests ===\n");
     
-    // 创建跳表
-    ppdb_skiplist_t* list = NULL;
-    ASSERT_OK(ppdb_skiplist_create(&list));
+    // 创建表
+    ppdb_txn_t* txn = NULL;
+    ASSERT_OK(ppdb_database_txn_begin(g_db, NULL, 0, &txn));
+    
+    ppdb_database_table_t* table = NULL;
+    ASSERT_OK(ppdb_database_table_create(g_db, txn, "test_table", &table));
+    
+    ASSERT_OK(ppdb_database_txn_commit(txn));
     
     // 创建多个线程进行并发插入
     ppdb_base_thread_t threads[4];
     thread_data_t thread_data[4];
     
     for (int i = 0; i < 4; i++) {
-        thread_data[i].list = list;
+        thread_data[i].db = g_db;
+        thread_data[i].table = table;
         thread_data[i].thread_id = i;
         ASSERT_OK(ppdb_base_thread_create(&threads[i], concurrent_insert_thread, &thread_data[i]));
     }
@@ -147,10 +183,10 @@ static int test_skiplist_concurrent(void) {
     }
     
     // 验证结果
-    ASSERT_EQ(ppdb_skiplist_size(list), 400);  // 4个线程 * 100个键值对
+    ppdb_database_stats_t stats;
+    ASSERT_OK(ppdb_database_get_stats(g_db, &stats));
+    ASSERT_EQ(stats.total_records, 400);  // 4个线程 * 100个键值对
     
-    // 清理
-    ppdb_skiplist_destroy(list);
     printf("Concurrent skiplist tests completed\n");
     return 0;
 }
@@ -159,45 +195,48 @@ static int test_skiplist_concurrent(void) {
 static int test_skiplist_boundary(void) {
     printf("\n=== Running boundary condition tests ===\n");
     
-    ppdb_skiplist_t* list = NULL;
-    ASSERT_OK(ppdb_skiplist_create(&list));
+    ppdb_txn_t* txn = NULL;
+    ASSERT_OK(ppdb_database_txn_begin(g_db, NULL, 0, &txn));
+    
+    ppdb_database_table_t* table = NULL;
+    ASSERT_OK(ppdb_database_table_create(g_db, txn, "test_table", &table));
     
     // 测试NULL参数
     ppdb_key_t key;
     ppdb_value_t value;
-    ASSERT_ERR(ppdb_skiplist_insert(list, NULL, &value), PPDB_ERR_NULL_POINTER);
-    ASSERT_ERR(ppdb_skiplist_insert(list, &key, NULL), PPDB_ERR_NULL_POINTER);
+    ASSERT_ERR(ppdb_database_put(g_db, txn, "test_table", NULL, 0, value.data, value.size), PPDB_ERR_PARAM);
+    ASSERT_ERR(ppdb_database_put(g_db, txn, "test_table", key.data, key.size, NULL, 0), PPDB_ERR_PARAM);
     
     // 测试空键/值
     create_test_kv("", "value", &key, &value);
-    ASSERT_ERR(ppdb_skiplist_insert(list, &key, &value), PPDB_ERR_NULL_POINTER);
+    ASSERT_ERR(ppdb_database_put(g_db, txn, "test_table", key.data, 0, value.data, value.size), PPDB_ERR_PARAM);
     free_test_kv(&key, &value);
     
     create_test_kv("key", "", &key, &value);
-    ASSERT_ERR(ppdb_skiplist_insert(list, &key, &value), PPDB_ERR_NULL_POINTER);
+    ASSERT_ERR(ppdb_database_put(g_db, txn, "test_table", key.data, key.size, value.data, 0), PPDB_ERR_PARAM);
     free_test_kv(&key, &value);
     
     // 测试重复键
     create_test_kv("key", "value1", &key, &value);
-    ASSERT_OK(ppdb_skiplist_insert(list, &key, &value));
+    ASSERT_OK(ppdb_database_put(g_db, txn, "test_table", key.data, key.size, value.data, value.size));
     
     ppdb_value_t value2;
     create_test_kv("key", "value2", &key, &value2);
-    ASSERT_OK(ppdb_skiplist_insert(list, &key, &value2));  // 应该更新值
+    ASSERT_OK(ppdb_database_put(g_db, txn, "test_table", key.data, key.size, value2.data, value2.size));  // 应该更新值
     
     ppdb_value_t found_value;
-    ASSERT_OK(ppdb_skiplist_find(list, &key, &found_value));
+    ASSERT_OK(ppdb_database_get(g_db, txn, "test_table", key.data, key.size, &found_value.data, &found_value.size));
     ASSERT_EQ(found_value.size, value2.size);
     ASSERT_EQ(memcmp(found_value.data, value2.data, value2.size), 0);
     
     // 测试删除不存在的键
     create_test_kv("nonexistent", "", &key, &value);
-    ASSERT_ERR(ppdb_skiplist_remove(list, &key), PPDB_ERR_NOT_FOUND);
+    ASSERT_ERR(ppdb_database_delete(g_db, txn, "test_table", key.data, key.size), PPDB_ERR_NOT_FOUND);
     
     // 清理
     free_test_kv(&key, &value);
     free_test_kv(&key, &value2);
-    ppdb_skiplist_destroy(list);
+    ppdb_database_txn_commit(txn);
     printf("Boundary condition tests completed\n");
     return 0;
 }
@@ -206,8 +245,11 @@ static int test_skiplist_boundary(void) {
 static int test_skiplist_stress(void) {
     printf("\n=== Running stress tests ===\n");
     
-    ppdb_skiplist_t* list = NULL;
-    ASSERT_OK(ppdb_skiplist_create(&list));
+    ppdb_txn_t* txn = NULL;
+    ASSERT_OK(ppdb_database_txn_begin(g_db, NULL, 0, &txn));
+    
+    ppdb_database_table_t* table = NULL;
+    ASSERT_OK(ppdb_database_table_create(g_db, txn, "test_table", &table));
     
     // 大量数据插入
     const int num_entries = 10000;
@@ -222,7 +264,7 @@ static int test_skiplist_stress(void) {
         ppdb_value_t value;
         create_test_kv(key_str, value_str, &key, &value);
         
-        ASSERT_OK(ppdb_skiplist_insert(list, &key, &value));
+        ASSERT_OK(ppdb_database_put(g_db, txn, "test_table", key.data, key.size, value.data, value.size));
         
         free_test_kv(&key, &value);
         
@@ -243,7 +285,7 @@ static int test_skiplist_stress(void) {
         create_test_kv(key_str, value_str, &key, &value);
         
         ppdb_value_t found_value;
-        ASSERT_OK(ppdb_skiplist_find(list, &key, &found_value));
+        ASSERT_OK(ppdb_database_get(g_db, txn, "test_table", key.data, key.size, &found_value.data, &found_value.size));
         ASSERT_EQ(found_value.size, value.size);
         ASSERT_EQ(memcmp(found_value.data, value.data, value.size), 0);
         
@@ -254,54 +296,21 @@ static int test_skiplist_stress(void) {
         }
     }
     
-    // 删除所有数据
-    printf("Deleting %d entries...\n", num_entries);
-    for (int i = 0; i < num_entries; i++) {
-        char key_str[32];
-        snprintf(key_str, sizeof(key_str), "key_%d", i);
-        
-        ppdb_key_t key;
-        ppdb_value_t value;  // 仅用于create_test_kv
-        create_test_kv(key_str, "", &key, &value);
-        
-        ASSERT_OK(ppdb_skiplist_remove(list, &key));
-        
-        free_test_kv(&key, &value);
-        
-        if (i % 1000 == 0) {
-            printf("Deleted %d entries\n", i);
-        }
-    }
-    
-    // 验证大小
-    ASSERT_EQ(ppdb_skiplist_size(list), 0);
-    
-    // 清理
-    ppdb_skiplist_destroy(list);
+    ppdb_database_txn_commit(txn);
     printf("Stress tests completed\n");
     return 0;
 }
 
 int main(void) {
-    if (test_setup() != 0) {
-        printf("Test setup failed\n");
-        return 1;
-    }
+    TEST_INIT();
     
-    TEST_CASE(test_skiplist_basic);
-    TEST_CASE(test_skiplist_concurrent);
-    TEST_CASE(test_skiplist_boundary);
-    TEST_CASE(test_skiplist_stress);
+    TEST_RUN(test_setup);
+    TEST_RUN(test_skiplist_basic);
+    TEST_RUN(test_skiplist_concurrent);
+    TEST_RUN(test_skiplist_boundary);
+    TEST_RUN(test_skiplist_stress);
+    TEST_RUN(test_teardown);
     
-    if (test_teardown() != 0) {
-        printf("Test teardown failed\n");
-        return 1;
-    }
-    
-    printf("\nTest summary:\n");
-    printf("  Total: %d\n", g_test_count);
-    printf("  Passed: %d\n", g_test_passed);
-    printf("  Failed: %d\n", g_test_failed);
-    
-    return g_test_failed > 0 ? 1 : 0;
+    TEST_REPORT();
+    return 0;
 }

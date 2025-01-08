@@ -15,12 +15,12 @@
 
 // Database structure
 struct ppdb_database_s {
-    ppdb_database_config_t config;
-    ppdb_mvcc_t* mvcc;
-    ppdb_storage_t* storage;
-    ppdb_base_mutex_t* mutex;
+    ppdb_database_table_manager_t* table_manager;
+    ppdb_database_txn_manager_t* txn_manager;
+    ppdb_database_index_manager_t* index_manager;
     ppdb_database_stats_t stats;
-    bool initialized;
+    pthread_rwlock_t rwlock;
+    pthread_mutex_t mutex;
 };
 
 // Transaction structure
@@ -37,13 +37,6 @@ struct ppdb_mvcc_s {
     _Atomic(uint64_t) next_txn_id;
     ppdb_base_skiplist_t* versions;
     ppdb_base_mutex_t* mutex;
-};
-
-// Storage structure
-struct ppdb_storage_s {
-    ppdb_base_skiplist_t* memtable;
-    ppdb_base_mutex_t* mutex;
-    char* data_dir;
 };
 
 // Index structure

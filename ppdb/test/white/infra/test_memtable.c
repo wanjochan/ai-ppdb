@@ -157,7 +157,7 @@ static int test_memtable_concurrent(void) {
     // Get and print metrics
     printf("Getting metrics...\n");
     ppdb_metrics_t metrics = {0};
-    err = ppdb_storage_get_stats(base, &metrics);
+    err = ppdb_database_get_stats(base, &metrics);
     if (err == PPDB_OK) {
         printf("Concurrent test results:\n");
         printf("Total expected operations: %d\n", TEST_ITERATIONS * thread_created);

@@ -34,10 +34,8 @@
 //=============================================================================
 
 #include <cosmopolitan.h>
-#include <ppdb/ppdb.h>
 #include "internal/base.h"
-#include "internal/engine.h"
-#include "internal/storage.h"
+#include "internal/database.h"
 #include "internal/peer.h"
 
 //-----------------------------------------------------------------------------
@@ -86,4 +84,37 @@ void ppdb_destroy(ppdb_ctx_t* ctx) {
     
     // Free context
     free(ctx);
+}
+
+// Library initialization
+ppdb_error_t ppdb_init(void) {
+    // Initialize base layer
+    ppdb_error_t err = ppdb_base_init();
+    if (err != PPDB_OK) {
+        return err;
+    }
+
+    // Initialize database layer
+    err = ppdb_database_init();
+    if (err != PPDB_OK) {
+        ppdb_base_cleanup();
+        return err;
+    }
+
+    // Initialize peer layer
+    err = ppdb_peer_init();
+    if (err != PPDB_OK) {
+        ppdb_database_cleanup();
+        ppdb_base_cleanup();
+        return err;
+    }
+
+    return PPDB_OK;
+}
+
+// Library cleanup
+void ppdb_cleanup(void) {
+    ppdb_peer_cleanup();
+    ppdb_database_cleanup();
+    ppdb_base_cleanup();
 } 

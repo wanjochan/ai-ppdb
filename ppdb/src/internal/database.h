@@ -2,31 +2,25 @@
  * database.h - Database Layer Definitions
  */
 
-#ifndef PPDB_DATABASE_H
-#define PPDB_DATABASE_H
+#ifndef PPDB_DATABASE_H_
+#define PPDB_DATABASE_H_
 
 #include <cosmopolitan.h>
 #include "base.h"
 
-// Database error codes (4200-4399)
-#define PPDB_DATABASE_ERR_START     4200
-#define PPDB_DATABASE_ERR_TXN       4201  // Transaction error
-#define PPDB_DATABASE_ERR_LOCK      4202  // Lock error
-#define PPDB_DATABASE_ERR_MVCC      4203  // MVCC error
-#define PPDB_DATABASE_ERR_STORAGE   4204  // Storage error
-#define PPDB_DATABASE_ERR_INDEX     4205  // Index error
-#define PPDB_DATABASE_ERR_CONFLICT  4206  // Transaction conflict
-#define PPDB_DATABASE_ERR_ABORT     4207  // Transaction abort
-#define PPDB_DATABASE_ERR_TIMEOUT   4208  // Operation timeout
-#define PPDB_DATABASE_ERR_READONLY  4209  // Read-only error
-#define PPDB_DATABASE_ERR_CORRUPT   4210  // Data corruption
+// Error codes
+#define PPDB_DATABASE_ERR_START    4200
+#define PPDB_DATABASE_ERR_INIT     4201  // Initialization error
+#define PPDB_DATABASE_ERR_TXN      4202  // Transaction error
+#define PPDB_DATABASE_ERR_CONFLICT 4203  // Conflict error
+#define PPDB_DATABASE_ERR_CORRUPT  4204  // Database corruption error
+#define PPDB_DATABASE_ERR_FULL     4205  // Database full error
 
 // Forward declarations
 typedef struct ppdb_database_s ppdb_database_t;
-typedef struct ppdb_txn_s ppdb_txn_t;
-typedef struct ppdb_mvcc_s ppdb_mvcc_t;
-typedef struct ppdb_storage_s ppdb_storage_t;
-typedef struct ppdb_index_s ppdb_index_t;
+typedef struct ppdb_database_table_s ppdb_database_table_t;
+typedef struct ppdb_database_txn_s ppdb_database_txn_t;
+typedef struct ppdb_database_index_s ppdb_database_index_t;
 
 // Transaction isolation levels
 typedef enum {
@@ -78,13 +72,6 @@ ppdb_error_t ppdb_txn_abort(ppdb_txn_t* txn);
 ppdb_error_t ppdb_txn_get_isolation(ppdb_txn_t* txn, ppdb_txn_isolation_t* isolation);
 ppdb_error_t ppdb_txn_set_isolation(ppdb_txn_t* txn, ppdb_txn_isolation_t isolation);
 
-// Storage operations
-ppdb_error_t ppdb_put(ppdb_txn_t* txn, const void* key, size_t key_size, 
-                      const void* value, size_t value_size);
-ppdb_error_t ppdb_get(ppdb_txn_t* txn, const void* key, size_t key_size,
-                      void** value, size_t* value_size);
-ppdb_error_t ppdb_delete(ppdb_txn_t* txn, const void* key, size_t key_size);
-
 // Index operations
 ppdb_error_t ppdb_index_create(ppdb_txn_t* txn, const char* name,
                               ppdb_base_compare_func_t compare);
@@ -108,4 +95,4 @@ ppdb_error_t ppdb_iterator_key(ppdb_iterator_t* iterator,
 ppdb_error_t ppdb_iterator_value(ppdb_iterator_t* iterator,
                                 void** value, size_t* value_size);
 
-#endif // PPDB_DATABASE_H 
+#endif // PPDB_DATABASE_H_ 
