@@ -60,8 +60,9 @@
 
 ## TODO 
 
-- infra 是不是有些【内存管理】的封装没做？
-- infra 层要检查一下，除了 sync 不应有对 pthread的调用？应该是用 sync中的封装
+- infra 是不是有些【内存管理】的封装没做？（做了之后所有其它内存有关的都要换有自己的封装）
+- infra 是不是有些【线程管理】的封装没做？（做了之后在很多测试代码都要用我们自己的封装而不要直接用pthead）
+- infra 层要检查一下，除了 sync和线程封装外 不应有对 pthread的调用？应该是用 sync中的封装
 - 异步那里针对 windows做一个 IOCP优化（在ppdb_prev还有备份可以参考）
 - 从 ppdb_prev的 sync_perf 中参考下同步有没有优化的地方
  

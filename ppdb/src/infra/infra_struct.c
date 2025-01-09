@@ -1,3 +1,4 @@
+#include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 
 /* Linked List Implementation */
@@ -38,308 +39,361 @@ static u64 hash_bytes(const void* key, size_t len) {
 }
 
 int infra_hash_init(struct infra_hash_table* table, size_t nbuckets) {
-    table->buckets = infra_calloc(nbuckets, sizeof(struct infra_list));
-    if (!table->buckets) {
-        return INFRA_ERR_NOMEM;
+    if (!table || nbuckets == 0) {
+        return PPDB_ERR_PARAM;
     }
-    
-    table->nbuckets = nbuckets;
-    table->size = 0;
-    
+
+    table->buckets = malloc(nbuckets * sizeof(struct infra_list));
+    if (!table->buckets) {
+        return PPDB_ERR_MEMORY;
+    }
+
     for (size_t i = 0; i < nbuckets; i++) {
         infra_list_init(&table->buckets[i]);
     }
-    
-    return INFRA_OK;
+
+    table->nbuckets = nbuckets;
+    table->size = 0;
+
+    return PPDB_OK;
 }
 
 void infra_hash_destroy(struct infra_hash_table* table) {
-    if (!table->buckets) return;
-    
+    if (!table) {
+        return;
+    }
+
     for (size_t i = 0; i < table->nbuckets; i++) {
-        struct infra_list* head = &table->buckets[i];
-        while (!infra_list_empty(head)) {
-            struct infra_hash_node* node = (struct infra_hash_node*)head->next;
-            infra_list_del(&node->list);
-            infra_free(node);
+        struct infra_list* bucket = &table->buckets[i];
+        struct infra_list* pos = bucket->next;
+        while (pos != bucket) {
+            struct infra_list* next = pos->next;
+            struct infra_hash_node* node = container_of(pos, struct infra_hash_node, list);
+            free(node);
+            pos = next;
         }
     }
-    
-    infra_free(table->buckets);
+
+    free(table->buckets);
     table->buckets = NULL;
+    table->nbuckets = 0;
     table->size = 0;
 }
 
 int infra_hash_put(struct infra_hash_table* table, void* key, size_t klen, void* value) {
+    if (!table || !key) {
+        return PPDB_ERR_PARAM;
+    }
+
     u64 hash = hash_bytes(key, klen);
-    size_t bucket = hash % table->nbuckets;
-    struct infra_list* head = &table->buckets[bucket];
-    
-    /* Check for existing key */
+    size_t bucket_idx = hash % table->nbuckets;
+    struct infra_list* bucket = &table->buckets[bucket_idx];
+
+    // Check if key already exists
     struct infra_list* pos;
-    for (pos = head->next; pos != head; pos = pos->next) {
-        struct infra_hash_node* node = (struct infra_hash_node*)pos;
-        if (node->hash == hash && memcmp(node->key, key, klen) == 0) {
+    for (pos = bucket->next; pos != bucket; pos = pos->next) {
+        struct infra_hash_node* node = container_of(pos, struct infra_hash_node, list);
+        if (node->hash == hash && node->key == key) {
             node->value = value;
-            return INFRA_OK;
+            return PPDB_OK;
         }
     }
-    
-    /* Create new node */
-    struct infra_hash_node* node = infra_malloc(sizeof(*node));
+
+    // Create new node
+    struct infra_hash_node* node = malloc(sizeof(struct infra_hash_node));
     if (!node) {
-        return INFRA_ERR_NOMEM;
+        return PPDB_ERR_MEMORY;
     }
-    
+
     node->hash = hash;
     node->key = key;
     node->value = value;
-    infra_list_add(head, &node->list);
+    infra_list_init(&node->list);
+    infra_list_add(bucket, &node->list);
     table->size++;
-    
-    return INFRA_OK;
+
+    return PPDB_OK;
 }
 
 void* infra_hash_get(struct infra_hash_table* table, void* key, size_t klen) {
+    if (!table || !key) {
+        return NULL;
+    }
+
     u64 hash = hash_bytes(key, klen);
-    size_t bucket = hash % table->nbuckets;
-    struct infra_list* head = &table->buckets[bucket];
-    
+    size_t bucket_idx = hash % table->nbuckets;
+    struct infra_list* bucket = &table->buckets[bucket_idx];
+
     struct infra_list* pos;
-    for (pos = head->next; pos != head; pos = pos->next) {
-        struct infra_hash_node* node = (struct infra_hash_node*)pos;
-        if (node->hash == hash && memcmp(node->key, key, klen) == 0) {
+    for (pos = bucket->next; pos != bucket; pos = pos->next) {
+        struct infra_hash_node* node = container_of(pos, struct infra_hash_node, list);
+        if (node->hash == hash && node->key == key) {
             return node->value;
         }
     }
-    
+
     return NULL;
 }
 
 int infra_hash_del(struct infra_hash_table* table, void* key, size_t klen) {
+    if (!table || !key) {
+        return PPDB_ERR_PARAM;
+    }
+
     u64 hash = hash_bytes(key, klen);
-    size_t bucket = hash % table->nbuckets;
-    struct infra_list* head = &table->buckets[bucket];
-    
+    size_t bucket_idx = hash % table->nbuckets;
+    struct infra_list* bucket = &table->buckets[bucket_idx];
+
     struct infra_list* pos;
-    for (pos = head->next; pos != head; pos = pos->next) {
-        struct infra_hash_node* node = (struct infra_hash_node*)pos;
-        if (node->hash == hash && memcmp(node->key, key, klen) == 0) {
+    for (pos = bucket->next; pos != bucket; pos = pos->next) {
+        struct infra_hash_node* node = container_of(pos, struct infra_hash_node, list);
+        if (node->hash == hash && node->key == key) {
             infra_list_del(&node->list);
-            infra_free(node);
+            free(node);
             table->size--;
-            return INFRA_OK;
+            return PPDB_OK;
         }
     }
-    
-    return INFRA_ERR_NOTFOUND;
+
+    return PPDB_ERR_NOTFOUND;
 }
 
 /* Queue Implementation */
 void infra_queue_init(struct infra_queue* queue) {
+    if (!queue) {
+        return;
+    }
     infra_list_init(&queue->list);
     queue->size = 0;
 }
 
 int infra_queue_push(struct infra_queue* queue, void* data) {
-    struct infra_queue_node* node = infra_malloc(sizeof(*node));
-    if (!node) {
-        return INFRA_ERR_NOMEM;
+    if (!queue) {
+        return PPDB_ERR_PARAM;
     }
-    
+
+    struct infra_queue_node* node = malloc(sizeof(struct infra_queue_node));
+    if (!node) {
+        return PPDB_ERR_MEMORY;
+    }
+
     node->data = data;
-    infra_list_add(&queue->list, &node->list);
+    infra_list_init(&node->list);
+    infra_list_add(queue->list.prev, &node->list);
     queue->size++;
-    
-    return INFRA_OK;
+
+    return PPDB_OK;
 }
 
 void* infra_queue_pop(struct infra_queue* queue) {
-    if (infra_queue_empty(queue)) {
+    if (!queue || infra_queue_empty(queue)) {
         return NULL;
     }
-    
-    struct infra_queue_node* node = (struct infra_queue_node*)queue->list.prev;
+
+    struct infra_list* first = queue->list.next;
+    struct infra_queue_node* node = container_of(first, struct infra_queue_node, list);
     void* data = node->data;
-    
-    infra_list_del(&node->list);
-    infra_free(node);
+
+    infra_list_del(first);
+    free(node);
     queue->size--;
-    
+
     return data;
 }
 
 int infra_queue_empty(struct infra_queue* queue) {
-    return queue->size == 0;
+    return !queue || infra_list_empty(&queue->list);
 }
 
 size_t infra_queue_size(struct infra_queue* queue) {
-    return queue->size;
+    return queue ? queue->size : 0;
 }
 
 /* Red-Black Tree Implementation */
 static void rb_set_parent(struct infra_rb_node* node, struct infra_rb_node* parent) {
-    node->parent = parent;
+    if (node) {
+        node->parent = parent;
+    }
 }
 
 static void rb_set_color(struct infra_rb_node* node, int color) {
-    node->color = color;
-}
-
-static struct infra_rb_node* rb_parent(struct infra_rb_node* node) {
-    return node->parent;
-}
-
-static int rb_is_red(struct infra_rb_node* node) {
-    return node && node->color == INFRA_RB_RED;
+    if (node) {
+        node->color = color;
+    }
 }
 
 static int rb_is_black(struct infra_rb_node* node) {
-    return !rb_is_red(node);
-}
-
-static void rb_set_red(struct infra_rb_node* node) {
-    rb_set_color(node, INFRA_RB_RED);
-}
-
-static void rb_set_black(struct infra_rb_node* node) {
-    rb_set_color(node, INFRA_RB_BLACK);
-}
-
-static struct infra_rb_node* rb_minimum(struct infra_rb_node* node) {
-    while (node->left)
-        node = node->left;
-    return node;
+    return !node || node->color == INFRA_RB_BLACK;
 }
 
 static void rb_rotate_left(struct infra_rb_tree* tree, struct infra_rb_node* node) {
     struct infra_rb_node* right = node->right;
-    
+    struct infra_rb_node* parent = node->parent;
+
     node->right = right->left;
-    if (right->left)
-        rb_set_parent(right->left, node);
-    
-    rb_set_parent(right, rb_parent(node));
-    
-    if (!rb_parent(node))
-        tree->root = right;
-    else if (node == rb_parent(node)->left)
-        rb_parent(node)->left = right;
-    else
-        rb_parent(node)->right = right;
-    
+    if (right->left) {
+        right->left->parent = node;
+    }
+
     right->left = node;
-    rb_set_parent(node, right);
+    right->parent = parent;
+
+    if (!parent) {
+        tree->root = right;
+    } else if (parent->left == node) {
+        parent->left = right;
+    } else {
+        parent->right = right;
+    }
+
+    node->parent = right;
 }
 
 static void rb_rotate_right(struct infra_rb_tree* tree, struct infra_rb_node* node) {
     struct infra_rb_node* left = node->left;
-    
+    struct infra_rb_node* parent = node->parent;
+
     node->left = left->right;
-    if (left->right)
-        rb_set_parent(left->right, node);
-    
-    rb_set_parent(left, rb_parent(node));
-    
-    if (!rb_parent(node))
-        tree->root = left;
-    else if (node == rb_parent(node)->right)
-        rb_parent(node)->right = left;
-    else
-        rb_parent(node)->left = left;
-    
+    if (left->right) {
+        left->right->parent = node;
+    }
+
     left->right = node;
-    rb_set_parent(node, left);
+    left->parent = parent;
+
+    if (!parent) {
+        tree->root = left;
+    } else if (parent->left == node) {
+        parent->left = left;
+    } else {
+        parent->right = left;
+    }
+
+    node->parent = left;
 }
 
-static void rb_insert_fixup(struct infra_rb_tree* tree, struct infra_rb_node* node) {
-    while (rb_is_red(rb_parent(node))) {
-        if (rb_parent(node) == rb_parent(rb_parent(node))->left) {
-            struct infra_rb_node* uncle = rb_parent(rb_parent(node))->right;
-            if (rb_is_red(uncle)) {
-                rb_set_black(rb_parent(node));
-                rb_set_black(uncle);
-                rb_set_red(rb_parent(rb_parent(node)));
-                node = rb_parent(rb_parent(node));
-            } else {
-                if (node == rb_parent(node)->right) {
-                    node = rb_parent(node);
-                    rb_rotate_left(tree, node);
-                }
-                rb_set_black(rb_parent(node));
-                rb_set_red(rb_parent(rb_parent(node)));
-                rb_rotate_right(tree, rb_parent(rb_parent(node)));
+static struct infra_rb_node* rb_minimum(struct infra_rb_node* node) {
+    while (node && node->left) {
+        node = node->left;
+    }
+    return node;
+}
+
+static void rb_insert_color(struct infra_rb_tree* tree, struct infra_rb_node* node) {
+    struct infra_rb_node* parent, *gparent, *uncle;
+
+    while ((parent = node->parent) && parent->color == INFRA_RB_RED) {
+        gparent = parent->parent;
+
+        if (parent == gparent->left) {
+            uncle = gparent->right;
+            if (uncle && uncle->color == INFRA_RB_RED) {
+                uncle->color = INFRA_RB_BLACK;
+                parent->color = INFRA_RB_BLACK;
+                gparent->color = INFRA_RB_RED;
+                node = gparent;
+                continue;
             }
+
+            if (parent->right == node) {
+                rb_rotate_left(tree, parent);
+                struct infra_rb_node* tmp = parent;
+                parent = node;
+                node = tmp;
+            }
+
+            parent->color = INFRA_RB_BLACK;
+            gparent->color = INFRA_RB_RED;
+            rb_rotate_right(tree, gparent);
         } else {
-            struct infra_rb_node* uncle = rb_parent(rb_parent(node))->left;
-            if (rb_is_red(uncle)) {
-                rb_set_black(rb_parent(node));
-                rb_set_black(uncle);
-                rb_set_red(rb_parent(rb_parent(node)));
-                node = rb_parent(rb_parent(node));
-            } else {
-                if (node == rb_parent(node)->left) {
-                    node = rb_parent(node);
-                    rb_rotate_right(tree, node);
-                }
-                rb_set_black(rb_parent(node));
-                rb_set_red(rb_parent(rb_parent(node)));
-                rb_rotate_left(tree, rb_parent(rb_parent(node)));
+            uncle = gparent->left;
+            if (uncle && uncle->color == INFRA_RB_RED) {
+                uncle->color = INFRA_RB_BLACK;
+                parent->color = INFRA_RB_BLACK;
+                gparent->color = INFRA_RB_RED;
+                node = gparent;
+                continue;
             }
+
+            if (parent->left == node) {
+                rb_rotate_right(tree, parent);
+                struct infra_rb_node* tmp = parent;
+                parent = node;
+                node = tmp;
+            }
+
+            parent->color = INFRA_RB_BLACK;
+            gparent->color = INFRA_RB_RED;
+            rb_rotate_left(tree, gparent);
         }
     }
-    rb_set_black(tree->root);
+
+    tree->root->color = INFRA_RB_BLACK;
 }
 
 void infra_rbtree_init(struct infra_rb_tree* tree) {
+    if (!tree) {
+        return;
+    }
     tree->root = NULL;
     tree->size = 0;
 }
 
 int infra_rbtree_insert(struct infra_rb_tree* tree, struct infra_rb_node* node,
                        int (*cmp)(struct infra_rb_node*, struct infra_rb_node*)) {
+    if (!tree || !node || !cmp) {
+        return PPDB_ERR_PARAM;
+    }
+
     struct infra_rb_node* parent = NULL;
     struct infra_rb_node** p = &tree->root;
-    
+
     while (*p) {
         parent = *p;
-        int res = cmp(node, parent);
-        if (res < 0)
+        int result = cmp(node, parent);
+        if (result < 0) {
             p = &parent->left;
-        else if (res > 0)
+        } else if (result > 0) {
             p = &parent->right;
-        else
-            return INFRA_ERR_EXISTS;
+        } else {
+            return PPDB_ERR_EXISTS;
+        }
     }
-    
-    node->left = node->right = NULL;
-    rb_set_parent(node, parent);
-    rb_set_red(node);
+
+    node->parent = parent;
+    node->left = NULL;
+    node->right = NULL;
+    node->color = INFRA_RB_RED;
+
     *p = node;
-    
-    rb_insert_fixup(tree, node);
     tree->size++;
-    
-    return INFRA_OK;
+
+    rb_insert_color(tree, node);
+
+    return PPDB_OK;
 }
 
 struct infra_rb_node* infra_rbtree_find(struct infra_rb_tree* tree, struct infra_rb_node* key,
                                        int (*cmp)(struct infra_rb_node*, struct infra_rb_node*)) {
-    struct infra_rb_node* node = tree->root;
-    
-    while (node) {
-        int res = cmp(key, node);
-        if (res < 0)
-            node = node->left;
-        else if (res > 0)
-            node = node->right;
-        else
-            return node;
+    if (!tree || !key || !cmp) {
+        return NULL;
     }
-    
+
+    struct infra_rb_node* node = tree->root;
+    while (node) {
+        int result = cmp(key, node);
+        if (result < 0) {
+            node = node->left;
+        } else if (result > 0) {
+            node = node->right;
+        } else {
+            return node;
+        }
+    }
+
     return NULL;
 }
 
 size_t infra_rbtree_size(struct infra_rb_tree* tree) {
-    return tree->size;
+    return tree ? tree->size : 0;
 }

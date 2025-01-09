@@ -42,7 +42,7 @@ set "DEBUG_FLAGS=-DDEBUG"
 set "BUILD_FLAGS=%COMMON_FLAGS% %DEBUG_FLAGS%"
 
 rem Set include paths
-set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%INTERNAL_DIR% -I%COSMO% -I%COSMO%\libc -I%COSMO%\libc\calls -I%COSMO%\libc\sock -I%COSMO%\libc\thread -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
+set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\internal -I%COSMO% -I%COSMO%\libc -I%COSMO%\libc\calls -I%COSMO%\libc\sock -I%COSMO%\libc\thread -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
 
 rem Set final CFLAGS
 set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
