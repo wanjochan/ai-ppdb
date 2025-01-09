@@ -75,3 +75,4 @@ ai/hist/
 ppdb/src/base/backup/
 *.new
 .clangd
+ppdb_prev/

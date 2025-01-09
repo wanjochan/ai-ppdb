@@ -1,18 +1,6 @@
 @echo off
 rem ===== Environment Variables and Common Functions =====
 
-rem Set proxy if provided
-set "PROXY="
-if not "%HTTP_PROXY%"=="" (
-    set "PROXY=%HTTP_PROXY%"
-) else if not "%HTTPS_PROXY%"=="" (
-    set "PROXY=%HTTPS_PROXY%"
-)
-
-if not "%PROXY%"=="" (
-    echo Using proxy: %PROXY%
-)
-
 rem Set paths (using absolute paths)
 set "SCRIPT_DIR=%~dp0"
 set "ROOT_DIR=%SCRIPT_DIR%\.."
@@ -48,27 +36,16 @@ if not exist "%OBJCOPY%" (
     exit /b 1
 )
 
-rem Set build flags based on BUILD_MODE
-if /i "%BUILD_MODE%"=="release" (
-    set "COMMON_FLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables -ftls-model=initial-exec"
-    set "RELEASE_FLAGS=-DNDEBUG"
-    set "BUILD_FLAGS=%COMMON_FLAGS% %RELEASE_FLAGS%"
-) else (
-    set "COMMON_FLAGS=-g -O0 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables -ftls-model=initial-exec"
-    set "DEBUG_FLAGS=-DDEBUG"
-    set "BUILD_FLAGS=%COMMON_FLAGS% %DEBUG_FLAGS%"
-)
+rem Set build flags
+set "COMMON_FLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables -ftls-model=initial-exec"
+set "DEBUG_FLAGS=-DDEBUG"
+set "BUILD_FLAGS=%COMMON_FLAGS% %DEBUG_FLAGS%"
 
 rem Set include paths
-set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%INTERNAL_DIR% -I%COSMO% -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
+set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%INTERNAL_DIR% -I%COSMO% -I%COSMO%\libc -I%COSMO%\libc\calls -I%COSMO%\libc\sock -I%COSMO%\libc\thread -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
 
 rem Set final CFLAGS
 set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
-
-rem Set sync mode if specified
-if "%PPDB_SYNC_MODE%"=="lockfree" (
-    set "CFLAGS=%CFLAGS% -DPPDB_SYNC_MODE_LOCKFREE"
-)
 
 rem Set linker flags
 set "LDFLAGS=-static -nostdlib -Wl,-T,%BUILD_DIR%\ape.lds -Wl,--gc-sections -B%CROSS9% -Wl,-z,max-page-size=0x1000 -no-pie"
@@ -90,15 +67,6 @@ if not exist "%BUILD_DIR%\cosmopolitan.a" (
 if not exist "%BUILD_DIR%\ape.lds" (
     echo Error: Missing runtime files. Please run setup.bat first
     exit /b 1
-)
-
-rem Check header changes
-for %%F in (%INCLUDE_DIR%\ppdb\*.h) do (
-    if %%~tF gtr %BUILD_DIR%\*.o (
-        echo Header %%F has been updated, rebuilding...
-        del /F /Q "%BUILD_DIR%\*.o"
-        exit /b 1
-    )
 )
 
 exit /b 0

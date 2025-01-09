@@ -1,144 +1,135 @@
 ﻿# PPDB 架构设计
 
-中级目标：分布式去中心数据库
+## 项目目标
 
-## 分层架构
+构建一个高性能的分布式数据库，目前简化的目标是：
+- 内存KV存储（兼容Memcached）
+- 持久化存储
+- 分布式集群
 
-PPDB 采用清晰的分层架构设计，每一层都有其明确的职责和边界：
+## 特别注意
 
-base => database => peer => [ppdb.exe] + [ppdb.h,libppdb]
+使用 cosmopolitan 跨平台底层，所以全部标准c的头文件都不需要引用
 
-## 开发优先级
-
-1. Base层 [P0]
-   - 内存管理 [已完成]
-   - 同步原语 [已完成]
-   - 错误处理 [进行中]
-   - 异步IO [进行中]
-   - 事件循环 [待开发]
-
-2. Database层 [P1]
-   - 基本KV操作 [进行中]
-   - 事务管理 [待开发]
-   - MVCC [计划中]
-   - WAL [计划中]
-
-3. Peer层 [P2]
-   - Memcached协议 [进行中]
-   - 连接管理 [待开发]
-   - Redis协议 [计划中]
-
-## 项目结构
+## 目录结构
 
 ```
-ppdb/
-├── include/                   # 公共头文件目录
-│   └── ppdb.h               # 唯一公共头文件，对外API定义
-├── scripts/                   # 构建和工具脚本
-│   ├── build.bat            # Windows构建脚本
-│   └── build.sh             # Linux构建脚本
-├── test/                      # 测试目录
-│   ├── black/               # 黑盒测试
-│   │   ├── api/            # API测试
-│   │   └── perf/           # 性能测试
-│   └── white/               # 白盒测试
-│       └── {layer}/           # 各层测试
-└── src/                       # 源代码目录
-    ├── internal/             # 内部实现头文件
-    │   ├── base.h          # 基础设施：内存、线程、同步、异步、日志、错误、工具
-    │   ├── database.h        # 数据层：事务、并发控制、MVCC、数据组织、持久化、缓存等
-    │   └── peer.h          # 节点应用层：服务器、客户端、协议、通信等
-    ├── {layer}/                # 各层的实现
-    │   ├── {layer}_{module}.inc.c    # 子模块实现
-    ├── {layer}.c               # 各层主文件
-    ├── libppdb.c            # 动态库实现(配合ppdb.h)
-    └── ppdb.c               # 主程序入口
+src/
+├── infra/                     # 基础设施层
+│   ├── infra_core.c          # 内存分配、错误处理
+│   ├── infra_struct.c        # 基础数据结构
+│   ├── infra_sync.c          # 同步原语
+│   ├── infra_async.c         # 异步框架
+│   ├── infra_timer.c         # 定时器
+│   ├── infra_event.c         # 事件循环
+│   ├── infra_io.c            # 通用IO框架
+│   ├── infra_store.c         # 通用存储接口
+│   ├── infra_buffer.c        # 通用缓冲区管理
+│   └── infra_peer.c          # 通用网络接口
+│
+├── memkv/                     # 内存KV层
+│   ├── memkv.c               # memkv主入口（被 libppdb.c 调用）
+│   ├── memkv_store.c         # 内存存储实现
+│   └── memkv_peer.c          # memcached协议服务
+│
+├── diskv/                     # 持久化层
+│   ├── diskv.c               # diskv主入口（被 libppdb.c 调用）
+│   ├── diskv_store.c         # 磁盘存储实现（含WAL）
+│   └── diskv_peer.c          # 存储服务协议
+│
+└── ppdb/                      # 产品层
+    ├── ppdb.c                # 服务端主程序
+    └── libppdb.c             # 客户端库 （被 ppdb.c 调用）
 ```
 
-1. **基础层** (`base.h/c`)
-   - 内存管理：内存分配、释放、内存池管理
-   - 同步原语：互斥锁、自旋锁、读写锁、条件变量
-   - 线程管理：线程创建、销毁、状态管理
-   - IO管理：异步IO、文件操作、网络IO
-   - 数据结构：跳表、计数器等基础数据结构
-   - 错误处理：错误码定义、错误上下文管理
-   - 统计功能：内存使用、锁竞争等统计信息
-   - 时间管理：高精度时间戳、定时器
-   - 事件循环：异步事件处理、回调管理
+## 头文件结构
 
-2. **数据库层** (`database.h/c`)
-   - 事务管理：事务创建、提交、回滚
-   - 并发控制：MVCC实现、锁管理
-   - 统计信息：事务计数、读写统计
-   - IO管理：异步IO操作封装
-   - 内存管理：基于base层的内存管理封装
-   - 错误处理：引擎层错误码和错误处理
-   - 配置管理：引擎参数配置
-   - 表管理：表的创建、删除、获取
-   - 数据操作：get/put/delete 基本操作
-   - 游标支持：数据遍历和扫描
-   - 统计信息：读写次数、缓存命中率等
-   - 配置管理：存储参数配置（内存表大小、块大小等）
-   - 维护操作：压缩、备份、恢复 //不急，等diskv开工再弄
-   - WAL日志：预写日志实现 //不急，等diskv开工再弄
-   - 缓存管理：块缓存、内存表管理 //不急，等diskv开工再弄
+```
+include/                       # 公共头文件目录
+└── ppdb.h                    # 唯一对外头文件
 
-3. **节点层** (`peer.h/c`)
-   - 连接管理：连接池、连接状态管理
-   - 协议适配：支持多种协议（memcached、redis等）
-   - 请求处理：请求解析、响应生成
-   - 会话管理：超时控制、资源清理
-   - 服务管理：服务器创建、启动、停止
-   - 配置管理：网络参数、连接限制等
-   - 客户端：CLT和查询语言等
-   - 统计信息：连接数、请求数等
+src/internal/                 # 内部头文件目录
+├── infra/                    # 基础设施头文件
+├── memkv/                    # 内存KV头文件
+├── diskv/                    # 持久化头文件
+└── ppdb/                     # 产品头文件
+```
 
-5. **公共 API 层** (`ppdb.h`)
-   - 对外提供统一的接口
-   - 唯一需要包含的公共头文件
-   - 隐藏内部实现细节
+## 开发阶段
 
-## 层间调用规则
+1. **第一阶段：MemKV**
+   - 实现基础设施层
+   - 实现内存KV存储
+   - 支持Memcached协议
 
-1. **严格的单向依赖**
-   - peer层只能调用database层接口
-   - database层只能调用base层接口
-   - base层不依赖其他层
+2. **第二阶段：DiskV**
+   - 实现持久化存储
+   - 添加WAL日志
+   - 实现数据恢复
 
-2. **接口封装原则**
-   - 每一层都要对上层隐藏实现细节
-   - 提供清晰的错误处理机制
-   - 保持接口的稳定性和一致性
+3. **第三阶段：集群**
+   - 实现分布式协议
+   - 支持数据复制
+   - 实现一致性保证
 
-3. **资源管理**
-   - 每一层负责管理自己的资源
-   - 通过明确的生命周期管理来避免资源泄露
-   - 提供清晰的资源清理接口
+## 同步/异步设计
 
-4. **错误处理**
-   - 每一层都有自己的错误码范围
-   - 错误信息要准确传递给上层
-   - 提供详细的错误上下文
+1. **同步操作**
+   - 内存操作
+   - 本地计算
+   - 简单查询
 
-## 设计原则
+2. **异步操作**
+   - 网络IO
+   - 磁盘IO
+   - 定时任务
 
-1. **层次分明**
-   - 每一层只能调用其下层的接口
-   - 禁止跨层调用
-   - 避免循环依赖
+## 测试结构
 
-2. **接口清晰**
-   - 每个模块都有明确定义的公共接口
-   - 内部实现细节对外不可见
-   - 接口设计要简洁易用
+```
+test/
+├── infra/                    # 基础设施测试
+├── memkv/                    # memkv测试
+├── diskv/                    # diskv测试
+└── ppdb/                     # 产品集成测试
+```
 
-3. **职责单一**
-   - 每个模块只负责一个核心功能
-   - 避免功能重叠
-   - 保持高内聚低耦合
+## 重构指南
 
-4. **可测试性**
-   - 所有公共接口都要有对应的测试
-   - 支持单元测试和集成测试
-   - 保证代码质量和可维护性
+1. **代码迁移**
+   ```
+   当前代码 => 新位置
+   base_core.inc.c    => infra/infra_core.c
+   base_struct.inc.c  => infra/infra_struct.c
+   base_sync.inc.c    => infra/infra_sync.c
+   base_async.inc.c   => infra/infra_async.c
+   base_timer.inc.c   => infra/infra_timer.c
+   base_net.inc.c     => infra/infra_peer.c
+   ```
 
+2. **核心接口**
+   ```c
+   // infra层示例
+   struct store_ops {
+       int (*open)(void* ctx);
+       int (*close)(void* ctx);
+       int (*get)(void* ctx, const char* key, void** value);
+       int (*set)(void* ctx, const char* key, const void* value);
+   };
+
+   // memkv层示例
+   struct memkv_store {
+       struct store_ops ops;  // 实现store接口
+       void* ctx;            // 存储上下文
+   };
+   ```
+
+3. **重构顺序**
+   - infra层：core => struct => sync => async => peer
+   - memkv层：store => peer
+   - ppdb层：libppdb => ppdb
+
+构建工具：
+scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
+scripts\build_{layer}_{module}.bat 用于构建指定层和模块的代码 （这个还没确定，可能还要讨论？）
+scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）
