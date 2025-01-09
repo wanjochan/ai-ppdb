@@ -1,57 +1,53 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal enabledelayedexpansion
 
-rem Get build mode from parameter
-set "BUILD_MODE=%1"
-if "%BUILD_MODE%"=="" set "BUILD_MODE=release"
+REM Set paths
+set ROOT_DIR=%~dp0..
+set SRC_DIR=%ROOT_DIR%\src
+set TEST_DIR=%ROOT_DIR%\test\white\infra
+set BUILD_DIR=%ROOT_DIR%\build\test
+set CROSS9_DIR=%ROOT_DIR%\..\repos\cross9
+set COSMO_DIR=%ROOT_DIR%\..\repos\cosmopolitan
 
-rem Load environment variables and common functions
-call "%~dp0\build_env.bat"
-if errorlevel 1 exit /b 1
-
-rem Create build directory if it doesn't exist
+REM Create build directory if not exists
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
-if not exist "%BUILD_DIR%\infra" mkdir "%BUILD_DIR%\infra"
-if not exist "%BUILD_DIR%\test" mkdir "%BUILD_DIR%\test"
 
-rem Build infra layer
-echo Building infra layer...
-"%GCC%" %CFLAGS% "%PPDB_DIR%\src\infra\infra_core.c" -c -o "%BUILD_DIR%\infra\infra_core.o"
+REM Set compiler flags
+set CFLAGS=-g -O2 -static -fno-pie -no-pie -mno-red-zone -nostdlib -nostdinc -fno-omit-frame-pointer -pg -mnop-mcount -I"%COSMO_DIR%" -I"%ROOT_DIR%\src"
+
+REM Compile infra source files
+echo Building infra source files...
+"%CROSS9_DIR%\bin\x86_64-pc-linux-gnu-gcc.exe" %CFLAGS% -c "%SRC_DIR%\infra\infra_core.c" -o "%BUILD_DIR%\infra_core.o"
 if errorlevel 1 exit /b 1
 
-"%GCC%" %CFLAGS% "%PPDB_DIR%\src\infra\infra_async.c" -c -o "%BUILD_DIR%\infra\infra_async.o"
+"%CROSS9_DIR%\bin\x86_64-pc-linux-gnu-gcc.exe" %CFLAGS% -c "%SRC_DIR%\infra\infra_struct.c" -o "%BUILD_DIR%\infra_struct.o"
 if errorlevel 1 exit /b 1
 
-"%GCC%" %CFLAGS% "%PPDB_DIR%\src\infra\infra_event.c" -c -o "%BUILD_DIR%\infra\infra_event.o"
+REM Compile test files
+echo Building test files...
+"%CROSS9_DIR%\bin\x86_64-pc-linux-gnu-gcc.exe" %CFLAGS% -c "%TEST_DIR%\test_struct.c" -o "%BUILD_DIR%\test_struct.o"
 if errorlevel 1 exit /b 1
 
-"%GCC%" %CFLAGS% "%PPDB_DIR%\src\infra\infra_io.c" -c -o "%BUILD_DIR%\infra\infra_io.o"
+REM Link test executable
+echo Linking test executable...
+"%CROSS9_DIR%\bin\x86_64-pc-linux-gnu-gcc.exe" %CFLAGS% -o "%BUILD_DIR%\test_struct.com.dbg" ^
+    "%BUILD_DIR%\test_struct.o" ^
+    "%BUILD_DIR%\infra_core.o" ^
+    "%BUILD_DIR%\infra_struct.o" ^
+    "%ROOT_DIR%\build\ape.o" ^
+    "%ROOT_DIR%\build\cosmopolitan.a"
 if errorlevel 1 exit /b 1
 
-"%GCC%" %CFLAGS% "%PPDB_DIR%\src\infra\infra_peer.c" -c -o "%BUILD_DIR%\infra\infra_peer.o"
+REM Strip debug info
+"%CROSS9_DIR%\bin\x86_64-pc-linux-gnu-strip.exe" -o "%BUILD_DIR%\test_struct.com" "%BUILD_DIR%\test_struct.com.dbg"
 if errorlevel 1 exit /b 1
 
-rem Create static library
-"%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" ^
-    "%BUILD_DIR%\infra\infra_core.o" ^
-    "%BUILD_DIR%\infra\infra_async.o" ^
-    "%BUILD_DIR%\infra\infra_event.o" ^
-    "%BUILD_DIR%\infra\infra_io.o" ^
-    "%BUILD_DIR%\infra\infra_peer.o"
-if errorlevel 1 exit /b 1
-
-rem Build test
-echo Building infra test...
-"%GCC%" %CFLAGS% "%PPDB_DIR%\test\white\infra\test_infra.c" -o "%BUILD_DIR%\test\test_infra.exe.dbg" ^
-    -L"%BUILD_DIR%\infra" -linfra %LDFLAGS% %LIBS%
-if errorlevel 1 exit /b 1
-
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\test\test_infra.exe.dbg" "%BUILD_DIR%\test\test_infra.exe"
-if errorlevel 1 exit /b 1
-
-rem Run the test if not explicitly disabled
-if not "%2"=="norun" (
-    "%BUILD_DIR%\test\test_infra.exe"
+REM Run tests
+echo Running tests...
+"%BUILD_DIR%\test_struct.com"
+if errorlevel 1 (
+    echo Test failed with error code %errorlevel%
+    exit /b 1
 )
 
-exit /b 0 
+echo Done. 

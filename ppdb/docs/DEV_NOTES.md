@@ -56,3 +56,12 @@
    - [ ] 引入性能基准测试
    - [ ] 优化关键路径
    - [ ] 减少锁竞争 
+
+
+## TODO 
+
+- infra 是不是有些【内存管理】的封装没做？
+- infra 层要检查一下，除了 sync 不应有对 pthread的调用？应该是用 sync中的封装
+- 异步那里针对 windows做一个 IOCP优化（在ppdb_prev还有备份可以参考）
+- 从 ppdb_prev的 sync_perf 中参考下同步有没有优化的地方
+ 

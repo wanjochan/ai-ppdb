@@ -134,3 +134,78 @@ int infra_hash_del(struct infra_hash_table* table, void* key, size_t klen) {
     
     return INFRA_ERR_NOTFOUND;
 }
+
+/* Queue Implementation */
+struct infra_queue {
+    struct infra_list list;
+    size_t size;
+};
+
+void infra_queue_init(struct infra_queue* queue) {
+    infra_list_init(&queue->list);
+    queue->size = 0;
+}
+
+int infra_queue_push(struct infra_queue* queue, void* data) {
+    struct infra_queue_node* node = infra_malloc(sizeof(*node));
+    if (!node) {
+        return INFRA_ERR_NOMEM;
+    }
+    
+    node->data = data;
+    infra_list_add(&queue->list, &node->list);
+    queue->size++;
+    
+    return INFRA_OK;
+}
+
+void* infra_queue_pop(struct infra_queue* queue) {
+    if (infra_queue_empty(queue)) {
+        return NULL;
+    }
+    
+    struct infra_queue_node* node = (struct infra_queue_node*)queue->list.prev;
+    void* data = node->data;
+    
+    infra_list_del(&node->list);
+    infra_free(node);
+    queue->size--;
+    
+    return data;
+}
+
+int infra_queue_empty(struct infra_queue* queue) {
+    return queue->size == 0;
+}
+
+size_t infra_queue_size(struct infra_queue* queue) {
+    return queue->size;
+}
+
+/* Red-Black Tree Implementation */
+struct rb_node {
+    struct rb_node* parent;
+    struct rb_node* left;
+    struct rb_node* right;
+    int color;  // 0 = black, 1 = red
+    void* key;
+    void* value;
+};
+
+struct rb_tree {
+    struct rb_node* root;
+    size_t size;
+    int (*compare)(const void*, const void*);
+};
+
+int infra_rbtree_init(struct rb_tree* tree, int (*compare)(const void*, const void*)) {
+    if (!tree || !compare) {
+        return INFRA_ERR_INVALID;
+    }
+    tree->root = NULL;
+    tree->size = 0;
+    tree->compare = compare;
+    return INFRA_OK;
+}
+
+// ... additional rb-tree implementation functions would go here ...
