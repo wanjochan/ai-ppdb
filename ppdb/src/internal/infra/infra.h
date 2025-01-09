@@ -60,6 +60,26 @@ void infra_list_add(struct infra_list* list, struct infra_list* node);
 void infra_list_del(struct infra_list* node);
 int infra_list_empty(struct infra_list* list);
 
+/* Hash Table */
+struct infra_hash_node {
+    struct infra_list list;
+    u64 hash;
+    void* key;
+    void* value;
+};
+
+struct infra_hash_table {
+    struct infra_list* buckets;
+    size_t nbuckets;
+    size_t size;
+};
+
+int infra_hash_init(struct infra_hash_table* table, size_t nbuckets);
+void infra_hash_destroy(struct infra_hash_table* table);
+int infra_hash_put(struct infra_hash_table* table, void* key, size_t klen, void* value);
+void* infra_hash_get(struct infra_hash_table* table, void* key, size_t klen);
+int infra_hash_del(struct infra_hash_table* table, void* key, size_t klen);
+
 /* Queue */
 struct infra_queue_node {
     struct infra_list list;

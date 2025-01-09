@@ -136,11 +136,6 @@ int infra_hash_del(struct infra_hash_table* table, void* key, size_t klen) {
 }
 
 /* Queue Implementation */
-struct infra_queue {
-    struct infra_list list;
-    size_t size;
-};
-
 void infra_queue_init(struct infra_queue* queue) {
     infra_list_init(&queue->list);
     queue->size = 0;
@@ -183,29 +178,168 @@ size_t infra_queue_size(struct infra_queue* queue) {
 }
 
 /* Red-Black Tree Implementation */
-struct rb_node {
-    struct rb_node* parent;
-    struct rb_node* left;
-    struct rb_node* right;
-    int color;  // 0 = black, 1 = red
-    void* key;
-    void* value;
-};
+static void rb_set_parent(struct infra_rb_node* node, struct infra_rb_node* parent) {
+    node->parent = parent;
+}
 
-struct rb_tree {
-    struct rb_node* root;
-    size_t size;
-    int (*compare)(const void*, const void*);
-};
+static void rb_set_color(struct infra_rb_node* node, int color) {
+    node->color = color;
+}
 
-int infra_rbtree_init(struct rb_tree* tree, int (*compare)(const void*, const void*)) {
-    if (!tree || !compare) {
-        return INFRA_ERR_INVALID;
+static struct infra_rb_node* rb_parent(struct infra_rb_node* node) {
+    return node->parent;
+}
+
+static int rb_is_red(struct infra_rb_node* node) {
+    return node && node->color == INFRA_RB_RED;
+}
+
+static int rb_is_black(struct infra_rb_node* node) {
+    return !rb_is_red(node);
+}
+
+static void rb_set_red(struct infra_rb_node* node) {
+    rb_set_color(node, INFRA_RB_RED);
+}
+
+static void rb_set_black(struct infra_rb_node* node) {
+    rb_set_color(node, INFRA_RB_BLACK);
+}
+
+static struct infra_rb_node* rb_minimum(struct infra_rb_node* node) {
+    while (node->left)
+        node = node->left;
+    return node;
+}
+
+static void rb_rotate_left(struct infra_rb_tree* tree, struct infra_rb_node* node) {
+    struct infra_rb_node* right = node->right;
+    
+    node->right = right->left;
+    if (right->left)
+        rb_set_parent(right->left, node);
+    
+    rb_set_parent(right, rb_parent(node));
+    
+    if (!rb_parent(node))
+        tree->root = right;
+    else if (node == rb_parent(node)->left)
+        rb_parent(node)->left = right;
+    else
+        rb_parent(node)->right = right;
+    
+    right->left = node;
+    rb_set_parent(node, right);
+}
+
+static void rb_rotate_right(struct infra_rb_tree* tree, struct infra_rb_node* node) {
+    struct infra_rb_node* left = node->left;
+    
+    node->left = left->right;
+    if (left->right)
+        rb_set_parent(left->right, node);
+    
+    rb_set_parent(left, rb_parent(node));
+    
+    if (!rb_parent(node))
+        tree->root = left;
+    else if (node == rb_parent(node)->right)
+        rb_parent(node)->right = left;
+    else
+        rb_parent(node)->left = left;
+    
+    left->right = node;
+    rb_set_parent(node, left);
+}
+
+static void rb_insert_fixup(struct infra_rb_tree* tree, struct infra_rb_node* node) {
+    while (rb_is_red(rb_parent(node))) {
+        if (rb_parent(node) == rb_parent(rb_parent(node))->left) {
+            struct infra_rb_node* uncle = rb_parent(rb_parent(node))->right;
+            if (rb_is_red(uncle)) {
+                rb_set_black(rb_parent(node));
+                rb_set_black(uncle);
+                rb_set_red(rb_parent(rb_parent(node)));
+                node = rb_parent(rb_parent(node));
+            } else {
+                if (node == rb_parent(node)->right) {
+                    node = rb_parent(node);
+                    rb_rotate_left(tree, node);
+                }
+                rb_set_black(rb_parent(node));
+                rb_set_red(rb_parent(rb_parent(node)));
+                rb_rotate_right(tree, rb_parent(rb_parent(node)));
+            }
+        } else {
+            struct infra_rb_node* uncle = rb_parent(rb_parent(node))->left;
+            if (rb_is_red(uncle)) {
+                rb_set_black(rb_parent(node));
+                rb_set_black(uncle);
+                rb_set_red(rb_parent(rb_parent(node)));
+                node = rb_parent(rb_parent(node));
+            } else {
+                if (node == rb_parent(node)->left) {
+                    node = rb_parent(node);
+                    rb_rotate_right(tree, node);
+                }
+                rb_set_black(rb_parent(node));
+                rb_set_red(rb_parent(rb_parent(node)));
+                rb_rotate_left(tree, rb_parent(rb_parent(node)));
+            }
+        }
     }
+    rb_set_black(tree->root);
+}
+
+void infra_rbtree_init(struct infra_rb_tree* tree) {
     tree->root = NULL;
     tree->size = 0;
-    tree->compare = compare;
+}
+
+int infra_rbtree_insert(struct infra_rb_tree* tree, struct infra_rb_node* node,
+                       int (*cmp)(struct infra_rb_node*, struct infra_rb_node*)) {
+    struct infra_rb_node* parent = NULL;
+    struct infra_rb_node** p = &tree->root;
+    
+    while (*p) {
+        parent = *p;
+        int res = cmp(node, parent);
+        if (res < 0)
+            p = &parent->left;
+        else if (res > 0)
+            p = &parent->right;
+        else
+            return INFRA_ERR_EXISTS;
+    }
+    
+    node->left = node->right = NULL;
+    rb_set_parent(node, parent);
+    rb_set_red(node);
+    *p = node;
+    
+    rb_insert_fixup(tree, node);
+    tree->size++;
+    
     return INFRA_OK;
 }
 
-// ... additional rb-tree implementation functions would go here ...
+struct infra_rb_node* infra_rbtree_find(struct infra_rb_tree* tree, struct infra_rb_node* key,
+                                       int (*cmp)(struct infra_rb_node*, struct infra_rb_node*)) {
+    struct infra_rb_node* node = tree->root;
+    
+    while (node) {
+        int res = cmp(key, node);
+        if (res < 0)
+            node = node->left;
+        else if (res > 0)
+            node = node->right;
+        else
+            return node;
+    }
+    
+    return NULL;
+}
+
+size_t infra_rbtree_size(struct infra_rb_tree* tree) {
+    return tree->size;
+}
