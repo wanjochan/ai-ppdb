@@ -14,6 +14,7 @@
 
 // Global variables
 static ppdb_error_context_t g_error_context = {0};
+static ppdb_base_mutex_t* g_error_mutex = NULL;
 
 //-----------------------------------------------------------------------------
 // Memory Management
@@ -66,26 +67,209 @@ void ppdb_base_mem_free(void* ptr) {
 //-----------------------------------------------------------------------------
 // Error Handling
 //-----------------------------------------------------------------------------
+
+// Initialize error handling
 ppdb_error_t ppdb_base_error_init(void) {
     memset(&g_error_context, 0, sizeof(g_error_context));
+    
+    // Create mutex
+    ppdb_error_t err = ppdb_base_mutex_create(&g_error_mutex);
+    if (err != PPDB_OK) return err;
+    
+    // Initialize statistics
+    g_error_context.stats.error_free_time = ppdb_base_time_get_microseconds(NULL);
+    
     return PPDB_OK;
 }
 
+// Cleanup error handling
 void ppdb_base_error_cleanup(void) {
+    ppdb_base_mutex_lock(g_error_mutex);
+    
+    // Free error stack
+    ppdb_error_frame_t* frame = g_error_context.stack;
+    while (frame) {
+        ppdb_error_frame_t* next = frame->next;
+        ppdb_base_mem_free(frame);
+        frame = next;
+    }
+    
+    // Clear context
     memset(&g_error_context, 0, sizeof(g_error_context));
+    
+    ppdb_base_mutex_unlock(g_error_mutex);
+    ppdb_base_mutex_destroy(g_error_mutex);
+    g_error_mutex = NULL;
 }
 
+// Set error with details
+ppdb_error_t ppdb_base_error_set(ppdb_error_t code,
+                               ppdb_error_severity_t severity,
+                               ppdb_error_category_t category,
+                               const char* file,
+                               int line,
+                               const char* func,
+                               const char* fmt, ...) {
+    ppdb_base_mutex_lock(g_error_mutex);
+    
+    // Update context
+    g_error_context.code = code;
+    g_error_context.severity = severity;
+    g_error_context.category = category;
+    g_error_context.file = file;
+    g_error_context.line = line;
+    g_error_context.func = func;
+    
+    // Format message
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(g_error_context.message, PPDB_MAX_ERROR_MESSAGE, fmt, args);
+    va_end(args);
+    
+    // Update statistics
+    g_error_context.stats.total_errors++;
+    g_error_context.stats.errors_by_severity[severity]++;
+    g_error_context.stats.errors_by_category[category]++;
+    g_error_context.stats.last_error_time = ppdb_base_time_get_microseconds(NULL);
+    
+    // Call error callback if set
+    if (g_error_context.callback) {
+        g_error_context.callback(code, severity, category,
+                               g_error_context.message,
+                               g_error_context.callback_data);
+    }
+    
+    ppdb_base_mutex_unlock(g_error_mutex);
+    return code;
+}
+
+// Push error frame to stack
+ppdb_error_t ppdb_base_error_push_frame(const char* file,
+                                      int line,
+                                      const char* func,
+                                      const char* fmt, ...) {
+    ppdb_base_mutex_lock(g_error_mutex);
+    
+    // Create new frame
+    ppdb_error_frame_t* frame = NULL;
+    ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_error_frame_t), (void**)&frame);
+    if (err != PPDB_OK) {
+        ppdb_base_mutex_unlock(g_error_mutex);
+        return err;
+    }
+    
+    // Initialize frame
+    frame->file = file;
+    frame->line = line;
+    frame->func = func;
+    
+    // Format message
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(frame->message, sizeof(frame->message), fmt, args);
+    va_end(args);
+    
+    // Add to stack
+    frame->next = g_error_context.stack;
+    g_error_context.stack = frame;
+    
+    ppdb_base_mutex_unlock(g_error_mutex);
+    return PPDB_OK;
+}
+
+// Pop error frame from stack
+void ppdb_base_error_pop_frame(void) {
+    ppdb_base_mutex_lock(g_error_mutex);
+    
+    if (g_error_context.stack) {
+        ppdb_error_frame_t* frame = g_error_context.stack;
+        g_error_context.stack = frame->next;
+        ppdb_base_mem_free(frame);
+    }
+    
+    ppdb_base_mutex_unlock(g_error_mutex);
+}
+
+// Set error callback
+ppdb_error_t ppdb_base_error_set_callback(ppdb_error_callback_t callback,
+                                        void* user_data) {
+    ppdb_base_mutex_lock(g_error_mutex);
+    
+    g_error_context.callback = callback;
+    g_error_context.callback_data = user_data;
+    
+    ppdb_base_mutex_unlock(g_error_mutex);
+    return PPDB_OK;
+}
+
+// Get error statistics
+ppdb_error_t ppdb_base_error_get_stats(ppdb_error_stats_t* stats) {
+    if (!stats) return PPDB_ERR_PARAM;
+    
+    ppdb_base_mutex_lock(g_error_mutex);
+    memcpy(stats, &g_error_context.stats, sizeof(ppdb_error_stats_t));
+    ppdb_base_mutex_unlock(g_error_mutex);
+    
+    return PPDB_OK;
+}
+
+// Clear error statistics
+void ppdb_base_error_clear_stats(void) {
+    ppdb_base_mutex_lock(g_error_mutex);
+    
+    memset(&g_error_context.stats, 0, sizeof(ppdb_error_stats_t));
+    g_error_context.stats.error_free_time = ppdb_base_time_get_microseconds(NULL);
+    
+    ppdb_base_mutex_unlock(g_error_mutex);
+}
+
+// Set error context
 ppdb_error_t ppdb_base_error_set_context(const ppdb_error_context_t* ctx) {
     if (!ctx) return PPDB_ERR_PARAM;
     
+    ppdb_base_mutex_lock(g_error_mutex);
     memcpy(&g_error_context, ctx, sizeof(ppdb_error_context_t));
+    ppdb_base_mutex_unlock(g_error_mutex);
+    
     return PPDB_OK;
 }
 
+// Get error context
 const ppdb_error_context_t* ppdb_base_error_get_context(void) {
     return &g_error_context;
 }
 
+// Clear error context
+void ppdb_base_error_clear_context(void) {
+    ppdb_base_mutex_lock(g_error_mutex);
+    
+    // Free error stack
+    ppdb_error_frame_t* frame = g_error_context.stack;
+    while (frame) {
+        ppdb_error_frame_t* next = frame->next;
+        ppdb_base_mem_free(frame);
+        frame = next;
+    }
+    
+    // Clear context but keep statistics
+    ppdb_error_stats_t stats = g_error_context.stats;
+    memset(&g_error_context, 0, sizeof(g_error_context));
+    g_error_context.stats = stats;
+    
+    ppdb_base_mutex_unlock(g_error_mutex);
+}
+
+// Get error code
+ppdb_error_t ppdb_base_error_get_code(void) {
+    return g_error_context.code;
+}
+
+// Check if code is an error
+bool ppdb_base_error_is_error(ppdb_error_t code) {
+    return code != PPDB_OK;
+}
+
+// Convert error code to string
 const char* ppdb_base_error_to_string(ppdb_error_t error) {
     switch (error) {
         case PPDB_OK:
@@ -100,32 +284,28 @@ const char* ppdb_base_error_to_string(ppdb_error_t error) {
             return "Not found";
         case PPDB_ERR_EXISTS:
             return "Already exists";
-        case PPDB_ERR_TIMEOUT:
-            return "Operation timed out";
+        case PPDB_ERR_IO:
+            return "IO error";
+        case PPDB_ERR_NETWORK:
+            return "Network error";
+        case PPDB_ERR_PROTOCOL:
+            return "Protocol error";
+        case PPDB_ERR_DATA:
+            return "Data error";
+        case PPDB_ERR_CONFIG:
+            return "Configuration error";
         case PPDB_ERR_BUSY:
             return "Resource busy";
+        case PPDB_ERR_TIMEOUT:
+            return "Operation timed out";
         case PPDB_ERR_FULL:
             return "Resource full";
         case PPDB_ERR_EMPTY:
             return "Resource empty";
-        case PPDB_ERR_IO:
-            return "I/O error";
-        case PPDB_ERR_INTERNAL:
-            return "Internal error";
-        case PPDB_ERR_THREAD:
-            return "Thread error";
-        case PPDB_ERR_MUTEX:
-            return "Mutex error";
-        case PPDB_ERR_COND:
-            return "Condition variable error";
-        case PPDB_ERR_RWLOCK:
-            return "Read-write lock error";
-        case PPDB_ERR_STATE:
+        case PPDB_ERR_NOT_SUPPORTED:
+            return "Operation not supported";
+        case PPDB_ERR_INVALID_STATE:
             return "Invalid state";
-        case PPDB_ERR_MEMORY_LIMIT:
-            return "Memory limit exceeded";
-        case PPDB_ERR_CLOSED:
-            return "Connection closed";
         default:
             return "Unknown error";
     }
@@ -417,6 +597,22 @@ ppdb_error_t ppdb_base_mempool_create(ppdb_base_mempool_t** pool, size_t block_s
     new_pool->block_size = block_size;
     new_pool->alignment = alignment;
     
+    // 初始化统计字段
+    new_pool->total_allocated = 0;
+    new_pool->total_used = 0;
+    new_pool->total_blocks = 0;
+    new_pool->total_allocations = 0;
+    new_pool->total_frees = 0;
+    new_pool->peak_allocated = 0;
+    new_pool->peak_used = 0;
+    
+    // 创建互斥锁
+    err = ppdb_base_mutex_create(&new_pool->lock);
+    if (err != PPDB_OK) {
+        ppdb_base_mem_free(new_pool);
+        return err;
+    }
+    
     *pool = new_pool;
     return PPDB_OK;
 }
@@ -424,26 +620,41 @@ ppdb_error_t ppdb_base_mempool_create(ppdb_base_mempool_t** pool, size_t block_s
 void* ppdb_base_mempool_alloc(ppdb_base_mempool_t* pool, size_t size) {
     if (!pool || size == 0) return NULL;
     
-    // Find a block with enough space
+    ppdb_base_mutex_lock(pool->lock);
+    
+    // 查找可用块
     ppdb_base_mempool_block_t* block = pool->head;
     while (block) {
         if (block->size - block->used >= size) {
             void* ptr = (char*)block->data + block->used;
             block->used += size;
+            
+            // 更新统计信息
+            pool->total_used += size;
+            pool->total_allocations++;
+            if (pool->total_used > pool->peak_used) {
+                pool->peak_used = pool->total_used;
+            }
+            
+            ppdb_base_mutex_unlock(pool->lock);
             return ptr;
         }
         block = block->next;
     }
     
-    // Create a new block
+    // 创建新块
     size_t block_size = size > pool->block_size ? size : pool->block_size;
     ppdb_base_mempool_block_t* new_block = NULL;
     ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_base_mempool_block_t), (void**)&new_block);
-    if (err != PPDB_OK) return NULL;
+    if (err != PPDB_OK) {
+        ppdb_base_mutex_unlock(pool->lock);
+        return NULL;
+    }
     
     err = ppdb_base_mem_malloc(block_size, &new_block->data);
     if (err != PPDB_OK) {
         ppdb_base_mem_free(new_block);
+        ppdb_base_mutex_unlock(pool->lock);
         return NULL;
     }
     
@@ -452,25 +663,65 @@ void* ppdb_base_mempool_alloc(ppdb_base_mempool_t* pool, size_t size) {
     new_block->next = pool->head;
     pool->head = new_block;
     
+    // 更新统计信息
+    pool->total_allocated += block_size;
+    pool->total_used += size;
+    pool->total_blocks++;
+    pool->total_allocations++;
+    if (pool->total_allocated > pool->peak_allocated) {
+        pool->peak_allocated = pool->total_allocated;
+    }
+    if (pool->total_used > pool->peak_used) {
+        pool->peak_used = pool->total_used;
+    }
+    
+    ppdb_base_mutex_unlock(pool->lock);
     return new_block->data;
 }
 
 void ppdb_base_mempool_free(ppdb_base_mempool_t* pool, void* ptr) {
     if (!pool || !ptr) return;
     
-    // Find the block containing this pointer
+    ppdb_base_mutex_lock(pool->lock);
+    
+    // 查找包含此指针的块
     ppdb_base_mempool_block_t* block = pool->head;
     while (block) {
         if (ptr >= block->data && ptr < (char*)block->data + block->size) {
-            // Found the block, but we don't actually free individual allocations
+            // 找到块,更新统计信息
+            pool->total_frees++;
+            ppdb_base_mutex_unlock(pool->lock);
             return;
         }
         block = block->next;
     }
+    
+    ppdb_base_mutex_unlock(pool->lock);
+}
+
+void ppdb_base_mempool_get_stats(ppdb_base_mempool_t* pool, ppdb_base_mempool_stats_t* stats) {
+    if (!pool || !stats) return;
+    
+    ppdb_base_mutex_lock(pool->lock);
+    
+    stats->total_allocated = pool->total_allocated;
+    stats->total_used = pool->total_used;
+    stats->total_blocks = pool->total_blocks;
+    stats->total_allocations = pool->total_allocations;
+    stats->total_frees = pool->total_frees;
+    stats->peak_allocated = pool->peak_allocated;
+    stats->peak_used = pool->peak_used;
+    stats->block_size = pool->block_size;
+    stats->alignment = pool->alignment;
+    stats->fragmentation = pool->total_allocated - pool->total_used;
+    
+    ppdb_base_mutex_unlock(pool->lock);
 }
 
 ppdb_error_t ppdb_base_mempool_destroy(ppdb_base_mempool_t* pool) {
     if (!pool) return PPDB_ERR_PARAM;
+    
+    ppdb_base_mutex_lock(pool->lock);
     
     ppdb_base_mempool_block_t* block = pool->head;
     while (block) {
@@ -480,7 +731,10 @@ ppdb_error_t ppdb_base_mempool_destroy(ppdb_base_mempool_t* pool) {
         block = next;
     }
     
+    ppdb_base_mutex_unlock(pool->lock);
+    ppdb_base_mutex_destroy(pool->lock);
     ppdb_base_mem_free(pool);
+    
     return PPDB_OK;
 }
 
@@ -518,5 +772,3 @@ void ppdb_base_aligned_free(void* ptr) {
     free(original);
 }
 
-// ... existing code ...
-// ... existing code ...

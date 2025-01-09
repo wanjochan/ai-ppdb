@@ -108,11 +108,28 @@ static ppdb_error_t create_connection(ppdb_net_server_t* server, int client_fd, 
     ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_connection_t), (void**)&new_conn);
     if (err != PPDB_OK) return err;
 
+    // Initialize basic fields
     new_conn->fd = client_fd;
     new_conn->server = server;
     new_conn->recv_buffer = NULL;
     new_conn->recv_size = 0;
     new_conn->buffer_size = 0;
+
+    // Initialize state fields
+    new_conn->state = PPDB_CONN_STATE_INIT;
+    err = ppdb_base_time_get_microseconds(&new_conn->last_active_time);
+    if (err != PPDB_OK) {
+        ppdb_base_mem_free(new_conn);
+        return err;
+    }
+    new_conn->connect_time = (uint32_t)(new_conn->last_active_time / 1000); // Convert to milliseconds
+    new_conn->idle_timeout = 60000; // Default 60 seconds timeout
+
+    // Initialize statistics
+    new_conn->bytes_received = 0;
+    new_conn->bytes_sent = 0;
+    new_conn->request_count = 0;
+    new_conn->error_count = 0;
 
     *out_conn = new_conn;
     return PPDB_OK;
@@ -127,12 +144,18 @@ static ppdb_error_t handle_read(ppdb_connection_t* conn) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             return PPDB_OK;
         }
+        conn->error_count++;
         return PPDB_ERR_IO;
     }
     
     if (n == 0) {
         return PPDB_ERR_CLOSED;
     }
+    
+    // Update statistics and activity time
+    conn->bytes_received += n;
+    ppdb_base_time_get_microseconds(&conn->last_active_time);
+    conn->state = PPDB_CONN_STATE_ACTIVE;
     
     // Ensure buffer capacity
     size_t required = conn->recv_size + n;
@@ -142,7 +165,10 @@ static ppdb_error_t handle_read(ppdb_connection_t* conn) {
         
         void* new_buf = NULL;
         ppdb_error_t err = ppdb_base_mem_malloc(new_size, &new_buf);
-        if (err != PPDB_OK) return err;
+        if (err != PPDB_OK) {
+            conn->error_count++;
+            return err;
+        }
         
         if (conn->recv_buffer) {
             memcpy(new_buf, conn->recv_buffer, conn->recv_size);
@@ -156,6 +182,7 @@ static ppdb_error_t handle_read(ppdb_connection_t* conn) {
     // Append data
     memcpy(conn->recv_buffer + conn->recv_size, buf, n);
     conn->recv_size += n;
+    conn->request_count++;
     
     return PPDB_OK;
 }
@@ -278,19 +305,214 @@ static void io_thread_func(void* arg) {
     }
 }
 
-// Handle connection events
-static void handle_connection_event(ppdb_base_event_handler_t* h, uint32_t events) {
-    ppdb_connection_t* conn = (ppdb_connection_t*)h->user_data;
+// Check connection timeout
+static ppdb_error_t check_connection_timeout(ppdb_connection_t* conn) {
+    if (!conn) return PPDB_ERR_PARAM;
     
-    if (events & PPDB_EVENT_READ) {
-        ppdb_error_t err = handle_read(conn);
-        if (err != PPDB_OK) {
-            ppdb_base_event_handler_remove(conn->server->event_loop, h);
-            close(conn->fd);
-            ppdb_base_mem_free(conn->recv_buffer);
-            ppdb_base_mem_free(conn);
-            ppdb_base_mem_free(h);
-            return;
-        }
+    uint64_t now;
+    ppdb_error_t err = ppdb_base_time_get_microseconds(&now);
+    if (err != PPDB_OK) return err;
+    
+    // Convert to milliseconds
+    uint64_t idle_time = (now - conn->last_active_time) / 1000;
+    
+    if (idle_time >= conn->idle_timeout) {
+        conn->state = PPDB_CONN_STATE_CLOSING;
+        return PPDB_OK;
     }
+    
+    return PPDB_OK;
+}
+
+// Connection cleanup
+static ppdb_error_t cleanup_connection(ppdb_connection_t* conn) {
+    if (!conn) return PPDB_ERR_PARAM;
+    
+    // Close socket
+    if (conn->fd >= 0) {
+        close(conn->fd);
+        conn->fd = -1;
+    }
+    
+    // Free receive buffer
+    if (conn->recv_buffer) {
+        ppdb_base_mem_free(conn->recv_buffer);
+        conn->recv_buffer = NULL;
+    }
+    
+    conn->state = PPDB_CONN_STATE_CLOSED;
+    return PPDB_OK;
+}
+
+// Handle connection event
+static ppdb_error_t handle_connection_event(ppdb_connection_t* conn) {
+    if (!conn) return PPDB_ERR_PARAM;
+    
+    // Check timeout first
+    ppdb_error_t err = check_connection_timeout(conn);
+    if (err != PPDB_OK) return err;
+    
+    if (conn->state == PPDB_CONN_STATE_CLOSING) {
+        return cleanup_connection(conn);
+    }
+    
+    // Handle read event
+    err = handle_read(conn);
+    if (err != PPDB_OK) {
+        conn->error_count++;
+        return err;
+    }
+    
+    // Update activity time
+    err = ppdb_base_time_get_microseconds(&conn->last_active_time);
+    if (err != PPDB_OK) return err;
+    
+    conn->state = PPDB_CONN_STATE_ACTIVE;
+    return PPDB_OK;
+}
+
+// Create connection
+ppdb_error_t ppdb_base_connection_create(ppdb_connection_t** conn, int fd) {
+    if (!conn || fd < 0) return PPDB_ERR_PARAM;
+    
+    ppdb_connection_t* new_conn = NULL;
+    ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_connection_t), (void**)&new_conn);
+    if (err != PPDB_OK) return err;
+    
+    // Initialize basic fields
+    new_conn->fd = fd;
+    new_conn->server = NULL;
+    new_conn->recv_buffer = NULL;
+    new_conn->recv_size = 0;
+    new_conn->buffer_size = 0;
+    
+    // Initialize new fields
+    new_conn->state = PPDB_CONN_STATE_INIT;
+    err = ppdb_base_time_get_microseconds(&new_conn->last_active_time);
+    if (err != PPDB_OK) {
+        ppdb_base_mem_free(new_conn);
+        return err;
+    }
+    new_conn->connect_time = new_conn->last_active_time;
+    new_conn->idle_timeout = 60000; // Default 60s timeout
+    
+    // Initialize statistics
+    new_conn->bytes_received = 0;
+    new_conn->bytes_sent = 0;
+    new_conn->request_count = 0;
+    new_conn->error_count = 0;
+    
+    *conn = new_conn;
+    return PPDB_OK;
+}
+
+// Create connection
+static ppdb_error_t create_connection(ppdb_net_server_t* server, int client_fd, ppdb_connection_t** conn) {
+    if (!server || client_fd < 0 || !conn) return PPDB_ERR_PARAM;
+    
+    ppdb_connection_t* new_conn = NULL;
+    ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_connection_t), (void**)&new_conn);
+    if (err != PPDB_OK) return err;
+    
+    // Initialize connection
+    new_conn->fd = client_fd;
+    new_conn->server = server;
+    new_conn->recv_buffer = NULL;
+    new_conn->recv_size = 0;
+    new_conn->buffer_size = PPDB_DEFAULT_BUFFER_SIZE;
+    
+    // Initialize new fields
+    new_conn->state = PPDB_CONN_STATE_INIT;
+    ppdb_base_time_get_microseconds(&new_conn->last_active_time);
+    new_conn->idle_timeout = PPDB_DEFAULT_IDLE_TIMEOUT;
+    new_conn->connect_time = (uint32_t)(new_conn->last_active_time / 1000000);
+    
+    // Initialize statistics
+    new_conn->bytes_received = 0;
+    new_conn->bytes_sent = 0;
+    new_conn->request_count = 0;
+    new_conn->error_count = 0;
+    
+    // Allocate receive buffer
+    err = ppdb_base_mem_malloc(new_conn->buffer_size, &new_conn->recv_buffer);
+    if (err != PPDB_OK) {
+        ppdb_base_mem_free(new_conn);
+        return err;
+    }
+    
+    *conn = new_conn;
+    return PPDB_OK;
+}
+
+// Handle read event
+static ppdb_error_t handle_read(ppdb_connection_t* conn) {
+    if (!conn || conn->fd < 0) return PPDB_ERR_PARAM;
+    
+    // Read data
+    ssize_t bytes = read(conn->fd, 
+                        (char*)conn->recv_buffer + conn->recv_size,
+                        conn->buffer_size - conn->recv_size);
+    
+    if (bytes < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return PPDB_OK;
+        }
+        conn->error_count++;
+        return PPDB_ERR_IO;
+    }
+    
+    if (bytes == 0) {
+        return PPDB_ERR_CLOSED;
+    }
+    
+    // Update statistics
+    conn->bytes_received += bytes;
+    conn->recv_size += bytes;
+    conn->request_count++;
+    
+    // Update activity time
+    ppdb_base_time_get_microseconds(&conn->last_active_time);
+    conn->state = PPDB_CONN_STATE_ACTIVE;
+    
+    return PPDB_OK;
+}
+
+// Get connection statistics
+ppdb_error_t ppdb_net_get_connection_stats(ppdb_connection_t* conn,
+                                         uint64_t* bytes_received,
+                                         uint64_t* bytes_sent,
+                                         uint32_t* request_count,
+                                         uint32_t* error_count,
+                                         uint32_t* uptime) {
+    if (!conn) return PPDB_ERR_PARAM;
+    
+    if (bytes_received) *bytes_received = conn->bytes_received;
+    if (bytes_sent) *bytes_sent = conn->bytes_sent;
+    if (request_count) *request_count = conn->request_count;
+    if (error_count) *error_count = conn->error_count;
+    
+    if (uptime) {
+        uint64_t now;
+        ppdb_base_time_get_microseconds(&now);
+        *uptime = (uint32_t)((now / 1000000) - conn->connect_time);
+    }
+    
+    return PPDB_OK;
+}
+
+// Set connection timeout
+ppdb_error_t ppdb_net_set_connection_timeout(ppdb_connection_t* conn, uint32_t timeout_ms) {
+    if (!conn) return PPDB_ERR_PARAM;
+    if (timeout_ms == 0) return PPDB_ERR_PARAM;
+    
+    conn->idle_timeout = timeout_ms;
+    return PPDB_OK;
+}
+
+// Get connection state
+ppdb_error_t ppdb_net_get_connection_state(ppdb_connection_t* conn, ppdb_connection_state_t* state) {
+    if (!conn || !state) return PPDB_ERR_PARAM;
+    
+    *state = conn->state;
+    return PPDB_OK;
 } 

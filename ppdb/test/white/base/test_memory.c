@@ -243,6 +243,126 @@ static int test_memory_pool(void) {
     return 0;
 }
 
+// Test memory pool statistics
+static int test_mempool_stats(void) {
+    printf("Testing memory pool statistics...\n");
+    
+    // Create pool
+    ppdb_base_mempool_t* pool = NULL;
+    ASSERT_OK(ppdb_base_mempool_create(&pool, 4096, 8));
+    
+    // Initial stats
+    ppdb_base_mempool_stats_t stats;
+    ppdb_base_mempool_get_stats(pool, &stats);
+    ASSERT_EQ(stats.total_allocated, 0);
+    ASSERT_EQ(stats.total_used, 0);
+    ASSERT_EQ(stats.total_blocks, 0);
+    ASSERT_EQ(stats.total_allocations, 0);
+    ASSERT_EQ(stats.total_frees, 0);
+    
+    // Allocate some memory
+    void* ptr1 = ppdb_base_mempool_alloc(pool, 1024);
+    ASSERT_NOT_NULL(ptr1);
+    
+    ppdb_base_mempool_get_stats(pool, &stats);
+    ASSERT_EQ(stats.total_allocated, 4096);  // Block size
+    ASSERT_EQ(stats.total_used, 1024);
+    ASSERT_EQ(stats.total_blocks, 1);
+    ASSERT_EQ(stats.total_allocations, 1);
+    ASSERT_EQ(stats.total_frees, 0);
+    ASSERT_EQ(stats.fragmentation, 3072);  // 4096 - 1024
+    
+    // Allocate more memory from same block
+    void* ptr2 = ppdb_base_mempool_alloc(pool, 2048);
+    ASSERT_NOT_NULL(ptr2);
+    
+    ppdb_base_mempool_get_stats(pool, &stats);
+    ASSERT_EQ(stats.total_allocated, 4096);  // Same block
+    ASSERT_EQ(stats.total_used, 3072);      // 1024 + 2048
+    ASSERT_EQ(stats.total_blocks, 1);
+    ASSERT_EQ(stats.total_allocations, 2);
+    ASSERT_EQ(stats.total_frees, 0);
+    ASSERT_EQ(stats.fragmentation, 1024);   // 4096 - 3072
+    
+    // Allocate memory requiring new block
+    void* ptr3 = ppdb_base_mempool_alloc(pool, 2048);
+    ASSERT_NOT_NULL(ptr3);
+    
+    ppdb_base_mempool_get_stats(pool, &stats);
+    ASSERT_EQ(stats.total_allocated, 8192);  // Two blocks
+    ASSERT_EQ(stats.total_used, 5120);      // 3072 + 2048
+    ASSERT_EQ(stats.total_blocks, 2);
+    ASSERT_EQ(stats.total_allocations, 3);
+    ASSERT_EQ(stats.total_frees, 0);
+    ASSERT_EQ(stats.fragmentation, 3072);   // 8192 - 5120
+    
+    // Free some memory
+    ppdb_base_mempool_free(pool, ptr1);
+    ppdb_base_mempool_free(pool, ptr2);
+    
+    ppdb_base_mempool_get_stats(pool, &stats);
+    ASSERT_EQ(stats.total_frees, 2);
+    
+    // Check peak values
+    ASSERT_EQ(stats.peak_allocated, 8192);
+    ASSERT_EQ(stats.peak_used, 5120);
+    
+    // Cleanup
+    ASSERT_OK(ppdb_base_mempool_destroy(pool));
+    printf("PASSED\n");
+    return 0;
+}
+
+// Test concurrent memory pool operations
+static void mempool_thread_func(void* arg) {
+    ppdb_base_mempool_t* pool = (ppdb_base_mempool_t*)arg;
+    void* ptrs[100];
+    
+    // Perform multiple allocations
+    for (int i = 0; i < 100; i++) {
+        ptrs[i] = ppdb_base_mempool_alloc(pool, 128);
+        ASSERT_NOT_NULL(ptrs[i]);
+        ppdb_base_sleep(1);  // Add some delay
+    }
+    
+    // Free all allocations
+    for (int i = 0; i < 100; i++) {
+        ppdb_base_mempool_free(pool, ptrs[i]);
+        ppdb_base_sleep(1);  // Add some delay
+    }
+}
+
+static int test_mempool_concurrent(void) {
+    printf("Testing concurrent memory pool operations...\n");
+    
+    // Create pool
+    ppdb_base_mempool_t* pool = NULL;
+    ASSERT_OK(ppdb_base_mempool_create(&pool, 4096, 8));
+    
+    // Create threads
+    ppdb_base_thread_t* threads[4];
+    for (int i = 0; i < 4; i++) {
+        ASSERT_OK(ppdb_base_thread_create(&threads[i], mempool_thread_func, pool));
+    }
+    
+    // Wait for threads
+    for (int i = 0; i < 4; i++) {
+        ASSERT_OK(ppdb_base_thread_join(threads[i], NULL));
+        ASSERT_OK(ppdb_base_thread_destroy(threads[i]));
+    }
+    
+    // Check final statistics
+    ppdb_base_mempool_stats_t stats;
+    ppdb_base_mempool_get_stats(pool, &stats);
+    ASSERT_EQ(stats.total_allocations, 400);  // 4 threads * 100 allocations
+    ASSERT_EQ(stats.total_frees, 400);       // 4 threads * 100 frees
+    
+    // Cleanup
+    ASSERT_OK(ppdb_base_mempool_destroy(pool));
+    printf("PASSED\n");
+    return 0;
+}
+
 int main(void) {
     if (test_setup() != 0) {
         printf("Test setup failed\n");
@@ -254,6 +374,8 @@ int main(void) {
     TEST_CASE(test_memory_alignment);
     TEST_CASE(test_memory_boundary);
     TEST_CASE(test_memory_pool);
+    TEST_RUN(test_mempool_stats);
+    TEST_RUN(test_mempool_concurrent);
     
     if (test_teardown() != 0) {
         printf("Test teardown failed\n");
