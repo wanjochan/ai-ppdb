@@ -361,6 +361,7 @@ typedef struct {
     uint64_t submit_time;
     uint64_t start_time;
     uint64_t complete_time;
+    bool is_write;  // Add flag to distinguish read/write
 } ppdb_async_io_request_t;
 
 static void async_io_handler(void* arg) {
@@ -374,13 +375,13 @@ static void async_io_handler(void* arg) {
     if (req->offset == (uint64_t)-2) {  // fsync
         ret = fsync(req->fd);
     } else if (req->offset == (uint64_t)-1) {  // append
-        if (req->buf) {
+        if (req->is_write) {
             ret = write(req->fd, req->buf, req->count);
         } else {
             ret = read(req->fd, req->buf, req->count);
         }
     } else {  // normal read/write with offset
-        if (req->buf) {
+        if (req->is_write) {
             ret = pwrite(req->fd, req->buf, req->count, req->offset);
         } else {
             ret = pread(req->fd, req->buf, req->count, req->offset);
@@ -390,15 +391,29 @@ static void async_io_handler(void* arg) {
     saved_errno = errno;
     req->complete_time = get_time_us();
 
+    // Update statistics
+    ppdb_mutex_lock(req->handle->loop->lock);
+    ppdb_async_io_stats_t* stats = &req->handle->loop->io_stats;
+    stats->completed_requests++;
+    
     if (ret < 0) {
+        stats->failed_requests++;
         if (req->callback) {
             req->callback(PPDB_ERR_IO, req->user_data);
         }
     } else {
+        if (req->offset != (uint64_t)-2) {  // not fsync
+            if (req->is_write) {
+                stats->bytes_written += ret;
+            } else {
+                stats->bytes_read += ret;
+            }
+        }
         if (req->callback) {
             req->callback(PPDB_OK, req->user_data);
         }
     }
+    ppdb_mutex_unlock(req->handle->loop->lock);
 
     ppdb_mem_free(req);
 }
@@ -414,13 +429,14 @@ ppdb_error_t ppdb_async_read(ppdb_async_loop_t* loop,
         return PPDB_ERR_PARAM;
     }
 
+    // Create IO request
     void* req_ptr;
     ppdb_error_t err = ppdb_mem_malloc(sizeof(ppdb_async_io_request_t), &req_ptr);
     if (err != PPDB_OK) {
         return err;
     }
-    ppdb_async_io_request_t* req = (ppdb_async_io_request_t*)req_ptr;
 
+    ppdb_async_io_request_t* req = (ppdb_async_io_request_t*)req_ptr;
     req->fd = fd;
     req->buf = buf;
     req->count = count;
@@ -428,15 +444,21 @@ ppdb_error_t ppdb_async_read(ppdb_async_loop_t* loop,
     req->callback = callback;
     req->user_data = user_data;
     req->submit_time = get_time_us();
+    req->is_write = false;  // Set read flag
 
-    ppdb_async_handle_t* handle;
-    err = ppdb_async_submit(loop, async_io_handler, req, 0, 0, NULL, NULL, &handle);
+    // Submit IO task
+    err = ppdb_async_submit(loop, async_io_handler, req, 0, 0,
+                           NULL, NULL, &req->handle);
     if (err != PPDB_OK) {
         ppdb_mem_free(req);
         return err;
     }
 
-    req->handle = handle;
+    // Update statistics
+    ppdb_mutex_lock(loop->lock);
+    loop->io_stats.total_requests++;
+    ppdb_mutex_unlock(loop->lock);
+
     return PPDB_OK;
 }
 
@@ -466,6 +488,7 @@ ppdb_error_t ppdb_async_write(ppdb_async_loop_t* loop,
     req->callback = callback;
     req->user_data = user_data;
     req->submit_time = get_time_us();
+    req->is_write = true;  // Set write flag
 
     // Submit IO task
     err = ppdb_async_submit(loop, async_io_handler, req, 0, 0,
@@ -477,7 +500,7 @@ ppdb_error_t ppdb_async_write(ppdb_async_loop_t* loop,
 
     // Update statistics
     ppdb_mutex_lock(loop->lock);
-    loop->io_stats.write_requests++;
+    loop->io_stats.total_requests++;
     loop->io_stats.bytes_written += count;
     ppdb_mutex_unlock(loop->lock);
 

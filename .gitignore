@@ -77,3 +77,4 @@ ppdb/src/base/backup/
 .clangd
 
 ppdb/test.txt
+ppdb/scripts/test.txt

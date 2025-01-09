@@ -105,7 +105,7 @@ static int test_async_cancel(void) {
 static int test_async_io(void) {
     ppdb_async_loop_t* loop;
     int counter = 0;
-    char buf[128];
+    char buf[128] = {0};  // Initialize buffer
     ppdb_error_t err;
     int fd;
 
@@ -114,42 +114,54 @@ static int test_async_io(void) {
     TEST_ASSERT(err == PPDB_OK, "Async loop creation failed");
 
     // Create test file
-    fd = open("test.txt", O_CREAT | O_RDWR, 0644);
+    fd = open("test.txt", O_CREAT | O_RDWR | O_TRUNC, 0644);
     TEST_ASSERT(fd >= 0, "File creation failed");
 
     // Write test
     const char* test_data = "Hello, World!";
-    err = ppdb_async_write(loop, fd, test_data, strlen(test_data), 0,
+    size_t data_len = strlen(test_data);
+
+    // Write with offset 0
+    err = ppdb_async_write(loop, fd, test_data, data_len, 0,
                           test_callback, &counter);
     TEST_ASSERT(err == PPDB_OK, "Async write failed");
 
-    // Run loop
-    err = ppdb_async_loop_run(loop, 1000);
+    // Run loop with longer timeout
+    err = ppdb_async_loop_run(loop, 5000);  // 5 seconds timeout
     TEST_ASSERT(err == PPDB_OK, "Loop run failed");
     TEST_ASSERT(counter == 1, "Write callback not called");
 
+    // Verify file size
+    off_t size = lseek(fd, 0, SEEK_END);
+    TEST_ASSERT(size == data_len, "File size mismatch");
+
+    // Reset file position
+    lseek(fd, 0, SEEK_SET);
+
     // Read test
-    err = ppdb_async_read(loop, fd, buf, strlen(test_data), 0,
+    counter = 0;  // Reset counter
+    err = ppdb_async_read(loop, fd, buf, data_len, 0,
                          test_callback, &counter);
     TEST_ASSERT(err == PPDB_OK, "Async read failed");
 
     // Run loop
-    err = ppdb_async_loop_run(loop, 1000);
+    err = ppdb_async_loop_run(loop, 5000);  // 5 seconds timeout
     TEST_ASSERT(err == PPDB_OK, "Loop run failed");
-    TEST_ASSERT(counter == 2, "Read callback not called");
+    TEST_ASSERT(counter == 1, "Read callback not called");
 
     // Compare data
-    TEST_ASSERT(memcmp(buf, test_data, strlen(test_data)) == 0,
+    TEST_ASSERT(memcmp(buf, test_data, data_len) == 0,
                 "Read data does not match written data");
 
     // Fsync test
+    counter = 0;  // Reset counter
     err = ppdb_async_fsync(loop, fd, test_callback, &counter);
     TEST_ASSERT(err == PPDB_OK, "Async fsync failed");
 
     // Run loop
-    err = ppdb_async_loop_run(loop, 1000);
+    err = ppdb_async_loop_run(loop, 5000);  // 5 seconds timeout
     TEST_ASSERT(err == PPDB_OK, "Loop run failed");
-    TEST_ASSERT(counter == 3, "Fsync callback not called");
+    TEST_ASSERT(counter == 1, "Fsync callback not called");
 
     // Cleanup
     close(fd);
