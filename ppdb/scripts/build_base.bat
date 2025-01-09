@@ -75,6 +75,39 @@ if not "%TEST_MODE%"=="notest" (
     "%BUILD_DIR%\skiplist_test.exe"
     if errorlevel 1 exit /b 1
 
+    REM Build and run async test
+    echo Building async test...
+    %GCC% %CFLAGS% "%BUILD_DIR%\base.o" "%PPDB_DIR%\test\white\base\test_async.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\async_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\async_test.exe.dbg" "%BUILD_DIR%\async_test.exe"
+    if errorlevel 1 exit /b 1
+
+    echo Running async test...
+    "%BUILD_DIR%\async_test.exe"
+    if errorlevel 1 exit /b 1
+
+    REM Build and run timer test
+    echo Building timer test...
+    %GCC% %CFLAGS% "%BUILD_DIR%\base.o" "%PPDB_DIR%\test\white\base\test_timer.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\timer_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\timer_test.exe.dbg" "%BUILD_DIR%\timer_test.exe"
+    if errorlevel 1 exit /b 1
+
+    echo Running timer test...
+    "%BUILD_DIR%\timer_test.exe"
+    if errorlevel 1 exit /b 1
+
+    REM Build and run event test
+    echo Building event test...
+    %GCC% %CFLAGS% "%BUILD_DIR%\base.o" "%PPDB_DIR%\test\white\base\test_event.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\event_test.exe.dbg"
+    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\event_test.exe.dbg" "%BUILD_DIR%\event_test.exe"
+    if errorlevel 1 exit /b 1
+
+    echo Running event test...
+    "%BUILD_DIR%\event_test.exe"
+    if errorlevel 1 exit /b 1
+
     echo All base tests passed!
 )
 
