@@ -2,30 +2,33 @@
 #include "internal/base.h"
 
 // Test suite for error handling
-static void test_error_basic(void) {
-    assert(PPDB_BASE_ERR_MEMORY != PPDB_OK);
+void test_error_basic(void) {
+    assert(PPDB_ERR_MEMORY != PPDB_OK);
+    assert(ppdb_base_error_init() == PPDB_OK);
 }
 
-static void test_error_context(void) {
-    ppdb_error_context_t ctx;
-    ctx.code = PPDB_BASE_ERR_MEMORY;
+void test_error_context(void) {
+    ppdb_error_context_t ctx = {0};
+    ctx.code = PPDB_ERR_MEMORY;
     ctx.file = __FILE__;
     ctx.line = __LINE__;
     ctx.func = __func__;
-    snprintf(ctx.message, sizeof(ctx.message), "Test error message");
+    strncpy(ctx.message, "Test error", PPDB_MAX_ERROR_MESSAGE - 1);
     
-    ppdb_error_set_context(&ctx);
+    assert(ppdb_base_error_set_context(&ctx) == PPDB_OK);
     
-    assert(ppdb_error_get_context()->code == ctx.code);
-    assert(strcmp(ppdb_error_get_context()->file, ctx.file) == 0);
-    assert(ppdb_error_get_context()->line == ctx.line);
-    assert(strcmp(ppdb_error_get_context()->func, ctx.func) == 0);
-    assert(strcmp(ppdb_error_get_context()->message, ctx.message) == 0);
+    const ppdb_error_context_t* get_ctx = ppdb_base_error_get_context();
+    assert(get_ctx != NULL);
+    assert(get_ctx->code == ctx.code);
+    assert(strcmp(get_ctx->file, ctx.file) == 0);
+    assert(get_ctx->line == ctx.line);
+    assert(strcmp(get_ctx->func, ctx.func) == 0);
+    assert(strcmp(get_ctx->message, ctx.message) == 0);
 }
 
-static void test_error_string(void) {
-    assert(strcmp(ppdb_error_to_string(PPDB_OK), "Success") == 0);
-    assert(strcmp(ppdb_error_to_string(PPDB_BASE_ERR_MEMORY), "Memory error") == 0);
+void test_error_string(void) {
+    assert(strcmp(ppdb_base_error_to_string(PPDB_ERR_MEMORY), "Memory allocation failed") == 0);
+    assert(strcmp(ppdb_base_error_to_string(PPDB_OK), "Success") == 0);
 }
 
 int main(void) {

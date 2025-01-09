@@ -11,6 +11,31 @@
 #define PPDB_MAX_ERROR_MESSAGE 256
 #define PPDB_MAX_SKIPLIST_LEVEL 32
 
+// IO manager constants
+#define PPDB_IO_DEFAULT_QUEUE_SIZE 1024
+#define PPDB_IO_MIN_THREADS 2
+#define PPDB_IO_MAX_THREADS 64
+#define PPDB_IO_DEFAULT_THREADS 4
+#define PPDB_IO_QUEUE_PRIORITIES 4
+
+// Event system constants
+#define PPDB_EVENT_MAX_EVENTS 64
+#define PPDB_EVENT_MAX_FILTERS 16
+#define PPDB_EVENT_READ  0x01
+#define PPDB_EVENT_WRITE 0x02
+#define PPDB_EVENT_ERROR 0x04
+
+// Timer wheel configuration
+#define PPDB_TIMER_WHEEL_BITS 8
+#define PPDB_TIMER_WHEEL_SIZE (1 << PPDB_TIMER_WHEEL_BITS)
+#define PPDB_TIMER_WHEEL_MASK (PPDB_TIMER_WHEEL_SIZE - 1)
+#define PPDB_TIMER_WHEEL_COUNT 4
+
+// Timer priorities
+#define PPDB_TIMER_PRIORITY_HIGH 0
+#define PPDB_TIMER_PRIORITY_NORMAL 1
+#define PPDB_TIMER_PRIORITY_LOW 2
+
 // Log levels
 #define PPDB_LOG_ERROR 0
 #define PPDB_LOG_WARN  1
@@ -21,24 +46,25 @@
 #define PPDB_OK 0
 
 // Error codes (4000-4199)
-#define PPDB_BASE_ERR_START    4000
-#define PPDB_BASE_ERR_PARAM    4001
-#define PPDB_BASE_ERR_MEMORY   4002
-#define PPDB_BASE_ERR_SYSTEM   4003
-#define PPDB_BASE_ERR_NOT_FOUND 4004
-#define PPDB_BASE_ERR_EXISTS   4005
-#define PPDB_BASE_ERR_TIMEOUT  4006
-#define PPDB_BASE_ERR_BUSY     4007
-#define PPDB_BASE_ERR_FULL     4008
-#define PPDB_BASE_ERR_EMPTY    4009
-#define PPDB_BASE_ERR_IO       4010
-#define PPDB_BASE_ERR_INTERNAL 4011
-#define PPDB_BASE_ERR_THREAD   4012
-#define PPDB_BASE_ERR_MUTEX    4013
-#define PPDB_BASE_ERR_COND     4014
-#define PPDB_BASE_ERR_RWLOCK   4015
-#define PPDB_BASE_ERR_STATE    4016
-#define PPDB_BASE_ERR_MEMORY_LIMIT 4017
+#define PPDB_ERR_START    4000
+#define PPDB_ERR_PARAM    4001
+#define PPDB_ERR_MEMORY   4002
+#define PPDB_ERR_SYSTEM   4003
+#define PPDB_ERR_NOT_FOUND 4004
+#define PPDB_ERR_EXISTS   4005
+#define PPDB_ERR_TIMEOUT  4006
+#define PPDB_ERR_BUSY     4007
+#define PPDB_ERR_FULL     4008
+#define PPDB_ERR_EMPTY    4009
+#define PPDB_ERR_IO       4010
+#define PPDB_ERR_INTERNAL 4011
+#define PPDB_ERR_THREAD   4012
+#define PPDB_ERR_MUTEX    4013
+#define PPDB_ERR_COND     4014
+#define PPDB_ERR_RWLOCK   4015
+#define PPDB_ERR_STATE    4016
+#define PPDB_ERR_MEMORY_LIMIT 4017
+#define PPDB_ERR_CLOSED   4018
 
 // Error type
 typedef int ppdb_error_t;
@@ -84,12 +110,16 @@ typedef struct ppdb_base_rwlock_s ppdb_base_rwlock_t;
 typedef struct ppdb_base_cond_s ppdb_base_cond_t;
 typedef struct ppdb_base_async_task_s ppdb_base_async_task_t;
 typedef struct ppdb_base_async_queue_s ppdb_base_async_queue_t;
+typedef struct ppdb_base_event_loop_s ppdb_base_event_loop_t;
+typedef struct ppdb_connection_s ppdb_connection_t;
+typedef struct ppdb_base_io_worker_s ppdb_base_io_worker_t;
 
 // Function types
 typedef void (*ppdb_base_thread_func_t)(void* arg);
 typedef void (*ppdb_base_async_func_t)(void* arg);
 typedef void (*ppdb_base_io_func_t)(void* arg);
 typedef int (*ppdb_base_compare_func_t)(const void* a, const void* b);
+typedef void (*ppdb_base_cleanup_func_t)(void* data);
 typedef void (*ppdb_base_timer_callback_t)(ppdb_base_timer_t* timer, void* user_data);
 typedef void (*ppdb_base_async_callback_t)(ppdb_error_t error, void* arg);
 
@@ -140,9 +170,10 @@ typedef struct ppdb_base_skiplist_node_s {
 // Skiplist structure
 typedef struct ppdb_base_skiplist_s {
     ppdb_base_skiplist_node_t* head;
-    int max_level;
-    size_t size;
+    size_t level;
+    size_t count;
     ppdb_base_compare_func_t compare;
+    ppdb_base_cleanup_func_t cleanup;
     ppdb_base_mutex_t* lock;
 } ppdb_base_skiplist_t;
 
@@ -168,25 +199,25 @@ typedef struct ppdb_base_mempool_s {
     size_t alignment;
 } ppdb_base_mempool_t;
 
-// Timer statistics structure
+// Timer statistics
 typedef struct ppdb_base_timer_stats_s {
-    uint64_t total_ticks;
+    uint64_t total_calls;
     uint64_t total_elapsed;
     uint64_t min_elapsed;
     uint64_t max_elapsed;
-    uint64_t avg_elapsed;
+    uint64_t last_elapsed;
+    uint64_t drift;
 } ppdb_base_timer_stats_t;
 
-// Timer structure
+// Timer
 typedef struct ppdb_base_timer_s {
-    ppdb_base_timer_callback_t callback;
-    void* user_data;
     uint64_t interval_ms;
-    uint64_t timeout_us;
     uint64_t next_timeout;
-    bool repeat;
-    bool active;
     ppdb_base_timer_stats_t stats;
+    void (*callback)(struct ppdb_base_timer_s* timer, void* user_data);
+    void* user_data;
+    struct ppdb_base_timer_s* next;
+    bool repeating;
 } ppdb_base_timer_t;
 
 // Base functions
@@ -194,10 +225,10 @@ ppdb_error_t ppdb_base_init(ppdb_base_t** base, const ppdb_base_config_t* config
 void ppdb_base_destroy(ppdb_base_t* base);
 
 // Memory management
-void* ppdb_base_malloc(size_t size);
-void ppdb_base_free(void* ptr);
+ppdb_error_t ppdb_base_mem_malloc(size_t size, void** out_ptr);
+void ppdb_base_mem_free(void* ptr);
 void* ppdb_base_realloc(void* ptr, size_t size);
-void* ppdb_base_calloc(size_t count, size_t size);
+ppdb_error_t ppdb_base_mem_calloc(size_t count, size_t size, void** out_ptr);
 void* ppdb_base_aligned_alloc(size_t alignment, size_t size);
 void ppdb_base_aligned_free(void* ptr);
 
@@ -206,8 +237,21 @@ ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, ppdb_base_thre
 ppdb_error_t ppdb_base_thread_destroy(ppdb_base_thread_t* thread);
 ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread);
 ppdb_error_t ppdb_base_thread_detach(ppdb_base_thread_t* thread);
+ppdb_error_t ppdb_base_thread_set_affinity(ppdb_base_thread_t* thread, int cpu_id);
 ppdb_error_t ppdb_base_yield(void);
 ppdb_error_t ppdb_base_sleep(uint32_t milliseconds);
+
+// Mutex statistics
+typedef struct ppdb_base_mutex_stats_s {
+    bool enabled;
+    uint64_t contention;
+} ppdb_base_mutex_stats_t;
+
+// Mutex structure
+typedef struct ppdb_base_mutex_s {
+    pthread_mutex_t mutex;
+    ppdb_base_mutex_stats_t stats;
+} ppdb_base_mutex_t;
 
 // Mutex functions
 ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex);
@@ -215,13 +259,14 @@ ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex);
 ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex);
+void ppdb_base_mutex_enable_stats(ppdb_base_mutex_t* mutex, bool enable);
 
 // Counter functions
 ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter, const char* name);
 ppdb_error_t ppdb_base_counter_destroy(ppdb_base_counter_t* counter);
 ppdb_error_t ppdb_base_counter_increment(ppdb_base_counter_t* counter);
 ppdb_error_t ppdb_base_counter_decrement(ppdb_base_counter_t* counter);
-uint64_t ppdb_base_counter_get(ppdb_base_counter_t* counter);
+ppdb_error_t ppdb_base_counter_get(ppdb_base_counter_t* counter, uint64_t* out_value);
 ppdb_error_t ppdb_base_counter_set(ppdb_base_counter_t* counter, uint64_t value);
 
 // Skiplist functions
@@ -234,7 +279,7 @@ ppdb_error_t ppdb_base_skiplist_find(ppdb_base_skiplist_t* list, const void* key
 // Skiplist iterator functions
 ppdb_error_t ppdb_base_skiplist_iterator_create(ppdb_base_skiplist_t* list, ppdb_base_skiplist_iterator_t** iterator, bool reverse);
 ppdb_error_t ppdb_base_skiplist_iterator_destroy(ppdb_base_skiplist_iterator_t* iterator);
-bool ppdb_base_skiplist_iterator_valid(ppdb_base_skiplist_iterator_t* iterator);
+ppdb_error_t ppdb_base_skiplist_iterator_valid(ppdb_base_skiplist_iterator_t* iterator, bool* out_valid);
 ppdb_error_t ppdb_base_skiplist_iterator_next(ppdb_base_skiplist_iterator_t* iterator);
 ppdb_error_t ppdb_base_skiplist_iterator_key(ppdb_base_skiplist_iterator_t* iterator, void** key, size_t* key_size);
 ppdb_error_t ppdb_base_skiplist_iterator_value(ppdb_base_skiplist_iterator_t* iterator, void** value, size_t* value_size);
@@ -246,14 +291,26 @@ void* ppdb_base_mempool_alloc(ppdb_base_mempool_t* pool, size_t size);
 void ppdb_base_mempool_free(ppdb_base_mempool_t* pool, void* ptr);
 
 // Timer functions
-ppdb_error_t ppdb_base_timer_create(ppdb_base_timer_t** timer, uint64_t interval_ms, bool repeat, ppdb_base_timer_callback_t callback, void* user_data);
+ppdb_error_t ppdb_base_timer_create(ppdb_base_timer_t** timer, uint64_t interval_ms);
 ppdb_error_t ppdb_base_timer_destroy(ppdb_base_timer_t* timer);
 ppdb_error_t ppdb_base_timer_start(ppdb_base_timer_t* timer);
 ppdb_error_t ppdb_base_timer_stop(ppdb_base_timer_t* timer);
-ppdb_error_t ppdb_base_timer_get_stats(ppdb_base_timer_t* timer, ppdb_base_timer_stats_t* stats);
+ppdb_error_t ppdb_base_timer_get_stats(ppdb_base_timer_t* timer,
+                                     uint64_t* total_ticks,
+                                     uint64_t* min_elapsed,
+                                     uint64_t* max_elapsed,
+                                     uint64_t* avg_elapsed,
+                                     uint64_t* last_elapsed,
+                                     uint64_t* drift);
+void ppdb_base_timer_get_manager_stats(uint64_t* total_timers,
+                                    uint64_t* active_timers,
+                                    uint64_t* expired_timers,
+                                    uint64_t* overdue_timers,
+                                    uint64_t* total_drift);
+ppdb_error_t ppdb_base_timer_update(void);
 
 // IO manager functions
-ppdb_error_t ppdb_base_io_manager_create(ppdb_base_io_manager_t** manager);
+ppdb_error_t ppdb_base_io_manager_create(ppdb_base_io_manager_t** manager, size_t queue_size, size_t num_threads);
 ppdb_error_t ppdb_base_io_manager_destroy(ppdb_base_io_manager_t* manager);
 ppdb_error_t ppdb_base_io_manager_process(ppdb_base_io_manager_t* manager);
 
@@ -264,26 +321,17 @@ ppdb_error_t ppdb_base_async_cancel(ppdb_base_async_handle_t* handle);
 // Thread structure
 typedef struct ppdb_base_thread_s {
     pthread_t thread;
-    bool initialized;
 } ppdb_base_thread_t;
-
-// Mutex structure
-typedef struct ppdb_base_mutex_s {
-    pthread_mutex_t mutex;
-    bool initialized;
-} ppdb_base_mutex_t;
-
-// RWLock structure
-typedef struct ppdb_base_rwlock_s {
-    pthread_rwlock_t rwlock;
-    bool initialized;
-} ppdb_base_rwlock_t;
 
 // Condition variable structure
 typedef struct ppdb_base_cond_s {
     pthread_cond_t cond;
-    bool initialized;
 } ppdb_base_cond_t;
+
+// Read-write lock structure
+typedef struct ppdb_base_rwlock_s {
+    pthread_rwlock_t rwlock;
+} ppdb_base_rwlock_t;
 
 // Async task structure
 typedef struct ppdb_base_async_task_s {
@@ -324,22 +372,59 @@ typedef struct ppdb_base_async_handle_s {
 
 // IO request structure
 typedef struct ppdb_base_io_request_s {
-    ppdb_base_io_func_t func;
+    void (*func)(void* arg);
     void* arg;
+    int priority;
     struct ppdb_base_io_request_s* next;
 } ppdb_base_io_request_t;
 
+// IO queue structure
+typedef struct ppdb_base_io_queue_s {
+    ppdb_base_io_request_t* head;
+    ppdb_base_io_request_t* tail;
+    size_t size;
+} ppdb_base_io_queue_t;
+
 // IO manager structure
 typedef struct ppdb_base_io_manager_s {
-    ppdb_base_thread_t* worker;
     ppdb_base_mutex_t* mutex;
-    ppdb_base_io_request_t* requests;
+    ppdb_base_cond_t* cond;
+    ppdb_base_io_worker_t** workers;
+    ppdb_base_io_queue_t queues[PPDB_IO_QUEUE_PRIORITIES];
+    size_t max_queue_size;
+    size_t min_threads;
+    size_t active_threads;
     bool running;
 } ppdb_base_io_manager_t;
 
+// Event handler structure
+typedef struct ppdb_base_event_handler_s {
+    int fd;
+    uint32_t events;
+    void (*callback)(struct ppdb_base_event_handler_s* handler, uint32_t events);
+    void* user_data;
+    struct ppdb_base_event_handler_s* next;
+} ppdb_base_event_handler_t;
+
+// Event filter
+typedef struct ppdb_base_event_filter_s {
+    bool (*filter)(void* handler, uint32_t events);
+    void* user_data;
+} ppdb_base_event_filter_t;
+
+// Event implementation operations
+typedef struct ppdb_base_event_impl_ops_s {
+    ppdb_error_t (*init)(void** context);
+    void (*cleanup)(void* context);
+    ppdb_error_t (*add)(void* context, ppdb_base_event_handler_t* handler);
+    ppdb_error_t (*remove)(void* context, ppdb_base_event_handler_t* handler);
+    ppdb_error_t (*modify)(void* context, ppdb_base_event_handler_t* handler);
+    ppdb_error_t (*wait)(void* context, int timeout_ms);
+} ppdb_base_event_impl_ops_t;
+
 // Utility functions
 uint64_t ppdb_base_get_time_ns(void);
-uint64_t ppdb_base_get_time_us(void);
+ppdb_error_t ppdb_base_time_get_microseconds(uint64_t* out_time);
 ppdb_error_t ppdb_base_sleep_us(uint32_t microseconds);
 
 // RWLock functions
@@ -382,8 +467,8 @@ ppdb_error_t ppdb_base_cond_broadcast(ppdb_base_cond_t* cond);
 typedef void (*ppdb_base_async_callback_t)(ppdb_error_t error, void* arg);
 
 // Async functions
-ppdb_error_t ppdb_base_async_loop_create(ppdb_base_async_loop_t** loop, size_t worker_count);
-void ppdb_base_async_loop_destroy(ppdb_base_async_loop_t* loop);
+ppdb_error_t ppdb_base_async_loop_create(ppdb_base_async_loop_t** loop);
+ppdb_error_t ppdb_base_async_loop_destroy(ppdb_base_async_loop_t* loop);
 ppdb_error_t ppdb_base_async_submit(ppdb_base_async_loop_t* loop,
                                    ppdb_base_async_func_t func,
                                    void* arg,
@@ -394,5 +479,182 @@ ppdb_error_t ppdb_base_async_submit(ppdb_base_async_loop_t* loop,
                                    ppdb_base_async_handle_t** handle);
 ppdb_error_t ppdb_base_async_cancel(ppdb_base_async_handle_t* handle);
 void ppdb_base_async_wait_all(ppdb_base_async_loop_t* loop);
+
+// List types
+typedef struct ppdb_base_list_node_s {
+    void* data;
+    struct ppdb_base_list_node_s* next;
+    struct ppdb_base_list_node_s* prev;
+} ppdb_base_list_node_t;
+
+typedef struct ppdb_base_list_s {
+    ppdb_base_list_node_t* head;
+    ppdb_base_list_node_t* tail;
+    size_t size;
+    ppdb_base_mutex_t* lock;
+    void (*cleanup)(void*);
+} ppdb_base_list_t;
+
+// Hash types
+typedef struct ppdb_base_hash_node_s {
+    void* key;
+    void* value;
+    struct ppdb_base_hash_node_s* next;
+} ppdb_base_hash_node_t;
+
+typedef struct ppdb_base_hash_s {
+    ppdb_base_hash_node_t** buckets;
+    size_t size;
+    size_t capacity;
+    ppdb_base_compare_func_t compare;
+    ppdb_base_cleanup_func_t cleanup;
+    ppdb_base_mutex_t* lock;
+} ppdb_base_hash_t;
+
+// Cleanup function type
+typedef void (*ppdb_base_cleanup_func_t)(void*);
+
+// Network types
+typedef struct ppdb_net_config_s {
+    const char* host;
+    uint16_t port;
+    size_t max_connections;
+    size_t io_threads;
+    size_t read_buffer_size;
+    size_t write_buffer_size;
+    int backlog;
+} ppdb_net_config_t;
+
+// Protocol operations
+typedef struct ppdb_protocol_ops_s {
+    ppdb_error_t (*create)(void** proto, void* proto_data);
+    void (*destroy)(void* proto);
+    ppdb_error_t (*on_data)(void* proto, struct ppdb_connection_s* conn, const void* data, size_t size);
+    ppdb_error_t (*on_close)(void* proto, struct ppdb_connection_s* conn);
+} ppdb_protocol_ops_t;
+
+// Connection structure
+typedef struct ppdb_connection_s {
+    int fd;
+    struct ppdb_net_server_s* server;
+    void* recv_buffer;
+    size_t recv_size;
+    size_t buffer_size;
+} ppdb_connection_t;
+
+// Server structure
+typedef struct ppdb_net_server_s {
+    int listen_fd;
+    bool running;
+    ppdb_base_thread_t** io_threads;
+    size_t thread_count;
+    ppdb_base_event_loop_t* event_loop;
+    void* user_data;
+} ppdb_net_server_t;
+
+// String Operations
+ppdb_error_t ppdb_base_string_equal(const char* s1, const char* s2, bool* out_result);
+ppdb_error_t ppdb_base_string_hash(const char* str, size_t* out_hash);
+
+// File System Operations
+ppdb_error_t ppdb_base_fs_exists(const char* path, bool* out_exists);
+ppdb_error_t ppdb_base_fs_create_directory(const char* path);
+
+// Time and System Functions
+ppdb_error_t ppdb_base_time_get_microseconds(uint64_t* out_time);
+ppdb_error_t ppdb_base_sys_get_cpu_count(uint32_t* out_count);
+ppdb_error_t ppdb_base_sys_get_page_size(size_t* out_size);
+
+// List Operations
+ppdb_error_t ppdb_base_list_init(ppdb_base_list_t* list);
+ppdb_error_t ppdb_base_list_destroy(ppdb_base_list_t* list);
+ppdb_error_t ppdb_base_list_push_front(ppdb_base_list_t* list, void* data);
+ppdb_error_t ppdb_base_list_push_back(ppdb_base_list_t* list, void* data);
+ppdb_error_t ppdb_base_list_pop_front(ppdb_base_list_t* list, void** out_data);
+ppdb_error_t ppdb_base_list_pop_back(ppdb_base_list_t* list, void** out_data);
+ppdb_error_t ppdb_base_list_front(ppdb_base_list_t* list, void** out_data);
+ppdb_error_t ppdb_base_list_back(ppdb_base_list_t* list, void** out_data);
+ppdb_error_t ppdb_base_list_size(ppdb_base_list_t* list, size_t* out_size);
+ppdb_error_t ppdb_base_list_empty(ppdb_base_list_t* list, bool* out_empty);
+ppdb_error_t ppdb_base_list_clear(ppdb_base_list_t* list);
+ppdb_error_t ppdb_base_list_reverse(ppdb_base_list_t* list);
+
+// Hash Table Operations
+ppdb_error_t ppdb_base_hash_init(ppdb_base_hash_t* hash, size_t initial_size);
+ppdb_error_t ppdb_base_hash_destroy(ppdb_base_hash_t* hash);
+
+// Skip List Operations
+ppdb_error_t ppdb_base_skiplist_init(ppdb_base_skiplist_t* list, size_t max_level);
+ppdb_error_t ppdb_base_skiplist_destroy(ppdb_base_skiplist_t* list);
+ppdb_error_t ppdb_base_skiplist_size(ppdb_base_skiplist_t* list, size_t* out_size);
+ppdb_error_t ppdb_base_skiplist_iterator_valid(ppdb_base_skiplist_iterator_t* iterator, bool* out_valid);
+
+// Counter Operations
+ppdb_error_t ppdb_base_counter_create(ppdb_base_counter_t** counter, const char* name);
+ppdb_error_t ppdb_base_counter_destroy(ppdb_base_counter_t* counter);
+ppdb_error_t ppdb_base_counter_get(ppdb_base_counter_t* counter, uint64_t* out_value);
+
+// Async Operations
+ppdb_error_t ppdb_base_async_loop_create(ppdb_base_async_loop_t** loop);
+ppdb_error_t ppdb_base_async_loop_destroy(ppdb_base_async_loop_t* loop);
+ppdb_error_t ppdb_base_async_loop_run(ppdb_base_async_loop_t* loop, int timeout_ms);
+
+// Timer Operations
+ppdb_error_t ppdb_base_timer_create(ppdb_base_timer_t** timer, uint64_t interval_ms);
+ppdb_error_t ppdb_base_timer_destroy(ppdb_base_timer_t* timer);
+ppdb_error_t ppdb_base_timer_update(void);
+
+// Network Operations
+ppdb_error_t ppdb_base_net_server_create(ppdb_net_server_t** server);
+ppdb_error_t ppdb_base_net_server_start(ppdb_net_server_t* server);
+ppdb_error_t ppdb_base_net_server_stop(ppdb_net_server_t* server);
+ppdb_error_t ppdb_base_net_server_destroy(ppdb_net_server_t* server);
+
+// Configuration functions
+ppdb_error_t ppdb_base_config_load(const char* config_path);
+ppdb_error_t ppdb_base_config_set(const char* key, const char* value);
+
+// IO worker structure
+typedef struct ppdb_base_io_worker_s {
+    ppdb_base_thread_t* thread;
+    ppdb_base_io_manager_t* mgr;
+    int cpu_id;
+    bool running;
+} ppdb_base_io_worker_t;
+
+// Event loop functions
+ppdb_error_t ppdb_base_event_loop_create(ppdb_base_event_loop_t** loop);
+ppdb_error_t ppdb_base_event_loop_destroy(ppdb_base_event_loop_t* loop);
+ppdb_error_t ppdb_base_event_handler_add(ppdb_base_event_loop_t* loop, ppdb_base_event_handler_t* handler);
+ppdb_error_t ppdb_base_event_handler_remove(ppdb_base_event_loop_t* loop, ppdb_base_event_handler_t* handler);
+ppdb_error_t ppdb_base_event_loop_run(ppdb_base_event_loop_t* loop, int timeout_ms);
+
+// Memory management functions
+ppdb_error_t ppdb_base_mem_malloc(size_t size, void** out_ptr);
+ppdb_error_t ppdb_base_mem_calloc(size_t count, size_t size, void** out_ptr);
+ppdb_error_t ppdb_base_mem_realloc(void* ptr, size_t new_size, void** out_ptr);
+void ppdb_base_mem_free(void* ptr);
+
+// Network server functions
+ppdb_error_t ppdb_base_net_server_stop(ppdb_net_server_t* server);
+ppdb_error_t ppdb_base_net_server_destroy(ppdb_net_server_t* server);
+
+// Event loop structure
+typedef struct ppdb_base_event_loop_s {
+    bool running;
+    ppdb_base_event_handler_t* handlers;
+    size_t handler_count;
+    ppdb_base_mutex_t* lock;
+    int epoll_fd;  // For Linux
+    void* kqueue_fd;  // For BSD/macOS
+    void* iocp_handle;  // For Windows
+} ppdb_base_event_loop_t;
+
+// Event loop functions
+ppdb_error_t ppdb_base_event_loop_create(ppdb_base_event_loop_t** loop);
+ppdb_error_t ppdb_base_event_loop_destroy(ppdb_base_event_loop_t* loop);
+ppdb_error_t ppdb_base_event_handler_add(ppdb_base_event_loop_t* loop, ppdb_base_event_handler_t* handler);
+ppdb_error_t ppdb_base_event_handler_remove(ppdb_base_event_loop_t* loop, ppdb_base_event_handler_t* handler);
+ppdb_error_t ppdb_base_event_loop_run(ppdb_base_event_loop_t* loop, int timeout_ms);
 
 #endif // PPDB_BASE_H

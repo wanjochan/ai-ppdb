@@ -197,6 +197,94 @@ static int test_async_priority(void) {
     return 0;
 }
 
+// Test timer wheel functionality
+static int timer_callback_count = 0;
+static void test_timer_callback(ppdb_base_timer_t* timer, void* arg) {
+    timer_callback_count++;
+}
+
+static void test_timer_system(void) {
+    ppdb_error_t err;
+    ppdb_base_timer_t* timer = NULL;
+    ppdb_base_timer_stats_t stats;
+
+    // Create timer with high priority
+    err = ppdb_base_timer_create(&timer, PPDB_TIMER_PRIORITY_HIGH);
+    assert(err == PPDB_OK);
+    assert(timer != NULL);
+
+    // Schedule timer for 100ms
+    err = ppdb_base_timer_schedule(timer, 100, test_timer_callback, NULL);
+    assert(err == PPDB_OK);
+
+    // Wait for timer to fire
+    ppdb_base_sleep(150);
+    assert(timer_callback_count == 1);
+
+    // Check timer stats
+    ppdb_base_timer_get_stats(timer, &stats);
+    assert(stats.total_timers > 0);
+    assert(stats.active_timers >= 0);
+
+    // Cleanup
+    ppdb_base_timer_destroy(timer);
+}
+
+// Test event system functionality
+static void test_event_system(void) {
+    ppdb_error_t err;
+    ppdb_base_event_t* event = NULL;
+    ppdb_base_event_filter_t filter;
+    ppdb_base_event_stats_t stats;
+
+    // Create event system
+    err = ppdb_base_event_create(&event);
+    assert(err == PPDB_OK);
+    assert(event != NULL);
+
+    // Setup event filter
+    filter.type = PPDB_EVENT_TYPE_IO;
+    filter.priority = PPDB_EVENT_PRIORITY_HIGH;
+    err = ppdb_base_event_add_filter(event, &filter);
+    assert(err == PPDB_OK);
+
+    // Check event stats
+    ppdb_base_event_get_stats(event, &stats);
+    assert(stats.total_events == 0);
+    assert(stats.active_filters == 1);
+
+    // Cleanup
+    ppdb_base_event_destroy(event);
+}
+
+// Test IO manager thread pool
+static void test_io_thread_pool(void) {
+    ppdb_error_t err;
+    ppdb_base_io_manager_t* mgr = NULL;
+    ppdb_base_io_stats_t stats;
+
+    // Create IO manager with custom thread count
+    err = ppdb_base_io_manager_create(&mgr, PPDB_IO_DEFAULT_QUEUE_SIZE, 8);
+    assert(err == PPDB_OK);
+    assert(mgr != NULL);
+
+    // Check thread pool stats
+    ppdb_base_io_manager_get_stats(mgr, &stats);
+    assert(stats.thread_count == 8);
+    assert(stats.active_threads >= 0);
+    assert(stats.queue_size == PPDB_IO_DEFAULT_QUEUE_SIZE);
+
+    // Test thread pool scaling
+    err = ppdb_base_io_manager_adjust_threads(mgr, 4);
+    assert(err == PPDB_OK);
+
+    ppdb_base_io_manager_get_stats(mgr, &stats);
+    assert(stats.thread_count == 4);
+
+    // Cleanup
+    ppdb_base_io_manager_destroy(mgr);
+}
+
 int main(void) {
     printf("Testing async IO basic operations...\n");
     test_async_basic();
@@ -217,6 +305,11 @@ int main(void) {
     printf("Testing async priority handling...\n");
     test_async_priority();
     printf("PASSED\n");
+
+    test_timer_system();
+    test_event_system();
+    test_io_thread_pool();
+    printf("All async tests passed!\n");
 
     return 0;
 }

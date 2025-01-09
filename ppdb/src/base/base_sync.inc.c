@@ -24,7 +24,7 @@ static void* thread_wrapper(void* arg) {
     thread_wrapper_t* wrapper = (thread_wrapper_t*)arg;
     ppdb_base_thread_func_t func = wrapper->func;
     void* func_arg = wrapper->arg;
-    free(wrapper);
+    ppdb_base_mem_free(wrapper);
     func(func_arg);
     return NULL;
 }
@@ -32,64 +32,92 @@ static void* thread_wrapper(void* arg) {
 ppdb_error_t ppdb_base_thread_create(ppdb_base_thread_t** thread, 
                                    ppdb_base_thread_func_t func, void* arg) {
     if (!thread || !func) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
 
-    ppdb_base_thread_t* new_thread = (ppdb_base_thread_t*)malloc(sizeof(ppdb_base_thread_t));
-    if (!new_thread) {
-        return PPDB_BASE_ERR_MEMORY;
+    void* thread_ptr;
+    ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_base_thread_t), &thread_ptr);
+    if (err != PPDB_OK) {
+        return err;
     }
+    ppdb_base_thread_t* new_thread = (ppdb_base_thread_t*)thread_ptr;
 
-    thread_wrapper_t* wrapper = (thread_wrapper_t*)malloc(sizeof(thread_wrapper_t));
-    if (!wrapper) {
-        free(new_thread);
-        return PPDB_BASE_ERR_MEMORY;
+    void* wrapper_ptr;
+    err = ppdb_base_mem_malloc(sizeof(thread_wrapper_t), &wrapper_ptr);
+    if (err != PPDB_OK) {
+        ppdb_base_mem_free(new_thread);
+        return err;
     }
+    thread_wrapper_t* wrapper = (thread_wrapper_t*)wrapper_ptr;
 
     wrapper->func = func;
     wrapper->arg = arg;
 
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-
-    if (pthread_create(&new_thread->thread, &attr, thread_wrapper, wrapper) != 0) {
-        pthread_attr_destroy(&attr);
-        free(wrapper);
-        free(new_thread);
-        return PPDB_BASE_ERR_THREAD;
+    err = pthread_create(&new_thread->thread, NULL, thread_wrapper, wrapper);
+    if (err != 0) {
+        ppdb_base_mem_free(wrapper);
+        ppdb_base_mem_free(new_thread);
+        return PPDB_ERR_THREAD;
     }
 
-    pthread_attr_destroy(&attr);
     *thread = new_thread;
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_thread_join(ppdb_base_thread_t* thread) {
     if (!thread) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_join(thread->thread, NULL) != 0) {
-        return PPDB_BASE_ERR_THREAD;
+
+    int err = pthread_join(thread->thread, NULL);
+    if (err != 0) {
+        return PPDB_ERR_THREAD;
     }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_thread_detach(ppdb_base_thread_t* thread) {
     if (!thread) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_detach(thread->thread) != 0) {
-        return PPDB_BASE_ERR_THREAD;
+
+    int err = pthread_detach(thread->thread);
+    if (err != 0) {
+        return PPDB_ERR_THREAD;
     }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_thread_destroy(ppdb_base_thread_t* thread) {
     if (!thread) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    free(thread);
+
+    ppdb_base_mem_free(thread);
+    return PPDB_OK;
+}
+
+ppdb_error_t ppdb_base_thread_set_affinity(ppdb_base_thread_t* thread, int cpu_id) {
+    if (!thread || cpu_id < 0) {
+        return PPDB_ERR_PARAM;
+    }
+
+#ifdef _WIN32
+    DWORD_PTR mask = 1ULL << cpu_id;
+    if (!SetThreadAffinityMask(thread->thread, mask)) {
+        return PPDB_ERR_THREAD;
+    }
+#else
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu_id, &cpuset);
+    if (pthread_setaffinity_np(thread->thread, sizeof(cpu_set_t), &cpuset) != 0) {
+        return PPDB_ERR_THREAD;
+    }
+#endif
+
     return PPDB_OK;
 }
 
@@ -99,70 +127,78 @@ ppdb_error_t ppdb_base_thread_destroy(ppdb_base_thread_t* thread) {
 
 ppdb_error_t ppdb_base_mutex_create(ppdb_base_mutex_t** mutex) {
     if (!mutex) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
 
-    ppdb_base_mutex_t* new_mutex = (ppdb_base_mutex_t*)malloc(sizeof(ppdb_base_mutex_t));
-    if (!new_mutex) {
-        return PPDB_BASE_ERR_MEMORY;
+    void* mutex_ptr;
+    ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_base_mutex_t), &mutex_ptr);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    ppdb_base_mutex_t* new_mutex = (ppdb_base_mutex_t*)mutex_ptr;
+
+    err = pthread_mutex_init(&new_mutex->mutex, NULL);
+    if (err != 0) {
+        ppdb_base_mem_free(new_mutex);
+        return PPDB_ERR_MUTEX;
     }
 
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-
-    if (pthread_mutex_init(&new_mutex->mutex, &attr) != 0) {
-        pthread_mutexattr_destroy(&attr);
-        free(new_mutex);
-        return PPDB_BASE_ERR_MUTEX;
-    }
-
-    pthread_mutexattr_destroy(&attr);
     *mutex = new_mutex;
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_mutex_destroy(ppdb_base_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_mutex_destroy(&mutex->mutex) != 0) {
-        return PPDB_BASE_ERR_MUTEX;
+
+    int err = pthread_mutex_destroy(&mutex->mutex);
+    if (err != 0) {
+        return PPDB_ERR_MUTEX;
     }
-    free(mutex);
+
+    ppdb_base_mem_free(mutex);
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_mutex_lock(ppdb_base_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_mutex_lock(&mutex->mutex) != 0) {
-        return PPDB_BASE_ERR_MUTEX;
+
+    int err = pthread_mutex_lock(&mutex->mutex);
+    if (err != 0) {
+        return PPDB_ERR_MUTEX;
     }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_mutex_unlock(ppdb_base_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_mutex_unlock(&mutex->mutex) != 0) {
-        return PPDB_BASE_ERR_MUTEX;
+
+    int err = pthread_mutex_unlock(&mutex->mutex);
+    if (err != 0) {
+        return PPDB_ERR_MUTEX;
     }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    int ret = pthread_mutex_trylock(&mutex->mutex);
-    if (ret == EBUSY) {
-        return PPDB_BASE_ERR_BUSY;
-    } else if (ret != 0) {
-        return PPDB_BASE_ERR_MUTEX;
+
+    int err = pthread_mutex_trylock(&mutex->mutex);
+    if (err == EBUSY) {
+        return PPDB_ERR_BUSY;
+    } else if (err != 0) {
+        return PPDB_ERR_MUTEX;
     }
+
     return PPDB_OK;
 }
 
@@ -172,17 +208,20 @@ ppdb_error_t ppdb_base_mutex_trylock(ppdb_base_mutex_t* mutex) {
 
 ppdb_error_t ppdb_base_cond_create(ppdb_base_cond_t** cond) {
     if (!cond) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
 
-    ppdb_base_cond_t* new_cond = (ppdb_base_cond_t*)malloc(sizeof(ppdb_base_cond_t));
-    if (!new_cond) {
-        return PPDB_BASE_ERR_MEMORY;
+    void* cond_ptr;
+    ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_base_cond_t), &cond_ptr);
+    if (err != PPDB_OK) {
+        return err;
     }
+    ppdb_base_cond_t* new_cond = (ppdb_base_cond_t*)cond_ptr;
 
-    if (pthread_cond_init(&new_cond->cond, NULL) != 0) {
-        free(new_cond);
-        return PPDB_BASE_ERR_COND;
+    err = pthread_cond_init(&new_cond->cond, NULL);
+    if (err != 0) {
+        ppdb_base_mem_free(new_cond);
+        return PPDB_ERR_COND;
     }
 
     *cond = new_cond;
@@ -191,67 +230,54 @@ ppdb_error_t ppdb_base_cond_create(ppdb_base_cond_t** cond) {
 
 ppdb_error_t ppdb_base_cond_destroy(ppdb_base_cond_t* cond) {
     if (!cond) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_cond_destroy(&cond->cond) != 0) {
-        return PPDB_BASE_ERR_COND;
+
+    int err = pthread_cond_destroy(&cond->cond);
+    if (err != 0) {
+        return PPDB_ERR_COND;
     }
-    free(cond);
+
+    ppdb_base_mem_free(cond);
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_cond_wait(ppdb_base_cond_t* cond, ppdb_base_mutex_t* mutex) {
     if (!cond || !mutex) {
-        return PPDB_BASE_ERR_PARAM;
-    }
-    if (pthread_cond_wait(&cond->cond, &mutex->mutex) != 0) {
-        return PPDB_BASE_ERR_COND;
-    }
-    return PPDB_OK;
-}
-
-ppdb_error_t ppdb_base_cond_timedwait(ppdb_base_cond_t* cond, 
-                                     ppdb_base_mutex_t* mutex,
-                                     uint64_t timeout_us) {
-    if (!cond || !mutex) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
 
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += timeout_us / 1000000;
-    ts.tv_nsec += (timeout_us % 1000000) * 1000;
-    if (ts.tv_nsec >= 1000000000) {
-        ts.tv_sec++;
-        ts.tv_nsec -= 1000000000;
+    int err = pthread_cond_wait(&cond->cond, &mutex->mutex);
+    if (err != 0) {
+        return PPDB_ERR_COND;
     }
 
-    int ret = pthread_cond_timedwait(&cond->cond, &mutex->mutex, &ts);
-    if (ret == ETIMEDOUT) {
-        return PPDB_BASE_ERR_TIMEOUT;
-    } else if (ret != 0) {
-        return PPDB_BASE_ERR_COND;
-    }
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_cond_signal(ppdb_base_cond_t* cond) {
     if (!cond) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_cond_signal(&cond->cond) != 0) {
-        return PPDB_BASE_ERR_COND;
+
+    int err = pthread_cond_signal(&cond->cond);
+    if (err != 0) {
+        return PPDB_ERR_COND;
     }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_cond_broadcast(ppdb_base_cond_t* cond) {
     if (!cond) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_cond_broadcast(&cond->cond) != 0) {
-        return PPDB_BASE_ERR_COND;
+
+    int err = pthread_cond_broadcast(&cond->cond);
+    if (err != 0) {
+        return PPDB_ERR_COND;
     }
+
     return PPDB_OK;
 }
 
@@ -261,69 +287,76 @@ ppdb_error_t ppdb_base_cond_broadcast(ppdb_base_cond_t* cond) {
 
 ppdb_error_t ppdb_base_rwlock_create(ppdb_base_rwlock_t** rwlock) {
     if (!rwlock) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
 
-    ppdb_base_rwlock_t* new_rwlock = (ppdb_base_rwlock_t*)malloc(sizeof(ppdb_base_rwlock_t));
-    if (!new_rwlock) {
-        return PPDB_BASE_ERR_MEMORY;
+    void* rwlock_ptr;
+    ppdb_error_t err = ppdb_base_mem_malloc(sizeof(ppdb_base_rwlock_t), &rwlock_ptr);
+    if (err != PPDB_OK) {
+        return err;
+    }
+    ppdb_base_rwlock_t* new_rwlock = (ppdb_base_rwlock_t*)rwlock_ptr;
+
+    err = pthread_rwlock_init(&new_rwlock->rwlock, NULL);
+    if (err != 0) {
+        ppdb_base_mem_free(new_rwlock);
+        return PPDB_ERR_RWLOCK;
     }
 
-    pthread_rwlockattr_t attr;
-    pthread_rwlockattr_init(&attr);
-    #ifdef PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
-    pthread_rwlockattr_setkind_np(&attr, PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP);
-    #endif
-
-    if (pthread_rwlock_init(&new_rwlock->rwlock, &attr) != 0) {
-        pthread_rwlockattr_destroy(&attr);
-        free(new_rwlock);
-        return PPDB_BASE_ERR_RWLOCK;
-    }
-
-    pthread_rwlockattr_destroy(&attr);
     *rwlock = new_rwlock;
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_rwlock_destroy(ppdb_base_rwlock_t* rwlock) {
     if (!rwlock) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_rwlock_destroy(&rwlock->rwlock) != 0) {
-        return PPDB_BASE_ERR_RWLOCK;
+
+    int err = pthread_rwlock_destroy(&rwlock->rwlock);
+    if (err != 0) {
+        return PPDB_ERR_RWLOCK;
     }
-    free(rwlock);
+
+    ppdb_base_mem_free(rwlock);
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_rwlock_rdlock(ppdb_base_rwlock_t* rwlock) {
     if (!rwlock) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_rwlock_rdlock(&rwlock->rwlock) != 0) {
-        return PPDB_BASE_ERR_RWLOCK;
+
+    int err = pthread_rwlock_rdlock(&rwlock->rwlock);
+    if (err != 0) {
+        return PPDB_ERR_RWLOCK;
     }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_rwlock_wrlock(ppdb_base_rwlock_t* rwlock) {
     if (!rwlock) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_rwlock_wrlock(&rwlock->rwlock) != 0) {
-        return PPDB_BASE_ERR_RWLOCK;
+
+    int err = pthread_rwlock_wrlock(&rwlock->rwlock);
+    if (err != 0) {
+        return PPDB_ERR_RWLOCK;
     }
+
     return PPDB_OK;
 }
 
 ppdb_error_t ppdb_base_rwlock_unlock(ppdb_base_rwlock_t* rwlock) {
     if (!rwlock) {
-        return PPDB_BASE_ERR_PARAM;
+        return PPDB_ERR_PARAM;
     }
-    if (pthread_rwlock_unlock(&rwlock->rwlock) != 0) {
-        return PPDB_BASE_ERR_RWLOCK;
+
+    int err = pthread_rwlock_unlock(&rwlock->rwlock);
+    if (err != 0) {
+        return PPDB_ERR_RWLOCK;
     }
+
     return PPDB_OK;
 }
 
