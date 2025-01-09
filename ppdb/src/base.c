@@ -9,17 +9,11 @@
 typedef int ppdb_error_t;
 
 // Include implementations
-#include "base/base_error.inc.c"
+#include "base/base_core.inc.c"
 #include "base/base_memory.inc.c"
-#include "base/base_skiplist.inc.c"
-#include "base/base_sync.inc.c"
-#include "base/base_timer.inc.c"
 #include "base/base_utils.inc.c"
+#include "base/base_sync.inc.c"
 #include "base/base_async.inc.c"
-#include "base/base_spinlock.inc.c"
-#include "base/base_counter.inc.c"
-#include "base/base_io.inc.c"
-#include "base/base_sync_perf.inc.c"
 
 // Global state
 static _Atomic(bool) base_initialized = false;

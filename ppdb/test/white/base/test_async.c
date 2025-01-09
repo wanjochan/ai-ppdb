@@ -160,6 +160,43 @@ static void test_async_errors(void) {
     ppdb_base_async_destroy(async);
 }
 
+// 优先级任务测试
+static void test_priority_callback(ppdb_error_t error, void* arg) {
+    int* priority = (int*)arg;
+    printf("Task with priority %d completed with error %d\n", *priority, error);
+}
+
+static int test_async_priority(void) {
+    printf("\n=== Running async priority tests ===\n");
+    
+    ppdb_base_async_loop_t* loop = NULL;
+    ASSERT_OK(ppdb_base_async_loop_create(&loop, 4));
+    
+    // 提交不同优先级的任务
+    ppdb_base_async_handle_t* handles[3];
+    int priorities[3] = {0, 1, 2};  // HIGH, NORMAL, LOW
+    
+    ASSERT_OK(ppdb_base_async_submit(loop, test_task, &priorities[0], 
+        PPDB_ASYNC_PRIORITY_HIGH, 1000000, test_priority_callback, &priorities[0], &handles[0]));
+    
+    ASSERT_OK(ppdb_base_async_submit(loop, test_task, &priorities[1],
+        PPDB_ASYNC_PRIORITY_NORMAL, 1000000, test_priority_callback, &priorities[1], &handles[1]));
+    
+    ASSERT_OK(ppdb_base_async_submit(loop, test_task, &priorities[2],
+        PPDB_ASYNC_PRIORITY_LOW, 1000000, test_priority_callback, &priorities[2], &handles[2]));
+    
+    // 等待所有任务完成
+    ppdb_base_async_wait_all(loop);
+    
+    // 测试取消任务
+    ASSERT_OK(ppdb_base_async_submit(loop, test_task, NULL,
+        PPDB_ASYNC_PRIORITY_NORMAL, 1000000, NULL, NULL, &handles[0]));
+    ASSERT_OK(ppdb_base_async_cancel(handles[0]));
+    
+    ppdb_base_async_loop_destroy(loop);
+    return 0;
+}
+
 int main(void) {
     printf("Testing async IO basic operations...\n");
     test_async_basic();
@@ -175,6 +212,10 @@ int main(void) {
 
     printf("Testing async error handling...\n");
     test_async_errors();
+    printf("PASSED\n");
+    
+    printf("Testing async priority handling...\n");
+    test_async_priority();
     printf("PASSED\n");
 
     return 0;

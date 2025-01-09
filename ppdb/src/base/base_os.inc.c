@@ -1,3 +1,7 @@
+/*
+ * base_os.inc.c - Operating System Interface Implementation
+ */
+
 #include "internal/base.h"
 #include "cosmopolitan.h"
 

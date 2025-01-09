@@ -159,6 +159,45 @@ static int test_async_performance(void) {
     return 0;
 }
 
+// 异步优先级性能测试
+static int test_async_priority_perf(void) {
+    printf("\n=== Running async priority performance tests ===\n");
+    
+    ppdb_base_async_loop_t* loop = NULL;
+    ASSERT_OK(ppdb_base_async_loop_create(&loop, perf_config.thread_count));
+    
+    // 测试不同优先级的任务性能
+    const char* priority_names[] = {"HIGH", "NORMAL", "LOW"};
+    for(int prio = 0; prio < perf_config.priority_levels; prio++) {
+        perf_stats_t stats;
+        init_perf_stats(&stats);
+        
+        for(int i = 0; i < perf_config.iterations; i++) {
+            uint64_t start = ppdb_base_get_time_ns();
+            
+            ASSERT_OK(ppdb_base_async_submit(loop, perf_task, NULL,
+                prio, perf_config.timeout_us, NULL, NULL, NULL));
+                
+            uint64_t end = ppdb_base_get_time_ns();
+            update_perf_stats(&stats, end - start);
+        }
+        
+        printf("\nPriority %s Performance:\n", priority_names[prio]);
+        print_perf_stats(&stats);
+    }
+    
+    ppdb_base_async_loop_destroy(loop);
+    return 0;
+}
+
+// 更新性能测试配置
+static void update_perf_config(void) {
+    perf_config.thread_count = 8;
+    perf_config.iterations = 1000000;
+    perf_config.priority_levels = 3;
+    perf_config.timeout_us = 1000000;
+}
+
 // 测试入口
 int main(int argc, char* argv[]) {
     (void)argc;
@@ -166,8 +205,11 @@ int main(int argc, char* argv[]) {
     
     PPDB_TEST_BEGIN();
     
+    update_perf_config();
+    
     PPDB_TEST_RUN(test_setup);
     PPDB_TEST_RUN(test_async_performance);
+    PPDB_TEST_RUN(test_async_priority_perf);
     PPDB_TEST_RUN(test_teardown);
     
     PPDB_TEST_END();

@@ -208,6 +208,41 @@ static int test_memory_boundary(void) {
     return 0;
 }
 
+// 内存池测试
+static int test_memory_pool(void) {
+    printf("\n=== Running memory pool tests ===\n");
+    
+    mem_stats_t stats;
+    init_mem_stats(&stats);
+    
+    // 创建内存池
+    ppdb_base_mempool_t* pool = NULL;
+    ASSERT_OK(ppdb_base_mempool_create(&pool, 4096, 8));
+    
+    // 测试内存池分配
+    void* blocks[10];
+    for(int i = 0; i < 10; i++) {
+        blocks[i] = ppdb_base_mempool_alloc(pool, 256);
+        ASSERT_NOT_NULL(blocks[i]);
+        update_mem_stats_alloc(&stats, 256);
+    }
+    
+    // 获取内存池统计
+    ppdb_base_mempool_stats_t pool_stats;
+    ppdb_base_mempool_get_stats(pool, &pool_stats);
+    
+    // 验证统计数据
+    ASSERT_TRUE(pool_stats.total_size >= 4096);
+    ASSERT_TRUE(pool_stats.used_size >= 2560);
+    ASSERT_TRUE(pool_stats.block_count > 0);
+    
+    // 销毁内存池
+    ASSERT_OK(ppdb_base_mempool_destroy(pool));
+    
+    print_mem_stats("Memory Pool Test", &stats);
+    return 0;
+}
+
 int main(void) {
     if (test_setup() != 0) {
         printf("Test setup failed\n");
@@ -218,6 +253,7 @@ int main(void) {
     TEST_CASE(test_memory_realloc);
     TEST_CASE(test_memory_alignment);
     TEST_CASE(test_memory_boundary);
+    TEST_CASE(test_memory_pool);
     
     if (test_teardown() != 0) {
         printf("Test teardown failed\n");

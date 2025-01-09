@@ -70,3 +70,8 @@ agentic/venv/
 *.del
 *.un~
 *~
+ai/hist/
+*.bak
+ppdb/src/base/backup/
+*.new
+.clangd

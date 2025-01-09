@@ -33,6 +33,12 @@
 #define PPDB_BASE_ERR_EMPTY    4009
 #define PPDB_BASE_ERR_IO       4010
 #define PPDB_BASE_ERR_INTERNAL 4011
+#define PPDB_BASE_ERR_THREAD   4012
+#define PPDB_BASE_ERR_MUTEX    4013
+#define PPDB_BASE_ERR_COND     4014
+#define PPDB_BASE_ERR_RWLOCK   4015
+#define PPDB_BASE_ERR_STATE    4016
+#define PPDB_BASE_ERR_MEMORY_LIMIT 4017
 
 // Error type
 typedef int ppdb_error_t;
@@ -47,8 +53,15 @@ typedef struct ppdb_error_context_s {
 } ppdb_error_context_t;
 
 // Error functions
+ppdb_error_t ppdb_error_init(void);
+void ppdb_error_cleanup(void);
+ppdb_error_t ppdb_error_set(ppdb_error_t code, const char* file, int line,
+                           const char* func, const char* fmt, ...);
 ppdb_error_t ppdb_error_set_context(const ppdb_error_context_t* ctx);
 const ppdb_error_context_t* ppdb_error_get_context(void);
+void ppdb_error_clear_context(void);
+ppdb_error_t ppdb_error_get_code(void);
+bool ppdb_error_is_error(ppdb_error_t code);
 const char* ppdb_error_to_string(ppdb_error_t error);
 
 // Forward declarations
@@ -68,6 +81,9 @@ typedef struct ppdb_base_mempool_block_s ppdb_base_mempool_block_t;
 typedef struct ppdb_base_timer_s ppdb_base_timer_t;
 typedef struct ppdb_base_timer_stats_s ppdb_base_timer_stats_t;
 typedef struct ppdb_base_rwlock_s ppdb_base_rwlock_t;
+typedef struct ppdb_base_cond_s ppdb_base_cond_t;
+typedef struct ppdb_base_async_task_s ppdb_base_async_task_t;
+typedef struct ppdb_base_async_queue_s ppdb_base_async_queue_t;
 
 // Function types
 typedef void (*ppdb_base_thread_func_t)(void* arg);
@@ -75,6 +91,7 @@ typedef void (*ppdb_base_async_func_t)(void* arg);
 typedef void (*ppdb_base_io_func_t)(void* arg);
 typedef int (*ppdb_base_compare_func_t)(const void* a, const void* b);
 typedef void (*ppdb_base_timer_callback_t)(ppdb_base_timer_t* timer, void* user_data);
+typedef void (*ppdb_base_async_callback_t)(ppdb_error_t error, void* arg);
 
 // Base configuration
 typedef struct ppdb_base_config_s {
@@ -246,43 +263,63 @@ ppdb_error_t ppdb_base_async_cancel(ppdb_base_async_handle_t* handle);
 
 // Thread structure
 typedef struct ppdb_base_thread_s {
-    ppdb_base_thread_t thread;
+    pthread_t thread;
     bool initialized;
 } ppdb_base_thread_t;
 
 // Mutex structure
 typedef struct ppdb_base_mutex_s {
-    ppdb_base_mutex_t mutex;
+    pthread_mutex_t mutex;
     bool initialized;
 } ppdb_base_mutex_t;
 
 // RWLock structure
 typedef struct ppdb_base_rwlock_s {
-    ppdb_base_rwlock_t rwlock;
+    pthread_rwlock_t rwlock;
     bool initialized;
 } ppdb_base_rwlock_t;
+
+// Condition variable structure
+typedef struct ppdb_base_cond_s {
+    pthread_cond_t cond;
+    bool initialized;
+} ppdb_base_cond_t;
 
 // Async task structure
 typedef struct ppdb_base_async_task_s {
     ppdb_base_async_func_t func;
     void* arg;
+    uint32_t priority;
+    uint64_t timeout_us;
+    uint64_t start_time;
+    _Atomic(uint32_t) state;
+    ppdb_base_async_callback_t callback;
+    void* callback_arg;
     struct ppdb_base_async_task_s* next;
 } ppdb_base_async_task_t;
 
+// Async queue structure
+typedef struct ppdb_base_async_queue_s {
+    ppdb_base_async_task_t* head;
+    ppdb_base_async_task_t* tail;
+    size_t size;
+} ppdb_base_async_queue_t;
+
 // Async loop structure
 typedef struct ppdb_base_async_loop_s {
-    ppdb_base_thread_t* worker;
+    ppdb_base_thread_t** workers;
+    size_t worker_count;
+    ppdb_base_async_queue_t queues[3];  // Priority queues
     ppdb_base_mutex_t* mutex;
-    ppdb_base_async_task_t* tasks;
+    ppdb_base_cond_t* cond;
     bool running;
+    _Atomic(size_t) active_tasks;
 } ppdb_base_async_loop_t;
 
 // Async handle structure
 typedef struct ppdb_base_async_handle_s {
-    ppdb_base_async_func_t fn;
-    void* arg;
-    struct ppdb_base_async_handle_s* next;
-    bool cancelled;
+    ppdb_base_async_task_t* task;
+    ppdb_base_async_loop_t* loop;
 } ppdb_base_async_handle_t;
 
 // IO request structure
@@ -311,5 +348,51 @@ ppdb_error_t ppdb_base_rwlock_destroy(ppdb_base_rwlock_t* rwlock);
 ppdb_error_t ppdb_base_rwlock_rdlock(ppdb_base_rwlock_t* rwlock);
 ppdb_error_t ppdb_base_rwlock_wrlock(ppdb_base_rwlock_t* rwlock);
 ppdb_error_t ppdb_base_rwlock_unlock(ppdb_base_rwlock_t* rwlock);
+
+// Memory statistics structure
+typedef struct ppdb_base_memory_stats_s {
+    size_t total_allocated;
+    size_t total_freed;
+    size_t current_usage;
+    size_t peak_usage;
+    size_t memory_limit;
+} ppdb_base_memory_stats_t;
+
+// Memory pool statistics structure
+typedef struct ppdb_base_mempool_stats_s {
+    size_t total_size;
+    size_t used_size;
+    size_t block_count;
+} ppdb_base_mempool_stats_t;
+
+// Memory management functions
+void ppdb_base_set_memory_limit(size_t limit);
+void ppdb_base_get_memory_stats(ppdb_base_memory_stats_t* stats);
+void ppdb_base_mempool_get_stats(ppdb_base_mempool_t* pool, ppdb_base_mempool_stats_t* stats);
+
+// Condition variable functions
+ppdb_error_t ppdb_base_cond_create(ppdb_base_cond_t** cond);
+ppdb_error_t ppdb_base_cond_destroy(ppdb_base_cond_t* cond);
+ppdb_error_t ppdb_base_cond_wait(ppdb_base_cond_t* cond, ppdb_base_mutex_t* mutex);
+ppdb_error_t ppdb_base_cond_timedwait(ppdb_base_cond_t* cond, ppdb_base_mutex_t* mutex, uint64_t timeout_us);
+ppdb_error_t ppdb_base_cond_signal(ppdb_base_cond_t* cond);
+ppdb_error_t ppdb_base_cond_broadcast(ppdb_base_cond_t* cond);
+
+// Async callback type
+typedef void (*ppdb_base_async_callback_t)(ppdb_error_t error, void* arg);
+
+// Async functions
+ppdb_error_t ppdb_base_async_loop_create(ppdb_base_async_loop_t** loop, size_t worker_count);
+void ppdb_base_async_loop_destroy(ppdb_base_async_loop_t* loop);
+ppdb_error_t ppdb_base_async_submit(ppdb_base_async_loop_t* loop,
+                                   ppdb_base_async_func_t func,
+                                   void* arg,
+                                   uint32_t priority,
+                                   uint64_t timeout_us,
+                                   ppdb_base_async_callback_t callback,
+                                   void* callback_arg,
+                                   ppdb_base_async_handle_t** handle);
+ppdb_error_t ppdb_base_async_cancel(ppdb_base_async_handle_t* handle);
+void ppdb_base_async_wait_all(ppdb_base_async_loop_t* loop);
 
 #endif // PPDB_BASE_H
