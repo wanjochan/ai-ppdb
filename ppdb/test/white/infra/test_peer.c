@@ -1,6 +1,7 @@
-#include <cosmopolitan.h>
-#include "ppdb/ppdb.h"
-#include "test_framework.h"
+#include "test/test_common.h"
+#include "internal/infra/infra.h"
+#include "internal/infra/infra_net.h"
+#include "test/test_framework.h"
 #include "test_macros.h"
 
 TEST(test_peer_basic) {
@@ -74,14 +75,14 @@ TEST(test_peer_send_recv) {
     ASSERT_OK(err);
 
     // Test send
-    err = ppdb_peer_send(peer, test_data, strlen(test_data) + 1);
+    err = ppdb_peer_send(peer, test_data, infra_strlen(test_data) + 1);
     ASSERT_OK(err);
 
     // Test receive
     err = ppdb_peer_recv(peer, recv_buf, sizeof(recv_buf), &recv_size);
     ASSERT_OK(err);
-    ASSERT_EQ(recv_size, strlen(test_data) + 1);
-    ASSERT_STR_EQ(recv_buf, test_data);
+    ASSERT_EQ(recv_size, infra_strlen(test_data) + 1);
+    ASSERT_EQ(infra_strcmp(recv_buf, test_data), 0);
 
     // Cleanup
     err = ppdb_peer_disconnect(peer);

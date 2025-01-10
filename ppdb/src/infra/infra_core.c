@@ -67,6 +67,72 @@ void ppdb_mem_free(void* ptr) {
     }
 }
 
+void* infra_memset(void* dest, int ch, size_t count) {
+    if (!dest) return NULL;
+    unsigned char* p = dest;
+    while (count--) *p++ = (unsigned char)ch;
+    return dest;
+}
+
+void* infra_memcpy(void* dest, const void* src, size_t count) {
+    if (!dest || !src) return NULL;
+    unsigned char* d = dest;
+    const unsigned char* s = src;
+    while (count--) *d++ = *s++;
+    return dest;
+}
+
+void* infra_memmove(void* dest, const void* src, size_t count) {
+    if (!dest || !src) return NULL;
+    unsigned char* d = dest;
+    const unsigned char* s = src;
+    if (d < s) {
+        while (count--) *d++ = *s++;
+    } else {
+        d += count;
+        s += count;
+        while (count--) *--d = *--s;
+    }
+    return dest;
+}
+
+int infra_memcmp(const void* lhs, const void* rhs, size_t count) {
+    if (!lhs || !rhs) return -1;
+    const unsigned char* l = lhs;
+    const unsigned char* r = rhs;
+    while (count--) {
+        if (*l != *r) return *l - *r;
+        l++; r++;
+    }
+    return 0;
+}
+
+/* String Operations */
+size_t infra_strlen(const char* str) {
+    if (!str) return 0;
+    const char* s = str;
+    while (*s) s++;
+    return s - str;
+}
+
+int infra_strcmp(const char* lhs, const char* rhs) {
+    if (!lhs || !rhs) return -1;
+    while (*lhs && *lhs == *rhs) {
+        lhs++; rhs++;
+    }
+    return *(unsigned char*)lhs - *(unsigned char*)rhs;
+}
+
+char* infra_strdup(const char* str) {
+    if (!str) return NULL;
+    size_t len = infra_strlen(str) + 1;
+    void* new_str;
+    if (ppdb_mem_malloc(len, &new_str) != PPDB_OK) {
+        return NULL;
+    }
+    return infra_memcpy(new_str, str, len);
+}
+
 /* Log Level */
 static int g_log_level = INFRA_LOG_INFO;
 static void (*g_log_handler)(int level, const char* msg) = NULL;

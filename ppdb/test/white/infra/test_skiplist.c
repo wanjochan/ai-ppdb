@@ -1,5 +1,7 @@
-#include <cosmopolitan.h>
-#include "internal/base.h"
+#include "test/test_common.h"
+#include "internal/infra/infra.h"
+#include "internal/infra/infra_struct.h"
+#include "test/test_framework.h"
 
 // Compare function for integers
 static int compare_int(const void* a, const void* b) {

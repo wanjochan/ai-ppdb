@@ -1,4 +1,5 @@
-#include <cosmopolitan.h>
+#include "test_common.h"
+#include "internal/infra/infra.h"
 #include "ppdb/ppdb.h"
 #include "internal/base.h"
 #include "test_framework.h"
@@ -71,9 +72,9 @@ static void generate_test_data(char* key, size_t key_size,
 // 压力测试线程函数
 static void* stress_test_thread(void* arg) {
     thread_args_t* args = (thread_args_t*)arg;
-    char* key = malloc(LARGE_KEY_SIZE);
-    char* value = malloc(LARGE_VALUE_SIZE);
-    char* read_value = malloc(LARGE_VALUE_SIZE);
+    char* key = infra_malloc(LARGE_KEY_SIZE);
+    char* value = infra_malloc(LARGE_VALUE_SIZE);
+    char* read_value = infra_malloc(LARGE_VALUE_SIZE);
     size_t read_size;
     
     size_t key_size = (args->mode == TEST_MODE_LARGE_KV) ? 
@@ -91,12 +92,12 @@ static void* stress_test_thread(void* arg) {
             (args->mode == TEST_MODE_READ_WRITE && rand() % 2)) {
             // 写入操作
             err = ppdb_kvstore_put(args->store, 
-                (uint8_t*)key, strlen(key),
-                (uint8_t*)value, strlen(value));
+                (uint8_t*)key, infra_strlen(key),
+                (uint8_t*)value, infra_strlen(value));
         } else {
             // 读取操作
             err = ppdb_kvstore_get(args->store,
-                (uint8_t*)key, strlen(key),
+                (uint8_t*)key, infra_strlen(key),
                 (uint8_t*)read_value, LARGE_VALUE_SIZE,
                 &read_size);
         }
@@ -106,9 +107,9 @@ static void* stress_test_thread(void* arg) {
         }
     }
     
-    free(key);
-    free(value);
-    free(read_value);
+    infra_free(key);
+    infra_free(value);
+    infra_free(read_value);
     return NULL;
 }
 

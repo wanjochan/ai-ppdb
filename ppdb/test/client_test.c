@@ -1,6 +1,7 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
 #include "test_common.h"
+#include "internal/infra/infra.h"
 
 //-----------------------------------------------------------------------------
 // Test Callbacks
@@ -19,9 +20,9 @@ static void on_operation_complete(ppdb_error_t error, void* result, void* user_d
         TEST_ASSERT(error == PPDB_OK);
         TEST_ASSERT(value->size == expected->size);
         if (value->size <= sizeof(value->inline_data)) {
-            TEST_ASSERT(memcmp(value->inline_data, expected->inline_data, value->size) == 0);
+            TEST_ASSERT(infra_memcmp(value->inline_data, expected->inline_data, value->size) == 0);
         } else {
-            TEST_ASSERT(memcmp(value->extended_data, expected->extended_data, value->size) == 0);
+            TEST_ASSERT(infra_memcmp(value->extended_data, expected->extended_data, value->size) == 0);
         }
     } else {
         TEST_ASSERT(error == PPDB_ERR_NOT_FOUND);

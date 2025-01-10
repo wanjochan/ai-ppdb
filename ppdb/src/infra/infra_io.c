@@ -1,6 +1,34 @@
 #include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 
+// Print operations
+int infra_printf(const char* format, ...) {
+    if (!format) return -1;
+    va_list args;
+    va_start(args, format);
+    int result = vprintf(format, args);
+    va_end(args);
+    return result;
+}
+
+int infra_dprintf(int fd, const char* format, ...) {
+    if (fd < 0 || !format) return -1;
+    va_list args;
+    va_start(args, format);
+    int result = vdprintf(fd, format, args);
+    va_end(args);
+    return result;
+}
+
+int infra_puts(const char* str) {
+    if (!str) return -1;
+    return puts(str);
+}
+
+int infra_putchar(int ch) {
+    return putchar(ch);
+}
+
 // Read from file descriptor
 int infra_io_read(int fd, void* buf, size_t count) {
     if (fd < 0 || !buf || count == 0) return -1;

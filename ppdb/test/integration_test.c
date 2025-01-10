@@ -1,6 +1,7 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
 #include "test_common.h"
+#include "internal/infra/infra.h"
 
 //-----------------------------------------------------------------------------
 // Test Data
@@ -69,7 +70,7 @@ static void test_concurrent_operations(void) {
 
     // Create clients
     client_context_t clients[TEST_CONNECTIONS];
-    memset(clients, 0, sizeof(clients));
+    infra_memset(clients, 0, sizeof(clients));
 
     for (int i = 0; i < TEST_CONNECTIONS; i++) {
         // Create client context
@@ -105,20 +106,20 @@ static void test_concurrent_operations(void) {
             // Prepare data
             char key_buf[32];
             char value_buf[32];
-            snprintf(key_buf, sizeof(key_buf), "key_%d_%d", j, i);
-            snprintf(value_buf, sizeof(value_buf), "value_%d_%d", j, i);
+            infra_snprintf(key_buf, sizeof(key_buf), "key_%d_%d", j, i);
+            infra_snprintf(value_buf, sizeof(value_buf), "value_%d_%d", j, i);
 
             ppdb_data_t key = {
-                .size = strlen(key_buf),
+                .size = infra_strlen(key_buf),
                 .flags = 0
             };
-            memcpy(key.inline_data, key_buf, key.size);
+            infra_memcpy(key.inline_data, key_buf, key.size);
 
             ppdb_data_t value = {
-                .size = strlen(value_buf),
+                .size = infra_strlen(value_buf),
                 .flags = 0
             };
-            memcpy(value.inline_data, value_buf, value.size);
+            infra_memcpy(value.inline_data, value_buf, value.size);
 
             // Put value
             TEST_ASSERT(ppdb_client_put(clients[j].conn, &key, &value,
@@ -136,7 +137,7 @@ static void test_concurrent_operations(void) {
 
     // Check results
     for (int i = 0; i < TEST_CONNECTIONS; i++) {
-        printf("Client %d: %d success, %d failure\n",
+        infra_printf("Client %d: %d success, %d failure\n",
                i, clients[i].success, clients[i].failure);
         TEST_ASSERT(clients[i].success > 0);
         TEST_ASSERT(clients[i].failure == 0);
@@ -149,7 +150,7 @@ static void test_concurrent_operations(void) {
     // Get server stats
     char stats[1024];
     TEST_ASSERT(ppdb_server_get_stats(server_ctx, stats, sizeof(stats)) == PPDB_OK);
-    printf("Server Stats:\n%s\n", stats);
+    infra_printf("Server Stats:\n%s\n", stats);
 
     // Stop server
     TEST_ASSERT(ppdb_server_stop(server_ctx) == PPDB_OK);

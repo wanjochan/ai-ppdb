@@ -1,6 +1,27 @@
 #include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 
+// Time utilities
+uint64_t infra_get_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+uint64_t infra_get_time_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
+}
+
+void infra_sleep_ms(uint32_t ms) {
+    struct timespec ts = {
+        .tv_sec = ms / 1000,
+        .tv_nsec = (ms % 1000) * 1000000
+    };
+    nanosleep(&ts, NULL);
+}
+
 // Create timer
 int infra_timer_create(infra_event_loop_t* loop, infra_timer_t** timer, uint64_t interval_ms) {
     if (!loop || !timer || interval_ms == 0) return -1;

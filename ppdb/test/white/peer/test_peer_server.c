@@ -1,4 +1,5 @@
-#include <cosmopolitan.h>
+#include "test_common.h"
+#include "internal/infra/infra.h"
 #include "../test_framework.h"
 #include "internal/peer.h"
 

@@ -1,4 +1,5 @@
-#include <cosmopolitan.h>
+#include "test_common.h"
+#include "internal/infra/infra.h"
 #include "internal/base.h"
 #include "../test_macros.h"
 
@@ -28,7 +29,7 @@ int test_concurrent_basic(void) {
         
         ppdb_error_t err = ppdb_base_thread_create(&threads[i], worker_thread, &args[i]);
         if (err != PPDB_OK) {
-            printf("Thread creation failed: %d\n", err);
+            infra_printf("Thread creation failed: %d\n", err);
             return err;
         }
     }
@@ -38,14 +39,14 @@ int test_concurrent_basic(void) {
         void* retval;
         ppdb_error_t err = ppdb_base_thread_join(threads[i], &retval);
         if (err != PPDB_OK) {
-            printf("Thread join failed: %d\n", err);
+            infra_printf("Thread join failed: %d\n", err);
             return err;
         }
         
         // 获取线程运行时间和状态
         uint64_t wall_time = ppdb_base_thread_get_wall_time(threads[i]);
         int state = ppdb_base_thread_get_state(threads[i]);
-        printf("Thread %d completed: wall_time=%lu us, state=%d\n", 
+        infra_printf("Thread %d completed: wall_time=%lu us, state=%d\n", 
                i, wall_time, state);
         
         ppdb_base_thread_destroy(threads[i]);
@@ -69,7 +70,7 @@ int test_concurrent_memtable(void) {
         
         ppdb_error_t err = ppdb_base_thread_create(&threads[i], memtable_worker, &contexts[i]);
         if (err != PPDB_OK) {
-            printf("Thread creation failed: %d\n", err);
+            infra_printf("Thread creation failed: %d\n", err);
             return err;
         }
     }
@@ -79,12 +80,12 @@ int test_concurrent_memtable(void) {
         void* retval;
         ppdb_error_t err = ppdb_base_thread_join(threads[i], &retval);
         if (err != PPDB_OK) {
-            printf("Thread join failed: %d\n", err);
+            infra_printf("Thread join failed: %d\n", err);
             return err;
         }
         
         uint64_t wall_time = ppdb_base_thread_get_wall_time(threads[i]);
-        printf("Thread %d completed memtable operations in %lu us\n", i, wall_time);
+        infra_printf("Thread %d completed memtable operations in %lu us\n", i, wall_time);
         
         ppdb_base_thread_destroy(threads[i]);
     }
@@ -107,7 +108,7 @@ int test_concurrent_wal(void) {
         
         ppdb_error_t err = ppdb_base_thread_create(&threads[i], wal_worker, &contexts[i]);
         if (err != PPDB_OK) {
-            printf("Thread creation failed: %d\n", err);
+            infra_printf("Thread creation failed: %d\n", err);
             return err;
         }
     }
@@ -117,12 +118,12 @@ int test_concurrent_wal(void) {
         void* retval;
         ppdb_error_t err = ppdb_base_thread_join(threads[i], &retval);
         if (err != PPDB_OK) {
-            printf("Thread join failed: %d\n", err);
+            infra_printf("Thread join failed: %d\n", err);
             return err;
         }
         
         uint64_t wall_time = ppdb_base_thread_get_wall_time(threads[i]);
-        printf("Thread %d completed WAL operations in %lu us\n", i, wall_time);
+        infra_printf("Thread %d completed WAL operations in %lu us\n", i, wall_time);
         
         ppdb_base_thread_destroy(threads[i]);
     }
@@ -138,7 +139,7 @@ static void worker_thread(void* arg) {
     for (int i = 0; i < NUM_ITERATIONS; i++) {
         // 模拟工作
         (*counter)++;
-        usleep(1);
+        infra_sleep_ms(1);
     }
 }
 
@@ -148,7 +149,7 @@ static void memtable_worker(void* arg) {
     
     for (int i = 0; i < NUM_ITERATIONS; i++) {
         // 模拟memtable操作
-        usleep(1);
+        infra_sleep_ms(1);
     }
 }
 
@@ -158,7 +159,7 @@ static void wal_worker(void* arg) {
     
     for (int i = 0; i < NUM_ITERATIONS; i++) {
         // 模拟WAL操作
-        usleep(1);
+        infra_sleep_ms(1);
     }
 }
 
@@ -167,9 +168,9 @@ int main(void) {
     TEST_CASE(test_concurrent_memtable);
     TEST_CASE(test_concurrent_wal);
     
-    printf("\nTest summary:\n");
-    printf("  Total: %d\n", g_test_count);
-    printf("  Passed: %d\n", g_test_passed);
-    printf("  Failed: %d\n", g_test_failed);
+    infra_printf("\nTest summary:\n");
+    infra_printf("  Total: %d\n", g_test_count);
+    infra_printf("  Passed: %d\n", g_test_passed);
+    infra_printf("  Failed: %d\n", g_test_failed);
     return g_test_failed > 0 ? 1 : 0;
 }

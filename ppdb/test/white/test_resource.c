@@ -1,8 +1,5 @@
-#include "cosmopolitan.h"
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
-#include <sys/resource.h>
+#include "test_common.h"
+#include "internal/infra/infra.h"
 #include "test_framework.h"
 #include "test_plan.h"
 #include "ppdb/ppdb.h"
@@ -107,7 +104,7 @@ static void update_resource_stats(resource_stats_t* stats) {
 
 // 内存使用监控测试
 void test_memory_usage(void) {
-    ppdb_log_info("Running memory usage test...");
+    infra_printf("Running memory usage test...\n");
     
     resource_stats_t stats = {0};
     ppdb_kvstore_t* store = NULL;
@@ -115,40 +112,40 @@ void test_memory_usage(void) {
     assert(err == PPDB_OK);
     
     // 写入大量数据以增加内存使用
-    char* large_value = malloc(1024 * 1024);  // 1MB
-    memset(large_value, 'A', 1024 * 1024 - 1);
+    char* large_value = infra_malloc(1024 * 1024);  // 1MB
+    infra_memset(large_value, 'A', 1024 * 1024 - 1);
     large_value[1024 * 1024 - 1] = '\0';
     
     for (int i = 0; i < 100; i++) {
         char key[32];
-        snprintf(key, sizeof(key), "large_key_%d", i);
+        infra_snprintf(key, sizeof(key), "large_key_%d", i);
         
         err = ppdb_kvstore_put(store, 
-            (uint8_t*)key, strlen(key),
-            (uint8_t*)large_value, strlen(large_value));
+            (uint8_t*)key, infra_strlen(key),
+            (uint8_t*)large_value, infra_strlen(large_value));
         assert(err == PPDB_OK);
         
         update_resource_stats(&stats);
     }
     
-    free(large_value);
+    infra_free(large_value);
     ppdb_kvstore_close(store);
     
-    ppdb_log_info("Memory test completed: peak usage = %zu bytes", 
+    infra_printf("Memory test completed: peak usage = %zu bytes\n", 
         stats.peak_memory);
 }
 
 // 文件句柄监控测试
 void test_file_handles(void) {
-    ppdb_log_info("Running file handles test...");
+    infra_printf("Running file handles test...\n");
     
     resource_stats_t stats = {0};
-    ppdb_kvstore_t** stores = malloc(sizeof(ppdb_kvstore_t*) * 10);
+    ppdb_kvstore_t** stores = infra_malloc(sizeof(ppdb_kvstore_t*) * 10);
     
     // 打开多个KVStore实例
     for (int i = 0; i < 10; i++) {
         char dir[64];
-        snprintf(dir, sizeof(dir), "%s_%d", TEST_DIR, i);
+        infra_snprintf(dir, sizeof(dir), "%s_%d", TEST_DIR, i);
         
         ppdb_error_t err = ppdb_kvstore_open(dir, &stores[i]);
         assert(err == PPDB_OK);
@@ -161,15 +158,15 @@ void test_file_handles(void) {
         ppdb_kvstore_close(stores[i]);
     }
     
-    free(stores);
+    infra_free(stores);
     
-    ppdb_log_info("File handles test completed: max open files = %d", 
+    infra_printf("File handles test completed: max open files = %d\n", 
         stats.max_open_files);
 }
 
 // 线程资源监控测试
 void test_thread_resources(void) {
-    ppdb_log_info("Running thread resources test...");
+    infra_printf("Running thread resources test...\n");
     
     resource_stats_t stats = {0};
     ppdb_kvstore_t* store = NULL;
@@ -193,13 +190,13 @@ void test_thread_resources(void) {
     
     ppdb_kvstore_close(store);
     
-    ppdb_log_info("Thread resources test completed: max threads = %d", 
+    infra_printf("Thread resources test completed: max threads = %d\n", 
         stats.max_threads);
 }
 
 // 磁盘空间监控测试
 void test_disk_space(void) {
-    ppdb_log_info("Running disk space test...");
+    infra_printf("Running disk space test...\n");
     
     resource_stats_t stats = {0};
     ppdb_kvstore_t* store = NULL;
@@ -207,26 +204,26 @@ void test_disk_space(void) {
     assert(err == PPDB_OK);
     
     // 写入数据直到达到指定大小
-    char* value = malloc(1024 * 1024);  // 1MB
-    memset(value, 'B', 1024 * 1024 - 1);
+    char* value = infra_malloc(1024 * 1024);  // 1MB
+    infra_memset(value, 'B', 1024 * 1024 - 1);
     value[1024 * 1024 - 1] = '\0';
     
-    for (int i = 0; i < 100; i++) {  // 写入约100MB数据
+    for (int i = 0; i < 100; i++) {
         char key[32];
-        snprintf(key, sizeof(key), "disk_key_%d", i);
+        infra_snprintf(key, sizeof(key), "disk_key_%d", i);
         
         err = ppdb_kvstore_put(store, 
-            (uint8_t*)key, strlen(key),
-            (uint8_t*)value, strlen(value));
+            (uint8_t*)key, infra_strlen(key),
+            (uint8_t*)value, infra_strlen(value));
         assert(err == PPDB_OK);
         
         update_resource_stats(&stats);
     }
     
-    free(value);
+    infra_free(value);
     ppdb_kvstore_close(store);
     
-    ppdb_log_info("Disk space test completed: total usage = %zu bytes", 
+    infra_printf("Disk space test completed: total usage = %zu bytes\n", 
         stats.disk_usage);
 }
 

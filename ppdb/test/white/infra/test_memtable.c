@@ -1,7 +1,10 @@
-#include "test_framework.h"
+#include "test/test_common.h"
+#include "internal/infra/infra.h"
+#include "internal/infra/infra_struct.h"
+#include "internal/infra/infra_memory.h"
+#include "test/test_framework.h"
 #include "internal/base.h"
 #include "ppdb/ppdb.h"
-#include <cosmopolitan.h>
 
 // Test configuration
 #define TEST_MEMTABLE_SIZE (1024 * 1024)  // 1MB

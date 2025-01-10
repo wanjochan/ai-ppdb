@@ -1,4 +1,5 @@
-#include <cosmopolitan.h>
+#include "test_common.h"
+#include "internal/infra/infra.h"
 #include "test_framework.h"
 #include "test_plan.h"
 #include "kvstore/internal/kvstore_memtable.h"
@@ -13,8 +14,8 @@
 static void generate_test_data(char* key, size_t key_size, 
                              char* value, size_t value_size,
                              int thread_id, int op_id) {
-    snprintf(key, key_size, "key_%d_%d", thread_id, op_id);
-    snprintf(value, value_size, "value_%d_%d", thread_id, op_id);
+    infra_snprintf(key, key_size, "key_%d_%d", thread_id, op_id);
+    infra_snprintf(value, value_size, "value_%d_%d", thread_id, op_id);
 }
 
 // 基本操作测试
@@ -30,25 +31,25 @@ static int test_basic_ops(void) {
     // 测试插入和获取
     const char* test_key = "test_key";
     const char* test_value = "test_value";
-    err = ppdb_sharded_memtable_put(table, test_key, strlen(test_key) + 1,
-                                   test_value, strlen(test_value) + 1);
+    err = ppdb_sharded_memtable_put(table, test_key, infra_strlen(test_key) + 1,
+                                   test_value, infra_strlen(test_value) + 1);
     TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
 
     // 获取值
     char value[32] = {0};
     size_t value_size = sizeof(value);
-    err = ppdb_sharded_memtable_get(table, test_key, strlen(test_key) + 1,
+    err = ppdb_sharded_memtable_get(table, test_key, infra_strlen(test_key) + 1,
                                    value, &value_size);
     TEST_ASSERT(err == PPDB_OK, "Failed to get value");
-    TEST_ASSERT(value_size == strlen(test_value) + 1, "Value size mismatch");
-    TEST_ASSERT(memcmp(value, test_value, value_size) == 0, "Value content mismatch");
+    TEST_ASSERT(value_size == infra_strlen(test_value) + 1, "Value size mismatch");
+    TEST_ASSERT(infra_memcmp(value, test_value, value_size) == 0, "Value content mismatch");
 
     // 测试删除
-    err = ppdb_sharded_memtable_delete(table, test_key, strlen(test_key) + 1);
+    err = ppdb_sharded_memtable_delete(table, test_key, infra_strlen(test_key) + 1);
     TEST_ASSERT(err == PPDB_OK, "Failed to delete key-value pair");
 
     // 验证删除
-    err = ppdb_sharded_memtable_get(table, test_key, strlen(test_key) + 1,
+    err = ppdb_sharded_memtable_get(table, test_key, infra_strlen(test_key) + 1,
                                    value, &value_size);
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key still exists after deletion");
 
@@ -70,10 +71,10 @@ static int test_shard_distribution(void) {
     // 插入一些数据
     char key[32], value[32];
     for (int i = 0; i < 100; i++) {
-        snprintf(key, sizeof(key), "key_%d", i);
-        snprintf(value, sizeof(value), "value_%d", i);
-        err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1,
-                                       value, strlen(value) + 1);
+        infra_snprintf(key, sizeof(key), "key_%d", i);
+        infra_snprintf(value, sizeof(value), "value_%d", i);
+        err = ppdb_sharded_memtable_put(table, key, infra_strlen(key) + 1,
+                                       value, infra_strlen(value) + 1);
         TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
     }
 
@@ -111,8 +112,8 @@ static void* concurrent_worker(void* arg) {
         generate_test_data(key, sizeof(key), value, sizeof(value), thread_id, i);
 
         // 插入
-        ppdb_error_t err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1,
-                                                    value, strlen(value) + 1);
+        ppdb_error_t err = ppdb_sharded_memtable_put(table, key, infra_strlen(key) + 1,
+                                                    value, infra_strlen(value) + 1);
         if (err != PPDB_OK) {
             PPDB_LOG_ERROR("Thread %d: Failed to put key-value pair", thread_id);
             return NULL;
@@ -120,19 +121,19 @@ static void* concurrent_worker(void* arg) {
 
         // 获取
         size_t value_size = sizeof(retrieved_value);
-        err = ppdb_sharded_memtable_get(table, key, strlen(key) + 1,
+        err = ppdb_sharded_memtable_get(table, key, infra_strlen(key) + 1,
                                        retrieved_value, &value_size);
         if (err != PPDB_OK) {
             PPDB_LOG_ERROR("Thread %d: Failed to get value", thread_id);
             return NULL;
         }
-        if (value_size != strlen(value) + 1 || memcmp(retrieved_value, value, value_size) != 0) {
+        if (value_size != infra_strlen(value) + 1 || infra_memcmp(retrieved_value, value, value_size) != 0) {
             PPDB_LOG_ERROR("Thread %d: Value mismatch", thread_id);
             return NULL;
         }
 
         // 删除
-        err = ppdb_sharded_memtable_delete(table, key, strlen(key) + 1);
+        err = ppdb_sharded_memtable_delete(table, key, infra_strlen(key) + 1);
         if (err != PPDB_OK) {
             PPDB_LOG_ERROR("Thread %d: Failed to delete key-value pair", thread_id);
             return NULL;
@@ -189,10 +190,10 @@ static void test_iterator(void) {
     char key[16];
     char value[16];
     for (int i = 0; i < 100; i++) {
-        snprintf(key, sizeof(key), "iter_key_%03d", i);
-        snprintf(value, sizeof(value), "iter_value_%03d", i);
-        printf("Inserted key: %s, value: %s\n", key, value);
-        err = ppdb_sharded_memtable_put(table, key, strlen(key) + 1, value, strlen(value) + 1);
+        infra_snprintf(key, sizeof(key), "iter_key_%03d", i);
+        infra_snprintf(value, sizeof(value), "iter_value_%03d", i);
+        infra_printf("Inserted key: %s, value: %s\n", key, value);
+        err = ppdb_sharded_memtable_put(table, key, infra_strlen(key) + 1, value, infra_strlen(value) + 1);
         assert(err == PPDB_OK);
     }
 
@@ -208,13 +209,13 @@ static void test_iterator(void) {
         err = iter->get(iter, &pair);
         assert(err == PPDB_OK);
 
-        snprintf(key, sizeof(key), "iter_key_%03d", i);
-        snprintf(value, sizeof(value), "iter_value_%03d", i);
+        infra_snprintf(key, sizeof(key), "iter_key_%03d", i);
+        infra_snprintf(value, sizeof(value), "iter_value_%03d", i);
         
-        assert(pair.key_size == strlen(key) + 1);
-        assert(pair.value_size == strlen(value) + 1);
-        assert(memcmp(pair.key, key, pair.key_size) == 0);
-        assert(memcmp(pair.value, value, pair.value_size) == 0);
+        assert(pair.key_size == infra_strlen(key) + 1);
+        assert(pair.value_size == infra_strlen(value) + 1);
+        assert(infra_memcmp(pair.key, key, pair.key_size) == 0);
+        assert(infra_memcmp(pair.value, value, pair.value_size) == 0);
 
         iter->next(iter);
         i++;

@@ -1,6 +1,7 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
 #include "test_common.h"
+#include "internal/infra/infra.h"
 
 //-----------------------------------------------------------------------------
 // Test Callbacks
@@ -44,7 +45,7 @@ static void test_server_start_stop(void) {
     // Get stats
     char stats[1024];
     TEST_ASSERT(ppdb_server_get_stats(ctx, stats, sizeof(stats)) == PPDB_OK);
-    TEST_ASSERT(strlen(stats) > 0);
+    TEST_ASSERT(infra_strlen(stats) > 0);
 
     // Stop server
     TEST_ASSERT(ppdb_server_stop(ctx) == PPDB_OK);
@@ -88,7 +89,7 @@ static void test_server_connection_callback(void) {
     TEST_ASSERT(ppdb_client_connect(ctx, &config, &client) == PPDB_OK);
 
     // Wait for connection
-    usleep(100000);  // 100ms
+    infra_sleep_ms(100);  // 100ms
     TEST_ASSERT(connected);
 
     // Disconnect client

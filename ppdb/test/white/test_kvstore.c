@@ -1,6 +1,7 @@
-#include <cosmopolitan.h>
+#include "test_common.h"
 #include "test_framework.h"
 #include "test_plan.h"
+#include "internal/infra/infra.h"
 #include "ppdb/ppdb.h"
 #include "internal/base.h"
 #include "kvstore/internal/kvstore_internal.h"
@@ -28,7 +29,7 @@ static int test_kvstore_create_close(void) {
     cleanup_test_dir(test_dir); // Then clean up parent directory
     
     // Wait for resources to be released
-    microsleep(1000000);  // 1000ms
+    infra_sleep_ms(1000);  // 1000ms
     
     // Create KVStore
     ppdb_log_info("Creating KVStore configuration...");
@@ -37,7 +38,7 @@ static int test_kvstore_create_close(void) {
         .memtable_size = 4096,
         .mode = PPDB_MODE_LOCKED
     };
-    strlcpy(config.dir_path, test_dir, sizeof(config.dir_path));
+    infra_memcpy(config.dir_path, test_dir, infra_strlen(test_dir) + 1);
     
     ppdb_log_info("Creating KVStore instance...");
     ppdb_kvstore_t* store = NULL;
@@ -46,7 +47,7 @@ static int test_kvstore_create_close(void) {
     TEST_ASSERT(store != NULL, "KVStore pointer is NULL");
     
     // Wait for initialization to complete
-    microsleep(1000000);  // 1000ms
+    infra_sleep_ms(1000);  // 1000ms
     
     // Verify directories exist
     ppdb_log_info("Verifying directories...");
@@ -54,7 +55,7 @@ static int test_kvstore_create_close(void) {
     TEST_ASSERT(ppdb_fs_dir_exists(wal_dir), "WAL directory does not exist");
     
     // Wait for WAL initialization
-    microsleep(1000000);  // 1000ms
+    infra_sleep_ms(1000);  // 1000ms
     
     // Close KVStore
     ppdb_log_info("Closing KVStore...");
@@ -64,7 +65,7 @@ static int test_kvstore_create_close(void) {
     }
     
     // Wait for resources to be released
-    microsleep(2000000);  // 2000ms
+    infra_sleep_ms(2000);  // 2000ms
     
     // Clean up test directories
     ppdb_log_info("Final cleanup of test directories...");
@@ -72,7 +73,7 @@ static int test_kvstore_create_close(void) {
     cleanup_test_dir(test_dir); // Then clean up parent directory
     
     // Wait for cleanup to complete
-    microsleep(1000000);  // 1000ms
+    infra_sleep_ms(1000);  // 1000ms
     
     ppdb_log_info("Test completed successfully");
     return 0;
@@ -81,21 +82,21 @@ static int test_kvstore_create_close(void) {
 // 创建测试用的 KVStore
 static ppdb_kvstore_t* create_test_kvstore(const char* test_dir, ppdb_mode_t mode) {
     char wal_dir[MAX_PATH_LENGTH];
-    snprintf(wal_dir, sizeof(wal_dir), "%s/wal", test_dir);
+    infra_snprintf(wal_dir, sizeof(wal_dir), "%s/wal", test_dir);
     
     // 清理测试目录和WAL目录
     cleanup_test_dir(wal_dir);  // 先清理子目录
     cleanup_test_dir(test_dir); // 再清理父目录
     
     // 等待一小段时间确保所有资源都被释放
-    microsleep(200000);  // 200ms
+    infra_sleep_ms(200);  // 200ms
     
     ppdb_kvstore_config_t config = {
         .dir_path = {0},
         .memtable_size = 4096,
         .mode = mode
     };
-    strlcpy(config.dir_path, test_dir, sizeof(config.dir_path));
+    infra_memcpy(config.dir_path, test_dir, infra_strlen(test_dir) + 1);
     
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_create(&config, &store);
@@ -109,7 +110,7 @@ static ppdb_kvstore_t* create_test_kvstore(const char* test_dir, ppdb_mode_t mod
     }
 
     // 等待初始化完成
-    microsleep(200000);  // 200ms
+    infra_sleep_ms(200);  // 200ms
     return store;
 }
 
@@ -125,34 +126,35 @@ static int test_kvstore_basic_ops(void) {
     // 测试插入和获取
     const char* test_key = "test_key";
     const char* test_value = "test_value";
-    ppdb_error_t err = ppdb_kvstore_put(store, (const uint8_t*)test_key, strlen(test_key),
-                                       (const uint8_t*)test_value, strlen(test_value));
+    ppdb_error_t err = ppdb_kvstore_put(store, 
+                                       (const uint8_t*)test_key, infra_strlen(test_key),
+                                       (const uint8_t*)test_value, infra_strlen(test_value));
     TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
 
     // 先获取值的大小
     size_t value_size = 0;
-    err = ppdb_kvstore_get(store, (const uint8_t*)test_key, strlen(test_key),
+    err = ppdb_kvstore_get(store, (const uint8_t*)test_key, infra_strlen(test_key),
                           NULL, &value_size);
     TEST_ASSERT(err == PPDB_OK, "Failed to get value size");
-    TEST_ASSERT(value_size == strlen(test_value), "Value size mismatch");
+    TEST_ASSERT(value_size == infra_strlen(test_value), "Value size mismatch");
 
     // 获取值
     uint8_t* value_buf = NULL;
     size_t actual_size = 0;
-    err = ppdb_kvstore_get(store, (const uint8_t*)test_key, strlen(test_key),
+    err = ppdb_kvstore_get(store, (const uint8_t*)test_key, infra_strlen(test_key),
                           &value_buf, &actual_size);
     TEST_ASSERT(err == PPDB_OK, "Failed to get value");
-    TEST_ASSERT(actual_size == strlen(test_value), "Value size mismatch");
+    TEST_ASSERT(actual_size == infra_strlen(test_value), "Value size mismatch");
     TEST_ASSERT(value_buf != NULL, "Value buffer is NULL");
-    TEST_ASSERT(memcmp(value_buf, test_value, actual_size) == 0, "Value content mismatch");
-    free(value_buf);
+    TEST_ASSERT(infra_memcmp(value_buf, test_value, actual_size) == 0, "Value content mismatch");
+    infra_free(value_buf);
 
     // 测试删除
-    err = ppdb_kvstore_delete(store, (const uint8_t*)test_key, strlen(test_key));
+    err = ppdb_kvstore_delete(store, (const uint8_t*)test_key, infra_strlen(test_key));
     TEST_ASSERT(err == PPDB_OK, "Failed to delete key-value pair");
 
     // 验证删除
-    err = ppdb_kvstore_get(store, (const uint8_t*)test_key, strlen(test_key),
+    err = ppdb_kvstore_get(store, (const uint8_t*)test_key, infra_strlen(test_key),
                           NULL, &value_size);
     TEST_ASSERT(err == PPDB_ERR_NOT_FOUND, "Key still exists after deletion");
 
@@ -181,8 +183,8 @@ static int test_kvstore_recovery(void) {
 
     for (int i = 0; i < num_pairs; i++) {
         ppdb_error_t err = ppdb_kvstore_put(store1,
-                                           (const uint8_t*)test_keys[i], strlen(test_keys[i]),
-                                           (const uint8_t*)test_values[i], strlen(test_values[i]));
+                                           (const uint8_t*)test_keys[i], infra_strlen(test_keys[i]),
+                                           (const uint8_t*)test_values[i], infra_strlen(test_values[i]));
         TEST_ASSERT(err == PPDB_OK, "Failed to put key-value pair");
     }
 
@@ -198,12 +200,12 @@ static int test_kvstore_recovery(void) {
         uint8_t* value = NULL;
         size_t value_size = 0;
         ppdb_error_t err = ppdb_kvstore_get(store2,
-                                           (const uint8_t*)test_keys[i], strlen(test_keys[i]),
+                                           (const uint8_t*)test_keys[i], infra_strlen(test_keys[i]),
                                            &value, &value_size);
         TEST_ASSERT(err == PPDB_OK, "Failed to get key-value pair");
-        TEST_ASSERT(value_size == strlen(test_values[i]), "Value size mismatch");
-        TEST_ASSERT(memcmp(value, test_values[i], value_size) == 0, "Value content mismatch");
-        free(value);
+        TEST_ASSERT(value_size == infra_strlen(test_values[i]), "Value size mismatch");
+        TEST_ASSERT(infra_memcmp(value, test_values[i], value_size) == 0, "Value content mismatch");
+        infra_free(value);
     }
 
     // 关闭第二个实例
@@ -231,25 +233,25 @@ static void* concurrent_worker(void* arg) {
     char value[32];
 
     for (int i = 0; i < args->num_ops; i++) {
-        // 生成键值对
-        snprintf(key, sizeof(key), "key_%d_%d", args->thread_id, i);
-        snprintf(value, sizeof(value), "value_%d_%d", args->thread_id, i);
-
-        // 写入键值对
+        // Generate key-value pairs
+        infra_snprintf(key, sizeof(key), "key_%d_%d", args->thread_id, i);
+        infra_snprintf(value, sizeof(value), "value_%d_%d", args->thread_id, i);
+        
+        // Write key-value pair
         ppdb_error_t err = ppdb_kvstore_put(args->store,
-                                           (const uint8_t*)key, strlen(key),
-                                           (const uint8_t*)value, strlen(value));
+                                           (const uint8_t*)key, infra_strlen(key),
+                                           (const uint8_t*)value, infra_strlen(value));
         if (err != PPDB_OK) {
             PPDB_LOG_ERROR("Thread %d failed to put key-value pair: %s",
                           args->thread_id, ppdb_error_string(err));
             continue;
         }
 
-        // 读取并验证
+        // Read and verify
         uint8_t* read_value = NULL;
         size_t read_size = 0;
         err = ppdb_kvstore_get(args->store,
-                              (const uint8_t*)key, strlen(key),
+                              (const uint8_t*)key, infra_strlen(key),
                               &read_value, &read_size);
         if (err != PPDB_OK) {
             PPDB_LOG_ERROR("Thread %d failed to get key-value pair: %s",
@@ -257,16 +259,16 @@ static void* concurrent_worker(void* arg) {
             continue;
         }
 
-        // 验证值
-        if (read_size != strlen(value) ||
-            memcmp(read_value, value, read_size) != 0) {
+        // Verify value
+        if (read_size != infra_strlen(value) ||
+            infra_memcmp(read_value, value, read_size) != 0) {
             PPDB_LOG_ERROR("Thread %d value mismatch", args->thread_id);
         }
-        free(read_value);
+        infra_free(read_value);
 
-        // 删除键值对
+        // Delete key-value pair
         err = ppdb_kvstore_delete(args->store,
-                                 (const uint8_t*)key, strlen(key));
+                                 (const uint8_t*)key, infra_strlen(key));
         if (err != PPDB_OK) {
             PPDB_LOG_ERROR("Thread %d failed to delete key-value pair: %s",
                           args->thread_id, ppdb_error_string(err));
@@ -349,28 +351,28 @@ static int test_kvstore_basic(void) {
     const char* test_key = "test_key";
     const char* test_value = "test_value";
     
-    err = ppdb_kvstore_put(store, test_key, strlen(test_key),
-        test_value, strlen(test_value));
+    err = ppdb_kvstore_put(store, test_key, infra_strlen(test_key),
+        test_value, infra_strlen(test_value));
     TEST_ASSERT_OK(err, "Failed to put value");
     
     // 读取数据
     void* value;
     size_t value_size;
-    err = ppdb_kvstore_get(store, test_key, strlen(test_key),
+    err = ppdb_kvstore_get(store, test_key, infra_strlen(test_key),
         &value, &value_size);
     TEST_ASSERT_OK(err, "Failed to get value");
-    TEST_ASSERT(value_size == strlen(test_value), "Value size mismatch");
-    TEST_ASSERT(memcmp(value, test_value, value_size) == 0,
+    TEST_ASSERT(value_size == infra_strlen(test_value), "Value size mismatch");
+    TEST_ASSERT(infra_memcmp(value, test_value, value_size) == 0,
         "Value content mismatch");
     
-    free(value);
+    infra_free(value);
     
     // 删除数据
-    err = ppdb_kvstore_delete(store, test_key, strlen(test_key));
+    err = ppdb_kvstore_delete(store, test_key, infra_strlen(test_key));
     TEST_ASSERT_OK(err, "Failed to delete value");
     
     // 验证删除
-    err = ppdb_kvstore_get(store, test_key, strlen(test_key),
+    err = ppdb_kvstore_get(store, test_key, infra_strlen(test_key),
         &value, &value_size);
     TEST_ASSERT(err == PPDB_NOT_FOUND, "Key should be deleted");
     
@@ -403,8 +405,8 @@ static int test_kvstore_batch(void) {
     const int num_records = 3;
     
     for (int i = 0; i < num_records; i++) {
-        err = ppdb_batch_put(batch, keys[i], strlen(keys[i]),
-            values[i], strlen(values[i]));
+        err = ppdb_batch_put(batch, keys[i], infra_strlen(keys[i]),
+            values[i], infra_strlen(values[i]));
         TEST_ASSERT_OK(err, "Failed to add put to batch");
     }
     
@@ -416,14 +418,14 @@ static int test_kvstore_batch(void) {
     for (int i = 0; i < num_records; i++) {
         void* value;
         size_t value_size;
-        err = ppdb_kvstore_get(store, keys[i], strlen(keys[i]),
+        err = ppdb_kvstore_get(store, keys[i], infra_strlen(keys[i]),
             &value, &value_size);
         TEST_ASSERT_OK(err, "Failed to get record %d", i);
-        TEST_ASSERT(value_size == strlen(values[i]),
+        TEST_ASSERT(value_size == infra_strlen(values[i]),
             "Value size mismatch for record %d", i);
-        TEST_ASSERT(memcmp(value, values[i], value_size) == 0,
+        TEST_ASSERT(infra_memcmp(value, values[i], value_size) == 0,
             "Value content mismatch for record %d", i);
-        free(value);
+        infra_free(value);
     }
     
     ppdb_batch_destroy(batch);
@@ -451,8 +453,8 @@ static int test_kvstore_iterator(void) {
     const int num_records = 3;
     
     for (int i = 0; i < num_records; i++) {
-        err = ppdb_kvstore_put(store, keys[i], strlen(keys[i]),
-            values[i], strlen(values[i]));
+        err = ppdb_kvstore_put(store, keys[i], infra_strlen(keys[i]),
+            values[i], infra_strlen(values[i]));
         TEST_ASSERT_OK(err, "Failed to put record %d", i);
     }
     
@@ -474,11 +476,11 @@ static int test_kvstore_iterator(void) {
         
         bool found = false;
         for (int i = 0; i < num_records; i++) {
-            if (key_size == strlen(keys[i]) &&
-                memcmp(key, keys[i], key_size) == 0) {
-                TEST_ASSERT(value_size == strlen(values[i]),
+            if (key_size == infra_strlen(keys[i]) &&
+                infra_memcmp(key, keys[i], key_size) == 0) {
+                TEST_ASSERT(value_size == infra_strlen(values[i]),
                     "Value size mismatch for key %s", keys[i]);
-                TEST_ASSERT(memcmp(value, values[i], value_size) == 0,
+                TEST_ASSERT(infra_memcmp(value, values[i], value_size) == 0,
                     "Value content mismatch for key %s", keys[i]);
                 found = true;
                 break;

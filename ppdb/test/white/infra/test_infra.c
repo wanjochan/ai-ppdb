@@ -1,5 +1,6 @@
 #include "cosmopolitan.h"
 #include "internal/infra/infra.h"
+#include "test/test_framework.h"
 #include "internal/infra/infra_io.h"
 #include "internal/infra/infra_event.h"
 

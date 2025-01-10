@@ -1,4 +1,5 @@
-#include <cosmopolitan.h>
+#include "test_common.h"
+#include "internal/infra/infra.h"
 #include "test_framework.h"
 #include "ppdb/ppdb.h"
 #include "ppdb/ppdb_sync.h"
@@ -75,8 +76,8 @@ static int test_put_get(void) {
     // 测试数据
     const char* key = "test_key";
     const char* value = "test_value";
-    size_t key_len = strlen(key) + 1;
-    size_t value_len = strlen(value) + 1;
+    size_t key_len = infra_strlen(key) + 1;
+    size_t value_len = infra_strlen(value) + 1;
     
     // Put操作
     err = ppdb_memtable_put(table, key, key_len, value, value_len);
@@ -93,11 +94,11 @@ static int test_put_get(void) {
     TEST_ASSERT_OK(err, "Get operation failed");
     TEST_ASSERT_NOT_NULL(retrieved_value, "Retrieved value is NULL");
     TEST_ASSERT(retrieved_value_len == value_len, "Retrieved value length mismatch");
-    TEST_ASSERT(memcmp(retrieved_value, value, value_len) == 0, "Retrieved value content mismatch");
+    TEST_ASSERT(infra_memcmp(retrieved_value, value, value_len) == 0, "Retrieved value content mismatch");
 
     // 清理
     if (retrieved_value) {
-        free(retrieved_value);
+        infra_free(retrieved_value);
         retrieved_value = NULL;
     }
     ppdb_destroy(table);
@@ -120,8 +121,8 @@ static int test_delete(void) {
     // 插入数据
     const char* key = "test_key";
     const char* value = "test_value";
-    size_t key_len = strlen(key) + 1;
-    size_t value_len = strlen(value) + 1;
+    size_t key_len = infra_strlen(key) + 1;
+    size_t value_len = infra_strlen(value) + 1;
     
     err = ppdb_memtable_put(table, key, key_len, value, value_len);
     TEST_ASSERT_OK(err, "Put operation failed");
@@ -138,7 +139,7 @@ static int test_delete(void) {
     
     // 清理
     if (retrieved_value) {
-        free(retrieved_value);
+        infra_free(retrieved_value);
         retrieved_value = NULL;
     }
     ppdb_destroy(table);
@@ -165,8 +166,8 @@ static int test_size_limit(void) {
     // 尝试插入超过限制的数据
     const char* key = "test_key";
     const char* value = "this_is_a_very_long_value_that_exceeds_the_limit";
-    size_t key_len = strlen(key) + 1;
-    size_t value_len = strlen(value) + 1;
+    size_t key_len = infra_strlen(key) + 1;
+    size_t value_len = infra_strlen(value) + 1;
     
     err = ppdb_memtable_put(table, key, key_len, value, value_len);
     TEST_ASSERT(err == PPDB_ERR_OUT_OF_MEMORY, "Should reject data exceeding size limit");
@@ -193,9 +194,9 @@ static int test_update(void) {
     const char* key = "test_key";
     const char* value1 = "value1";
     const char* value2 = "value2";
-    size_t key_len = strlen(key) + 1;
-    size_t value1_len = strlen(value1) + 1;
-    size_t value2_len = strlen(value2) + 1;
+    size_t key_len = infra_strlen(key) + 1;
+    size_t value1_len = infra_strlen(value1) + 1;
+    size_t value2_len = infra_strlen(value2) + 1;
     
     err = ppdb_memtable_put(table, key, key_len, value1, value1_len);
     TEST_ASSERT_OK(err, "Initial put failed");
@@ -211,11 +212,11 @@ static int test_update(void) {
     TEST_ASSERT_OK(err, "Get after update failed");
     TEST_ASSERT_NOT_NULL(retrieved_value, "Retrieved value is NULL");
     TEST_ASSERT(retrieved_value_len == value2_len, "Retrieved value length mismatch");
-    TEST_ASSERT(memcmp(retrieved_value, value2, value2_len) == 0, "Retrieved value content mismatch");
+    TEST_ASSERT(infra_memcmp(retrieved_value, value2, value2_len) == 0, "Retrieved value content mismatch");
 
     // 清理
     if (retrieved_value) {
-        free(retrieved_value);
+        infra_free(retrieved_value);
         retrieved_value = NULL;
     }
     ppdb_destroy(table);

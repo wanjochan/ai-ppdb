@@ -1,7 +1,7 @@
 #ifndef PPDB_TEST_UTILS_H
 #define PPDB_TEST_UTILS_H
 
-#include <cosmopolitan.h>
+#include "internal/infra/infra.h"
 #include "ppdb/ppdb.h"
 
 // 测试工具函数

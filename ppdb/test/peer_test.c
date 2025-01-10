@@ -1,6 +1,7 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
 #include "test_common.h"
+#include "internal/infra/infra.h"
 
 //-----------------------------------------------------------------------------
 // Test Callbacks
@@ -72,7 +73,7 @@ static void test_peer_start_stop(void) {
     // Get stats
     char stats[1024];
     TEST_ASSERT(ppdb_peer_get_stats(peer, stats, sizeof(stats)) == PPDB_OK);
-    TEST_ASSERT(strlen(stats) > 0);
+    TEST_ASSERT(infra_strlen(stats) > 0);
 
     // Stop peer
     TEST_ASSERT(ppdb_peer_stop(peer) == PPDB_OK);

@@ -1,6 +1,6 @@
+#include "test/test_common.h"
 #include "ppdb/ppdb_advance.h"
 #include "ppdb/ppdb.h"
-#include <cosmopolitan.h>
 
 //-----------------------------------------------------------------------------
 // 辅助函数
@@ -12,8 +12,8 @@ static void init_test_data(ppdb_base_t* base) {
     const char* values[] = {"1", "2", "3", "4", "5"};
     
     for (int i = 0; i < 5; i++) {
-        ppdb_key_t key = {(void*)keys[i], strlen(keys[i])};
-        ppdb_value_t value = {(void*)values[i], strlen(values[i])};
+        ppdb_key_t key = {(void*)keys[i], infra_strlen(keys[i])};
+        ppdb_value_t value = {(void*)values[i], infra_strlen(values[i])};
         ppdb_put(base, &key, &value);
     }
 }
@@ -63,8 +63,8 @@ void test_range_scan(void) {
     {
         const char start_str[] = "b";
         const char end_str[] = "d";
-        ppdb_key_t start_key = {(void*)start_str, strlen(start_str)};
-        ppdb_key_t end_key = {(void*)end_str, strlen(end_str)};
+        ppdb_key_t start_key = {(void*)start_str, infra_strlen(start_str)};
+        ppdb_key_t end_key = {(void*)end_str, infra_strlen(end_str)};
         
         ppdb_scan_options_t options = {
             .start_key = &start_key,
@@ -141,14 +141,14 @@ void test_metrics(void) {
 //-----------------------------------------------------------------------------
 
 int main(void) {
-    printf("Running advanced feature tests...\n");
+    infra_printf("Running advanced feature tests...\n");
     
     test_range_scan();
-    printf("Range scan tests passed\n");
+    infra_printf("Range scan tests passed\n");
     
     test_metrics();
-    printf("Metrics tests passed\n");
+    infra_printf("Metrics tests passed\n");
     
-    printf("All advanced feature tests passed!\n");
+    infra_printf("All advanced feature tests passed!\n");
     return 0;
 }

@@ -1,6 +1,7 @@
-#include "cosmopolitan.h"
+#include "test/test_common.h"
 #include "internal/infra/infra.h"
 #include "internal/infra/infra_sync.h"
+#include "test/test_framework.h"
 
 #define TEST_ASSERT(cond, msg) \
     if (!(cond)) { \
