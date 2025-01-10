@@ -9,12 +9,6 @@
 #ifndef INFRA_H
 #define INFRA_H
 
-#include <stddef.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <time.h>
-#include <sys/types.h>
-
 //-----------------------------------------------------------------------------
 // Version Information
 //-----------------------------------------------------------------------------

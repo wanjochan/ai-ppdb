@@ -12,20 +12,25 @@ if errorlevel 1 exit /b 1
 rem Create build directory if it doesn't exist
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
+rem Build infra library first
+echo Building infra library...
+"%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra.c" -o "%BUILD_DIR%\infra.o"
+if errorlevel 1 exit /b 1
+
 rem Build infra tests
 echo Building infra tests...
 
 rem Define test cases
-set "TEST_CASES=test_infra test_infra_async test_infra_sync test_infra_platform"
+set "TEST_CASES=test_infra test_async test_sync test_struct test_log test_peer test_memtable test_memory test_metrics test_error test_skiplist"
 
 rem Build and run test cases
 set "TEST_TO_RUN=%3"
 if "%TEST_TO_RUN%"=="" set "TEST_TO_RUN=%TEST_CASES%"
 
 for %%t in (%TEST_TO_RUN%) do (
-    if exist "%TEST_DIR%\infra\%%t.c" (
+    if exist "%TEST_DIR%\white\infra\%%t.c" (
         echo Building %%t...
-        "%GCC%" %CFLAGS% "%TEST_DIR%\infra\%%t.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%t.exe.dbg"
+        "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%%t.c" "%BUILD_DIR%\infra.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%t.exe.dbg"
         if errorlevel 1 exit /b 1
         "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%%t.exe.dbg" "%BUILD_DIR%\%%t.exe"
         if errorlevel 1 exit /b 1
@@ -39,7 +44,7 @@ for %%t in (%TEST_TO_RUN%) do (
             )
         )
     ) else (
-        echo Error: Test case %%t not found
+        echo Error: Test case %%t not found at %TEST_DIR%\white\infra\%%t.c
         exit /b 1
     )
 )

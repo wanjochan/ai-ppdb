@@ -16,16 +16,7 @@
 ```
 src/
 ├── infra/                     # 基础设施层
-│   ├── infra_core.c          # 内存分配、错误处理
-│   ├── infra_struct.c        # 基础数据结构
-│   ├── infra_sync.c          # 同步原语
-│   ├── infra_async.c         # 异步框架
-│   ├── infra_timer.c         # 定时器
-│   ├── infra_event.c         # 事件循环
-│   ├── infra_io.c            # 通用IO框架
-│   ├── infra_store.c         # 通用存储接口
-│   ├── infra_buffer.c        # 通用缓冲区管理
-│   └── infra_peer.c          # 通用网络接口
+│   ├── infra_{module}.c          
 │
 ├── memkv/                     # 内存KV层
 │   ├── memkv.c               # memkv主入口（被 libppdb.c 调用）
@@ -58,6 +49,8 @@ src/internal/                 # 内部头文件目录
 ## 开发阶段
 
 0. **基础设施层**
+
+特别注意：这一层不要出现 ppdb_ 字眼，这是通用设施层
 
 ppdb/src/internal/infra/infra.h: 基础设施头文件
 ppdb/src/infra/infra.c: 基础功能（内存、字符串、日志、基础数据结构等）

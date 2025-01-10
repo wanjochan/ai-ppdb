@@ -2,46 +2,36 @@
  * infra.c - Infrastructure Layer Implementation
  */
 
+#include "cosmopolitan.h"
 #include "internal/infra/infra.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdarg.h>
+#include "internal/infra/infra_platform.h"
 
 //-----------------------------------------------------------------------------
 // Error Handling
 //-----------------------------------------------------------------------------
 
-static const char* error_strings[] = {
-    [INFRA_OK]                = "Success",
-    [INFRA_ERROR_GENERIC]     = "Generic error",
-    [INFRA_ERROR_MEMORY]      = "Memory error",
-    [INFRA_ERROR_IO]          = "I/O error",
-    [INFRA_ERROR_TIMEOUT]     = "Timeout error",
-    [INFRA_ERROR_BUSY]        = "Resource busy",
-    [INFRA_ERROR_AGAIN]       = "Try again",
-    [INFRA_ERROR_INVALID]     = "Invalid argument",
-    [INFRA_ERROR_NOTFOUND]    = "Not found",
-    [INFRA_ERROR_EXISTS]      = "Already exists",
-    [INFRA_ERROR_FULL]        = "Resource full",
-    [INFRA_ERROR_EMPTY]       = "Resource empty",
-    [INFRA_ERROR_OVERFLOW]    = "Overflow error",
-    [INFRA_ERROR_UNDERFLOW]   = "Underflow error",
-    [INFRA_ERROR_SYSTEM]      = "System error",
-    [INFRA_ERROR_PROTOCOL]    = "Protocol error",
-    [INFRA_ERROR_NETWORK]     = "Network error",
-    [INFRA_ERROR_SECURITY]    = "Security error"
-};
-
 const char* infra_error_string(infra_error_t error) {
-    if (error >= 0) {
-        return error_strings[0];  // Success
+    switch (error) {
+        case INFRA_OK:               return "Success";
+        case INFRA_ERROR_GENERIC:    return "Generic error";
+        case INFRA_ERROR_MEMORY:     return "Memory error";
+        case INFRA_ERROR_IO:         return "IO error";
+        case INFRA_ERROR_TIMEOUT:    return "Timeout error";
+        case INFRA_ERROR_BUSY:       return "Resource busy";
+        case INFRA_ERROR_AGAIN:      return "Try again";
+        case INFRA_ERROR_INVALID:    return "Invalid argument";
+        case INFRA_ERROR_NOTFOUND:   return "Not found";
+        case INFRA_ERROR_EXISTS:     return "Already exists";
+        case INFRA_ERROR_FULL:       return "Resource full";
+        case INFRA_ERROR_EMPTY:      return "Resource empty";
+        case INFRA_ERROR_OVERFLOW:   return "Overflow error";
+        case INFRA_ERROR_UNDERFLOW:  return "Underflow error";
+        case INFRA_ERROR_SYSTEM:     return "System error";
+        case INFRA_ERROR_PROTOCOL:   return "Protocol error";
+        case INFRA_ERROR_NETWORK:    return "Network error";
+        case INFRA_ERROR_SECURITY:   return "Security error";
+        default:                     return "Unknown error";
     }
-    error = -error;  // Convert to positive index
-    if (error >= sizeof(error_strings) / sizeof(error_strings[0])) {
-        return "Unknown error";
-    }
-    return error_strings[error];
 }
 
 //-----------------------------------------------------------------------------
@@ -113,19 +103,20 @@ int infra_strncmp(const char* s1, const char* s2, size_t n) {
 }
 
 char* infra_strdup(const char* s) {
-    size_t len = strlen(s) + 1;
+    size_t len = infra_strlen(s) + 1;
     char* new_str = infra_malloc(len);
     if (new_str) {
-        memcpy(new_str, s, len);
+        infra_memcpy(new_str, s, len);
     }
     return new_str;
 }
 
 char* infra_strndup(const char* s, size_t n) {
-    size_t len = strnlen(s, n);
+    size_t len = infra_strlen(s);
+    if (len > n) len = n;
     char* new_str = infra_malloc(len + 1);
     if (new_str) {
-        memcpy(new_str, s, len);
+        infra_memcpy(new_str, s, len);
         new_str[len] = '\0';
     }
     return new_str;
@@ -151,19 +142,17 @@ infra_error_t infra_buffer_init(infra_buffer_t* buf, size_t initial_capacity) {
     if (!buf || initial_capacity == 0) {
         return INFRA_ERROR_INVALID;
     }
-
     buf->data = infra_malloc(initial_capacity);
     if (!buf->data) {
         return INFRA_ERROR_MEMORY;
     }
-
     buf->size = 0;
     buf->capacity = initial_capacity;
     return INFRA_OK;
 }
 
 void infra_buffer_destroy(infra_buffer_t* buf) {
-    if (buf) {
+    if (buf && buf->data) {
         infra_free(buf->data);
         buf->data = NULL;
         buf->size = 0;
@@ -175,16 +164,13 @@ infra_error_t infra_buffer_reserve(infra_buffer_t* buf, size_t capacity) {
     if (!buf) {
         return INFRA_ERROR_INVALID;
     }
-
     if (capacity <= buf->capacity) {
         return INFRA_OK;
     }
-
     uint8_t* new_data = infra_realloc(buf->data, capacity);
     if (!new_data) {
         return INFRA_ERROR_MEMORY;
     }
-
     buf->data = new_data;
     buf->capacity = capacity;
     return INFRA_OK;
@@ -194,7 +180,6 @@ infra_error_t infra_buffer_write(infra_buffer_t* buf, const void* data, size_t s
     if (!buf || !data || size == 0) {
         return INFRA_ERROR_INVALID;
     }
-
     if (buf->size + size > buf->capacity) {
         size_t new_capacity = buf->capacity * 2;
         if (new_capacity < buf->size + size) {
@@ -205,8 +190,7 @@ infra_error_t infra_buffer_write(infra_buffer_t* buf, const void* data, size_t s
             return err;
         }
     }
-
-    memcpy(buf->data + buf->size, data, size);
+    infra_memcpy(buf->data + buf->size, data, size);
     buf->size += size;
     return INFRA_OK;
 }
@@ -215,14 +199,10 @@ infra_error_t infra_buffer_read(infra_buffer_t* buf, void* data, size_t size) {
     if (!buf || !data || size == 0) {
         return INFRA_ERROR_INVALID;
     }
-
     if (size > buf->size) {
-        return INFRA_ERROR_OVERFLOW;
+        return INFRA_ERROR_INVALID;
     }
-
-    memcpy(data, buf->data, size);
-    memmove(buf->data, buf->data + size, buf->size - size);
-    buf->size -= size;
+    infra_memcpy(data, buf->data, size);
     return INFRA_OK;
 }
 
@@ -290,8 +270,8 @@ void infra_log(int level, const char* file, int line, const char* func,
 
 void infra_stats_init(infra_stats_t* stats) {
     if (stats) {
-        memset(stats, 0, sizeof(infra_stats_t));
-        stats->min_latency_us = UINT64_MAX;
+        infra_memset(stats, 0, sizeof(infra_stats_t));
+        stats->min_latency_us = (uint64_t)-1;
     }
 }
 
@@ -301,9 +281,7 @@ void infra_stats_reset(infra_stats_t* stats) {
 
 void infra_stats_update(infra_stats_t* stats, bool success, uint64_t latency_us,
                        size_t bytes, infra_error_t error) {
-    if (!stats) {
-        return;
-    }
+    if (!stats) return;
 
     stats->total_operations++;
     if (success) {
@@ -311,7 +289,7 @@ void infra_stats_update(infra_stats_t* stats, bool success, uint64_t latency_us,
     } else {
         stats->failed_operations++;
         stats->last_error = error;
-        stats->last_error_time = infra_time_monotonic_ms();
+        stats->last_error_time = time(NULL);
     }
 
     stats->total_bytes += bytes;
@@ -323,18 +301,14 @@ void infra_stats_update(infra_stats_t* stats, bool success, uint64_t latency_us,
         stats->max_latency_us = latency_us;
     }
 
-    // Update average latency using exponential moving average
-    if (stats->avg_latency_us == 0) {
-        stats->avg_latency_us = latency_us;
-    } else {
-        stats->avg_latency_us = (stats->avg_latency_us * 7 + latency_us) / 8;
-    }
+    // Update average latency
+    uint64_t total = stats->avg_latency_us * (stats->total_operations - 1);
+    total += latency_us;
+    stats->avg_latency_us = total / stats->total_operations;
 }
 
 void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src) {
-    if (!dest || !src) {
-        return;
-    }
+    if (!dest || !src) return;
 
     dest->total_operations += src->total_operations;
     dest->successful_operations += src->successful_operations;
@@ -348,14 +322,11 @@ void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src) {
         dest->max_latency_us = src->max_latency_us;
     }
 
-    // Merge average latencies weighted by operation counts
-    uint64_t total_ops = dest->total_operations + src->total_operations;
-    if (total_ops > 0) {
-        dest->avg_latency_us = (dest->avg_latency_us * dest->total_operations +
-                               src->avg_latency_us * src->total_operations) / total_ops;
-    }
+    // Update average latency
+    uint64_t total1 = dest->avg_latency_us * (dest->total_operations - src->total_operations);
+    uint64_t total2 = src->avg_latency_us * src->total_operations;
+    dest->avg_latency_us = (total1 + total2) / dest->total_operations;
 
-    // Keep the most recent error
     if (src->last_error_time > dest->last_error_time) {
         dest->last_error = src->last_error;
         dest->last_error_time = src->last_error_time;
@@ -363,22 +334,17 @@ void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src) {
 }
 
 void infra_stats_print(const infra_stats_t* stats, const char* prefix) {
-    if (!stats || !prefix) {
-        return;
-    }
-
-    printf("%s Statistics:\n", prefix);
-    printf("  Total Operations: %lu\n", stats->total_operations);
-    printf("  Successful Operations: %lu\n", stats->successful_operations);
-    printf("  Failed Operations: %lu\n", stats->failed_operations);
-    printf("  Total Bytes: %lu\n", stats->total_bytes);
-    printf("  Min Latency: %lu us\n", stats->min_latency_us);
-    printf("  Max Latency: %lu us\n", stats->max_latency_us);
-    printf("  Avg Latency: %lu us\n", stats->avg_latency_us);
-    if (stats->last_error) {
-        printf("  Last Error: %s (at %lu ms)\n",
-               infra_error_string(stats->last_error),
-               stats->last_error_time);
+    if (!stats) return;
+    printf("%sTotal operations: %lu\n", prefix ? prefix : "", (unsigned long)stats->total_operations);
+    printf("%sSuccessful operations: %lu\n", prefix ? prefix : "", (unsigned long)stats->successful_operations);
+    printf("%sFailed operations: %lu\n", prefix ? prefix : "", (unsigned long)stats->failed_operations);
+    printf("%sTotal bytes: %lu\n", prefix ? prefix : "", (unsigned long)stats->total_bytes);
+    printf("%sMin latency: %lu us\n", prefix ? prefix : "", (unsigned long)stats->min_latency_us);
+    printf("%sMax latency: %lu us\n", prefix ? prefix : "", (unsigned long)stats->max_latency_us);
+    printf("%sAvg latency: %lu us\n", prefix ? prefix : "", (unsigned long)stats->avg_latency_us);
+    if (stats->last_error_time) {
+        printf("%sLast error: %s at %lu\n", prefix ? prefix : "",
+               infra_error_string(stats->last_error), (unsigned long)stats->last_error_time);
     }
 }
 
