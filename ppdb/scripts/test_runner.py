@@ -1,8 +1,3 @@
-#!/usr/bin/env python3
-"""
-example
-d:\miniconda3\python.exe ppdb/scripts/test_runner.py -t 5 -d ".\ppdb\scripts\build_test_infra.bat"
-"""
 import argparse
 import subprocess
 import sys
@@ -32,11 +27,17 @@ def kill_proc_tree(pid, including_parent=True):
 def run_warmup():
     """运行预热命令"""
     print("=== 运行预热命令 ===")
+    # 获取当前脚本所在目录
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # 构建预热命令的完整路径
+    warmup_cmd = os.path.join(script_dir, "build_test42.bat")
+    
     process = subprocess.Popen(
-        ".\\ppdb\\scripts\\build_test42.bat",
+        warmup_cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        shell=True
+        shell=True,
+        cwd=script_dir  # 设置工作目录
     )
     stdout, stderr = process.communicate()
     print("预热输出:")
@@ -87,7 +88,7 @@ def run_test(args):
             stderr=subprocess.PIPE,
             stdin=subprocess.PIPE if args.interactive else None,
             shell=True,
-            bufsize=1,
+            bufsize=-1,  # 使用系统默认缓冲区大小
             universal_newlines=False,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
         )

@@ -132,8 +132,12 @@ static infra_error_t queue_pop(infra_async_queue_t* queue, infra_async_task_node
     
     // 等待队列非空
     while (queue->size == 0) {
-        // 等待有新任务
-        infra_platform_cond_wait(queue->not_empty, queue->mutex);
+        // 等待有新任务，最多等待100ms
+        infra_error_t err = infra_platform_cond_timedwait(queue->not_empty, queue->mutex, 100);
+        if (err == INFRA_ERROR_TIMEOUT) {
+            infra_platform_mutex_unlock(queue->mutex);
+            return INFRA_ERROR_TIMEOUT;
+        }
         // 如果线程被唤醒但队列仍为空，继续等待
     }
     
@@ -250,7 +254,12 @@ static void* worker_thread(void* arg) {
         infra_error_t result = queue_pop(&async->task_queue, &node);
         
         if (result != INFRA_OK || !node) {
-            continue;
+            // 如果队列为空，等待一段时间再试
+            if (result == INFRA_ERROR_TIMEOUT) {
+                continue;
+            }
+            // 其他错误，退出线程
+            break;
         }
         
         // 记录开始时间
@@ -275,6 +284,11 @@ static void* worker_thread(void* arg) {
         
         // 释放节点
         free(node);
+        
+        // 发送信号通知任务已完成
+        infra_platform_mutex_lock(async->task_queue.mutex);
+        infra_platform_cond_signal(async->task_queue.not_empty);
+        infra_platform_mutex_unlock(async->task_queue.mutex);
     }
     
     return NULL;
@@ -336,22 +350,28 @@ infra_error_t infra_async_run(infra_async_t* async, uint32_t timeout_ms) {
         
         // 检查队列是否为空
         infra_platform_mutex_lock(async->task_queue.mutex);
+        
+        // 如果队列为空，等待新任务或超时
         if (async->task_queue.size == 0) {
-            // 队列为空，等待新任务或超时
-            infra_platform_cond_timedwait(async->task_queue.not_empty, 
-                                        async->task_queue.mutex, 
-                                        100);  // 等待100ms
+            // 计算剩余超时时间
+            uint64_t elapsed_ms = (current_time - start_time) / 1000;  // 转换为毫秒
+            uint64_t remaining_ms = timeout_ms > elapsed_ms ? timeout_ms - elapsed_ms : 1;
+            
+            // 等待新任务或超时
+            infra_error_t err = infra_platform_cond_timedwait(
+                async->task_queue.not_empty,
+                async->task_queue.mutex,
+                remaining_ms
+            );
+            
+            // 如果等待超时，检查是否真的没有任务了
+            if (err == INFRA_ERROR_TIMEOUT && async->task_queue.size == 0) {
+                infra_platform_mutex_unlock(async->task_queue.mutex);
+                return INFRA_OK;  // 所有任务已完成
+            }
         }
-        infra_platform_mutex_unlock(async->task_queue.mutex);
         
-        // 再次检查队列，如果还是空，说明任务已完成
-        infra_platform_mutex_lock(async->task_queue.mutex);
-        bool is_empty = (async->task_queue.size == 0);
         infra_platform_mutex_unlock(async->task_queue.mutex);
-        
-        if (is_empty) {
-            return INFRA_OK;
-        }
     }
     
     return INFRA_OK;

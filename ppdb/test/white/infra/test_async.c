@@ -18,6 +18,9 @@ static int test_async_loop(void) {
     infra_async_task_t task;
     infra_config_t config = INFRA_DEFAULT_CONFIG;
 
+    // 设置较小的任务队列大小，以便更容易测试
+    config.async.task_queue_size = 4;
+
     err = infra_async_init(&async, &config);
     ASSERT_OK(err);
 
@@ -32,14 +35,22 @@ static int test_async_loop(void) {
     task.type = INFRA_ASYNC_EVENT;
     task.callback = test_callback;
 
+    printf("Submitting task...\n");
     err = infra_async_submit(&async, &task);
     ASSERT_OK(err);
 
-    err = infra_async_run(&async, 5000);  // 增加超时时间到5秒
+    printf("Running async system...\n");
+    err = infra_async_run(&async, 1000);  // 减少超时时间到1秒
     ASSERT_OK(err);
+    printf("Async system completed\n");
+
     TEST_ASSERT(counter == 1);  // 确保任务已完成
 
-    infra_async_stop(&async);
+    printf("Stopping async system...\n");
+    err = infra_async_stop(&async);
+    ASSERT_OK(err);
+    printf("Async system stopped\n");
+
     infra_async_destroy(&async);
     return 0;
 }
