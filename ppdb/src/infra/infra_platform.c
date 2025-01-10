@@ -219,7 +219,8 @@ infra_error_t infra_platform_cond_timedwait(void* cond_handle, void* mutex_handl
 
     pthread_cond_t* cond = (pthread_cond_t*)cond_handle;
     pthread_mutex_t* mutex = (pthread_mutex_t*)mutex_handle;
-
+    
+    // 计算超时时间
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += timeout_ms / 1000;
@@ -228,9 +229,16 @@ infra_error_t infra_platform_cond_timedwait(void* cond_handle, void* mutex_handl
         ts.tv_sec++;
         ts.tv_nsec -= 1000000000;
     }
-
+    
+    // 等待条件变量
     int ret = pthread_cond_timedwait(cond, mutex, &ts);
-    return (ret == 0) ? INFRA_OK : (ret == ETIMEDOUT ? INFRA_ERROR_TIMEOUT : INFRA_ERROR_IO);
+    if (ret == 0) {
+        return INFRA_OK;
+    } else if (ret == ETIMEDOUT) {
+        return INFRA_ERROR_TIMEOUT;
+    } else {
+        return INFRA_ERROR_IO;
+    }
 }
 
 infra_error_t infra_platform_cond_signal(void* handle) {

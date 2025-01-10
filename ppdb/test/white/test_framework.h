@@ -1,7 +1,6 @@
 #ifndef TEST_FRAMEWORK_H
 #define TEST_FRAMEWORK_H
 
-#include <cosmopolitan.h>
 #include "internal/infra/infra.h"
 
 // Test case type
@@ -14,19 +13,19 @@ typedef struct {
 static struct {
     int total_tests;
     int failed_tests;
-    clock_t start_time;
+    infra_time_t start_time;
 } test_stats = {0, 0, 0};
 
 // Test macros
 #define TEST_INIT() do { \
     test_stats.total_tests = 0; \
     test_stats.failed_tests = 0; \
-    test_stats.start_time = clock(); \
+    test_stats.start_time = infra_time_monotonic(); \
 } while(0)
 
 #define TEST_CLEANUP() do { \
-    clock_t end_time = clock(); \
-    double time_spent = (double)(end_time - test_stats.start_time) / CLOCKS_PER_SEC; \
+    infra_time_t end_time = infra_time_monotonic(); \
+    double time_spent = (double)(end_time - test_stats.start_time) / 1000000.0; \
     printf("\nTest Summary:\n"); \
     printf("Total tests: %d\n", test_stats.total_tests); \
     printf("Failed tests: %d\n", test_stats.failed_tests); \

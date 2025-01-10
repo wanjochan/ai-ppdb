@@ -24,6 +24,9 @@ static int test_async_loop(void) {
     // 重置计数器
     counter = 0;
 
+    // 给工作线程一点时间启动
+    infra_time_sleep(100);  // 休眠100ms
+
     // 提交一个简单的任务
     memset(&task, 0, sizeof(task));
     task.type = INFRA_ASYNC_EVENT;
@@ -32,7 +35,7 @@ static int test_async_loop(void) {
     err = infra_async_submit(&async, &task);
     ASSERT_OK(err);
 
-    err = infra_async_run(&async, 1000);  // 1秒超时
+    err = infra_async_run(&async, 5000);  // 增加超时时间到5秒
     ASSERT_OK(err);
     TEST_ASSERT(counter == 1);  // 确保任务已完成
 

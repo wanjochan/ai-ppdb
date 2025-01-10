@@ -12,13 +12,28 @@ import threading
 import queue
 import select
 import tempfile
+import signal
 from datetime import datetime
+
+def kill_proc_tree(pid, including_parent=True):
+    """杀死进程树"""
+    if sys.platform != "win32":
+        parent = subprocess.Popen(f"ps -o pid --ppid {pid} --noheaders".split(),
+                                stdout=subprocess.PIPE)
+        children = parent.stdout.read().decode().strip().split("\n")
+        for child in children:
+            if child:
+                os.kill(int(child), signal.SIGTERM)
+        if including_parent:
+            os.kill(pid, signal.SIGTERM)
+    else:
+        subprocess.call(['taskkill', '/F', '/T', '/PID', str(pid)])
 
 def run_warmup():
     """运行预热命令"""
     print("=== 运行预热命令 ===")
     process = subprocess.Popen(
-        ".\ppdb\scripts\build_test42.bat",
+        ".\\ppdb\\scripts\\build_test42.bat",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         shell=True
@@ -44,7 +59,7 @@ def read_stream(stream, q):
 def run_test(args):
     """运行测试程序并处理输出"""
     # 先运行预热命令
-    if run_warmup() != 0:
+    if not args.no_warmup and run_warmup() != 0:
         print("预热失败，停止测试", file=sys.stderr)
         return 1
         
@@ -73,7 +88,8 @@ def run_test(args):
             stdin=subprocess.PIPE if args.interactive else None,
             shell=True,
             bufsize=1,
-            universal_newlines=False
+            universal_newlines=False,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
         )
         
         # 创建队列存储输出
@@ -90,11 +106,13 @@ def run_test(args):
         
         # 等待超时或完成
         start_time = time.time()
+        timeout_occurred = False
         while True:
             # 检查是否超时
             if args.timeout and (time.time() - start_time) > args.timeout:
-                process.kill()
-                print(f"\n程序运行超时 ({args.timeout}秒)，已强制终止")
+                print(f"\n程序运行超时 ({args.timeout}秒)，正在强制终止...")
+                kill_proc_tree(process.pid)
+                timeout_occurred = True
                 break
                 
             # 检查进程是否结束
@@ -168,6 +186,10 @@ def run_test(args):
             except UnicodeDecodeError:
                 print(content.decode('gbk', errors='replace'))
         
+        if timeout_occurred:
+            print("\n测试因超时而终止")
+            return -1
+        
         return process.returncode
         
     finally:
@@ -181,7 +203,7 @@ def run_test(args):
 def main():
     parser = argparse.ArgumentParser(description='智能测试运行器')
     parser.add_argument('command', help='要运行的命令')
-    parser.add_argument('-t', '--timeout', type=float, help='超时时间（秒）')
+    parser.add_argument('-t', '--timeout', type=float, default=10.0, help='超时时间（秒），默认10秒')
     parser.add_argument('-i', '--interactive', action='store_true', help='是否需要交互')
     parser.add_argument('-d', '--debug', action='store_true', help='是否打印调试信息')
     parser.add_argument('-n', '--no-warmup', action='store_true', help='是否跳过预热')
