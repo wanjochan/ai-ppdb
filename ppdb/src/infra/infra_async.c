@@ -525,19 +525,25 @@ ppdb_error_t ppdb_async_fsync(ppdb_async_loop_t* loop,
     req->fd = fd;
     req->buf = NULL;
     req->count = 0;
-    req->offset = -2;  // Indicate fsync operation
+    req->offset = (uint64_t)-2;  // Indicate fsync operation
     req->callback = callback;
     req->user_data = user_data;
     req->submit_time = get_time_us();
+    req->is_write = true;  // fsync is considered a write operation
 
-    ppdb_async_handle_t* handle;
-    err = ppdb_async_submit(loop, async_io_handler, req, 0, 0, NULL, NULL, &handle);
+    // Submit IO task
+    err = ppdb_async_submit(loop, async_io_handler, req, 0, 0,
+                           NULL, NULL, &req->handle);
     if (err != PPDB_OK) {
         ppdb_mem_free(req);
         return err;
     }
 
-    req->handle = handle;
+    // Update statistics
+    ppdb_mutex_lock(loop->lock);
+    loop->io_stats.total_requests++;
+    ppdb_mutex_unlock(loop->lock);
+
     return PPDB_OK;
 }
 
