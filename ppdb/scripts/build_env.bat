@@ -1,4 +1,8 @@
 @echo off
+rem @cursor:protected
+rem This file is considered semi-read-only by Cursor AI.
+rem Any modifications should be discussed and confirmed before applying.
+
 rem ===== Environment Variables and Common Functions =====
 
 rem Set paths (using absolute paths)
@@ -53,19 +57,19 @@ set "LIBS=%BUILD_DIR%\crt.o %BUILD_DIR%\ape.o %BUILD_DIR%\cosmopolitan.a"
 
 rem Check runtime files
 if not exist "%BUILD_DIR%\crt.o" (
-    echo Error: Missing runtime files. Please run setup.bat first
+    echo Error: Missing runtime files crt.o
     exit /b 1
 )
 if not exist "%BUILD_DIR%\ape.o" (
-    echo Error: Missing runtime files. Please run setup.bat first
+    echo Error: Missing runtime files ape.o
     exit /b 1
 )
 if not exist "%BUILD_DIR%\cosmopolitan.a" (
-    echo Error: Missing runtime files. Please run setup.bat first
+    echo Error: Missing runtime files cosmopolitan.a
     exit /b 1
 )
 if not exist "%BUILD_DIR%\ape.lds" (
-    echo Error: Missing runtime files. Please run setup.bat first
+    echo Error: Missing runtime files ape.lds
     exit /b 1
 )
 

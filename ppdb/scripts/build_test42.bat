@@ -1,4 +1,8 @@
 @echo off
+rem @cursor:protected
+rem This file is considered semi-read-only by Cursor AI.
+rem Any modifications should be discussed and confirmed before applying.
+
 setlocal EnableDelayedExpansion
 
 rem Get build mode from parameter
