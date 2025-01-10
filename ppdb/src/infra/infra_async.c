@@ -36,7 +36,13 @@ extern struct {
 
 static bool queue_is_empty(infra_async_queue_t* queue) {
     if (!queue) return true;
-    return queue->size == 0;
+    
+    // 加锁保护
+    infra_platform_mutex_lock(queue->mutex);
+    bool is_empty = (queue->size == 0);
+    infra_platform_mutex_unlock(queue->mutex);
+    
+    return is_empty;
 }
 
 static void queue_init(infra_async_queue_t* queue) {
@@ -124,9 +130,14 @@ static infra_error_t queue_pop(infra_async_queue_t* queue, infra_async_task_t** 
     // 加锁
     infra_platform_mutex_lock(queue->mutex);
     
-    // 等待队列非空
+    // 等待队列非空或超时
     while (queue->size == 0) {
-        infra_platform_cond_wait(queue->not_empty, queue->mutex);
+        // 等待条件变量，超时时间为1ms
+        infra_error_t err = infra_platform_cond_timedwait(queue->not_empty, queue->mutex, 1000);
+        if (err == INFRA_ERROR_TIMEOUT) {
+            infra_platform_mutex_unlock(queue->mutex);
+            return err;
+        }
     }
     
     // 从队列头部取出节点
@@ -201,22 +212,21 @@ static infra_error_t process_task(infra_async_task_t* task) {
     if (!task) return INFRA_ERROR_INVALID;
     
     infra_time_t start_time = infra_time_monotonic();
-    infra_error_t result = INFRA_ERROR_INVALID;
+    infra_error_t result = INFRA_OK;
     
-    // 简化处理逻辑，不再区分处理方式
     switch (task->type) {
         case INFRA_ASYNC_READ:
-            // TODO: 实现读操作
+            // 暂时返回成功，因为还没实现真正的读操作
             result = INFRA_OK;
             break;
             
         case INFRA_ASYNC_WRITE:
-            // TODO: 实现写操作
+            // 暂时返回成功，因为还没实现真正的写操作
             result = INFRA_OK;
             break;
             
         case INFRA_ASYNC_EVENT:
-            // TODO: 实现事件处理
+            // 事件类型任务直接返回成功
             result = INFRA_OK;
             break;
             
@@ -243,11 +253,19 @@ static void* worker_thread(void* arg) {
         infra_async_task_t* task = NULL;
         infra_error_t result = queue_pop(&async->task_queue, &task);
         
-        if (result == INFRA_OK && task) {
-            result = process_task(task);
-            if (task->callback) {
-                task->callback(task, result);
-            }
+        if (result == INFRA_ERROR_TIMEOUT) {
+            // 超时继续尝试
+            continue;
+        } else if (result != INFRA_OK || !task) {
+            // 其他错误，短暂休眠后继续
+            usleep(1000);
+            continue;
+        }
+        
+        // 处理任务
+        result = process_task(task);
+        if (task->callback) {
+            task->callback(task, result);
         }
     }
     
@@ -266,6 +284,9 @@ infra_error_t infra_async_init(infra_async_t* async, const infra_config_t* confi
     
     // 初始化任务队列
     queue_init(&async->task_queue);
+    
+    // 设置初始状态
+    async->stop = false;
     
     // 创建工作线程
     infra_error_t err = infra_thread_create(&async->worker, worker_thread, async);
@@ -297,23 +318,19 @@ infra_error_t infra_async_submit(infra_async_t* async, infra_async_task_t* task)
 infra_error_t infra_async_run(infra_async_t* async, uint32_t timeout_ms) {
     if (!async) return INFRA_ERROR_INVALID;
     
-    // 启动工作线程
-    async->stop = false;
+    // 启动工作线程（如果还没启动）
+    if (async->stop) {
+        async->stop = false;
+        infra_error_t err = infra_thread_create(&async->worker, worker_thread, async);
+        if (err != INFRA_OK) {
+            return err;
+        }
+    }
     
     // 等待任务完成或超时
     infra_time_t start_time = infra_time_monotonic();
     while (!async->stop) {
-        infra_async_task_t* task = NULL;
-        infra_error_t result = queue_pop(&async->task_queue, &task);
-        
-        if (result == INFRA_OK && task) {
-            result = process_task(task);
-            if (task->callback) {
-                task->callback(task, result);
-            }
-        }
-        
-        // 检查超时
+        // 检查是否超时
         if (timeout_ms > 0) {
             infra_time_t current_time = infra_time_monotonic();
             if (current_time - start_time >= timeout_ms * 1000) {  // 转换为微秒
@@ -321,10 +338,14 @@ infra_error_t infra_async_run(infra_async_t* async, uint32_t timeout_ms) {
             }
         }
         
-        // 如果队列为空，退出
+        // 检查队列是否为空
         if (queue_is_empty(&async->task_queue)) {
-            break;
+            // 队列为空，说明所有任务都已完成
+            return INFRA_OK;
         }
+        
+        // 等待一小段时间
+        usleep(100);  // 减少等待时间到0.1ms
     }
     
     return INFRA_OK;
