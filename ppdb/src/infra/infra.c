@@ -723,3 +723,41 @@ bool infra_queue_empty(const infra_queue_t* queue) {
     return queue ? queue->list.size == 0 : true;
 }
 
+//-----------------------------------------------------------------------------
+// IO Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_printf(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    int ret = vprintf(format, args);
+    va_end(args);
+    return ret >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+infra_error_t infra_dprintf(int fd, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    int ret = vdprintf(fd, format, args);
+    va_end(args);
+    return ret >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+infra_error_t infra_puts(const char* str) {
+    return puts(str) >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+infra_error_t infra_putchar(int ch) {
+    return putchar(ch) >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+infra_error_t infra_io_read(int fd, void* buf, size_t count) {
+    ssize_t ret = read(fd, buf, count);
+    return ret >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+infra_error_t infra_io_write(int fd, const void* buf, size_t count) {
+    ssize_t ret = write(fd, buf, count);
+    return ret >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+}
+

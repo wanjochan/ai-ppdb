@@ -104,6 +104,17 @@ size_t infra_buffer_writable(const infra_buffer_t* buf);
 void infra_buffer_reset(infra_buffer_t* buf);
 
 //-----------------------------------------------------------------------------
+// IO Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_printf(const char* format, ...);
+infra_error_t infra_dprintf(int fd, const char* format, ...);
+infra_error_t infra_puts(const char* str);
+infra_error_t infra_putchar(int ch);
+infra_error_t infra_io_read(int fd, void* buf, size_t count);
+infra_error_t infra_io_write(int fd, const void* buf, size_t count);
+
+//-----------------------------------------------------------------------------
 // Logging
 //-----------------------------------------------------------------------------
 
@@ -155,5 +166,14 @@ void infra_stats_update(infra_stats_t* stats, bool success, uint64_t latency_us,
                        size_t bytes, infra_error_t error);
 void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src);
 void infra_stats_print(const infra_stats_t* stats, const char* prefix);
+
+//-----------------------------------------------------------------------------
+// Time Management
+//-----------------------------------------------------------------------------
+
+infra_time_t infra_time_now(void);
+infra_time_t infra_time_monotonic(void);
+void infra_time_sleep(uint32_t ms);
+void infra_time_yield(void);
 
 #endif /* INFRA_H */

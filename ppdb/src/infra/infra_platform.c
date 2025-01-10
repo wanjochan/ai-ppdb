@@ -7,407 +7,334 @@
 #include "internal/infra/infra_platform.h"
 
 //-----------------------------------------------------------------------------
-// Thread Management Implementation
+// Platform-specific Functions
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_thread_create(infra_thread_t* thread, void* (*func)(void*), void* arg) {
-    if (!thread || !func) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    pthread_t* handle = infra_malloc(sizeof(pthread_t));
-    if (!handle) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    if (pthread_create(handle, NULL, func, arg) != 0) {
-        infra_free(handle);
-        return INFRA_ERROR_SYSTEM;
-    }
-
-    *thread = handle;
+infra_error_t infra_platform_init(void) {
     return INFRA_OK;
 }
 
-infra_error_t infra_thread_join(infra_thread_t thread, void** retval) {
-    if (!thread) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    pthread_t* handle = (pthread_t*)thread;
-    int ret = pthread_join(*handle, retval);
-    infra_free(handle);
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+void infra_platform_cleanup(void) {
 }
 
-infra_error_t infra_thread_detach(infra_thread_t thread) {
-    if (!thread) {
+infra_error_t infra_platform_get_pid(infra_pid_t* pid) {
+    if (!pid) {
         return INFRA_ERROR_INVALID;
     }
-
-    pthread_t* handle = (pthread_t*)thread;
-    int ret = pthread_detach(*handle);
-    infra_free(handle);
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
-}
-
-infra_error_t infra_mutex_create(infra_mutex_t* mutex) {
-    if (!mutex) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    pthread_mutex_t* handle = infra_malloc(sizeof(pthread_mutex_t));
-    if (!handle) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    if (pthread_mutex_init(handle, NULL) != 0) {
-        infra_free(handle);
-        return INFRA_ERROR_SYSTEM;
-    }
-
-    *mutex = handle;
+    *pid = getpid();
     return INFRA_OK;
 }
 
-infra_error_t infra_mutex_destroy(infra_mutex_t mutex) {
-    if (!mutex) {
+infra_error_t infra_platform_get_tid(infra_tid_t* tid) {
+    if (!tid) {
+        return INFRA_ERROR_INVALID;
+    }
+    *tid = gettid();
+    return INFRA_OK;
+}
+
+infra_error_t infra_platform_sleep(uint32_t ms) {
+    usleep(ms * 1000);
+    return INFRA_OK;
+}
+
+infra_error_t infra_platform_yield(void) {
+    yield();
+    return INFRA_OK;
+}
+
+infra_error_t infra_platform_get_time(infra_time_t* time) {
+    if (!time) {
+        return INFRA_ERROR_INVALID;
+    }
+    *time = now();
+    return INFRA_OK;
+}
+
+infra_error_t infra_platform_get_monotonic_time(infra_time_t* time) {
+    if (!time) {
+        return INFRA_ERROR_INVALID;
+    }
+    *time = nowl();
+    return INFRA_OK;
+}
+
+//-----------------------------------------------------------------------------
+// Thread Management
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_platform_thread_create(void** handle, infra_thread_func_t func, void* arg) {
+    if (!handle || !func) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_mutex_t* handle = (pthread_mutex_t*)mutex;
-    int ret = pthread_mutex_destroy(handle);
-    infra_free(handle);
+    pthread_t* pthread = infra_malloc(sizeof(pthread_t));
+    if (!pthread) {
+        return INFRA_ERROR_MEMORY;
+    }
+
+    if (pthread_create(pthread, NULL, (void* (*)(void*))func, arg) != 0) {
+        infra_free(pthread);
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    *handle = pthread;
+    return INFRA_OK;
+}
+
+infra_error_t infra_platform_thread_join(void* handle) {
+    if (!handle) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    pthread_t* pthread = (pthread_t*)handle;
+    int ret = pthread_join(*pthread, NULL);
+    infra_free(pthread);
     return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_mutex_lock(infra_mutex_t mutex) {
-    if (!mutex) {
+infra_error_t infra_platform_thread_detach(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_mutex_t* handle = (pthread_mutex_t*)mutex;
-    return (pthread_mutex_lock(handle) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    pthread_t* pthread = (pthread_t*)handle;
+    int ret = pthread_detach(*pthread);
+    infra_free(pthread);
+    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_mutex_unlock(infra_mutex_t mutex) {
-    if (!mutex) {
+//-----------------------------------------------------------------------------
+// Mutex Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_platform_mutex_create(void** handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_mutex_t* handle = (pthread_mutex_t*)mutex;
-    return (pthread_mutex_unlock(handle) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    pthread_mutex_t* mutex = infra_malloc(sizeof(pthread_mutex_t));
+    if (!mutex) {
+        return INFRA_ERROR_MEMORY;
+    }
+
+    if (pthread_mutex_init(mutex, NULL) != 0) {
+        infra_free(mutex);
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    *handle = mutex;
+    return INFRA_OK;
 }
 
-infra_error_t infra_mutex_trylock(infra_mutex_t mutex) {
-    if (!mutex) {
+void infra_platform_mutex_destroy(void* handle) {
+    if (!handle) {
+        return;
+    }
+
+    pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
+    pthread_mutex_destroy(mutex);
+    infra_free(mutex);
+}
+
+infra_error_t infra_platform_mutex_lock(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_mutex_t* handle = (pthread_mutex_t*)mutex;
-    int ret = pthread_mutex_trylock(handle);
-    
+    pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
+    return (pthread_mutex_lock(mutex) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+}
+
+infra_error_t infra_platform_mutex_trylock(void* handle) {
+    if (!handle) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
+    int ret = pthread_mutex_trylock(mutex);
     if (ret == EBUSY) {
         return INFRA_ERROR_BUSY;
     }
     return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_cond_create(infra_cond_t* cond) {
-    if (!cond) {
+infra_error_t infra_platform_mutex_unlock(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_cond_t* handle = infra_malloc(sizeof(pthread_cond_t));
+    pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
+    return (pthread_mutex_unlock(mutex) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+}
+
+//-----------------------------------------------------------------------------
+// Condition Variable Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_platform_cond_create(void** handle) {
     if (!handle) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    pthread_cond_t* cond = infra_malloc(sizeof(pthread_cond_t));
+    if (!cond) {
         return INFRA_ERROR_MEMORY;
     }
 
-    if (pthread_cond_init(handle, NULL) != 0) {
-        infra_free(handle);
+    if (pthread_cond_init(cond, NULL) != 0) {
+        infra_free(cond);
         return INFRA_ERROR_SYSTEM;
     }
 
-    *cond = handle;
+    *handle = cond;
     return INFRA_OK;
 }
 
-infra_error_t infra_cond_destroy(infra_cond_t cond) {
-    if (!cond) {
-        return INFRA_ERROR_INVALID;
+void infra_platform_cond_destroy(void* handle) {
+    if (!handle) {
+        return;
     }
 
-    pthread_cond_t* handle = (pthread_cond_t*)cond;
-    int ret = pthread_cond_destroy(handle);
-    infra_free(handle);
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    pthread_cond_t* cond = (pthread_cond_t*)handle;
+    pthread_cond_destroy(cond);
+    infra_free(cond);
 }
 
-infra_error_t infra_cond_wait(infra_cond_t cond, infra_mutex_t mutex) {
-    if (!cond || !mutex) {
+infra_error_t infra_platform_cond_wait(void* cond_handle, void* mutex_handle) {
+    if (!cond_handle || !mutex_handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_cond_t* cond_handle = (pthread_cond_t*)cond;
-    pthread_mutex_t* mutex_handle = (pthread_mutex_t*)mutex;
-    return (pthread_cond_wait(cond_handle, mutex_handle) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    pthread_cond_t* cond = (pthread_cond_t*)cond_handle;
+    pthread_mutex_t* mutex = (pthread_mutex_t*)mutex_handle;
+    return (pthread_cond_wait(cond, mutex) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_cond_timedwait(infra_cond_t cond, infra_mutex_t mutex, const struct timespec* ts) {
-    if (!cond || !mutex || !ts) {
+infra_error_t infra_platform_cond_timedwait(void* cond_handle, void* mutex_handle, uint64_t timeout_ms) {
+    if (!cond_handle || !mutex_handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_cond_t* cond_handle = (pthread_cond_t*)cond;
-    pthread_mutex_t* mutex_handle = (pthread_mutex_t*)mutex;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += timeout_ms / 1000;
+    ts.tv_nsec += (timeout_ms % 1000) * 1000000;
+    if (ts.tv_nsec >= 1000000000) {
+        ts.tv_sec++;
+        ts.tv_nsec -= 1000000000;
+    }
+
+    pthread_cond_t* cond = (pthread_cond_t*)cond_handle;
+    pthread_mutex_t* mutex = (pthread_mutex_t*)mutex_handle;
+    int ret = pthread_cond_timedwait(cond, mutex, &ts);
     
-    int ret = pthread_cond_timedwait(cond_handle, mutex_handle, ts);
     if (ret == ETIMEDOUT) {
         return INFRA_ERROR_TIMEOUT;
     }
     return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_cond_signal(infra_cond_t cond) {
-    if (!cond) {
+infra_error_t infra_platform_cond_signal(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_cond_t* handle = (pthread_cond_t*)cond;
-    return (pthread_cond_signal(handle) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    pthread_cond_t* cond = (pthread_cond_t*)handle;
+    return (pthread_cond_signal(cond) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_cond_broadcast(infra_cond_t cond) {
-    if (!cond) {
+infra_error_t infra_platform_cond_broadcast(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    pthread_cond_t* handle = (pthread_cond_t*)cond;
-    return (pthread_cond_broadcast(handle) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    pthread_cond_t* cond = (pthread_cond_t*)handle;
+    return (pthread_cond_broadcast(cond) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
 //-----------------------------------------------------------------------------
-// File System Operations Implementation
+// Read-Write Lock Operations
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_file_open(const char* path, int flags, int mode, int* fd) {
-    if (!path || !fd) {
+infra_error_t infra_platform_rwlock_create(void** handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    *fd = open(path, flags, mode);
-    return (*fd >= 0) ? INFRA_OK : INFRA_ERROR_IO;
+    pthread_rwlock_t* rwlock = infra_malloc(sizeof(pthread_rwlock_t));
+    if (!rwlock) {
+        return INFRA_ERROR_MEMORY;
+    }
+
+    if (pthread_rwlock_init(rwlock, NULL) != 0) {
+        infra_free(rwlock);
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    *handle = rwlock;
+    return INFRA_OK;
 }
 
-infra_error_t infra_file_close(int fd) {
-    return (close(fd) == 0) ? INFRA_OK : INFRA_ERROR_IO;
+void infra_platform_rwlock_destroy(void* handle) {
+    if (!handle) {
+        return;
+    }
+
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    pthread_rwlock_destroy(rwlock);
+    infra_free(rwlock);
 }
 
-infra_error_t infra_file_read(int fd, void* buf, size_t count, ssize_t* nread) {
-    if (!buf || !nread) {
+infra_error_t infra_platform_rwlock_rdlock(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    *nread = read(fd, buf, count);
-    return (*nread >= 0) ? INFRA_OK : INFRA_ERROR_IO;
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    return (pthread_rwlock_rdlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_file_write(int fd, const void* buf, size_t count, ssize_t* nwritten) {
-    if (!buf || !nwritten) {
+infra_error_t infra_platform_rwlock_tryrdlock(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    *nwritten = write(fd, buf, count);
-    return (*nwritten >= 0) ? INFRA_OK : INFRA_ERROR_IO;
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    int ret = pthread_rwlock_tryrdlock(rwlock);
+    if (ret == EBUSY) {
+        return INFRA_ERROR_BUSY;
+    }
+    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_file_seek(int fd, off_t offset, int whence, off_t* new_offset) {
-    if (!new_offset) {
+infra_error_t infra_platform_rwlock_wrlock(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    *new_offset = lseek(fd, offset, whence);
-    return (*new_offset >= 0) ? INFRA_OK : INFRA_ERROR_IO;
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    return (pthread_rwlock_wrlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_file_sync(int fd) {
-    return (fsync(fd) == 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t infra_file_truncate(int fd, off_t length) {
-    return (ftruncate(fd, length) == 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t infra_file_stat(const char* path, struct stat* buf) {
-    if (!path || !buf) {
+infra_error_t infra_platform_rwlock_trywrlock(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return (stat(path, buf) == 0) ? INFRA_OK : INFRA_ERROR_IO;
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    int ret = pthread_rwlock_trywrlock(rwlock);
+    if (ret == EBUSY) {
+        return INFRA_ERROR_BUSY;
+    }
+    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
-infra_error_t infra_file_remove(const char* path) {
-    if (!path) {
+infra_error_t infra_platform_rwlock_unlock(void* handle) {
+    if (!handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return (unlink(path) == 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t infra_file_rename(const char* oldpath, const char* newpath) {
-    if (!oldpath || !newpath) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    return (rename(oldpath, newpath) == 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-//-----------------------------------------------------------------------------
-// IO Operations Implementation
-//-----------------------------------------------------------------------------
-
-infra_error_t infra_printf(const char* format, ...) {
-    if (!format) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    va_list args;
-    va_start(args, format);
-    int ret = vprintf(format, args);
-    va_end(args);
-
-    return (ret >= 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t infra_dprintf(int fd, const char* format, ...) {
-    if (!format) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    va_list args;
-    va_start(args, format);
-    int ret = vdprintf(fd, format, args);
-    va_end(args);
-
-    return (ret >= 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t infra_puts(const char* str) {
-    if (!str) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    return (puts(str) >= 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t infra_putchar(int ch) {
-    return (putchar(ch) >= 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-//-----------------------------------------------------------------------------
-// Network Operations Implementation
-//-----------------------------------------------------------------------------
-
-infra_error_t infra_socket_create(int domain, int type, int protocol, int* fd) {
-    if (!fd) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    *fd = socket(domain, type, protocol);
-    return (*fd >= 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_bind(int fd, const struct sockaddr* addr, socklen_t addrlen) {
-    if (!addr) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    return (bind(fd, addr, addrlen) == 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_listen(int fd, int backlog) {
-    return (listen(fd, backlog) == 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_accept(int fd, struct sockaddr* addr, socklen_t* addrlen, int* client_fd) {
-    if (!client_fd) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    *client_fd = accept(fd, addr, addrlen);
-    return (*client_fd >= 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_connect(int fd, const struct sockaddr* addr, socklen_t addrlen) {
-    if (!addr) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    return (connect(fd, addr, addrlen) == 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_close(int fd) {
-    return (close(fd) == 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_shutdown(int fd, int how) {
-    return (shutdown(fd, how) == 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_send(int fd, const void* buf, size_t len, int flags, ssize_t* nsent) {
-    if (!buf || !nsent) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    *nsent = send(fd, buf, len, flags);
-    return (*nsent >= 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_recv(int fd, void* buf, size_t len, int flags, ssize_t* nrecv) {
-    if (!buf || !nrecv) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    *nrecv = recv(fd, buf, len, flags);
-    return (*nrecv >= 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_sendto(int fd, const void* buf, size_t len, int flags,
-                                 const struct sockaddr* dest_addr, socklen_t addrlen,
-                                 ssize_t* nsent) {
-    if (!buf || !dest_addr || !nsent) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    *nsent = sendto(fd, buf, len, flags, dest_addr, addrlen);
-    return (*nsent >= 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_recvfrom(int fd, void* buf, size_t len, int flags,
-                                   struct sockaddr* src_addr, socklen_t* addrlen,
-                                   ssize_t* nrecv) {
-    if (!buf || !nrecv) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    *nrecv = recvfrom(fd, buf, len, flags, src_addr, addrlen);
-    return (*nrecv >= 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_setsockopt(int fd, int level, int optname,
-                                     const void* optval, socklen_t optlen) {
-    if (!optval) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    return (setsockopt(fd, level, optname, optval, optlen) == 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
-}
-
-infra_error_t infra_socket_getsockopt(int fd, int level, int optname,
-                                     void* optval, socklen_t* optlen) {
-    if (!optval || !optlen) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    return (getsockopt(fd, level, optname, optval, optlen) == 0) ? INFRA_OK : INFRA_ERROR_NETWORK;
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    return (pthread_rwlock_unlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 } 

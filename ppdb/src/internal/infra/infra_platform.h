@@ -9,63 +9,88 @@
 #ifndef INFRA_PLATFORM_H
 #define INFRA_PLATFORM_H
 
-// Basic types
-typedef unsigned long long u64;
-typedef unsigned int u32;
-typedef unsigned short u16;
-typedef unsigned char u8;
+#include "internal/infra/infra.h"
 
-typedef long long i64;
-typedef int i32;
-typedef short i16;
-typedef char i8;
+//-----------------------------------------------------------------------------
+// Platform Detection
+//-----------------------------------------------------------------------------
 
-// Common platform-independent types
-typedef int infra_error_t;
-typedef unsigned int infra_flags_t;
+#if defined(_WIN32) || defined(_WIN64)
+    #define INFRA_PLATFORM_WINDOWS
+    typedef unsigned long infra_pid_t;
+    typedef unsigned long infra_tid_t;
+#else
+    #define INFRA_PLATFORM_UNIX
+    typedef long infra_pid_t;
+    typedef long infra_tid_t;
+#endif
 
-// Event types (from cosmopolitan)
-#define INFRA_EVENT_READ  0x1
-#define INFRA_EVENT_WRITE 0x2
+//-----------------------------------------------------------------------------
+// Event Types
+//-----------------------------------------------------------------------------
+
+#define INFRA_EVENT_NONE   0x00
+#define INFRA_EVENT_READ   0x01
+#define INFRA_EVENT_WRITE  0x02
+#define INFRA_EVENT_ERROR  0x04
+#define INFRA_EVENT_TIMER  0x08
+#define INFRA_EVENT_SIGNAL 0x10
+
+//-----------------------------------------------------------------------------
+// Platform-specific Functions
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_platform_init(void);
+void infra_platform_cleanup(void);
+
+infra_error_t infra_platform_get_pid(infra_pid_t* pid);
+infra_error_t infra_platform_get_tid(infra_tid_t* tid);
+
+infra_error_t infra_platform_sleep(uint32_t ms);
+infra_error_t infra_platform_yield(void);
+
+infra_error_t infra_platform_get_time(infra_time_t* time);
+infra_error_t infra_platform_get_monotonic_time(infra_time_t* time);
 
 //-----------------------------------------------------------------------------
 // Thread Management
 //-----------------------------------------------------------------------------
-typedef void* infra_thread_t;
-typedef void* infra_mutex_t;
-typedef void* infra_cond_t;
-typedef void* infra_rwlock_t;
 
-infra_error_t infra_thread_create(infra_thread_t* thread, void* (*func)(void*), void* arg);
-infra_error_t infra_thread_join(infra_thread_t thread, void** retval);
-infra_error_t infra_thread_detach(infra_thread_t thread);
-
-infra_error_t infra_mutex_create(infra_mutex_t* mutex);
-infra_error_t infra_mutex_destroy(infra_mutex_t mutex);
-infra_error_t infra_mutex_lock(infra_mutex_t mutex);
-infra_error_t infra_mutex_unlock(infra_mutex_t mutex);
-infra_error_t infra_mutex_trylock(infra_mutex_t mutex);
-
-infra_error_t infra_cond_create(infra_cond_t* cond);
-infra_error_t infra_cond_destroy(infra_cond_t cond);
-infra_error_t infra_cond_wait(infra_cond_t cond, infra_mutex_t mutex);
-infra_error_t infra_cond_signal(infra_cond_t cond);
-infra_error_t infra_cond_broadcast(infra_cond_t cond);
-
-infra_error_t infra_rwlock_create(infra_rwlock_t* rwlock);
-infra_error_t infra_rwlock_destroy(infra_rwlock_t rwlock);
-infra_error_t infra_rwlock_rdlock(infra_rwlock_t rwlock);
-infra_error_t infra_rwlock_wrlock(infra_rwlock_t rwlock);
-infra_error_t infra_rwlock_unlock(infra_rwlock_t rwlock);
+infra_error_t infra_platform_thread_create(void** handle, infra_thread_func_t func, void* arg);
+infra_error_t infra_platform_thread_join(void* handle);
+infra_error_t infra_platform_thread_detach(void* handle);
 
 //-----------------------------------------------------------------------------
-// System Information
+// Mutex Operations
 //-----------------------------------------------------------------------------
-infra_error_t infra_sys_cpu_count(int* count);
-infra_error_t infra_sys_page_size(size_t* size);
-infra_error_t infra_sys_memory_info(size_t* total, size_t* available);
-infra_error_t infra_sys_cpu_features(uint32_t* features);
-infra_error_t infra_sys_hostname(char* name, size_t size);
-infra_error_t infra_sys_username(char* name, size_t size);
+
+infra_error_t infra_platform_mutex_create(void** handle);
+void infra_platform_mutex_destroy(void* handle);
+infra_error_t infra_platform_mutex_lock(void* handle);
+infra_error_t infra_platform_mutex_trylock(void* handle);
+infra_error_t infra_platform_mutex_unlock(void* handle);
+
+//-----------------------------------------------------------------------------
+// Condition Variable Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_platform_cond_create(void** handle);
+void infra_platform_cond_destroy(void* handle);
+infra_error_t infra_platform_cond_wait(void* cond_handle, void* mutex_handle);
+infra_error_t infra_platform_cond_timedwait(void* cond_handle, void* mutex_handle, uint64_t timeout_ms);
+infra_error_t infra_platform_cond_signal(void* handle);
+infra_error_t infra_platform_cond_broadcast(void* handle);
+
+//-----------------------------------------------------------------------------
+// Read-Write Lock Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_platform_rwlock_create(void** handle);
+void infra_platform_rwlock_destroy(void* handle);
+infra_error_t infra_platform_rwlock_rdlock(void* handle);
+infra_error_t infra_platform_rwlock_tryrdlock(void* handle);
+infra_error_t infra_platform_rwlock_wrlock(void* handle);
+infra_error_t infra_platform_rwlock_trywrlock(void* handle);
+infra_error_t infra_platform_rwlock_unlock(void* handle);
 
 #endif /* INFRA_PLATFORM_H */ 

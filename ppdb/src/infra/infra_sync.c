@@ -33,54 +33,39 @@ infra_error_t infra_thread_create(infra_thread_t** thread,
     infra_memset(&new_thread->stats, 0, sizeof(new_thread->stats));
     infra_memset(new_thread->name, 0, sizeof(new_thread->name));
 
-    infra_error_t err = infra_thread_create(&new_thread->thread, func, arg);
+    infra_error_t err = infra_platform_thread_create(&new_thread->handle, func, arg);
     if (err != INFRA_OK) {
         infra_free(new_thread);
         return err;
     }
 
     new_thread->state = INFRA_THREAD_RUNNING;
-    new_thread->start_time = infra_time_monotonic_ms();
-
     *thread = new_thread;
     return INFRA_OK;
 }
 
 infra_error_t infra_thread_join(infra_thread_t* thread) {
-    if (!thread) {
+    if (!thread || !thread->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    infra_error_t err = infra_thread_join(thread->thread, NULL);
-    if (err != INFRA_OK) {
-        return err;
+    infra_error_t err = infra_platform_thread_join(thread->handle);
+    if (err == INFRA_OK) {
+        thread->state = INFRA_THREAD_STOPPED;
     }
-
-    thread->state = INFRA_THREAD_STOPPED;
-    thread->stop_time = infra_time_monotonic_ms();
-
-    return INFRA_OK;
+    return err;
 }
 
 infra_error_t infra_thread_detach(infra_thread_t* thread) {
-    if (!thread) {
+    if (!thread || !thread->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_thread_detach(thread->thread);
-}
-
-infra_error_t infra_thread_destroy(infra_thread_t* thread) {
-    if (!thread) {
-        return INFRA_ERROR_INVALID;
+    infra_error_t err = infra_platform_thread_detach(thread->handle);
+    if (err == INFRA_OK) {
+        thread->state = INFRA_THREAD_DETACHED;
     }
-
-    if (thread->state == INFRA_THREAD_RUNNING) {
-        return INFRA_ERROR_SYSTEM;
-    }
-
-    infra_free(thread);
-    return INFRA_OK;
+    return err;
 }
 
 //-----------------------------------------------------------------------------
@@ -97,7 +82,7 @@ infra_error_t infra_mutex_create(infra_mutex_t** mutex) {
         return INFRA_ERROR_MEMORY;
     }
 
-    infra_error_t err = infra_mutex_create(&new_mutex->mutex);
+    infra_error_t err = infra_platform_mutex_create(&new_mutex->handle);
     if (err != INFRA_OK) {
         infra_free(new_mutex);
         return err;
@@ -107,42 +92,37 @@ infra_error_t infra_mutex_create(infra_mutex_t** mutex) {
     return INFRA_OK;
 }
 
-infra_error_t infra_mutex_destroy(infra_mutex_t* mutex) {
-    if (!mutex) {
-        return INFRA_ERROR_INVALID;
+void infra_mutex_destroy(infra_mutex_t* mutex) {
+    if (!mutex || !mutex->handle) {
+        return;
     }
 
-    infra_error_t err = infra_mutex_destroy(mutex->mutex);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
+    infra_platform_mutex_destroy(mutex->handle);
     infra_free(mutex);
-    return INFRA_OK;
 }
 
 infra_error_t infra_mutex_lock(infra_mutex_t* mutex) {
-    if (!mutex) {
+    if (!mutex || !mutex->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_mutex_lock(mutex->mutex);
+    return infra_platform_mutex_lock(mutex->handle);
 }
 
 infra_error_t infra_mutex_unlock(infra_mutex_t* mutex) {
-    if (!mutex) {
+    if (!mutex || !mutex->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_mutex_unlock(mutex->mutex);
+    return infra_platform_mutex_unlock(mutex->handle);
 }
 
 infra_error_t infra_mutex_trylock(infra_mutex_t* mutex) {
-    if (!mutex) {
+    if (!mutex || !mutex->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_mutex_trylock(mutex->mutex);
+    return infra_platform_mutex_trylock(mutex->handle);
 }
 
 //-----------------------------------------------------------------------------
@@ -159,7 +139,7 @@ infra_error_t infra_cond_create(infra_cond_t** cond) {
         return INFRA_ERROR_MEMORY;
     }
 
-    infra_error_t err = infra_cond_create(&new_cond->cond);
+    infra_error_t err = infra_platform_cond_create(&new_cond->handle);
     if (err != INFRA_OK) {
         infra_free(new_cond);
         return err;
@@ -169,51 +149,45 @@ infra_error_t infra_cond_create(infra_cond_t** cond) {
     return INFRA_OK;
 }
 
-infra_error_t infra_cond_destroy(infra_cond_t* cond) {
-    if (!cond) {
-        return INFRA_ERROR_INVALID;
+void infra_cond_destroy(infra_cond_t* cond) {
+    if (!cond || !cond->handle) {
+        return;
     }
 
-    infra_error_t err = infra_cond_destroy(cond->cond);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
+    infra_platform_cond_destroy(cond->handle);
     infra_free(cond);
-    return INFRA_OK;
 }
 
 infra_error_t infra_cond_wait(infra_cond_t* cond, infra_mutex_t* mutex) {
-    if (!cond || !mutex) {
+    if (!cond || !cond->handle || !mutex || !mutex->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_cond_wait(cond->cond, mutex->mutex);
+    return infra_platform_cond_wait(cond->handle, mutex->handle);
+}
+
+infra_error_t infra_cond_timedwait(infra_cond_t* cond, infra_mutex_t* mutex, uint64_t timeout_ms) {
+    if (!cond || !cond->handle || !mutex || !mutex->handle) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    return infra_platform_cond_timedwait(cond->handle, mutex->handle, timeout_ms);
 }
 
 infra_error_t infra_cond_signal(infra_cond_t* cond) {
-    if (!cond) {
+    if (!cond || !cond->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_cond_signal(cond->cond);
+    return infra_platform_cond_signal(cond->handle);
 }
 
 infra_error_t infra_cond_broadcast(infra_cond_t* cond) {
-    if (!cond) {
+    if (!cond || !cond->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_cond_broadcast(cond->cond);
-}
-
-infra_error_t infra_cond_timedwait(infra_cond_t* cond, infra_mutex_t* mutex,
-                                  const struct timespec* abstime) {
-    if (!cond || !mutex || !abstime) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    return infra_cond_timedwait(cond->cond, mutex->mutex, abstime);
+    return infra_platform_cond_broadcast(cond->handle);
 }
 
 //-----------------------------------------------------------------------------
@@ -230,7 +204,7 @@ infra_error_t infra_rwlock_create(infra_rwlock_t** rwlock) {
         return INFRA_ERROR_MEMORY;
     }
 
-    infra_error_t err = infra_rwlock_create(&new_rwlock->rwlock);
+    infra_error_t err = infra_platform_rwlock_create(&new_rwlock->handle);
     if (err != INFRA_OK) {
         infra_free(new_rwlock);
         return err;
@@ -240,42 +214,53 @@ infra_error_t infra_rwlock_create(infra_rwlock_t** rwlock) {
     return INFRA_OK;
 }
 
-infra_error_t infra_rwlock_destroy(infra_rwlock_t* rwlock) {
-    if (!rwlock) {
-        return INFRA_ERROR_INVALID;
+void infra_rwlock_destroy(infra_rwlock_t* rwlock) {
+    if (!rwlock || !rwlock->handle) {
+        return;
     }
 
-    infra_error_t err = infra_rwlock_destroy(rwlock->rwlock);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
+    infra_platform_rwlock_destroy(rwlock->handle);
     infra_free(rwlock);
-    return INFRA_OK;
 }
 
 infra_error_t infra_rwlock_rdlock(infra_rwlock_t* rwlock) {
-    if (!rwlock) {
+    if (!rwlock || !rwlock->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_rwlock_rdlock(rwlock->rwlock);
+    return infra_platform_rwlock_rdlock(rwlock->handle);
+}
+
+infra_error_t infra_rwlock_tryrdlock(infra_rwlock_t* rwlock) {
+    if (!rwlock || !rwlock->handle) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    return infra_platform_rwlock_tryrdlock(rwlock->handle);
 }
 
 infra_error_t infra_rwlock_wrlock(infra_rwlock_t* rwlock) {
-    if (!rwlock) {
+    if (!rwlock || !rwlock->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_rwlock_wrlock(rwlock->rwlock);
+    return infra_platform_rwlock_wrlock(rwlock->handle);
+}
+
+infra_error_t infra_rwlock_trywrlock(infra_rwlock_t* rwlock) {
+    if (!rwlock || !rwlock->handle) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    return infra_platform_rwlock_trywrlock(rwlock->handle);
 }
 
 infra_error_t infra_rwlock_unlock(infra_rwlock_t* rwlock) {
-    if (!rwlock) {
+    if (!rwlock || !rwlock->handle) {
         return INFRA_ERROR_INVALID;
     }
 
-    return infra_rwlock_unlock(rwlock->rwlock);
+    return infra_platform_rwlock_unlock(rwlock->handle);
 }
 
 //-----------------------------------------------------------------------------
@@ -283,14 +268,10 @@ infra_error_t infra_rwlock_unlock(infra_rwlock_t* rwlock) {
 //-----------------------------------------------------------------------------
 
 infra_error_t infra_yield(void) {
-    struct timespec ts = {0, 0};
-    return infra_sleep(&ts);
+    return infra_platform_yield();
 }
 
 infra_error_t infra_sleep(uint32_t milliseconds) {
-    struct timespec ts;
-    ts.tv_sec = milliseconds / 1000;
-    ts.tv_nsec = (milliseconds % 1000) * 1000000;
-    return infra_sleep(&ts);
+    return infra_platform_sleep(milliseconds);
 }
 

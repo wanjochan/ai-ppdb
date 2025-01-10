@@ -104,41 +104,6 @@ test/
 └── ppdb/                     # 产品集成测试
 ```
 
-## 重构指南
-
-1. **代码迁移**
-   ```
-   当前代码 => 新位置
-   base_core.inc.c    => infra/infra_core.c
-   base_struct.inc.c  => infra/infra_struct.c
-   base_sync.inc.c    => infra/infra_sync.c
-   base_async.inc.c   => infra/infra_async.c
-   base_timer.inc.c   => infra/infra_timer.c
-   base_net.inc.c     => infra/infra_peer.c
-   ```
-
-2. **核心接口**
-   ```c
-   // infra层示例
-   struct store_ops {
-       int (*open)(void* ctx);
-       int (*close)(void* ctx);
-       int (*get)(void* ctx, const char* key, void** value);
-       int (*set)(void* ctx, const char* key, const void* value);
-   };
-
-   // memkv层示例
-   struct memkv_store {
-       struct store_ops ops;  // 实现store接口
-       void* ctx;            // 存储上下文
-   };
-   ```
-
-3. **重构顺序**
-   - infra层：core => struct => sync => async => peer
-   - memkv层：store => peer
-   - ppdb层：libppdb => ppdb
-
 构建工具：
 scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
 scripts\build_{layer}_{module}.bat 用于构建指定层和模块的代码 （这个还没确定，可能还要讨论？）

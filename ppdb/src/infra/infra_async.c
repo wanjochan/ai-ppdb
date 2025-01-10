@@ -6,239 +6,291 @@
 #include "internal/infra/infra.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_async.h"
+#include "internal/infra/infra_sync.h"
 
 //-----------------------------------------------------------------------------
 // Internal Types
 //-----------------------------------------------------------------------------
 
-// Event loop structure
-struct infra_loop {
-    bool running;                  // Loop running flag
-    infra_mutex_t* lock;          // Loop lock
-    infra_event_t* events;        // Event list
-    infra_timer_t* timers;        // Timer list
-    void* backend;                // Platform-specific backend (epoll/kqueue/etc)
-    infra_stats_t stats;          // Statistics
+#define MAX_TASKS 1024
+
+typedef struct task_node {
+    infra_async_task_t task;
+    struct task_node* next;
+    bool cancelled;
+} task_node_t;
+
+struct infra_async_context {
+    infra_mutex_t* lock;
+    infra_cond_t* cond;
+    task_node_t* tasks;
+    task_node_t* free_list;
+    bool running;
+    bool stop_requested;
+    infra_stats_t stats;
 };
 
 //-----------------------------------------------------------------------------
-// Loop Management Implementation
+// Task Pool Management
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_loop_create(infra_loop_t** loop) {
-    if (!loop) {
-        return INFRA_ERR_PARAM;
-    }
-
-    infra_loop_t* new_loop = malloc(sizeof(infra_loop_t));
-    if (!new_loop) {
-        return INFRA_ERR_MEMORY;
-    }
-
-    memset(new_loop, 0, sizeof(infra_loop_t));
+static task_node_t* get_task_node(infra_async_context_t* ctx) {
+    task_node_t* node;
     
-    infra_error_t err = infra_mutex_create(&new_loop->lock);
+    infra_mutex_lock(ctx->lock);
+    if (ctx->free_list) {
+        node = ctx->free_list;
+        ctx->free_list = node->next;
+        infra_mutex_unlock(ctx->lock);
+        return node;
+    }
+    infra_mutex_unlock(ctx->lock);
+
+    node = malloc(sizeof(task_node_t));
+    if (!node) {
+        return NULL;
+    }
+    return node;
+}
+
+static void put_task_node(infra_async_context_t* ctx, task_node_t* node) {
+    infra_mutex_lock(ctx->lock);
+    node->next = ctx->free_list;
+    ctx->free_list = node;
+    infra_mutex_unlock(ctx->lock);
+}
+
+//-----------------------------------------------------------------------------
+// Async Context Implementation
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_async_init(infra_async_context_t** ctx) {
+    if (!ctx) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_async_context_t* new_ctx = malloc(sizeof(infra_async_context_t));
+    if (!new_ctx) {
+        return INFRA_ERROR_MEMORY;
+    }
+
+    memset(new_ctx, 0, sizeof(infra_async_context_t));
+
+    infra_error_t err = infra_mutex_create(&new_ctx->lock);
     if (err != INFRA_OK) {
-        free(new_loop);
+        free(new_ctx);
         return err;
     }
 
-    // Initialize platform-specific backend
-    err = infra_platform_backend_init(&new_loop->backend);
+    err = infra_cond_create(&new_ctx->cond);
     if (err != INFRA_OK) {
-        infra_mutex_destroy(new_loop->lock);
-        free(new_loop);
+        infra_mutex_destroy(new_ctx->lock);
+        free(new_ctx);
         return err;
     }
 
-    *loop = new_loop;
+    *ctx = new_ctx;
     return INFRA_OK;
 }
 
-infra_error_t infra_loop_destroy(infra_loop_t* loop) {
-    if (!loop) {
-        return INFRA_ERR_PARAM;
+void infra_async_destroy(infra_async_context_t* ctx) {
+    if (!ctx) {
+        return;
     }
 
-    if (loop->running) {
-        return INFRA_ERR_BUSY;
+    // Stop if running
+    if (ctx->running) {
+        infra_async_stop(ctx);
     }
 
-    // Cleanup all events
-    infra_event_t* event = loop->events;
-    while (event) {
-        infra_event_t* next = event->next;
-        infra_event_destroy(event);
-        event = next;
+    // Free all task nodes
+    task_node_t* node = ctx->tasks;
+    while (node) {
+        task_node_t* next = node->next;
+        free(node);
+        node = next;
     }
 
-    // Cleanup all timers
-    infra_timer_t* timer = loop->timers;
-    while (timer) {
-        infra_timer_t* next = timer->next;
-        infra_timer_destroy(timer);
-        timer = next;
+    node = ctx->free_list;
+    while (node) {
+        task_node_t* next = node->next;
+        free(node);
+        node = next;
     }
 
-    // Cleanup platform backend
-    infra_platform_backend_cleanup(loop->backend);
+    infra_cond_destroy(ctx->cond);
+    infra_mutex_destroy(ctx->lock);
+    free(ctx);
+}
 
-    infra_mutex_destroy(loop->lock);
-    free(loop);
+infra_error_t infra_async_submit(infra_async_context_t* ctx,
+                                infra_async_task_t* task) {
+    if (!ctx || !task) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    task_node_t* node = get_task_node(ctx);
+    if (!node) {
+        return INFRA_ERROR_MEMORY;
+    }
+
+    memset(node, 0, sizeof(task_node_t));
+    memcpy(&node->task, task, sizeof(infra_async_task_t));
+
+    infra_mutex_lock(ctx->lock);
+    node->next = ctx->tasks;
+    ctx->tasks = node;
+    infra_cond_signal(ctx->cond);
+    infra_mutex_unlock(ctx->lock);
+
     return INFRA_OK;
 }
 
-infra_error_t infra_loop_run(infra_loop_t* loop) {
-    if (!loop) {
-        return INFRA_ERR_PARAM;
+infra_error_t infra_async_cancel(infra_async_context_t* ctx,
+                                infra_async_task_t* task) {
+    if (!ctx || !task) {
+        return INFRA_ERROR_INVALID;
     }
 
-    infra_mutex_lock(loop->lock);
-    if (loop->running) {
-        infra_mutex_unlock(loop->lock);
-        return INFRA_ERR_BUSY;
+    infra_mutex_lock(ctx->lock);
+    task_node_t* node = ctx->tasks;
+    while (node) {
+        if (memcmp(&node->task, task, sizeof(infra_async_task_t)) == 0) {
+            node->cancelled = true;
+            break;
+        }
+        node = node->next;
     }
-    loop->running = true;
-    infra_mutex_unlock(loop->lock);
+    infra_mutex_unlock(ctx->lock);
 
-    while (loop->running) {
-        // Process timers
-        uint64_t now = infra_time_monotonic_ms();
-        infra_timer_t* timer = loop->timers;
-        while (timer) {
-            if (timer->next_expire <= now) {
-                if (timer->cb) {
-                    timer->cb(timer, timer->arg);
-                }
-                if (timer->repeat) {
-                    timer->next_expire = now + timer->interval;
-                } else {
-                    infra_timer_stop(timer);
-                }
+    return INFRA_OK;
+}
+
+static void process_io_task(task_node_t* node) {
+    infra_async_task_t* task = &node->task;
+    ssize_t ret;
+
+    switch (task->type) {
+        case INFRA_ASYNC_READ:
+            ret = read(task->io.fd, task->io.buffer, task->io.size);
+            if (ret < 0) {
+                task->callback(task, INFRA_ERROR_IO);
+            } else {
+                task->io.offset = ret;
+                task->callback(task, INFRA_OK);
             }
-            timer = timer->next;
+            break;
+
+        case INFRA_ASYNC_WRITE:
+            ret = write(task->io.fd, task->io.buffer, task->io.size);
+            if (ret < 0) {
+                task->callback(task, INFRA_ERROR_IO);
+            } else {
+                task->io.offset = ret;
+                task->callback(task, INFRA_OK);
+            }
+            break;
+
+        default:
+            task->callback(task, INFRA_ERROR_INVALID);
+            break;
+    }
+}
+
+static void process_event_task(task_node_t* node) {
+    infra_async_task_t* task = &node->task;
+    
+    if (task->event.event_fd >= 0) {
+        uint64_t value;
+        ssize_t ret = read(task->event.event_fd, &value, sizeof(value));
+        if (ret < 0) {
+            task->callback(task, INFRA_ERROR_IO);
+            return;
+        }
+    }
+
+    task->callback(task, INFRA_OK);
+}
+
+infra_error_t infra_async_run(infra_async_context_t* ctx, uint64_t timeout_ms) {
+    if (!ctx) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_mutex_lock(ctx->lock);
+    if (ctx->running) {
+        infra_mutex_unlock(ctx->lock);
+        return INFRA_ERROR_BUSY;
+    }
+    ctx->running = true;
+    ctx->stop_requested = false;
+    infra_mutex_unlock(ctx->lock);
+
+    uint64_t start_time = infra_time_monotonic();
+    bool timeout = false;
+
+    while (!ctx->stop_requested && !timeout) {
+        task_node_t* node = NULL;
+
+        infra_mutex_lock(ctx->lock);
+        if (!ctx->tasks) {
+            if (timeout_ms > 0) {
+                infra_cond_timedwait(ctx->cond, ctx->lock, timeout_ms);
+            } else {
+                infra_cond_wait(ctx->cond, ctx->lock);
+            }
         }
 
-        // Process events
-        infra_platform_backend_poll(loop->backend, 100);  // 100ms timeout
+        if (ctx->tasks) {
+            node = ctx->tasks;
+            ctx->tasks = node->next;
+        }
+        infra_mutex_unlock(ctx->lock);
+
+        if (node) {
+            if (!node->cancelled) {
+                switch (node->task.type) {
+                    case INFRA_ASYNC_READ:
+                    case INFRA_ASYNC_WRITE:
+                        process_io_task(node);
+                        break;
+
+                    case INFRA_ASYNC_EVENT:
+                        process_event_task(node);
+                        break;
+
+                    default:
+                        node->task.callback(&node->task, INFRA_ERROR_INVALID);
+                        break;
+                }
+            }
+            put_task_node(ctx, node);
+        }
+
+        if (timeout_ms > 0) {
+            uint64_t current_time = infra_time_monotonic();
+            if (current_time - start_time >= timeout_ms) {
+                timeout = true;
+            }
+        }
     }
+
+    infra_mutex_lock(ctx->lock);
+    ctx->running = false;
+    infra_mutex_unlock(ctx->lock);
 
     return INFRA_OK;
 }
 
-infra_error_t infra_loop_stop(infra_loop_t* loop) {
-    if (!loop) {
-        return INFRA_ERR_PARAM;
+infra_error_t infra_async_stop(infra_async_context_t* ctx) {
+    if (!ctx) {
+        return INFRA_ERROR_INVALID;
     }
 
-    infra_mutex_lock(loop->lock);
-    loop->running = false;
-    infra_mutex_unlock(loop->lock);
+    infra_mutex_lock(ctx->lock);
+    ctx->stop_requested = true;
+    infra_cond_signal(ctx->cond);
+    infra_mutex_unlock(ctx->lock);
 
     return INFRA_OK;
-}
-
-//-----------------------------------------------------------------------------
-// Event Management Implementation
-//-----------------------------------------------------------------------------
-
-infra_error_t infra_event_create(infra_loop_t* loop, int fd, 
-                                uint32_t events, infra_event_cb cb,
-                                void* arg, infra_event_t** event) {
-    if (!loop || !cb || !event || fd < 0) {
-        return INFRA_ERR_PARAM;
-    }
-
-    infra_event_t* new_event = malloc(sizeof(infra_event_t));
-    if (!new_event) {
-        return INFRA_ERR_MEMORY;
-    }
-
-    new_event->fd = fd;
-    new_event->events = events;
-    new_event->cb = cb;
-    new_event->arg = arg;
-    new_event->loop = loop;
-    new_event->data = NULL;
-
-    infra_error_t err = infra_platform_backend_add(loop->backend, new_event);
-    if (err != INFRA_OK) {
-        free(new_event);
-        return err;
-    }
-
-    // Add to event list
-    infra_mutex_lock(loop->lock);
-    new_event->next = loop->events;
-    loop->events = new_event;
-    loop->stats.events_total++;
-    loop->stats.events_active++;
-    infra_mutex_unlock(loop->lock);
-
-    *event = new_event;
-    return INFRA_OK;
-}
-
-//-----------------------------------------------------------------------------
-// Timer Management Implementation
-//-----------------------------------------------------------------------------
-
-infra_error_t infra_timer_create(infra_loop_t* loop, uint64_t interval,
-                                bool repeat, infra_timer_cb cb,
-                                void* arg, infra_timer_t** timer) {
-    if (!loop || !cb || !timer || interval == 0) {
-        return INFRA_ERR_PARAM;
-    }
-
-    infra_timer_t* new_timer = malloc(sizeof(infra_timer_t));
-    if (!new_timer) {
-        return INFRA_ERR_MEMORY;
-    }
-
-    new_timer->interval = interval;
-    new_timer->next_expire = infra_time_monotonic_ms() + interval;
-    new_timer->repeat = repeat;
-    new_timer->cb = cb;
-    new_timer->arg = arg;
-    new_timer->loop = loop;
-    new_timer->data = NULL;
-
-    // Add to timer list
-    infra_mutex_lock(loop->lock);
-    new_timer->next = loop->timers;
-    loop->timers = new_timer;
-    loop->stats.timers_total++;
-    loop->stats.timers_active++;
-    infra_mutex_unlock(loop->lock);
-
-    *timer = new_timer;
-    return INFRA_OK;
-}
-
-//-----------------------------------------------------------------------------
-// Async IO Implementation
-//-----------------------------------------------------------------------------
-
-infra_error_t infra_async_read(infra_loop_t* loop, int fd,
-                              void* buf, size_t len,
-                              infra_event_cb cb, void* arg) {
-    if (!loop || !buf || !cb || fd < 0) {
-        return INFRA_ERR_PARAM;
-    }
-
-    // Create read event
-    infra_event_t* event;
-    return infra_event_create(loop, fd, INFRA_EVENT_READ, cb, arg, &event);
-}
-
-infra_error_t infra_async_write(infra_loop_t* loop, int fd,
-                               const void* buf, size_t len,
-                               infra_event_cb cb, void* arg) {
-    if (!loop || !buf || !cb || fd < 0) {
-        return INFRA_ERR_PARAM;
-    }
-
-    // Create write event
-    infra_event_t* event;
-    return infra_event_create(loop, fd, INFRA_EVENT_WRITE, cb, arg, &event);
 }
