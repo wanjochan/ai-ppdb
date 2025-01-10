@@ -156,10 +156,10 @@ typedef struct {
 infra_error_t infra_async_init(infra_async_t* async, const infra_config_t* config);
 void infra_async_cleanup(infra_async_t* async);
 infra_error_t infra_async_submit(infra_async_t* async, infra_async_task_t* task);
-infra_error_t infra_async_run(infra_async_context_t* ctx, uint32_t timeout_ms);
-infra_error_t infra_async_cancel(infra_async_context_t* ctx, infra_async_task_t* task);
-infra_error_t infra_async_stop(infra_async_context_t* ctx);
-void infra_async_destroy(infra_async_context_t* ctx);
-infra_error_t infra_async_get_stats(infra_async_context_t* ctx, infra_async_stats_t* stats);
+infra_error_t infra_async_run(infra_async_t* async, uint32_t timeout_ms);
+infra_error_t infra_async_cancel(infra_async_t* async, infra_async_task_t* task);
+infra_error_t infra_async_stop(infra_async_t* async);
+void infra_async_destroy(infra_async_t* async);
+infra_error_t infra_async_get_stats(infra_async_t* async, infra_async_stats_t* stats);
 
 #endif // INFRA_ASYNC_H 

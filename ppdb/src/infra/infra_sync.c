@@ -45,7 +45,7 @@ infra_error_t infra_mutex_unlock(infra_mutex_t mutex) {
 // Condition Variable Operations
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_cond_create(infra_cond_t* cond) {
+infra_error_t infra_cond_init(infra_cond_t* cond) {
     if (!cond) return INFRA_ERROR_INVALID;
     return infra_platform_cond_create((void**)cond);
 }
@@ -61,7 +61,7 @@ infra_error_t infra_cond_wait(infra_cond_t cond, infra_mutex_t mutex) {
     return infra_platform_cond_wait(cond, mutex);
 }
 
-infra_error_t infra_cond_timedwait(infra_cond_t cond, infra_mutex_t mutex, uint64_t timeout_ms) {
+infra_error_t infra_cond_timedwait(infra_cond_t cond, infra_mutex_t mutex, uint32_t timeout_ms) {
     if (!cond || !mutex) return INFRA_ERROR_INVALID;
     return infra_platform_cond_timedwait(cond, mutex, timeout_ms);
 }
@@ -80,40 +80,40 @@ infra_error_t infra_cond_broadcast(infra_cond_t cond) {
 // Read-Write Lock Operations
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_rwlock_create(infra_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_init(infra_rwlock_t* rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
     return infra_platform_rwlock_create((void**)rwlock);
 }
 
-void infra_rwlock_destroy(infra_rwlock_t rwlock) {
-    if (rwlock) {
-        infra_platform_rwlock_destroy(rwlock);
-    }
+infra_error_t infra_rwlock_destroy(infra_rwlock_t* rwlock) {
+    if (!rwlock) return INFRA_ERROR_INVALID;
+    infra_platform_rwlock_destroy(*rwlock);
+    return INFRA_OK;
 }
 
-infra_error_t infra_rwlock_rdlock(infra_rwlock_t rwlock) {
+infra_error_t infra_rwlock_rdlock(infra_rwlock_t* rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_rdlock(rwlock);
+    return infra_platform_rwlock_rdlock(*rwlock);
 }
 
-infra_error_t infra_rwlock_tryrdlock(infra_rwlock_t rwlock) {
+infra_error_t infra_rwlock_tryrdlock(infra_rwlock_t* rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_tryrdlock(rwlock);
+    return infra_platform_rwlock_tryrdlock(*rwlock);
 }
 
-infra_error_t infra_rwlock_wrlock(infra_rwlock_t rwlock) {
+infra_error_t infra_rwlock_wrlock(infra_rwlock_t* rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_wrlock(rwlock);
+    return infra_platform_rwlock_wrlock(*rwlock);
 }
 
-infra_error_t infra_rwlock_trywrlock(infra_rwlock_t rwlock) {
+infra_error_t infra_rwlock_trywrlock(infra_rwlock_t* rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_trywrlock(rwlock);
+    return infra_platform_rwlock_trywrlock(*rwlock);
 }
 
-infra_error_t infra_rwlock_unlock(infra_rwlock_t rwlock) {
+infra_error_t infra_rwlock_unlock(infra_rwlock_t* rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_unlock(rwlock);
+    return infra_platform_rwlock_unlock(*rwlock);
 }
 
 //-----------------------------------------------------------------------------

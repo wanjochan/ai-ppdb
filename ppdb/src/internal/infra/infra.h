@@ -40,6 +40,27 @@ typedef void* infra_thread_t;
 typedef void* (*infra_thread_func_t)(void*);
 
 //-----------------------------------------------------------------------------
+// Thread Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_mutex_create(infra_mutex_t* mutex);
+void infra_mutex_destroy(infra_mutex_t mutex);
+infra_error_t infra_mutex_lock(infra_mutex_t mutex);
+infra_error_t infra_mutex_unlock(infra_mutex_t mutex);
+
+infra_error_t infra_cond_init(infra_cond_t* cond);
+void infra_cond_destroy(infra_cond_t cond);
+infra_error_t infra_cond_wait(infra_cond_t cond, infra_mutex_t mutex);
+infra_error_t infra_cond_timedwait(infra_cond_t cond, infra_mutex_t mutex, uint32_t timeout_ms);
+infra_error_t infra_cond_signal(infra_cond_t cond);
+infra_error_t infra_cond_broadcast(infra_cond_t cond);
+
+infra_error_t infra_thread_create(infra_thread_t* thread, infra_thread_func_t func, void* arg);
+infra_error_t infra_thread_join(infra_thread_t thread);
+void infra_thread_exit(void* retval);
+infra_thread_t infra_thread_self(void);
+
+//-----------------------------------------------------------------------------
 // Error Codes
 //-----------------------------------------------------------------------------
 
@@ -201,8 +222,13 @@ typedef struct {
 
 infra_error_t infra_list_create(infra_list_t** list);
 void infra_list_destroy(infra_list_t* list);
+infra_error_t infra_list_init(infra_list_t* list);
+void infra_list_cleanup(infra_list_t* list);
 infra_error_t infra_list_append(infra_list_t* list, void* value);
+infra_error_t infra_list_push_back(infra_list_t* list, void* value);
+void* infra_list_pop_front(infra_list_t* list);
 infra_error_t infra_list_remove(infra_list_t* list, infra_list_node_t* node);
+bool infra_list_empty(const infra_list_t* list);
 infra_list_node_t* infra_list_head(infra_list_t* list);
 infra_list_node_t* infra_list_node_next(infra_list_node_t* node);
 void* infra_list_node_value(infra_list_node_t* node);
@@ -312,6 +338,12 @@ void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src);
 void infra_stats_print(const infra_stats_t* stats, const char* prefix);
 
 //-----------------------------------------------------------------------------
+// Printf Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_printf(const char* format, ...);
+
+//-----------------------------------------------------------------------------
 // Time Management
 //-----------------------------------------------------------------------------
 
@@ -319,5 +351,30 @@ infra_time_t infra_time_now(void);
 infra_time_t infra_time_monotonic(void);
 void infra_time_sleep(uint32_t ms);
 void infra_time_yield(void);
+
+//-----------------------------------------------------------------------------
+// File Operations
+//-----------------------------------------------------------------------------
+
+#define INFRA_FILE_CREATE  (1 << 0)
+#define INFRA_FILE_RDONLY  (1 << 1)
+#define INFRA_FILE_WRONLY  (1 << 2)
+#define INFRA_FILE_RDWR    (INFRA_FILE_RDONLY | INFRA_FILE_WRONLY)
+#define INFRA_FILE_APPEND  (1 << 3)
+#define INFRA_FILE_TRUNC   (1 << 4)
+
+#define INFRA_SEEK_SET 0
+#define INFRA_SEEK_CUR 1
+#define INFRA_SEEK_END 2
+
+infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, infra_handle_t* handle);
+infra_error_t infra_file_close(infra_handle_t handle);
+infra_error_t infra_file_read(infra_handle_t handle, void* buffer, size_t size, size_t* bytes_read);
+infra_error_t infra_file_write(infra_handle_t handle, const void* buffer, size_t size, size_t* bytes_written);
+infra_error_t infra_file_seek(infra_handle_t handle, int64_t offset, int whence);
+infra_error_t infra_file_size(infra_handle_t handle, size_t* size);
+infra_error_t infra_file_remove(const char* path);
+infra_error_t infra_file_rename(const char* old_path, const char* new_path);
+infra_error_t infra_file_exists(const char* path, bool* exists);
 
 #endif /* INFRA_H */

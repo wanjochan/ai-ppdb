@@ -261,15 +261,17 @@ static void* worker_thread(void* arg) {
 infra_error_t infra_async_init(infra_async_t* async, const infra_config_t* config) {
     if (!async || !config) return INFRA_ERROR_INVALID;
     
+    // 初始化异步处理器
+    memset(async, 0, sizeof(infra_async_t));
+    
     // 初始化任务队列
     queue_init(&async->task_queue);
     
     // 创建工作线程
-    async->stop = false;
-    infra_error_t result = infra_platform_thread_create(&async->worker, worker_thread, async);
-    if (result != INFRA_OK) {
+    infra_error_t err = infra_thread_create(&async->worker, worker_thread, async);
+    if (err != INFRA_OK) {
         queue_cleanup(&async->task_queue);
-        return result;
+        return err;
     }
     
     return INFRA_OK;
@@ -279,8 +281,9 @@ void infra_async_cleanup(infra_async_t* async) {
     if (!async) return;
     
     // 停止工作线程
-    async->stop = true;
-    infra_platform_thread_join(async->worker);
+    if (!async->stop) {
+        infra_async_stop(async);
+    }
     
     // 清理任务队列
     queue_cleanup(&async->task_queue);
@@ -288,42 +291,73 @@ void infra_async_cleanup(infra_async_t* async) {
 
 infra_error_t infra_async_submit(infra_async_t* async, infra_async_task_t* task) {
     if (!async || !task) return INFRA_ERROR_INVALID;
-    
-    // 创建任务副本
-    infra_async_task_t* new_task = (infra_async_task_t*)malloc(sizeof(infra_async_task_t));
-    if (!new_task) return INFRA_ERROR_NOMEM;
-    
-    *new_task = *task;
-    
-    // 提交到任务队列
-    infra_error_t result = queue_push(&async->task_queue, new_task);
-    if (result != INFRA_OK) {
-        free(new_task);
-    }
-    
-    return result;
+    return queue_push(&async->task_queue, task);
 }
 
-infra_error_t infra_async_run(infra_async_context_t* ctx, uint32_t timeout_ms) {
-    // TODO: 实现异步上下文运行
+infra_error_t infra_async_run(infra_async_t* async, uint32_t timeout_ms) {
+    if (!async) return INFRA_ERROR_INVALID;
+    
+    // 启动工作线程
+    async->stop = false;
+    
+    // 等待任务完成或超时
+    infra_time_t start_time = infra_time_monotonic();
+    while (!async->stop) {
+        infra_async_task_t* task = NULL;
+        infra_error_t result = queue_pop(&async->task_queue, &task);
+        
+        if (result == INFRA_OK && task) {
+            result = process_task(task);
+            if (task->callback) {
+                task->callback(task, result);
+            }
+        }
+        
+        // 检查超时
+        if (timeout_ms > 0) {
+            infra_time_t current_time = infra_time_monotonic();
+            if (current_time - start_time >= timeout_ms * 1000) {  // 转换为微秒
+                break;
+            }
+        }
+        
+        // 如果队列为空，退出
+        if (queue_is_empty(&async->task_queue)) {
+            break;
+        }
+    }
+    
     return INFRA_OK;
 }
 
-infra_error_t infra_async_cancel(infra_async_context_t* ctx, infra_async_task_t* task) {
+infra_error_t infra_async_cancel(infra_async_t* async, infra_async_task_t* task) {
+    if (!async || !task) return INFRA_ERROR_INVALID;
     // TODO: 实现任务取消
     return INFRA_OK;
 }
 
-infra_error_t infra_async_stop(infra_async_context_t* ctx) {
-    // TODO: 实现异步上下文停止
+infra_error_t infra_async_stop(infra_async_t* async) {
+    if (!async) return INFRA_ERROR_INVALID;
+    
+    // 设置停止标志
+    async->stop = true;
+    
+    // 等待工作线程结束
+    infra_error_t err = infra_thread_join(async->worker);
+    if (err != INFRA_OK) {
+        return err;
+    }
+    
     return INFRA_OK;
 }
 
-void infra_async_destroy(infra_async_context_t* ctx) {
-    // TODO: 实现异步上下文销毁
+void infra_async_destroy(infra_async_t* async) {
+    if (!async) return;
+    infra_async_cleanup(async);
 }
 
-infra_error_t infra_async_get_stats(infra_async_context_t* ctx, infra_async_stats_t* stats) {
-    // TODO: 实现获取统计信息
+infra_error_t infra_async_get_stats(infra_async_t* async, infra_async_stats_t* stats) {
+    if (!async || !stats) return INFRA_ERROR_INVALID;
+    // TODO: 实现统计信息收集
     return INFRA_OK;
 }

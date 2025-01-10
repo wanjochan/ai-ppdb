@@ -1146,6 +1146,136 @@ infra_error_t infra_printf(const char* format, ...) {
 }
 
 //-----------------------------------------------------------------------------
+// File Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, infra_handle_t* handle) {
+    if (!path || !handle) return INFRA_ERROR_INVALID;
+
+    int os_flags = 0;
+    if (flags & INFRA_FILE_CREATE) os_flags |= O_CREAT;
+    if (flags & INFRA_FILE_RDONLY) os_flags |= O_RDONLY;
+    if (flags & INFRA_FILE_WRONLY) os_flags |= O_WRONLY;
+    if (flags & INFRA_FILE_RDWR) os_flags |= O_RDWR;
+    if (flags & INFRA_FILE_APPEND) os_flags |= O_APPEND;
+    if (flags & INFRA_FILE_TRUNC) os_flags |= O_TRUNC;
+
+    int fd = open(path, os_flags, mode);
+    if (fd == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    *handle = (infra_handle_t)fd;
+    return INFRA_OK;
+}
+
+infra_error_t infra_file_close(infra_handle_t handle) {
+    if (!handle) return INFRA_ERROR_INVALID;
+
+    if (close((int)handle) == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    return INFRA_OK;
+}
+
+infra_error_t infra_file_read(infra_handle_t handle, void* buffer, size_t size, size_t* bytes_read) {
+    if (!handle || !buffer || !bytes_read) return INFRA_ERROR_INVALID;
+
+    ssize_t result = read((int)handle, buffer, size);
+    if (result == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    *bytes_read = (size_t)result;
+    return INFRA_OK;
+}
+
+infra_error_t infra_file_write(infra_handle_t handle, const void* buffer, size_t size, size_t* bytes_written) {
+    if (!handle || !buffer || !bytes_written) return INFRA_ERROR_INVALID;
+
+    ssize_t result = write((int)handle, buffer, size);
+    if (result == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    *bytes_written = (size_t)result;
+    return INFRA_OK;
+}
+
+infra_error_t infra_file_seek(infra_handle_t handle, int64_t offset, int whence) {
+    if (!handle) return INFRA_ERROR_INVALID;
+
+    int os_whence;
+    switch (whence) {
+        case INFRA_SEEK_SET: os_whence = SEEK_SET; break;
+        case INFRA_SEEK_CUR: os_whence = SEEK_CUR; break;
+        case INFRA_SEEK_END: os_whence = SEEK_END; break;
+        default: return INFRA_ERROR_INVALID;
+    }
+
+    if (lseek((int)handle, offset, os_whence) == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    return INFRA_OK;
+}
+
+infra_error_t infra_file_size(infra_handle_t handle, size_t* size) {
+    if (!handle || !size) return INFRA_ERROR_INVALID;
+
+    // 保存当前位置
+    off_t current = lseek((int)handle, 0, SEEK_CUR);
+    if (current == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    // 移动到文件末尾
+    off_t end = lseek((int)handle, 0, SEEK_END);
+    if (end == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    // 恢复原位置
+    if (lseek((int)handle, current, SEEK_SET) == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    *size = (size_t)end;
+    return INFRA_OK;
+}
+
+infra_error_t infra_file_remove(const char* path) {
+    if (!path) return INFRA_ERROR_INVALID;
+
+    if (unlink(path) == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    return INFRA_OK;
+}
+
+infra_error_t infra_file_rename(const char* old_path, const char* new_path) {
+    if (!old_path || !new_path) return INFRA_ERROR_INVALID;
+
+    if (rename(old_path, new_path) == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    return INFRA_OK;
+}
+
+infra_error_t infra_file_exists(const char* path, bool* exists) {
+    if (!path || !exists) return INFRA_ERROR_INVALID;
+
+    struct stat st;
+    int result = stat(path, &st);
+    *exists = (result == 0);
+
+    return INFRA_OK;
+}
+
+//-----------------------------------------------------------------------------
 // Time Management
 //-----------------------------------------------------------------------------
 
