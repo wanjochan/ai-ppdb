@@ -65,9 +65,8 @@
 
 ## TODO （有时候会再跳出来，所以不删除，留着一轮轮清）
 
-- infra 是不是有些【内存管理】的封装没做？如果都做了，所有其它内存有关的都要换这个封装。
-- infra 是不是有些【线程管理】的封装没做？如果都做了，主代码和测试代码都要用我们自己的封装而不要直接用pthread
-- infra 层要检查一下，除了 sync和线程封装外 不应有对 pthread的调用？应该是用 sync中的封装
+- 要不要补 sync_perf 和 async_perf 做并发性能测试
+- 异步框架可能未考虑中断？
 - 异步那里针对 windows做一个 IOCP优化（在ppdb_prev还有备份可以参考）
-- 从 ppdb_prev的 sync_perf 中参考下同步有没有优化的地方
+- 等未来infra完全稳定后，可以考虑封装 libppdbinfra.a （静态库）和 ppdbinfra.lib （动态库）供应我们别的工具包
  

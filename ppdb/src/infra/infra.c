@@ -227,6 +227,7 @@ void infra_buffer_reset(infra_buffer_t* buf) {
 
 static int current_log_level = INFRA_LOG_LEVEL_INFO;
 static infra_log_callback_t log_callback = NULL;
+static void* log_mutex = NULL;
 
 void infra_log_set_level(int level) {
     if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
@@ -235,33 +236,30 @@ void infra_log_set_level(int level) {
 }
 
 void infra_log_set_callback(infra_log_callback_t callback) {
+    if (!log_mutex) {
+        infra_platform_mutex_create(&log_mutex);
+    }
     log_callback = callback;
 }
 
 void infra_log(int level, const char* file, int line, const char* func,
                const char* format, ...) {
-    if (level > current_log_level) {
+    if (level > current_log_level || !log_callback) {
         return;
     }
 
-    char message[1024];
+    char message[256];  // 使用较小的缓冲区
     va_list args;
     va_start(args, format);
     vsnprintf(message, sizeof(message), format, args);
     va_end(args);
 
-    if (log_callback) {
-        log_callback(level, file, line, func, message);
-    } else {
-        const char* level_str = "UNKNOWN";
-        switch (level) {
-            case INFRA_LOG_LEVEL_ERROR: level_str = "ERROR"; break;
-            case INFRA_LOG_LEVEL_WARN:  level_str = "WARN"; break;
-            case INFRA_LOG_LEVEL_INFO:  level_str = "INFO"; break;
-            case INFRA_LOG_LEVEL_DEBUG: level_str = "DEBUG"; break;
-            case INFRA_LOG_LEVEL_TRACE: level_str = "TRACE"; break;
-        }
-        fprintf(stderr, "[%s] %s:%d %s(): %s\n", level_str, file, line, func, message);
+    if (log_mutex) {
+        infra_platform_mutex_lock(log_mutex);
+    }
+    log_callback(level, file, line, func, message);
+    if (log_mutex) {
+        infra_platform_mutex_unlock(log_mutex);
     }
 }
 

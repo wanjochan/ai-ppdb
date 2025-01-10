@@ -44,7 +44,7 @@ if "%TEST_TO_RUN%"=="" set "TEST_TO_RUN=%TEST_CASES%"
 for %%t in (%TEST_TO_RUN%) do (
     if exist "%TEST_DIR%\white\infra\%%t.c" (
         echo Building %%t...
-        "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%%t.c" "%BUILD_DIR%\infra.o" "%BUILD_DIR%\infra_async.o" "%BUILD_DIR%\infra_sync.o" "%BUILD_DIR%\infra_platform.o" "%BUILD_DIR%\test_framework.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%t.exe.dbg"
+        "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%%t.c" "%BUILD_DIR%\infra.o" "%BUILD_DIR%\infra_platform.o" "%BUILD_DIR%\infra_sync.o" "%BUILD_DIR%\infra_async.o" "%BUILD_DIR%\test_framework.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%t.exe.dbg"
         if errorlevel 1 exit /b 1
         "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%%t.exe.dbg" "%BUILD_DIR%\%%t.exe"
         if errorlevel 1 exit /b 1

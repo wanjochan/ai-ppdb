@@ -85,14 +85,17 @@ static void put_task_node(infra_async_context_t* ctx, task_node_t* node) {
 static void* worker_thread_func(void* arg) {
     worker_thread_t* worker = (worker_thread_t*)arg;
     infra_async_context_t* ctx = worker->ctx;
+    infra_error_t err = INFRA_OK;
 
     while (worker->running) {
         task_node_t* node = NULL;
 
-        // 获取任务
         infra_mutex_lock(ctx->lock);
         while (worker->running && !ctx->stop_requested && !ctx->tasks) {
-            infra_cond_wait(ctx->cond, ctx->lock);
+            if (infra_cond_wait(ctx->cond, ctx->lock) != INFRA_OK) {
+                worker->running = false;
+                break;
+            }
         }
 
         if (!worker->running || ctx->stop_requested) {
@@ -103,10 +106,10 @@ static void* worker_thread_func(void* arg) {
         if (ctx->tasks) {
             node = ctx->tasks;
             ctx->tasks = node->next;
+            node->next = NULL;
         }
         infra_mutex_unlock(ctx->lock);
 
-        // 处理任务
         if (node) {
             if (!node->cancelled) {
                 switch (node->task.type) {
@@ -124,21 +127,18 @@ static void* worker_thread_func(void* arg) {
                         break;
                 }
             } else {
-                // 如果任务被取消，调用回调函数通知取消
                 node->task.callback(&node->task, INFRA_ERROR_CANCELLED);
             }
             
-            // 通知主线程任务已完成
             infra_mutex_lock(ctx->lock);
             infra_cond_broadcast(ctx->cond);
             infra_mutex_unlock(ctx->lock);
             
-            // 回收任务节点
             put_task_node(ctx, node);
         }
     }
 
-    return NULL;
+    return (void*)(intptr_t)err;
 }
 
 infra_error_t infra_async_init(infra_async_context_t** ctx) {
@@ -168,6 +168,9 @@ infra_error_t infra_async_init(infra_async_context_t** ctx) {
 
     new_ctx->running = true;
     new_ctx->stop_requested = false;
+    new_ctx->tasks = NULL;
+    new_ctx->free_nodes = NULL;
+    new_ctx->num_workers = 0;
 
     // 创建工作线程
     for (int i = 0; i < INFRA_ASYNC_DEFAULT_THREADS; i++) {
@@ -228,6 +231,10 @@ infra_error_t infra_async_submit(infra_async_context_t* ctx,
         return INFRA_ERROR_INVALID;
     }
 
+    if (!ctx->running || ctx->stop_requested) {
+        return INFRA_ERROR_BUSY;
+    }
+
     task_node_t* node = get_task_node(ctx);
     if (!node) {
         return INFRA_ERROR_MEMORY;
@@ -235,7 +242,7 @@ infra_error_t infra_async_submit(infra_async_context_t* ctx,
 
     infra_memset(node, 0, sizeof(task_node_t));
     infra_memcpy(&node->task, task, sizeof(infra_async_task_t));
-    node->next = NULL;  // 新节点总是添加到尾部
+    node->next = NULL;
 
     infra_mutex_lock(ctx->lock);
     if (!ctx->tasks) {
@@ -247,9 +254,8 @@ infra_error_t infra_async_submit(infra_async_context_t* ctx,
         }
         tail->next = node;
     }
-    infra_cond_signal(ctx->cond);
+    infra_cond_broadcast(ctx->cond);
     infra_mutex_unlock(ctx->lock);
-
     return INFRA_OK;
 }
 
@@ -331,26 +337,31 @@ infra_error_t infra_async_run(infra_async_context_t* ctx, uint64_t timeout_ms) {
     }
 
     // 如果有任务，等待它们完成
-    if (ctx->tasks) {
-        uint64_t start_time = infra_time_monotonic();
-        uint64_t end_time = timeout_ms == UINT64_MAX ? UINT64_MAX : start_time + timeout_ms;
+    uint64_t start_time = infra_time_monotonic();
+    uint64_t end_time = timeout_ms == UINT64_MAX ? UINT64_MAX : start_time + timeout_ms;
 
-        while (ctx->tasks && !ctx->stop_requested) {
-            if (timeout_ms != UINT64_MAX) {
-                uint64_t now = infra_time_monotonic();
-                if (now >= end_time) {
-                    infra_mutex_unlock(ctx->lock);
-                    return INFRA_ERROR_TIMEOUT;
-                }
-                uint64_t remaining = end_time - now;
-                infra_error_t err = infra_cond_timedwait(ctx->cond, ctx->lock, remaining);
-                if (err == INFRA_ERROR_TIMEOUT) {
-                    infra_mutex_unlock(ctx->lock);
-                    return INFRA_ERROR_TIMEOUT;
-                }
-            } else {
-                infra_cond_wait(ctx->cond, ctx->lock);
+    while (!ctx->stop_requested) {
+        // 检查是否还有未完成的任务
+        if (!ctx->tasks) {
+            break;  // 所有任务都已完成
+        }
+
+        // 检查超时
+        if (timeout_ms != UINT64_MAX) {
+            uint64_t now = infra_time_monotonic();
+            if (now >= end_time) {
+                infra_mutex_unlock(ctx->lock);
+                return INFRA_ERROR_TIMEOUT;
             }
+
+            uint64_t remaining = end_time - now;
+            infra_error_t err = infra_cond_timedwait(ctx->cond, ctx->lock, remaining);
+            if (err == INFRA_ERROR_TIMEOUT) {
+                infra_mutex_unlock(ctx->lock);
+                return INFRA_ERROR_TIMEOUT;
+            }
+        } else {
+            infra_cond_wait(ctx->cond, ctx->lock);
         }
     }
 
