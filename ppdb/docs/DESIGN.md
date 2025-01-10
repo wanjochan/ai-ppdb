@@ -105,6 +105,6 @@ test/
 ```
 
 构建工具：
-scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
-scripts\build_{layer}_{module}.bat 用于构建指定层和模块的代码 （这个还没确定，可能还要讨论？）
-scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）
+.\pdpb\scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
+.\ppdb\scripts\build_{layer}_{module}.bat 用于构建指定层和模块的代码 （这个还没确定，可能还要讨论？）
+.\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）

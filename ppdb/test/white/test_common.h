@@ -2,13 +2,13 @@
  * test_common.h - Common test utilities
  */
 
-#ifndef PPDB_TEST_COMMON_H_
-#define PPDB_TEST_COMMON_H_
+#ifndef TEST_COMMON_H_
+#define TEST_COMMON_H_
 
-#include <cosmopolitan.h>
+#include "internal/infra/infra.h"
 
 // Utility macros
-#define PPDB_UNUSED(x) ((void)(x))
+#define INFRA_UNUSED(x) ((void)(x))
 
 // Test macros
 #define ASSERT_TRUE(x) \
@@ -59,14 +59,6 @@
         } \
     } while (0)
 
-#define ASSERT_OK(x) \
-    do { \
-        if ((x) != PPDB_OK) { \
-            printf("  Test failed: %s:%d: %s != PPDB_OK\n", __FILE__, __LINE__, #x); \
-            exit(1); \
-        } \
-    } while (0)
-
 // Test runner macro
 #define RUN_TEST(test) \
     do { \
@@ -75,4 +67,4 @@
         printf("  Test passed: %s\n", #test); \
     } while (0)
 
-#endif // PPDB_TEST_COMMON_H_
+#endif // TEST_COMMON_H_

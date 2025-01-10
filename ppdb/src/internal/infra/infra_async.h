@@ -1,4 +1,8 @@
 /*
+ * @cursor:protected
+ * This file is considered semi-read-only by Cursor AI.
+ * Any modifications should be discussed and confirmed before applying.
+ *
  * infra_async.h - Unified Asynchronous System Interface
  */
 
@@ -57,6 +61,16 @@ struct infra_async_task {
         } event;
     };
 };
+
+//-----------------------------------------------------------------------------
+// Internal Types
+//-----------------------------------------------------------------------------
+
+typedef struct task_node {
+    infra_async_task_t task;
+    struct task_node* next;
+    bool cancelled;
+} task_node_t;
 
 //-----------------------------------------------------------------------------
 // Async Task Management

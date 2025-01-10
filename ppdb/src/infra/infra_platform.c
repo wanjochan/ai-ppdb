@@ -1,4 +1,8 @@
 /*
+ * @cursor:protected
+ * This file is considered semi-read-only by Cursor AI.
+ * Any modifications should be discussed and confirmed before applying.
+ *
  * infra_platform.c - Platform Abstraction Layer Implementation
  */
 
@@ -29,7 +33,7 @@ infra_error_t infra_platform_get_tid(infra_tid_t* tid) {
     if (!tid) {
         return INFRA_ERROR_INVALID;
     }
-    *tid = gettid();
+    *tid = pthread_self();
     return INFRA_OK;
 }
 
@@ -39,7 +43,7 @@ infra_error_t infra_platform_sleep(uint32_t ms) {
 }
 
 infra_error_t infra_platform_yield(void) {
-    yield();
+    sched_yield();
     return INFRA_OK;
 }
 
@@ -47,7 +51,9 @@ infra_error_t infra_platform_get_time(infra_time_t* time) {
     if (!time) {
         return INFRA_ERROR_INVALID;
     }
-    *time = now();
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    *time = (infra_time_t)ts.tv_sec * 1000000000ULL + (infra_time_t)ts.tv_nsec;
     return INFRA_OK;
 }
 
@@ -55,7 +61,9 @@ infra_error_t infra_platform_get_monotonic_time(infra_time_t* time) {
     if (!time) {
         return INFRA_ERROR_INVALID;
     }
-    *time = nowl();
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    *time = (infra_time_t)ts.tv_sec * 1000000000ULL + (infra_time_t)ts.tv_nsec;
     return INFRA_OK;
 }
 

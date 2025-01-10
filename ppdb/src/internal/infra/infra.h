@@ -50,6 +50,7 @@ typedef uint64_t infra_handle_t;
 #define INFRA_ERROR_PROTOCOL  -15
 #define INFRA_ERROR_NETWORK   -16
 #define INFRA_ERROR_SECURITY  -17
+#define INFRA_ERROR_CANCELLED -18
 
 const char* infra_error_string(infra_error_t error);
 
@@ -175,5 +176,77 @@ infra_time_t infra_time_now(void);
 infra_time_t infra_time_monotonic(void);
 void infra_time_sleep(uint32_t ms);
 void infra_time_yield(void);
+
+//-----------------------------------------------------------------------------
+// Data Structures
+//-----------------------------------------------------------------------------
+
+// List
+typedef struct infra_list_node {
+    struct infra_list_node* next;
+    struct infra_list_node* prev;
+    void* value;
+} infra_list_node_t;
+
+typedef struct infra_list {
+    infra_list_node_t* head;
+    infra_list_node_t* tail;
+    size_t size;
+} infra_list_t;
+
+infra_error_t infra_list_create(infra_list_t** list);
+void infra_list_destroy(infra_list_t* list);
+infra_error_t infra_list_append(infra_list_t* list, void* value);
+infra_error_t infra_list_remove(infra_list_t* list, infra_list_node_t* node);
+infra_list_node_t* infra_list_head(infra_list_t* list);
+infra_list_node_t* infra_list_node_next(infra_list_node_t* node);
+void* infra_list_node_value(infra_list_node_t* node);
+
+// Hash Table
+typedef struct infra_hash_node {
+    char* key;
+    void* value;
+    struct infra_hash_node* next;
+} infra_hash_node_t;
+
+typedef struct infra_hash {
+    infra_hash_node_t** buckets;
+    size_t size;
+    size_t capacity;
+} infra_hash_t;
+
+infra_error_t infra_hash_create(infra_hash_t** hash, size_t capacity);
+void infra_hash_destroy(infra_hash_t* hash);
+infra_error_t infra_hash_put(infra_hash_t* hash, const char* key, void* value);
+void* infra_hash_get(infra_hash_t* hash, const char* key);
+void* infra_hash_remove(infra_hash_t* hash, const char* key);
+void infra_hash_clear(infra_hash_t* hash);
+
+// Red-Black Tree
+typedef enum {
+    INFRA_RBTREE_RED,
+    INFRA_RBTREE_BLACK
+} infra_rbtree_color_t;
+
+typedef struct infra_rbtree_node {
+    struct infra_rbtree_node* parent;
+    struct infra_rbtree_node* left;
+    struct infra_rbtree_node* right;
+    infra_rbtree_color_t color;
+    int key;
+    void* value;
+} infra_rbtree_node_t;
+
+typedef struct infra_rbtree {
+    infra_rbtree_node_t* root;
+    size_t size;
+} infra_rbtree_t;
+
+infra_error_t infra_rbtree_create(infra_rbtree_t** tree);
+void infra_rbtree_destroy(infra_rbtree_t* tree);
+infra_error_t infra_rbtree_insert(infra_rbtree_t* tree, int key, void* value);
+void* infra_rbtree_find(infra_rbtree_t* tree, int key);
+void* infra_rbtree_remove(infra_rbtree_t* tree, int key);
+void infra_rbtree_clear(infra_rbtree_t* tree);
 
 #endif /* INFRA_H */

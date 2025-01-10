@@ -17,6 +17,20 @@ echo Building infra library...
 "%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra.c" -o "%BUILD_DIR%\infra.o"
 if errorlevel 1 exit /b 1
 
+"%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra_platform.c" -o "%BUILD_DIR%\infra_platform.o"
+if errorlevel 1 exit /b 1
+
+"%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra_sync.c" -o "%BUILD_DIR%\infra_sync.o"
+if errorlevel 1 exit /b 1
+
+"%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra_async.c" -o "%BUILD_DIR%\infra_async.o"
+if errorlevel 1 exit /b 1
+
+rem Build test framework
+echo Building test framework...
+"%GCC%" %CFLAGS% -c "%TEST_DIR%\white\test_framework.c" -o "%BUILD_DIR%\test_framework.o"
+if errorlevel 1 exit /b 1
+
 rem Build infra tests
 echo Building infra tests...
 
@@ -30,7 +44,7 @@ if "%TEST_TO_RUN%"=="" set "TEST_TO_RUN=%TEST_CASES%"
 for %%t in (%TEST_TO_RUN%) do (
     if exist "%TEST_DIR%\white\infra\%%t.c" (
         echo Building %%t...
-        "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%%t.c" "%BUILD_DIR%\infra.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%t.exe.dbg"
+        "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%%t.c" "%BUILD_DIR%\infra.o" "%BUILD_DIR%\infra_async.o" "%BUILD_DIR%\infra_sync.o" "%BUILD_DIR%\infra_platform.o" "%BUILD_DIR%\test_framework.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%%t.exe.dbg"
         if errorlevel 1 exit /b 1
         "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%%t.exe.dbg" "%BUILD_DIR%\%%t.exe"
         if errorlevel 1 exit /b 1

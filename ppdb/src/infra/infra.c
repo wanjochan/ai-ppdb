@@ -30,6 +30,7 @@ const char* infra_error_string(infra_error_t error) {
         case INFRA_ERROR_PROTOCOL:   return "Protocol error";
         case INFRA_ERROR_NETWORK:    return "Network error";
         case INFRA_ERROR_SECURITY:   return "Security error";
+        case INFRA_ERROR_CANCELLED:  return "Operation cancelled";
         default:                     return "Unknown error";
     }
 }
@@ -349,28 +350,21 @@ void infra_stats_print(const infra_stats_t* stats, const char* prefix) {
 }
 
 //-----------------------------------------------------------------------------
-// Data Structures - List
+// Data Structures
 //-----------------------------------------------------------------------------
 
-typedef struct infra_list_node {
-    struct infra_list_node* prev;
-    struct infra_list_node* next;
-    void* data;
-} infra_list_node_t;
-
-typedef struct infra_list {
-    infra_list_node_t* head;
-    infra_list_node_t* tail;
-    size_t size;
-} infra_list_t;
-
-infra_error_t infra_list_init(infra_list_t* list) {
+// List Implementation
+infra_error_t infra_list_create(infra_list_t** list) {
     if (!list) {
         return INFRA_ERROR_INVALID;
     }
-    list->head = NULL;
-    list->tail = NULL;
-    list->size = 0;
+    *list = infra_malloc(sizeof(infra_list_t));
+    if (!*list) {
+        return INFRA_ERROR_MEMORY;
+    }
+    (*list)->head = NULL;
+    (*list)->tail = NULL;
+    (*list)->size = 0;
     return INFRA_OK;
 }
 
@@ -378,31 +372,27 @@ void infra_list_destroy(infra_list_t* list) {
     if (!list) {
         return;
     }
-    infra_list_node_t* node = list->head;
-    while (node) {
-        infra_list_node_t* next = node->next;
-        infra_free(node);
-        node = next;
+    infra_list_node_t* current = list->head;
+    while (current) {
+        infra_list_node_t* next = current->next;
+        infra_free(current);
+        current = next;
     }
-    list->head = NULL;
-    list->tail = NULL;
-    list->size = 0;
+    infra_free(list);
 }
 
-infra_error_t infra_list_push_back(infra_list_t* list, void* data) {
+infra_error_t infra_list_append(infra_list_t* list, void* value) {
     if (!list) {
         return INFRA_ERROR_INVALID;
     }
-
     infra_list_node_t* node = infra_malloc(sizeof(infra_list_node_t));
     if (!node) {
         return INFRA_ERROR_MEMORY;
     }
-
-    node->data = data;
+    node->value = value;
     node->next = NULL;
     node->prev = list->tail;
-
+    
     if (list->tail) {
         list->tail->next = node;
     } else {
@@ -410,354 +400,529 @@ infra_error_t infra_list_push_back(infra_list_t* list, void* data) {
     }
     list->tail = node;
     list->size++;
-
     return INFRA_OK;
 }
 
-infra_error_t infra_list_push_front(infra_list_t* list, void* data) {
-    if (!list) {
+infra_error_t infra_list_remove(infra_list_t* list, infra_list_node_t* node) {
+    if (!list || !node) {
         return INFRA_ERROR_INVALID;
     }
-
-    infra_list_node_t* node = infra_malloc(sizeof(infra_list_node_t));
-    if (!node) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    node->data = data;
-    node->prev = NULL;
-    node->next = list->head;
-
-    if (list->head) {
-        list->head->prev = node;
+    if (node->prev) {
+        node->prev->next = node->next;
     } else {
-        list->tail = node;
+        list->head = node->next;
     }
-    list->head = node;
-    list->size++;
-
+    if (node->next) {
+        node->next->prev = node->prev;
+    } else {
+        list->tail = node->prev;
+    }
+    infra_free(node);
+    list->size--;
     return INFRA_OK;
 }
 
-void* infra_list_pop_back(infra_list_t* list) {
-    if (!list || !list->tail) {
-        return NULL;
-    }
-
-    infra_list_node_t* node = list->tail;
-    void* data = node->data;
-
-    list->tail = node->prev;
-    if (list->tail) {
-        list->tail->next = NULL;
-    } else {
-        list->head = NULL;
-    }
-
-    infra_free(node);
-    list->size--;
-
-    return data;
+infra_list_node_t* infra_list_head(infra_list_t* list) {
+    return list ? list->head : NULL;
 }
 
-void* infra_list_pop_front(infra_list_t* list) {
-    if (!list || !list->head) {
-        return NULL;
-    }
-
-    infra_list_node_t* node = list->head;
-    void* data = node->data;
-
-    list->head = node->next;
-    if (list->head) {
-        list->head->prev = NULL;
-    } else {
-        list->tail = NULL;
-    }
-
-    infra_free(node);
-    list->size--;
-
-    return data;
+infra_list_node_t* infra_list_node_next(infra_list_node_t* node) {
+    return node ? node->next : NULL;
 }
 
-size_t infra_list_size(const infra_list_t* list) {
-    return list ? list->size : 0;
+void* infra_list_node_value(infra_list_node_t* node) {
+    return node ? node->value : NULL;
 }
 
-bool infra_list_empty(const infra_list_t* list) {
-    return list ? list->size == 0 : true;
-}
-
-//-----------------------------------------------------------------------------
-// Data Structures - Hash Table
-//-----------------------------------------------------------------------------
-
-#define INFRA_HASH_INITIAL_SIZE 16
-#define INFRA_HASH_LOAD_FACTOR 0.75
-
-typedef struct infra_hash_entry {
-    char* key;
-    void* value;
-    struct infra_hash_entry* next;
-} infra_hash_entry_t;
-
-typedef struct infra_hash_table {
-    infra_hash_entry_t** buckets;
-    size_t size;
-    size_t capacity;
-} infra_hash_table_t;
-
-static size_t infra_hash_function(const char* key) {
+// Hash Table Implementation
+static size_t hash_function(const char* key, size_t capacity) {
     size_t hash = 5381;
     int c;
     while ((c = *key++)) {
         hash = ((hash << 5) + hash) + c;
     }
-    return hash;
+    return hash % capacity;
 }
 
-infra_error_t infra_hash_init(infra_hash_table_t* table) {
-    if (!table) {
+infra_error_t infra_hash_create(infra_hash_t** hash, size_t capacity) {
+    if (!hash || capacity == 0) {
         return INFRA_ERROR_INVALID;
     }
-
-    table->buckets = infra_calloc(INFRA_HASH_INITIAL_SIZE, sizeof(infra_hash_entry_t*));
-    if (!table->buckets) {
+    *hash = infra_malloc(sizeof(infra_hash_t));
+    if (!*hash) {
         return INFRA_ERROR_MEMORY;
     }
-
-    table->size = 0;
-    table->capacity = INFRA_HASH_INITIAL_SIZE;
+    (*hash)->buckets = infra_calloc(capacity, sizeof(infra_hash_node_t*));
+    if (!(*hash)->buckets) {
+        infra_free(*hash);
+        return INFRA_ERROR_MEMORY;
+    }
+    (*hash)->capacity = capacity;
+    (*hash)->size = 0;
     return INFRA_OK;
 }
 
-void infra_hash_destroy(infra_hash_table_t* table) {
-    if (!table) {
+void infra_hash_destroy(infra_hash_t* hash) {
+    if (!hash) {
         return;
     }
-
-    for (size_t i = 0; i < table->capacity; i++) {
-        infra_hash_entry_t* entry = table->buckets[i];
-        while (entry) {
-            infra_hash_entry_t* next = entry->next;
-            infra_free(entry->key);
-            infra_free(entry);
-            entry = next;
+    for (size_t i = 0; i < hash->capacity; i++) {
+        infra_hash_node_t* current = hash->buckets[i];
+        while (current) {
+            infra_hash_node_t* next = current->next;
+            infra_free(current->key);
+            infra_free(current);
+            current = next;
         }
     }
-
-    infra_free(table->buckets);
-    table->buckets = NULL;
-    table->size = 0;
-    table->capacity = 0;
+    infra_free(hash->buckets);
+    infra_free(hash);
 }
 
-static infra_error_t infra_hash_resize(infra_hash_table_t* table) {
-    size_t new_capacity = table->capacity * 2;
-    infra_hash_entry_t** new_buckets = infra_calloc(new_capacity, sizeof(infra_hash_entry_t*));
-    if (!new_buckets) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    for (size_t i = 0; i < table->capacity; i++) {
-        infra_hash_entry_t* entry = table->buckets[i];
-        while (entry) {
-            infra_hash_entry_t* next = entry->next;
-            size_t index = infra_hash_function(entry->key) % new_capacity;
-            entry->next = new_buckets[index];
-            new_buckets[index] = entry;
-            entry = next;
-        }
-    }
-
-    infra_free(table->buckets);
-    table->buckets = new_buckets;
-    table->capacity = new_capacity;
-    return INFRA_OK;
-}
-
-infra_error_t infra_hash_put(infra_hash_table_t* table, const char* key, void* value) {
-    if (!table || !key) {
+infra_error_t infra_hash_put(infra_hash_t* hash, const char* key, void* value) {
+    if (!hash || !key) {
         return INFRA_ERROR_INVALID;
     }
-
-    if ((float)table->size / table->capacity > INFRA_HASH_LOAD_FACTOR) {
-        infra_error_t err = infra_hash_resize(table);
-        if (err != INFRA_OK) {
-            return err;
-        }
-    }
-
-    size_t index = infra_hash_function(key) % table->capacity;
-    infra_hash_entry_t* entry = table->buckets[index];
-
-    while (entry) {
-        if (strcmp(entry->key, key) == 0) {
-            entry->value = value;
+    size_t index = hash_function(key, hash->capacity);
+    infra_hash_node_t* node = hash->buckets[index];
+    while (node) {
+        if (infra_strcmp(node->key, key) == 0) {
+            node->value = value;
             return INFRA_OK;
         }
-        entry = entry->next;
+        node = node->next;
     }
-
-    entry = infra_malloc(sizeof(infra_hash_entry_t));
-    if (!entry) {
+    node = infra_malloc(sizeof(infra_hash_node_t));
+    if (!node) {
         return INFRA_ERROR_MEMORY;
     }
-
-    entry->key = infra_strdup(key);
-    if (!entry->key) {
-        infra_free(entry);
+    node->key = infra_strdup(key);
+    if (!node->key) {
+        infra_free(node);
         return INFRA_ERROR_MEMORY;
     }
-
-    entry->value = value;
-    entry->next = table->buckets[index];
-    table->buckets[index] = entry;
-    table->size++;
-
+    node->value = value;
+    node->next = hash->buckets[index];
+    hash->buckets[index] = node;
+    hash->size++;
     return INFRA_OK;
 }
 
-void* infra_hash_get(const infra_hash_table_t* table, const char* key) {
-    if (!table || !key) {
+void* infra_hash_get(infra_hash_t* hash, const char* key) {
+    if (!hash || !key) {
         return NULL;
     }
-
-    size_t index = infra_hash_function(key) % table->capacity;
-    infra_hash_entry_t* entry = table->buckets[index];
-
-    while (entry) {
-        if (strcmp(entry->key, key) == 0) {
-            return entry->value;
+    size_t index = hash_function(key, hash->capacity);
+    infra_hash_node_t* node = hash->buckets[index];
+    while (node) {
+        if (infra_strcmp(node->key, key) == 0) {
+            return node->value;
         }
-        entry = entry->next;
+        node = node->next;
     }
-
     return NULL;
 }
 
-bool infra_hash_remove(infra_hash_table_t* table, const char* key) {
-    if (!table || !key) {
-        return false;
+void* infra_hash_remove(infra_hash_t* hash, const char* key) {
+    if (!hash || !key) {
+        return NULL;
     }
-
-    size_t index = infra_hash_function(key) % table->capacity;
-    infra_hash_entry_t* entry = table->buckets[index];
-    infra_hash_entry_t* prev = NULL;
-
-    while (entry) {
-        if (strcmp(entry->key, key) == 0) {
+    size_t index = hash_function(key, hash->capacity);
+    infra_hash_node_t* node = hash->buckets[index];
+    infra_hash_node_t* prev = NULL;
+    while (node) {
+        if (infra_strcmp(node->key, key) == 0) {
+            void* value = node->value;
             if (prev) {
-                prev->next = entry->next;
+                prev->next = node->next;
             } else {
-                table->buckets[index] = entry->next;
+                hash->buckets[index] = node->next;
             }
-            infra_free(entry->key);
-            infra_free(entry);
-            table->size--;
-            return true;
+            infra_free(node->key);
+            infra_free(node);
+            hash->size--;
+            return value;
         }
-        prev = entry;
-        entry = entry->next;
+        prev = node;
+        node = node->next;
     }
-
-    return false;
+    return NULL;
 }
 
-size_t infra_hash_size(const infra_hash_table_t* table) {
-    return table ? table->size : 0;
+void infra_hash_clear(infra_hash_t* hash) {
+    if (!hash) {
+        return;
+    }
+    for (size_t i = 0; i < hash->capacity; i++) {
+        infra_hash_node_t* current = hash->buckets[i];
+        while (current) {
+            infra_hash_node_t* next = current->next;
+            infra_free(current->key);
+            infra_free(current);
+            current = next;
+        }
+        hash->buckets[i] = NULL;
+    }
+    hash->size = 0;
 }
 
-bool infra_hash_empty(const infra_hash_table_t* table) {
-    return table ? table->size == 0 : true;
+// Red-Black Tree Implementation
+static infra_rbtree_node_t* rbtree_create_node(int key, void* value) {
+    infra_rbtree_node_t* node = infra_malloc(sizeof(infra_rbtree_node_t));
+    if (node) {
+        node->key = key;
+        node->value = value;
+        node->color = INFRA_RBTREE_RED;
+        node->left = node->right = node->parent = NULL;
+    }
+    return node;
 }
 
-//-----------------------------------------------------------------------------
-// Data Structures - Queue
-//-----------------------------------------------------------------------------
+static void rbtree_rotate_left(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
+    infra_rbtree_node_t* right = node->right;
+    node->right = right->left;
+    if (right->left) {
+        right->left->parent = node;
+    }
+    right->parent = node->parent;
+    if (!node->parent) {
+        tree->root = right;
+    } else if (node == node->parent->left) {
+        node->parent->left = right;
+    } else {
+        node->parent->right = right;
+    }
+    right->left = node;
+    node->parent = right;
+}
 
-typedef struct infra_queue {
-    infra_list_t list;
-} infra_queue_t;
+static void rbtree_rotate_right(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
+    infra_rbtree_node_t* left = node->left;
+    node->left = left->right;
+    if (left->right) {
+        left->right->parent = node;
+    }
+    left->parent = node->parent;
+    if (!node->parent) {
+        tree->root = left;
+    } else if (node == node->parent->right) {
+        node->parent->right = left;
+    } else {
+        node->parent->left = left;
+    }
+    left->right = node;
+    node->parent = left;
+}
 
-infra_error_t infra_queue_init(infra_queue_t* queue) {
-    if (!queue) {
+static void rbtree_fix_insert(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
+    while (node != tree->root && node->parent->color == INFRA_RBTREE_RED) {
+        if (node->parent == node->parent->parent->left) {
+            infra_rbtree_node_t* uncle = node->parent->parent->right;
+            if (uncle && uncle->color == INFRA_RBTREE_RED) {
+                node->parent->color = INFRA_RBTREE_BLACK;
+                uncle->color = INFRA_RBTREE_BLACK;
+                node->parent->parent->color = INFRA_RBTREE_RED;
+                node = node->parent->parent;
+            } else {
+                if (node == node->parent->right) {
+                    node = node->parent;
+                    rbtree_rotate_left(tree, node);
+                }
+                node->parent->color = INFRA_RBTREE_BLACK;
+                node->parent->parent->color = INFRA_RBTREE_RED;
+                rbtree_rotate_right(tree, node->parent->parent);
+            }
+        } else {
+            infra_rbtree_node_t* uncle = node->parent->parent->left;
+            if (uncle && uncle->color == INFRA_RBTREE_RED) {
+                node->parent->color = INFRA_RBTREE_BLACK;
+                uncle->color = INFRA_RBTREE_BLACK;
+                node->parent->parent->color = INFRA_RBTREE_RED;
+                node = node->parent->parent;
+            } else {
+                if (node == node->parent->left) {
+                    node = node->parent;
+                    rbtree_rotate_right(tree, node);
+                }
+                node->parent->color = INFRA_RBTREE_BLACK;
+                node->parent->parent->color = INFRA_RBTREE_RED;
+                rbtree_rotate_left(tree, node->parent->parent);
+            }
+        }
+    }
+    tree->root->color = INFRA_RBTREE_BLACK;
+}
+
+infra_error_t infra_rbtree_create(infra_rbtree_t** tree) {
+    if (!tree) {
         return INFRA_ERROR_INVALID;
     }
-    return infra_list_init(&queue->list);
+    *tree = infra_malloc(sizeof(infra_rbtree_t));
+    if (!*tree) {
+        return INFRA_ERROR_MEMORY;
+    }
+    (*tree)->root = NULL;
+    (*tree)->size = 0;
+    return INFRA_OK;
 }
 
-void infra_queue_destroy(infra_queue_t* queue) {
-    if (queue) {
-        infra_list_destroy(&queue->list);
+static void rbtree_destroy_recursive(infra_rbtree_node_t* node) {
+    if (node) {
+        rbtree_destroy_recursive(node->left);
+        rbtree_destroy_recursive(node->right);
+        infra_free(node);
     }
 }
 
-infra_error_t infra_queue_push(infra_queue_t* queue, void* data) {
-    if (!queue) {
+void infra_rbtree_destroy(infra_rbtree_t* tree) {
+    if (tree) {
+        rbtree_destroy_recursive(tree->root);
+        infra_free(tree);
+    }
+}
+
+infra_error_t infra_rbtree_insert(infra_rbtree_t* tree, int key, void* value) {
+    if (!tree) {
         return INFRA_ERROR_INVALID;
     }
-    return infra_list_push_back(&queue->list, data);
+    infra_rbtree_node_t* node = rbtree_create_node(key, value);
+    if (!node) {
+        return INFRA_ERROR_MEMORY;
+    }
+    infra_rbtree_node_t* y = NULL;
+    infra_rbtree_node_t* x = tree->root;
+    while (x) {
+        y = x;
+        if (key < x->key) {
+            x = x->left;
+        } else if (key > x->key) {
+            x = x->right;
+        } else {
+            x->value = value;
+            infra_free(node);
+            return INFRA_OK;
+        }
+    }
+    node->parent = y;
+    if (!y) {
+        tree->root = node;
+    } else if (key < y->key) {
+        y->left = node;
+    } else {
+        y->right = node;
+    }
+    tree->size++;
+    rbtree_fix_insert(tree, node);
+    return INFRA_OK;
 }
 
-void* infra_queue_pop(infra_queue_t* queue) {
-    if (!queue) {
+static infra_rbtree_node_t* rbtree_find_node(infra_rbtree_t* tree, int key) {
+    infra_rbtree_node_t* node = tree->root;
+    while (node) {
+        if (key < node->key) {
+            node = node->left;
+        } else if (key > node->key) {
+            node = node->right;
+        } else {
+            return node;
+        }
+    }
+    return NULL;
+}
+
+void* infra_rbtree_find(infra_rbtree_t* tree, int key) {
+    if (!tree) {
         return NULL;
     }
-    return infra_list_pop_front(&queue->list);
+    infra_rbtree_node_t* node = rbtree_find_node(tree, key);
+    return node ? node->value : NULL;
 }
 
-void* infra_queue_peek(const infra_queue_t* queue) {
-    if (!queue || !queue->list.head) {
+static void rbtree_transplant(infra_rbtree_t* tree, infra_rbtree_node_t* u, infra_rbtree_node_t* v) {
+    if (!u->parent) {
+        tree->root = v;
+    } else if (u == u->parent->left) {
+        u->parent->left = v;
+    } else {
+        u->parent->right = v;
+    }
+    if (v) {
+        v->parent = u->parent;
+    }
+}
+
+static infra_rbtree_node_t* rbtree_minimum(infra_rbtree_node_t* node) {
+    while (node->left) {
+        node = node->left;
+    }
+    return node;
+}
+
+static void rbtree_fix_delete(infra_rbtree_t* tree, infra_rbtree_node_t* x, infra_rbtree_node_t* parent) {
+    while (x != tree->root && (!x || x->color == INFRA_RBTREE_BLACK)) {
+        if (x == parent->left) {
+            infra_rbtree_node_t* w = parent->right;
+            if (w->color == INFRA_RBTREE_RED) {
+                w->color = INFRA_RBTREE_BLACK;
+                parent->color = INFRA_RBTREE_RED;
+                rbtree_rotate_left(tree, parent);
+                w = parent->right;
+            }
+            if ((!w->left || w->left->color == INFRA_RBTREE_BLACK) &&
+                (!w->right || w->right->color == INFRA_RBTREE_BLACK)) {
+                w->color = INFRA_RBTREE_RED;
+                x = parent;
+                parent = x->parent;
+            } else {
+                if (!w->right || w->right->color == INFRA_RBTREE_BLACK) {
+                    if (w->left) {
+                        w->left->color = INFRA_RBTREE_BLACK;
+                    }
+                    w->color = INFRA_RBTREE_RED;
+                    rbtree_rotate_right(tree, w);
+                    w = parent->right;
+                }
+                w->color = parent->color;
+                parent->color = INFRA_RBTREE_BLACK;
+                if (w->right) {
+                    w->right->color = INFRA_RBTREE_BLACK;
+                }
+                rbtree_rotate_left(tree, parent);
+                x = tree->root;
+                break;
+            }
+        } else {
+            infra_rbtree_node_t* w = parent->left;
+            if (w->color == INFRA_RBTREE_RED) {
+                w->color = INFRA_RBTREE_BLACK;
+                parent->color = INFRA_RBTREE_RED;
+                rbtree_rotate_right(tree, parent);
+                w = parent->left;
+            }
+            if ((!w->right || w->right->color == INFRA_RBTREE_BLACK) &&
+                (!w->left || w->left->color == INFRA_RBTREE_BLACK)) {
+                w->color = INFRA_RBTREE_RED;
+                x = parent;
+                parent = x->parent;
+            } else {
+                if (!w->left || w->left->color == INFRA_RBTREE_BLACK) {
+                    if (w->right) {
+                        w->right->color = INFRA_RBTREE_BLACK;
+                    }
+                    w->color = INFRA_RBTREE_RED;
+                    rbtree_rotate_left(tree, w);
+                    w = parent->left;
+                }
+                w->color = parent->color;
+                parent->color = INFRA_RBTREE_BLACK;
+                if (w->left) {
+                    w->left->color = INFRA_RBTREE_BLACK;
+                }
+                rbtree_rotate_right(tree, parent);
+                x = tree->root;
+                break;
+            }
+        }
+    }
+    if (x) {
+        x->color = INFRA_RBTREE_BLACK;
+    }
+}
+
+void* infra_rbtree_remove(infra_rbtree_t* tree, int key) {
+    if (!tree) {
         return NULL;
     }
-    return queue->list.head->data;
+    infra_rbtree_node_t* z = rbtree_find_node(tree, key);
+    if (!z) {
+        return NULL;
+    }
+    void* value = z->value;
+    infra_rbtree_node_t* y = z;
+    infra_rbtree_node_t* x;
+    infra_rbtree_color_t y_original_color = y->color;
+    
+    if (!z->left) {
+        x = z->right;
+        rbtree_transplant(tree, z, z->right);
+    } else if (!z->right) {
+        x = z->left;
+        rbtree_transplant(tree, z, z->left);
+    } else {
+        y = rbtree_minimum(z->right);
+        y_original_color = y->color;
+        x = y->right;
+        if (y->parent == z) {
+            if (x) {
+                x->parent = y;
+            }
+        } else {
+            rbtree_transplant(tree, y, y->right);
+            y->right = z->right;
+            y->right->parent = y;
+        }
+        rbtree_transplant(tree, z, y);
+        y->left = z->left;
+        y->left->parent = y;
+        y->color = z->color;
+    }
+    
+    if (y_original_color == INFRA_RBTREE_BLACK) {
+        rbtree_fix_delete(tree, x, x ? x->parent : NULL);
+    }
+    
+    infra_free(z);
+    tree->size--;
+    return value;
 }
 
-size_t infra_queue_size(const infra_queue_t* queue) {
-    return queue ? queue->list.size : 0;
-}
-
-bool infra_queue_empty(const infra_queue_t* queue) {
-    return queue ? queue->list.size == 0 : true;
+void infra_rbtree_clear(infra_rbtree_t* tree) {
+    if (tree) {
+        rbtree_destroy_recursive(tree->root);
+        tree->root = NULL;
+        tree->size = 0;
+    }
 }
 
 //-----------------------------------------------------------------------------
-// IO Operations
+// I/O Operations
 //-----------------------------------------------------------------------------
 
 infra_error_t infra_printf(const char* format, ...) {
+    if (!format) {
+        return INFRA_ERROR_INVALID;
+    }
+    
     va_list args;
     va_start(args, format);
-    int ret = vprintf(format, args);
+    int result = vfprintf(stdout, format, args);
     va_end(args);
-    return ret >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+    fflush(stdout);
+    
+    return (result >= 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
-infra_error_t infra_dprintf(int fd, const char* format, ...) {
-    va_list args;
-    va_start(args, format);
-    int ret = vdprintf(fd, format, args);
-    va_end(args);
-    return ret >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+//-----------------------------------------------------------------------------
+// Time Management
+//-----------------------------------------------------------------------------
+
+infra_time_t infra_time_now(void) {
+    infra_time_t time;
+    infra_platform_get_time(&time);
+    return time;
 }
 
-infra_error_t infra_puts(const char* str) {
-    return puts(str) >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+infra_time_t infra_time_monotonic(void) {
+    infra_time_t time;
+    infra_platform_get_monotonic_time(&time);
+    return time;
 }
 
-infra_error_t infra_putchar(int ch) {
-    return putchar(ch) >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+void infra_time_sleep(uint32_t ms) {
+    infra_platform_sleep(ms);
 }
 
-infra_error_t infra_io_read(int fd, void* buf, size_t count) {
-    ssize_t ret = read(fd, buf, count);
-    return ret >= 0 ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t infra_io_write(int fd, const void* buf, size_t count) {
-    ssize_t ret = write(fd, buf, count);
-    return ret >= 0 ? INFRA_OK : INFRA_ERROR_IO;
+void infra_time_yield(void) {
+    infra_platform_yield();
 }
 

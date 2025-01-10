@@ -1,170 +1,133 @@
-#include "test/test_common.h"
+#include "test_common.h"
+#include "test_framework.h"
 #include "internal/infra/infra.h"
 #include "internal/infra/infra_sync.h"
-#include "test/test_framework.h"
 
-#define TEST_ASSERT(cond, msg) \
-    if (!(cond)) { \
-        printf("ASSERT FAILED: %s\n", msg); \
-        return 1; \
-    }
-
-static void thread_func(void* arg) {
+static void* thread_func(void* arg) {
     int* counter = (int*)arg;
     (*counter)++;
+    return NULL;
 }
 
-static int test_thread(void) {
-    ppdb_thread_t* thread;
+static void test_thread(void) {
+    infra_error_t err;
+    infra_thread_t* thread;
     int counter = 0;
-    ppdb_error_t err;
 
-    // Test thread creation
-    err = ppdb_thread_create(&thread, thread_func, &counter);
-    TEST_ASSERT(err == PPDB_OK, "Thread creation failed");
+    // 创建线程
+    err = infra_thread_create(&thread, thread_func, &counter);
+    TEST_ASSERT(err == INFRA_OK);
 
-    // Test thread join
-    err = ppdb_thread_join(thread);
-    TEST_ASSERT(err == PPDB_OK, "Thread join failed");
-    TEST_ASSERT(counter == 1, "Thread function did not execute");
+    // 等待线程完成
+    err = infra_thread_join(thread);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(counter == 1);
 
-    // Test thread destroy
-    err = ppdb_thread_destroy(thread);
-    TEST_ASSERT(err == PPDB_OK, "Thread destroy failed");
-
-    return 0;
+    // 销毁线程
+    infra_free(thread);
 }
 
-static int test_mutex(void) {
-    ppdb_mutex_t* mutex;
-    ppdb_error_t err;
+static void test_mutex(void) {
+    infra_error_t err;
+    infra_mutex_t* mutex;
+    int counter = 0;
 
-    // Test mutex creation
-    err = ppdb_mutex_create(&mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex creation failed");
+    // 创建互斥锁
+    err = infra_mutex_create(&mutex);
+    TEST_ASSERT(err == INFRA_OK);
 
-    // Test mutex lock/unlock
-    err = ppdb_mutex_lock(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex lock failed");
+    // 加锁
+    err = infra_mutex_lock(mutex);
+    TEST_ASSERT(err == INFRA_OK);
+    counter++;
+    err = infra_mutex_unlock(mutex);
+    TEST_ASSERT(err == INFRA_OK);
 
-    err = ppdb_mutex_unlock(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex unlock failed");
+    // 尝试加锁
+    err = infra_mutex_trylock(mutex);
+    TEST_ASSERT(err == INFRA_OK);
+    counter++;
+    err = infra_mutex_unlock(mutex);
+    TEST_ASSERT(err == INFRA_OK);
 
-    // Test mutex trylock
-    err = ppdb_mutex_trylock(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex trylock failed");
-
-    err = ppdb_mutex_unlock(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex unlock after trylock failed");
-
-    // Test mutex destroy
-    err = ppdb_mutex_destroy(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex destroy failed");
-
-    return 0;
+    // 销毁互斥锁
+    infra_mutex_destroy(mutex);
+    TEST_ASSERT(counter == 2);
 }
 
-static int test_cond(void) {
-    ppdb_mutex_t* mutex;
-    ppdb_cond_t* cond;
-    ppdb_error_t err;
+static void test_cond(void) {
+    infra_error_t err;
+    infra_mutex_t* mutex;
+    infra_cond_t* cond;
 
-    // Test condition variable creation
-    err = ppdb_mutex_create(&mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex creation failed");
+    // 创建互斥锁和条件变量
+    err = infra_mutex_create(&mutex);
+    TEST_ASSERT(err == INFRA_OK);
 
-    err = ppdb_cond_create(&cond);
-    TEST_ASSERT(err == PPDB_OK, "Condition variable creation failed");
+    err = infra_cond_create(&cond);
+    TEST_ASSERT(err == INFRA_OK);
 
-    // Test condition variable signal
-    err = ppdb_mutex_lock(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex lock failed");
+    // 测试信号
+    err = infra_mutex_lock(mutex);
+    TEST_ASSERT(err == INFRA_OK);
 
-    err = ppdb_cond_signal(cond);
-    TEST_ASSERT(err == PPDB_OK, "Condition variable signal failed");
+    err = infra_cond_signal(cond);
+    TEST_ASSERT(err == INFRA_OK);
 
-    err = ppdb_mutex_unlock(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex unlock failed");
+    err = infra_mutex_unlock(mutex);
+    TEST_ASSERT(err == INFRA_OK);
 
-    // Test condition variable broadcast
-    err = ppdb_mutex_lock(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex lock failed");
+    // 测试广播
+    err = infra_mutex_lock(mutex);
+    TEST_ASSERT(err == INFRA_OK);
 
-    err = ppdb_cond_broadcast(cond);
-    TEST_ASSERT(err == PPDB_OK, "Condition variable broadcast failed");
+    err = infra_cond_broadcast(cond);
+    TEST_ASSERT(err == INFRA_OK);
 
-    err = ppdb_mutex_unlock(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex unlock failed");
+    err = infra_mutex_unlock(mutex);
+    TEST_ASSERT(err == INFRA_OK);
 
-    // Test condition variable destroy
-    err = ppdb_cond_destroy(cond);
-    TEST_ASSERT(err == PPDB_OK, "Condition variable destroy failed");
-
-    err = ppdb_mutex_destroy(mutex);
-    TEST_ASSERT(err == PPDB_OK, "Mutex destroy failed");
-
-    return 0;
+    // 销毁条件变量和互斥锁
+    infra_cond_destroy(cond);
+    infra_mutex_destroy(mutex);
 }
 
-static int test_rwlock(void) {
-    ppdb_rwlock_t* rwlock;
-    ppdb_error_t err;
+static void test_rwlock(void) {
+    infra_error_t err;
+    infra_rwlock_t* rwlock;
+    int counter = 0;
 
-    // Test rwlock creation
-    err = ppdb_rwlock_create(&rwlock);
-    TEST_ASSERT(err == PPDB_OK, "RWLock creation failed");
+    // 创建读写锁
+    err = infra_rwlock_create(&rwlock);
+    TEST_ASSERT(err == INFRA_OK);
 
-    // Test read lock/unlock
-    err = ppdb_rwlock_rdlock(rwlock);
-    TEST_ASSERT(err == PPDB_OK, "RWLock read lock failed");
+    // 读锁
+    err = infra_rwlock_rdlock(rwlock);
+    TEST_ASSERT(err == INFRA_OK);
+    counter++;
+    err = infra_rwlock_unlock(rwlock);
+    TEST_ASSERT(err == INFRA_OK);
 
-    err = ppdb_rwlock_unlock(rwlock);
-    TEST_ASSERT(err == PPDB_OK, "RWLock read unlock failed");
+    // 写锁
+    err = infra_rwlock_wrlock(rwlock);
+    TEST_ASSERT(err == INFRA_OK);
+    counter++;
+    err = infra_rwlock_unlock(rwlock);
+    TEST_ASSERT(err == INFRA_OK);
 
-    // Test write lock/unlock
-    err = ppdb_rwlock_wrlock(rwlock);
-    TEST_ASSERT(err == PPDB_OK, "RWLock write lock failed");
-
-    err = ppdb_rwlock_unlock(rwlock);
-    TEST_ASSERT(err == PPDB_OK, "RWLock write unlock failed");
-
-    // Test rwlock destroy
-    err = ppdb_rwlock_destroy(rwlock);
-    TEST_ASSERT(err == PPDB_OK, "RWLock destroy failed");
-
-    return 0;
+    // 销毁读写锁
+    infra_rwlock_destroy(rwlock);
+    TEST_ASSERT(counter == 2);
 }
 
 int main(void) {
-    int result = 0;
+    TEST_INIT();
 
-    printf("Running thread tests...\n");
-    result = test_thread();
-    if (result != 0) {
-        return result;
-    }
-    printf("Thread tests passed.\n");
+    test_thread();
+    test_mutex();
+    test_cond();
+    test_rwlock();
 
-    printf("Running mutex tests...\n");
-    result = test_mutex();
-    if (result != 0) {
-        return result;
-    }
-    printf("Mutex tests passed.\n");
-
-    printf("Running condition variable tests...\n");
-    result = test_cond();
-    if (result != 0) {
-        return result;
-    }
-    printf("Condition variable tests passed.\n");
-
-    printf("Running read-write lock tests...\n");
-    result = test_rwlock();
-    if (result != 0) {
-        return result;
-    }
-    printf("Read-write lock tests passed.\n");
-
+    TEST_CLEANUP();
     return 0;
 }

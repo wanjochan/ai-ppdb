@@ -1,4 +1,8 @@
 /*
+ * @cursor:protected
+ * This file is considered semi-read-only by Cursor AI.
+ * Any modifications should be discussed and confirmed before applying.
+ *
  * infra_sync.c - Synchronization Primitives Implementation
  */
 
