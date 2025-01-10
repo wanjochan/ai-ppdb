@@ -1,172 +1,161 @@
 /*
- * infra.h - Core Infrastructure Definitions
+ * infra.h - Infrastructure Layer
  */
 
 #ifndef PPDB_INFRA_H
 #define PPDB_INFRA_H
 
-#include "cosmopolitan.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <time.h>
+#include <sys/types.h>
 
-/* Basic Types */
-typedef uint64_t u64;
-typedef uint32_t u32;
-typedef uint16_t u16;
-typedef uint8_t  u8;
-typedef int64_t  i64;
-typedef int32_t  i32;
-typedef int16_t  i16;
-typedef int8_t   i8;
+//-----------------------------------------------------------------------------
+// Version Information
+//-----------------------------------------------------------------------------
 
-/* Utility Macros */
-#define container_of(ptr, type, member) \
-    ((type *)((char *)(ptr) - offsetof(type, member)))
+#define INFRA_VERSION_MAJOR 1
+#define INFRA_VERSION_MINOR 0
+#define INFRA_VERSION_PATCH 0
 
-/* Error Codes */
-#define PPDB_OK           0
-#define PPDB_ERR_PARAM    1
-#define PPDB_ERR_MEMORY   2
-#define PPDB_ERR_THREAD   3
-#define PPDB_ERR_MUTEX    4
-#define PPDB_ERR_COND     5
-#define PPDB_ERR_RWLOCK   6
-#define PPDB_ERR_BUSY     7
-#define PPDB_ERR_NOTFOUND 8
-#define PPDB_ERR_EXISTS   9
-#define PPDB_ERR_IO       10
-#define PPDB_ERR_TIMEOUT  11
-#define PPDB_ERR_AGAIN    12
-#define PPDB_ERR_INTR     13
-#define PPDB_ERR_PERM     14
-#define PPDB_ERR_NOENT    15
-#define PPDB_ERR_NOSPC    16
-#define PPDB_ERR_INVAL    17
-#define PPDB_ERR_NFILE    18
-#define PPDB_ERR_MFILE    19
-#define PPDB_ERR_NOSYS    20
-#define PPDB_ERR_PROTO    21
-#define PPDB_ERR_NOBUFS   22
-#define PPDB_ERR_NOMSG    23
-#define PPDB_ERR_BADMSG   24
-#define PPDB_ERR_OVERFLOW 25
-#define PPDB_ERR_NODATA   26
-#define PPDB_ERR_NOSR     27
-#define PPDB_ERR_TIME     28
-#define PPDB_ERR_NOLINK   29
-#define PPDB_ERR_PROTO_NO_SUPPORT 30
-#define PPDB_ERR_STALE    31
-#define PPDB_ERR_UNREACH  32
-#define PPDB_ERR_NOTCONN  33
-#define PPDB_ERR_SHUTDOWN 34
-#define PPDB_ERR_TOOBIG   35
-#define PPDB_ERR_NOTDIR   36
-#define PPDB_ERR_ISDIR    37
-#define PPDB_ERR_INVALID  38
-#define PPDB_ERR_NAMETOOLONG 39
-#define PPDB_ERR_LOOP     40
-#define PPDB_ERR_OPNOTSUPP 41
-#define PPDB_ERR_ADDRINUSE 42
-#define PPDB_ERR_ADDRNOTAVAIL 43
-#define PPDB_ERR_NETDOWN  44
-#define PPDB_ERR_NETUNREACH 45
-#define PPDB_ERR_NETRESET 46
-#define PPDB_ERR_CONNABORTED 47
-#define PPDB_ERR_CONNRESET 48
-#define PPDB_ERR_NOTSOCK  49
-#define PPDB_ERR_DESTADDRREQ 50
-#define PPDB_ERR_MSGSIZE  51
-#define PPDB_ERR_PROTONOSUPPORT 52
-#define PPDB_ERR_OPNOSUPPORT 53
-#define PPDB_ERR_PFNOSUPPORT 54
-#define PPDB_ERR_AFNOSUPPORT 55
-#define PPDB_ERR_SOCKNOSUPPORT 56
-#define PPDB_ERR_EOPNOTSUPP 57
-#define PPDB_ERR_CRYPTOERR 58
-#define PPDB_ERR_KEYEXPIRED 59
-#define PPDB_ERR_KEYREVOKED 60
-#define PPDB_ERR_KEYREJECTED 61
-#define PPDB_ERR_OWNER_DIED 62
-#define PPDB_ERR_STATE    63
-#define PPDB_ERR_ATOMIC_BUSY 64
-#define PPDB_ERR_REMOTE   65
-#define PPDB_ERR_NOREMOTE 66
-#define PPDB_ERR_RESTART  67
-#define PPDB_ERR_TRYAGAIN 68
-#define PPDB_ERR_IN_PROGRESS 69
-#define PPDB_ERR_ALREADY  70
-#define PPDB_ERR_LAST     71
+#define INFRA_VERSION_STRING "1.0.0"
 
-typedef int ppdb_error_t;
+//-----------------------------------------------------------------------------
+// Basic Types
+//-----------------------------------------------------------------------------
 
-/* Memory Management */
-ppdb_error_t ppdb_mem_malloc(size_t size, void** ptr);
-ppdb_error_t ppdb_mem_calloc(size_t nmemb, size_t size, void** ptr);
-ppdb_error_t ppdb_mem_realloc(void* old_ptr, size_t size, void** new_ptr);
-void ppdb_mem_free(void* ptr);
+typedef int32_t infra_error_t;
+typedef uint32_t infra_flags_t;
+typedef uint64_t infra_time_t;
+typedef uint64_t infra_handle_t;
 
-/* Log Levels */
-#define INFRA_LOG_ERROR 0
-#define INFRA_LOG_WARN  1
-#define INFRA_LOG_INFO  2
-#define INFRA_LOG_DEBUG 3
+//-----------------------------------------------------------------------------
+// Error Codes
+//-----------------------------------------------------------------------------
 
-/* Statistics Structure */
-struct infra_stats {
-    u64 alloc_count;
-    u64 free_count;
-    u64 total_allocated;
-    u64 current_allocated;
-    u64 error_count;
-};
+#define INFRA_OK               0
+#define INFRA_ERROR_GENERIC   -1
+#define INFRA_ERROR_MEMORY    -2
+#define INFRA_ERROR_IO        -3
+#define INFRA_ERROR_TIMEOUT   -4
+#define INFRA_ERROR_BUSY      -5
+#define INFRA_ERROR_AGAIN     -6
+#define INFRA_ERROR_INVALID   -7
+#define INFRA_ERROR_NOTFOUND  -8
+#define INFRA_ERROR_EXISTS    -9
+#define INFRA_ERROR_FULL      -10
+#define INFRA_ERROR_EMPTY     -11
+#define INFRA_ERROR_OVERFLOW  -12
+#define INFRA_ERROR_UNDERFLOW -13
+#define INFRA_ERROR_SYSTEM    -14
+#define INFRA_ERROR_PROTOCOL  -15
+#define INFRA_ERROR_NETWORK   -16
+#define INFRA_ERROR_SECURITY  -17
 
-/* Core Functions */
-void infra_set_log_level(int level);
-void infra_set_log_handler(void (*handler)(int level, const char* msg));
-void infra_log(int level, const char* fmt, ...);
-const char* infra_strerror(int code);
-void infra_set_error(int code, const char* msg);
-const char* infra_get_error(void);
+const char* infra_error_string(infra_error_t error);
+
+//-----------------------------------------------------------------------------
+// Memory Management
+//-----------------------------------------------------------------------------
+
 void* infra_malloc(size_t size);
 void* infra_calloc(size_t nmemb, size_t size);
 void* infra_realloc(void* ptr, size_t size);
 void infra_free(void* ptr);
-void infra_get_stats(struct infra_stats* stats);
-void infra_reset_stats(void);
 
-/* String Operations */
-size_t infra_strlen(const char* str);
-int infra_strcmp(const char* lhs, const char* rhs);
-char* infra_strdup(const char* str);
+void* infra_memset(void* s, int c, size_t n);
+void* infra_memcpy(void* dest, const void* src, size_t n);
+void* infra_memmove(void* dest, const void* src, size_t n);
+int infra_memcmp(const void* s1, const void* s2, size_t n);
 
-/* Memory Operations */
-void* infra_memset(void* dest, int ch, size_t count);
-void* infra_memcpy(void* dest, const void* src, size_t count);
-void* infra_memmove(void* dest, const void* src, size_t count);
-int infra_memcmp(const void* lhs, const void* rhs, size_t count);
+//-----------------------------------------------------------------------------
+// String Operations
+//-----------------------------------------------------------------------------
 
-/* IO Operations */
-int infra_printf(const char* format, ...);
-int infra_dprintf(int fd, const char* format, ...);
-int infra_puts(const char* str);
-int infra_putchar(int ch);
-int infra_io_read(int fd, void* buf, size_t count);
-int infra_io_write(int fd, const void* buf, size_t count);
+size_t infra_strlen(const char* s);
+char* infra_strcpy(char* dest, const char* src);
+char* infra_strncpy(char* dest, const char* src, size_t n);
+char* infra_strcat(char* dest, const char* src);
+char* infra_strncat(char* dest, const char* src, size_t n);
+int infra_strcmp(const char* s1, const char* s2);
+int infra_strncmp(const char* s1, const char* s2, size_t n);
+char* infra_strdup(const char* s);
+char* infra_strndup(const char* s, size_t n);
+char* infra_strchr(const char* s, int c);
+char* infra_strrchr(const char* s, int c);
+char* infra_strstr(const char* haystack, const char* needle);
 
-/* Buffer Operations */
-struct infra_buffer {
-    void* data;
+//-----------------------------------------------------------------------------
+// Buffer Operations
+//-----------------------------------------------------------------------------
+
+typedef struct infra_buffer {
+    uint8_t* data;
     size_t size;
     size_t capacity;
-    size_t read_pos;
-    size_t write_pos;
-};
+} infra_buffer_t;
 
-int infra_buffer_init(struct infra_buffer* buf, size_t initial_capacity);
-void infra_buffer_destroy(struct infra_buffer* buf);
-int infra_buffer_reserve(struct infra_buffer* buf, size_t size);
-int infra_buffer_write(struct infra_buffer* buf, const void* data, size_t size);
-int infra_buffer_read(struct infra_buffer* buf, void* data, size_t size);
-size_t infra_buffer_readable(struct infra_buffer* buf);
-size_t infra_buffer_writable(struct infra_buffer* buf);
-void infra_buffer_reset(struct infra_buffer* buf);
+infra_error_t infra_buffer_init(infra_buffer_t* buf, size_t initial_capacity);
+void infra_buffer_destroy(infra_buffer_t* buf);
+infra_error_t infra_buffer_reserve(infra_buffer_t* buf, size_t capacity);
+infra_error_t infra_buffer_write(infra_buffer_t* buf, const void* data, size_t size);
+infra_error_t infra_buffer_read(infra_buffer_t* buf, void* data, size_t size);
+size_t infra_buffer_readable(const infra_buffer_t* buf);
+size_t infra_buffer_writable(const infra_buffer_t* buf);
+void infra_buffer_reset(infra_buffer_t* buf);
+
+//-----------------------------------------------------------------------------
+// Logging
+//-----------------------------------------------------------------------------
+
+#define INFRA_LOG_LEVEL_NONE    0
+#define INFRA_LOG_LEVEL_ERROR   1
+#define INFRA_LOG_LEVEL_WARN    2
+#define INFRA_LOG_LEVEL_INFO    3
+#define INFRA_LOG_LEVEL_DEBUG   4
+#define INFRA_LOG_LEVEL_TRACE   5
+
+typedef void (*infra_log_callback_t)(int level, const char* file, int line,
+                                   const char* func, const char* msg);
+
+void infra_log_set_level(int level);
+void infra_log_set_callback(infra_log_callback_t callback);
+void infra_log(int level, const char* file, int line, const char* func,
+               const char* format, ...);
+
+#define INFRA_LOG_ERROR(fmt, ...) \
+    infra_log(INFRA_LOG_LEVEL_ERROR, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define INFRA_LOG_WARN(fmt, ...) \
+    infra_log(INFRA_LOG_LEVEL_WARN, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define INFRA_LOG_INFO(fmt, ...) \
+    infra_log(INFRA_LOG_LEVEL_INFO, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define INFRA_LOG_DEBUG(fmt, ...) \
+    infra_log(INFRA_LOG_LEVEL_DEBUG, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define INFRA_LOG_TRACE(fmt, ...) \
+    infra_log(INFRA_LOG_LEVEL_TRACE, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+
+//-----------------------------------------------------------------------------
+// Statistics
+//-----------------------------------------------------------------------------
+
+typedef struct infra_stats {
+    uint64_t total_operations;
+    uint64_t successful_operations;
+    uint64_t failed_operations;
+    uint64_t total_bytes;
+    uint64_t min_latency_us;
+    uint64_t max_latency_us;
+    uint64_t avg_latency_us;
+    uint64_t last_error_time;
+    infra_error_t last_error;
+} infra_stats_t;
+
+void infra_stats_init(infra_stats_t* stats);
+void infra_stats_reset(infra_stats_t* stats);
+void infra_stats_update(infra_stats_t* stats, bool success, uint64_t latency_us,
+                       size_t bytes, infra_error_t error);
+void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src);
+void infra_stats_print(const infra_stats_t* stats, const char* prefix);
 
 #endif /* PPDB_INFRA_H */

@@ -52,18 +52,6 @@ struct infra_timer {
     void* data;              // Platform-specific data
 };
 
-// Statistics
-typedef struct {
-    uint64_t events_total;   // Total events processed
-    uint64_t events_active;  // Currently active events
-    uint64_t timers_total;   // Total timers created
-    uint64_t timers_active;  // Currently active timers
-    uint64_t loops;          // Number of loop iterations
-    uint64_t io_reads;       // Number of read events
-    uint64_t io_writes;      // Number of write events
-    uint64_t io_errors;      // Number of error events
-} infra_stats_t;
-
 //-----------------------------------------------------------------------------
 // Loop Management
 //-----------------------------------------------------------------------------
@@ -129,5 +117,64 @@ infra_error_t infra_async_read(infra_loop_t* loop, int fd,
 infra_error_t infra_async_write(infra_loop_t* loop, int fd,
                                const void* buf, size_t len,
                                infra_event_cb cb, void* arg);
+
+//-----------------------------------------------------------------------------
+// Async Task Management
+//-----------------------------------------------------------------------------
+
+typedef struct infra_async_context infra_async_context_t;
+typedef struct infra_async_task infra_async_task_t;
+typedef void (*infra_async_callback_t)(infra_async_task_t* task, infra_error_t error);
+
+typedef enum infra_async_type {
+    INFRA_ASYNC_READ,
+    INFRA_ASYNC_WRITE,
+    INFRA_ASYNC_ACCEPT,
+    INFRA_ASYNC_CONNECT,
+    INFRA_ASYNC_TIMER,
+    INFRA_ASYNC_EVENT
+} infra_async_type_t;
+
+struct infra_async_task {
+    infra_async_type_t type;
+    infra_async_callback_t callback;
+    void* user_data;
+    infra_stats_t* stats;
+    union {
+        struct {
+            int fd;
+            void* buffer;
+            size_t size;
+            size_t offset;
+        } io;
+        struct {
+            int fd;
+            struct sockaddr* addr;
+            socklen_t* addrlen;
+        } accept;
+        struct {
+            int fd;
+            const struct sockaddr* addr;
+            socklen_t addrlen;
+        } connect;
+        struct {
+            uint64_t timeout_ms;
+            bool periodic;
+        } timer;
+        struct {
+            int event_fd;
+            uint64_t value;
+        } event;
+    };
+};
+
+infra_error_t infra_async_init(infra_async_context_t** ctx);
+void infra_async_destroy(infra_async_context_t* ctx);
+infra_error_t infra_async_submit(infra_async_context_t* ctx,
+                                infra_async_task_t* task);
+infra_error_t infra_async_cancel(infra_async_context_t* ctx,
+                                infra_async_task_t* task);
+infra_error_t infra_async_run(infra_async_context_t* ctx, uint64_t timeout_ms);
+infra_error_t infra_async_stop(infra_async_context_t* ctx);
 
 #endif /* PPDB_INFRA_ASYNC_H */ 

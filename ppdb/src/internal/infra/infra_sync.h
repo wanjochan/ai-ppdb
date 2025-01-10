@@ -5,7 +5,6 @@
 #ifndef PPDB_INFRA_SYNC_H
 #define PPDB_INFRA_SYNC_H
 
-#include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 
 //-----------------------------------------------------------------------------
@@ -96,5 +95,28 @@ ppdb_error_t ppdb_rwlock_unlock(ppdb_rwlock_t* rwlock);
 
 ppdb_error_t ppdb_yield(void);
 ppdb_error_t ppdb_sleep(uint32_t milliseconds);
+
+//-----------------------------------------------------------------------------
+// Synchronization Context
+//-----------------------------------------------------------------------------
+
+typedef struct infra_sync_context infra_sync_context_t;
+typedef struct infra_sync_task infra_sync_task_t;
+typedef void (*infra_sync_callback_t)(infra_sync_task_t* task, infra_error_t error);
+
+struct infra_sync_task {
+    infra_sync_callback_t callback;
+    void* user_data;
+    infra_stats_t* stats;
+};
+
+infra_error_t infra_sync_init(infra_sync_context_t** ctx);
+void infra_sync_destroy(infra_sync_context_t* ctx);
+infra_error_t infra_sync_submit(infra_sync_context_t* ctx,
+                               infra_sync_task_t* task);
+infra_error_t infra_sync_cancel(infra_sync_context_t* ctx,
+                               infra_sync_task_t* task);
+infra_error_t infra_sync_run(infra_sync_context_t* ctx);
+infra_error_t infra_sync_stop(infra_sync_context_t* ctx);
 
 #endif /* PPDB_INFRA_SYNC_H */ 
