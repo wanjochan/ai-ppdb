@@ -198,3 +198,169 @@ void infra_get_stats(struct infra_stats* stats) {
 void infra_reset_stats(void) {
     memset(&g_stats, 0, sizeof(g_stats));
 }
+
+//-----------------------------------------------------------------------------
+// IO Operations
+//-----------------------------------------------------------------------------
+
+// Print operations
+int infra_printf(const char* format, ...) {
+    if (!format) return -1;
+    va_list args;
+    va_start(args, format);
+    int result = vprintf(format, args);
+    va_end(args);
+    return result;
+}
+
+int infra_dprintf(int fd, const char* format, ...) {
+    if (fd < 0 || !format) return -1;
+    va_list args;
+    va_start(args, format);
+    int result = vdprintf(fd, format, args);
+    va_end(args);
+    return result;
+}
+
+int infra_puts(const char* str) {
+    if (!str) return -1;
+    return puts(str);
+}
+
+int infra_putchar(int ch) {
+    return putchar(ch);
+}
+
+// Basic IO operations
+int infra_io_read(int fd, void* buf, size_t count) {
+    if (fd < 0 || !buf || count == 0) return -1;
+    
+    ssize_t n = read(fd, buf, count);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;
+        }
+        return -1;
+    }
+    
+    return (int)n;
+}
+
+int infra_io_write(int fd, const void* buf, size_t count) {
+    if (fd < 0 || !buf || count == 0) return -1;
+    
+    ssize_t n = write(fd, buf, count);
+    if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;
+        }
+        return -1;
+    }
+    
+    return (int)n;
+}
+
+//-----------------------------------------------------------------------------
+// Buffer Operations
+//-----------------------------------------------------------------------------
+
+int infra_buffer_init(struct infra_buffer* buf, size_t initial_capacity) {
+    buf->data = infra_malloc(initial_capacity);
+    if (!buf->data) {
+        return INFRA_ERR_NOMEM;
+    }
+    
+    buf->size = 0;
+    buf->capacity = initial_capacity;
+    buf->read_pos = 0;
+    buf->write_pos = 0;
+    
+    return INFRA_OK;
+}
+
+void infra_buffer_destroy(struct infra_buffer* buf) {
+    if (buf->data) {
+        infra_free(buf->data);
+        buf->data = NULL;
+    }
+    buf->size = 0;
+    buf->capacity = 0;
+    buf->read_pos = 0;
+    buf->write_pos = 0;
+}
+
+int infra_buffer_reserve(struct infra_buffer* buf, size_t size) {
+    void* new_data;
+    size_t new_capacity;
+    
+    if (size <= buf->capacity) {
+        return INFRA_OK;
+    }
+    
+    /* Double the capacity until it's enough */
+    new_capacity = buf->capacity;
+    while (new_capacity < size) {
+        new_capacity *= 2;
+    }
+    
+    new_data = infra_realloc(buf->data, new_capacity);
+    if (!new_data) {
+        return INFRA_ERR_NOMEM;
+    }
+    
+    buf->data = new_data;
+    buf->capacity = new_capacity;
+    
+    return INFRA_OK;
+}
+
+int infra_buffer_write(struct infra_buffer* buf, const void* data, size_t size) {
+    int ret;
+    
+    /* Make sure we have enough space */
+    ret = infra_buffer_reserve(buf, buf->write_pos + size);
+    if (ret != INFRA_OK) {
+        return ret;
+    }
+    
+    /* Copy data */
+    memcpy((char*)buf->data + buf->write_pos, data, size);
+    buf->write_pos += size;
+    buf->size = buf->write_pos;
+    
+    return INFRA_OK;
+}
+
+int infra_buffer_read(struct infra_buffer* buf, void* data, size_t size) {
+    size_t available = infra_buffer_readable(buf);
+    
+    if (size > available) {
+        return INFRA_ERR_INVALID;
+    }
+    
+    /* Copy data */
+    memcpy(data, (char*)buf->data + buf->read_pos, size);
+    buf->read_pos += size;
+    
+    /* Reset positions if buffer is empty */
+    if (buf->read_pos == buf->write_pos) {
+        buf->read_pos = 0;
+        buf->write_pos = 0;
+    }
+    
+    return INFRA_OK;
+}
+
+size_t infra_buffer_readable(struct infra_buffer* buf) {
+    return buf->write_pos - buf->read_pos;
+}
+
+size_t infra_buffer_writable(struct infra_buffer* buf) {
+    return buf->capacity - buf->write_pos;
+}
+
+void infra_buffer_reset(struct infra_buffer* buf) {
+    buf->read_pos = 0;
+    buf->write_pos = 0;
+    buf->size = 0;
+}

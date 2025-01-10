@@ -57,6 +57,26 @@ src/internal/                 # 内部头文件目录
 
 ## 开发阶段
 
+0. **基础设施层**
+
+ppdb/src/internal/infra/infra.h: 基础设施头文件
+ppdb/src/infra/infra.c: 基础功能（内存、字符串、日志等）
+
+ppdb/src/internal/infra/infra_platform.h: 平台抽象头文件
+ppdb/src/infra/infra_platform.c: 平台抽象（线程等）
+
+ppdb/src/internal/infra/infra_struct.h: 数据结构头文件
+ppdb/src/infra/infra_struct.c: 数据结构（链表、哈希表等）
+
+ppdb/src/internal/infra/infra_async.h: 异步头文件
+ppdb/src/infra/infra_async.c: 异步
+
+ppdb/src/internal/infra/infra_sync.h: 同步头文件
+ppdb/src/infra/infra_sync.c: 同步
+
+ppdb/src/internal/infra/infra_peer.h: 实例头文件
+ppdb/src/infra/infra_peer.c: 实例
+
 1. **第一阶段：MemKV**
    - 实现基础设施层
    - 实现内存KV存储

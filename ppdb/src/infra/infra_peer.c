@@ -1,6 +1,8 @@
 #include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 
+//Peers (instances across process and networks)
+
 #define MAX_PEERS 128
 #define INVALID_SOCKET -1
 

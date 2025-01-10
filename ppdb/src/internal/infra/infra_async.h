@@ -1,116 +1,133 @@
 /*
- * infra_async.h - Asynchronous System Interface
+ * infra_async.h - Unified Asynchronous System Interface
  */
 
 #ifndef PPDB_INFRA_ASYNC_H
 #define PPDB_INFRA_ASYNC_H
 
-#include "cosmopolitan.h"
 #include "internal/infra/infra.h"
-#include "internal/infra/infra_sync.h"
+#include "internal/infra/infra_platform.h"
 
 //-----------------------------------------------------------------------------
-// Error Codes
+// Types and Constants
 //-----------------------------------------------------------------------------
 
-#define PPDB_ERR_IO      10
-#define PPDB_ERR_TIMEOUT 11
-#define PPDB_ERR_CANCEL  12
+// Event types
+#define INFRA_EVENT_NONE   0x00
+#define INFRA_EVENT_READ   0x01
+#define INFRA_EVENT_WRITE  0x02
+#define INFRA_EVENT_ERROR  0x04
+#define INFRA_EVENT_TIMER  0x08
+#define INFRA_EVENT_SIGNAL 0x10
+
+// Forward declarations
+typedef struct infra_loop infra_loop_t;
+typedef struct infra_event infra_event_t;
+typedef struct infra_timer infra_timer_t;
+
+// Event callback
+typedef void (*infra_event_cb)(infra_event_t* event, void* arg);
+
+// Timer callback
+typedef void (*infra_timer_cb)(infra_timer_t* timer, void* arg);
+
+// Event structure
+struct infra_event {
+    int fd;                  // File descriptor
+    uint32_t events;         // Registered events
+    infra_event_cb cb;       // Event callback
+    void* arg;               // User argument
+    infra_loop_t* loop;      // Owner loop
+    void* data;              // Platform-specific data
+};
+
+// Timer structure
+struct infra_timer {
+    uint64_t interval;       // Timer interval in milliseconds
+    uint64_t next_expire;    // Next expiration time
+    bool repeat;             // Whether timer repeats
+    infra_timer_cb cb;       // Timer callback
+    void* arg;               // User argument
+    infra_loop_t* loop;      // Owner loop
+    void* data;              // Platform-specific data
+};
+
+// Statistics
+typedef struct {
+    uint64_t events_total;   // Total events processed
+    uint64_t events_active;  // Currently active events
+    uint64_t timers_total;   // Total timers created
+    uint64_t timers_active;  // Currently active timers
+    uint64_t loops;          // Number of loop iterations
+    uint64_t io_reads;       // Number of read events
+    uint64_t io_writes;      // Number of write events
+    uint64_t io_errors;      // Number of error events
+} infra_stats_t;
 
 //-----------------------------------------------------------------------------
-// Type Definitions
+// Loop Management
 //-----------------------------------------------------------------------------
 
-typedef void (*ppdb_async_func_t)(void*);
-typedef void (*ppdb_async_callback_t)(ppdb_error_t error, void* arg);
+// Create event loop
+infra_error_t infra_loop_create(infra_loop_t** loop);
 
-typedef enum {
-    PPDB_ASYNC_STATE_INIT,
-    PPDB_ASYNC_STATE_QUEUED,
-    PPDB_ASYNC_STATE_RUNNING,
-    PPDB_ASYNC_STATE_COMPLETED,
-    PPDB_ASYNC_STATE_CANCELLED
-} ppdb_async_state_t;
+// Destroy event loop
+infra_error_t infra_loop_destroy(infra_loop_t* loop);
 
-typedef struct ppdb_async_handle {
-    struct ppdb_async_loop* loop;
-    ppdb_async_state_t state;
-    ppdb_async_func_t func;
-    void* func_arg;
-    ppdb_async_callback_t callback;
-    void* callback_arg;
-    struct ppdb_async_handle* next;
-    uint64_t submit_time;
-    uint64_t start_time;
-    uint64_t complete_time;
-} ppdb_async_handle_t;
+// Run event loop
+infra_error_t infra_loop_run(infra_loop_t* loop);
 
-typedef struct ppdb_async_io_stats {
-    uint64_t total_requests;
-    uint64_t completed_requests;
-    uint64_t failed_requests;
-    uint64_t bytes_read;
-    uint64_t bytes_written;
-    uint64_t total_wait_time;
-    uint64_t total_exec_time;
-} ppdb_async_io_stats_t;
+// Stop event loop
+infra_error_t infra_loop_stop(infra_loop_t* loop);
 
-typedef struct ppdb_async_queue {
-    ppdb_async_handle_t* head;
-    ppdb_async_handle_t* tail;
-    size_t size;
-} ppdb_async_queue_t;
-
-typedef struct ppdb_async_loop {
-    bool running;
-    ppdb_mutex_t* lock;
-    ppdb_cond_t* cond;
-    ppdb_async_queue_t queues[3];  // ready, running, completed
-    ppdb_async_io_stats_t io_stats;
-} ppdb_async_loop_t;
+// Get loop statistics
+infra_error_t infra_loop_stats(infra_loop_t* loop, infra_stats_t* stats);
 
 //-----------------------------------------------------------------------------
-// Function Declarations
+// Event Management
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_async_loop_create(ppdb_async_loop_t** loop);
-ppdb_error_t ppdb_async_loop_destroy(ppdb_async_loop_t* loop);
-ppdb_error_t ppdb_async_loop_run(ppdb_async_loop_t* loop, uint32_t timeout_ms);
-ppdb_error_t ppdb_async_loop_stop(ppdb_async_loop_t* loop);
+// Create event
+infra_error_t infra_event_create(infra_loop_t* loop, int fd, 
+                                uint32_t events, infra_event_cb cb,
+                                void* arg, infra_event_t** event);
 
-ppdb_error_t ppdb_async_submit(ppdb_async_loop_t* loop,
-                              ppdb_async_func_t func,
-                              void* func_arg,
-                              uint32_t flags,
-                              uint32_t timeout_ms,
-                              ppdb_async_callback_t callback,
-                              void* callback_arg,
-                              ppdb_async_handle_t** handle);
+// Destroy event
+infra_error_t infra_event_destroy(infra_event_t* event);
 
-ppdb_error_t ppdb_async_cancel(ppdb_async_handle_t* handle);
+// Modify event
+infra_error_t infra_event_modify(infra_event_t* event, uint32_t events);
 
-ppdb_error_t ppdb_async_read(ppdb_async_loop_t* loop,
-                            int fd,
-                            void* buf,
-                            size_t count,
-                            uint64_t offset,
-                            ppdb_async_callback_t callback,
-                            void* user_data);
+//-----------------------------------------------------------------------------
+// Timer Management
+//-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_async_write(ppdb_async_loop_t* loop,
-                             int fd,
-                             const void* buf,
-                             size_t count,
-                             uint64_t offset,
-                             ppdb_async_callback_t callback,
-                             void* user_data);
+// Create timer
+infra_error_t infra_timer_create(infra_loop_t* loop, uint64_t interval,
+                                bool repeat, infra_timer_cb cb,
+                                void* arg, infra_timer_t** timer);
 
-ppdb_error_t ppdb_async_fsync(ppdb_async_loop_t* loop,
-                             int fd,
-                             ppdb_async_callback_t callback,
-                             void* user_data);
+// Destroy timer
+infra_error_t infra_timer_destroy(infra_timer_t* timer);
 
-void ppdb_async_get_io_stats(ppdb_async_loop_t* loop,
-                            ppdb_async_io_stats_t* stats);
+// Start timer
+infra_error_t infra_timer_start(infra_timer_t* timer);
+
+// Stop timer
+infra_error_t infra_timer_stop(infra_timer_t* timer);
+
+//-----------------------------------------------------------------------------
+// Async IO Operations
+//-----------------------------------------------------------------------------
+
+// Async read
+infra_error_t infra_async_read(infra_loop_t* loop, int fd,
+                              void* buf, size_t len,
+                              infra_event_cb cb, void* arg);
+
+// Async write
+infra_error_t infra_async_write(infra_loop_t* loop, int fd,
+                               const void* buf, size_t len,
+                               infra_event_cb cb, void* arg);
 
 #endif /* PPDB_INFRA_ASYNC_H */ 
