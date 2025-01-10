@@ -2,8 +2,8 @@
  * infra_platform.h - Platform Abstraction Layer
  */
 
-#ifndef PPDB_INFRA_PLATFORM_H
-#define PPDB_INFRA_PLATFORM_H
+#ifndef INFRA_PLATFORM_H
+#define INFRA_PLATFORM_H
 
 #include "internal/infra/infra.h"
 
@@ -201,4 +201,4 @@ infra_error_t infra_sys_tid(pid_t* tid);
 infra_error_t infra_sys_uid(uid_t* uid);
 infra_error_t infra_sys_gid(gid_t* gid);
 
-#endif /* PPDB_INFRA_PLATFORM_H */ 
+#endif /* INFRA_PLATFORM_H */ 

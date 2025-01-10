@@ -2,8 +2,8 @@
  * infra_async.h - Unified Asynchronous System Interface
  */
 
-#ifndef PPDB_INFRA_ASYNC_H
-#define PPDB_INFRA_ASYNC_H
+#ifndef INFRA_ASYNC_H
+#define INFRA_ASYNC_H
 
 #include "internal/infra/infra.h"
 #include "internal/infra/infra_platform.h"
@@ -177,4 +177,4 @@ infra_error_t infra_async_cancel(infra_async_context_t* ctx,
 infra_error_t infra_async_run(infra_async_context_t* ctx, uint64_t timeout_ms);
 infra_error_t infra_async_stop(infra_async_context_t* ctx);
 
-#endif /* PPDB_INFRA_ASYNC_H */ 
+#endif /* INFRA_ASYNC_H */ 

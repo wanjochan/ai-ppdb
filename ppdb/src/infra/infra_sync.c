@@ -11,44 +11,44 @@
 // Thread Management
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_thread_create(ppdb_thread_t** thread, 
-                               ppdb_thread_func_t func, void* arg) {
+infra_error_t infra_thread_create(infra_thread_t** thread, 
+                                 infra_thread_func_t func, void* arg) {
     if (!thread || !func) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
-    ppdb_thread_t* new_thread = (ppdb_thread_t*)malloc(sizeof(ppdb_thread_t));
+    infra_thread_t* new_thread = (infra_thread_t*)infra_malloc(sizeof(infra_thread_t));
     if (!new_thread) {
-        return PPDB_ERR_MEMORY;
+        return INFRA_ERROR_MEMORY;
     }
 
     // Initialize thread state
-    new_thread->state = PPDB_THREAD_INIT;
+    new_thread->state = INFRA_THREAD_INIT;
     new_thread->func = func;
     new_thread->arg = arg;
     new_thread->flags = 0;
     new_thread->start_time = 0;
     new_thread->stop_time = 0;
     new_thread->cpu_time = 0;
-    memset(&new_thread->stats, 0, sizeof(new_thread->stats));
-    memset(new_thread->name, 0, sizeof(new_thread->name));
+    infra_memset(&new_thread->stats, 0, sizeof(new_thread->stats));
+    infra_memset(new_thread->name, 0, sizeof(new_thread->name));
 
     infra_error_t err = infra_thread_create(&new_thread->thread, func, arg);
     if (err != INFRA_OK) {
-        free(new_thread);
+        infra_free(new_thread);
         return err;
     }
 
-    new_thread->state = PPDB_THREAD_RUNNING;
+    new_thread->state = INFRA_THREAD_RUNNING;
     new_thread->start_time = infra_time_monotonic_ms();
 
     *thread = new_thread;
-    return PPDB_OK;
+    return INFRA_OK;
 }
 
-ppdb_error_t ppdb_thread_join(ppdb_thread_t* thread) {
+infra_error_t infra_thread_join(infra_thread_t* thread) {
     if (!thread) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     infra_error_t err = infra_thread_join(thread->thread, NULL);
@@ -56,60 +56,60 @@ ppdb_error_t ppdb_thread_join(ppdb_thread_t* thread) {
         return err;
     }
 
-    thread->state = PPDB_THREAD_STOPPED;
+    thread->state = INFRA_THREAD_STOPPED;
     thread->stop_time = infra_time_monotonic_ms();
 
-    return PPDB_OK;
+    return INFRA_OK;
 }
 
-ppdb_error_t ppdb_thread_detach(ppdb_thread_t* thread) {
+infra_error_t infra_thread_detach(infra_thread_t* thread) {
     if (!thread) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_thread_detach(thread->thread);
 }
 
-ppdb_error_t ppdb_thread_destroy(ppdb_thread_t* thread) {
+infra_error_t infra_thread_destroy(infra_thread_t* thread) {
     if (!thread) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
-    if (thread->state == PPDB_THREAD_RUNNING) {
-        return PPDB_ERR_THREAD;
+    if (thread->state == INFRA_THREAD_RUNNING) {
+        return INFRA_ERROR_SYSTEM;
     }
 
-    free(thread);
-    return PPDB_OK;
+    infra_free(thread);
+    return INFRA_OK;
 }
 
 //-----------------------------------------------------------------------------
 // Mutex Operations
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_mutex_create(ppdb_mutex_t** mutex) {
+infra_error_t infra_mutex_create(infra_mutex_t** mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
-    ppdb_mutex_t* new_mutex = (ppdb_mutex_t*)malloc(sizeof(ppdb_mutex_t));
+    infra_mutex_t* new_mutex = (infra_mutex_t*)infra_malloc(sizeof(infra_mutex_t));
     if (!new_mutex) {
-        return PPDB_ERR_MEMORY;
+        return INFRA_ERROR_MEMORY;
     }
 
     infra_error_t err = infra_mutex_create(&new_mutex->mutex);
     if (err != INFRA_OK) {
-        free(new_mutex);
+        infra_free(new_mutex);
         return err;
     }
 
     *mutex = new_mutex;
-    return PPDB_OK;
+    return INFRA_OK;
 }
 
-ppdb_error_t ppdb_mutex_destroy(ppdb_mutex_t* mutex) {
+infra_error_t infra_mutex_destroy(infra_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     infra_error_t err = infra_mutex_destroy(mutex->mutex);
@@ -117,29 +117,29 @@ ppdb_error_t ppdb_mutex_destroy(ppdb_mutex_t* mutex) {
         return err;
     }
 
-    free(mutex);
-    return PPDB_OK;
+    infra_free(mutex);
+    return INFRA_OK;
 }
 
-ppdb_error_t ppdb_mutex_lock(ppdb_mutex_t* mutex) {
+infra_error_t infra_mutex_lock(infra_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_mutex_lock(mutex->mutex);
 }
 
-ppdb_error_t ppdb_mutex_unlock(ppdb_mutex_t* mutex) {
+infra_error_t infra_mutex_unlock(infra_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_mutex_unlock(mutex->mutex);
 }
 
-ppdb_error_t ppdb_mutex_trylock(ppdb_mutex_t* mutex) {
+infra_error_t infra_mutex_trylock(infra_mutex_t* mutex) {
     if (!mutex) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_mutex_trylock(mutex->mutex);
@@ -149,29 +149,29 @@ ppdb_error_t ppdb_mutex_trylock(ppdb_mutex_t* mutex) {
 // Condition Variables
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_cond_create(ppdb_cond_t** cond) {
+infra_error_t infra_cond_create(infra_cond_t** cond) {
     if (!cond) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
-    ppdb_cond_t* new_cond = (ppdb_cond_t*)malloc(sizeof(ppdb_cond_t));
+    infra_cond_t* new_cond = (infra_cond_t*)infra_malloc(sizeof(infra_cond_t));
     if (!new_cond) {
-        return PPDB_ERR_MEMORY;
+        return INFRA_ERROR_MEMORY;
     }
 
     infra_error_t err = infra_cond_create(&new_cond->cond);
     if (err != INFRA_OK) {
-        free(new_cond);
+        infra_free(new_cond);
         return err;
     }
 
     *cond = new_cond;
-    return PPDB_OK;
+    return INFRA_OK;
 }
 
-ppdb_error_t ppdb_cond_destroy(ppdb_cond_t* cond) {
+infra_error_t infra_cond_destroy(infra_cond_t* cond) {
     if (!cond) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     infra_error_t err = infra_cond_destroy(cond->cond);
@@ -179,38 +179,38 @@ ppdb_error_t ppdb_cond_destroy(ppdb_cond_t* cond) {
         return err;
     }
 
-    free(cond);
-    return PPDB_OK;
+    infra_free(cond);
+    return INFRA_OK;
 }
 
-ppdb_error_t ppdb_cond_wait(ppdb_cond_t* cond, ppdb_mutex_t* mutex) {
+infra_error_t infra_cond_wait(infra_cond_t* cond, infra_mutex_t* mutex) {
     if (!cond || !mutex) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_cond_wait(cond->cond, mutex->mutex);
 }
 
-ppdb_error_t ppdb_cond_signal(ppdb_cond_t* cond) {
+infra_error_t infra_cond_signal(infra_cond_t* cond) {
     if (!cond) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_cond_signal(cond->cond);
 }
 
-ppdb_error_t ppdb_cond_broadcast(ppdb_cond_t* cond) {
+infra_error_t infra_cond_broadcast(infra_cond_t* cond) {
     if (!cond) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_cond_broadcast(cond->cond);
 }
 
-ppdb_error_t ppdb_cond_timedwait(ppdb_cond_t* cond, ppdb_mutex_t* mutex,
-                                const struct timespec* abstime) {
+infra_error_t infra_cond_timedwait(infra_cond_t* cond, infra_mutex_t* mutex,
+                                  const struct timespec* abstime) {
     if (!cond || !mutex || !abstime) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_cond_timedwait(cond->cond, mutex->mutex, abstime);
@@ -220,29 +220,29 @@ ppdb_error_t ppdb_cond_timedwait(ppdb_cond_t* cond, ppdb_mutex_t* mutex,
 // Read-Write Lock Operations
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_rwlock_create(ppdb_rwlock_t** rwlock) {
+infra_error_t infra_rwlock_create(infra_rwlock_t** rwlock) {
     if (!rwlock) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
-    ppdb_rwlock_t* new_rwlock = (ppdb_rwlock_t*)malloc(sizeof(ppdb_rwlock_t));
+    infra_rwlock_t* new_rwlock = (infra_rwlock_t*)infra_malloc(sizeof(infra_rwlock_t));
     if (!new_rwlock) {
-        return PPDB_ERR_MEMORY;
+        return INFRA_ERROR_MEMORY;
     }
 
     infra_error_t err = infra_rwlock_create(&new_rwlock->rwlock);
     if (err != INFRA_OK) {
-        free(new_rwlock);
+        infra_free(new_rwlock);
         return err;
     }
 
     *rwlock = new_rwlock;
-    return PPDB_OK;
+    return INFRA_OK;
 }
 
-ppdb_error_t ppdb_rwlock_destroy(ppdb_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_destroy(infra_rwlock_t* rwlock) {
     if (!rwlock) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     infra_error_t err = infra_rwlock_destroy(rwlock->rwlock);
@@ -250,47 +250,47 @@ ppdb_error_t ppdb_rwlock_destroy(ppdb_rwlock_t* rwlock) {
         return err;
     }
 
-    free(rwlock);
-    return PPDB_OK;
+    infra_free(rwlock);
+    return INFRA_OK;
 }
 
-ppdb_error_t ppdb_rwlock_rdlock(ppdb_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_rdlock(infra_rwlock_t* rwlock) {
     if (!rwlock) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_rwlock_rdlock(rwlock->rwlock);
 }
 
-ppdb_error_t ppdb_rwlock_wrlock(ppdb_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_wrlock(infra_rwlock_t* rwlock) {
     if (!rwlock) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_rwlock_wrlock(rwlock->rwlock);
 }
 
-ppdb_error_t ppdb_rwlock_unlock(ppdb_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_unlock(infra_rwlock_t* rwlock) {
     if (!rwlock) {
-        return PPDB_ERR_PARAM;
+        return INFRA_ERROR_INVALID;
     }
 
     return infra_rwlock_unlock(rwlock->rwlock);
 }
 
 //-----------------------------------------------------------------------------
-// Misc Operations
+// Utility Functions
 //-----------------------------------------------------------------------------
 
-ppdb_error_t ppdb_yield(void) {
+infra_error_t infra_yield(void) {
     struct timespec ts = {0, 0};
-    return infra_time_sleep(&ts);
+    return infra_sleep(&ts);
 }
 
-ppdb_error_t ppdb_sleep(uint32_t milliseconds) {
+infra_error_t infra_sleep(uint32_t milliseconds) {
     struct timespec ts;
     ts.tv_sec = milliseconds / 1000;
     ts.tv_nsec = (milliseconds % 1000) * 1000000;
-    return infra_time_sleep(&ts);
+    return infra_sleep(&ts);
 }
 

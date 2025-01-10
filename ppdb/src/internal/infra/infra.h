@@ -2,8 +2,8 @@
  * infra.h - Infrastructure Layer
  */
 
-#ifndef PPDB_INFRA_H
-#define PPDB_INFRA_H
+#ifndef INFRA_H
+#define INFRA_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -158,4 +158,4 @@ void infra_stats_update(infra_stats_t* stats, bool success, uint64_t latency_us,
 void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src);
 void infra_stats_print(const infra_stats_t* stats, const char* prefix);
 
-#endif /* PPDB_INFRA_H */
+#endif /* INFRA_H */
