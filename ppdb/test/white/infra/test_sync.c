@@ -11,7 +11,7 @@ static void* thread_func(void* arg) {
 
 static void test_thread(void) {
     infra_error_t err;
-    infra_thread_t* thread;
+    void* thread;
     int counter = 0;
 
     // 创建线程
@@ -29,7 +29,7 @@ static void test_thread(void) {
 
 static void test_mutex(void) {
     infra_error_t err;
-    infra_mutex_t* mutex;
+    void* mutex;
     int counter = 0;
 
     // 创建互斥锁
@@ -57,8 +57,8 @@ static void test_mutex(void) {
 
 static void test_cond(void) {
     infra_error_t err;
-    infra_mutex_t* mutex;
-    infra_cond_t* cond;
+    void* mutex;
+    void* cond;
 
     // 创建互斥锁和条件变量
     err = infra_mutex_create(&mutex);
@@ -94,7 +94,7 @@ static void test_cond(void) {
 
 static void test_rwlock(void) {
     infra_error_t err;
-    infra_rwlock_t* rwlock;
+    void* rwlock;
     int counter = 0;
 
     // 创建读写锁

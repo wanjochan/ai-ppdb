@@ -52,7 +52,7 @@ src/internal/                 # 内部头文件目录
 
 特别注意：这一层不要出现 ppdb_ 字眼，这是通用设施层
 
-ppdb/src/internal/infra/infra.h: 基础设施头文件
+ppdb/src/internal/infra/infra.h: 基础设施头文件 （等infra层完全稳定我们是要打包出ppdbinfra这个静态库和动态库，所以到时把infra.h移动到ppdb.h同一个目录）
 ppdb/src/infra/infra.c: 基础功能（内存、字符串、日志、基础数据结构等）
 
 ppdb/src/internal/infra/infra_platform.h: 平台抽象头文件

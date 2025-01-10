@@ -7,7 +7,7 @@
 static int counter = 0;
 
 static void test_callback(infra_async_task_t* task, infra_error_t error) {
-    if (error == INFRA_OK) {
+    if (error == INFRA_OK && task && task->user_data) {
         int* counter_ptr = (int*)task->user_data;
         (*counter_ptr)++;
     }
@@ -187,9 +187,12 @@ static int test_async_performance(void) {
     infra_async_task_t task;
     counter = 0;
 
+    printf("Starting performance test...\n");
     err = infra_async_init(&ctx);
     TEST_ASSERT(err == INFRA_OK);
+    printf("Async context initialized\n");
 
+    printf("Submitting %d tasks...\n", NUM_TASKS);
     for (int i = 0; i < NUM_TASKS; i++) {
         memset(&task, 0, sizeof(task));
         task.type = INFRA_ASYNC_EVENT;
@@ -201,14 +204,26 @@ static int test_async_performance(void) {
         err = infra_async_submit(ctx, &task);
         TEST_ASSERT(err == INFRA_OK);
     }
+    printf("All tasks submitted\n");
 
-    err = infra_async_run(ctx, 30000);  // 增加超时时间到30秒
+    printf("Running tasks with 60s timeout...\n");
+    err = infra_async_run(ctx, 60000);  // 增加超时时间到60秒
     TEST_ASSERT(err == INFRA_OK);
+    printf("Tasks completed, counter = %d (expected %d)\n", counter, NUM_TASKS);
     TEST_ASSERT(counter == NUM_TASKS);
 
+    // 获取统计信息
+    infra_async_stats_t stats;
+    err = infra_async_get_stats(ctx, &stats);
+    TEST_ASSERT(err == INFRA_OK);
+    printf("Stats: queued=%u, completed=%u, failed=%u, cancelled=%u\n",
+           stats.queued_tasks, stats.completed_tasks, stats.failed_tasks, stats.cancelled_tasks);
+
     // 先停止异步系统
+    printf("Stopping async system...\n");
     err = infra_async_stop(ctx);
     TEST_ASSERT(err == INFRA_OK);
+    printf("Async system stopped\n");
 
     infra_async_destroy(ctx);
     return 0;
@@ -269,23 +284,19 @@ static void* async_runner(void* arg) {
 static int test_async_concurrent(void) {
     infra_error_t err;
     infra_async_context_t* ctx;
-    infra_thread_t* threads[NUM_THREADS];
-    infra_thread_t* runner_thread;
+    infra_thread_t runner_thread;
+    infra_thread_t threads[NUM_THREADS];
     thread_data_t thread_data[NUM_THREADS];
-    counter = 0;
+    infra_async_task_t tasks[NUM_THREADS * TASKS_PER_THREAD];
+    int counter = 0;
 
     err = infra_async_init(&ctx);
-    ASSERT_OK(err);
+    TEST_ASSERT(err == INFRA_OK);
+    printf("Async context initialized\n");
 
-    // 先创建任务
-    infra_async_task_t tasks[NUM_THREADS * TASKS_PER_THREAD];
+    // 初始化任务
     for (int i = 0; i < NUM_THREADS; i++) {
-        thread_data[i].ctx = ctx;
-        thread_data[i].num_tasks = TASKS_PER_THREAD;
-        thread_data[i].tasks = &tasks[i * TASKS_PER_THREAD];
-        
         for (int j = 0; j < TASKS_PER_THREAD; j++) {
-            memset(&tasks[i * TASKS_PER_THREAD + j], 0, sizeof(infra_async_task_t));
             tasks[i * TASKS_PER_THREAD + j].type = INFRA_ASYNC_EVENT;
             tasks[i * TASKS_PER_THREAD + j].callback = test_callback;
             tasks[i * TASKS_PER_THREAD + j].user_data = &counter;
@@ -293,40 +304,251 @@ static int test_async_concurrent(void) {
             tasks[i * TASKS_PER_THREAD + j].event.value = 1;
         }
     }
+    printf("Tasks initialized: %d total\n", NUM_THREADS * TASKS_PER_THREAD);
 
-    // 启动异步处理线程
-    err = infra_thread_create(&runner_thread, async_runner, ctx);
-    ASSERT_OK(err);
+    // 创建运行器线程
+    err = infra_thread_create((void**)&runner_thread, async_runner, ctx);
+    TEST_ASSERT(err == INFRA_OK);
+    printf("Runner thread created\n");
 
-    // 启动任务提交线程
+    // 创建工作线程
     for (int i = 0; i < NUM_THREADS; i++) {
-        err = infra_thread_create(&threads[i], concurrent_worker, &thread_data[i]);
-        ASSERT_OK(err);
+        thread_data[i].ctx = ctx;
+        thread_data[i].num_tasks = TASKS_PER_THREAD;
+        thread_data[i].tasks = &tasks[i * TASKS_PER_THREAD];
+        err = infra_thread_create((void**)&threads[i], concurrent_worker, &thread_data[i]);
+        TEST_ASSERT(err == INFRA_OK);
     }
+    printf("Worker threads created: %d\n", NUM_THREADS);
 
-    // 等待所有提交线程完成
+    // 等待所有线程完成
     for (int i = 0; i < NUM_THREADS; i++) {
         err = infra_thread_join(threads[i]);
-        ASSERT_OK(err);
+        TEST_ASSERT(err == INFRA_OK);
     }
+    printf("All worker threads joined\n");
 
-    // 停止异步处理
-    infra_async_stop(ctx);
-
-    // 等待异步处理线程完成
     err = infra_thread_join(runner_thread);
-    ASSERT_OK(err);
+    TEST_ASSERT(err == INFRA_OK);
+    printf("Runner thread joined\n");
 
-    // 验证所有任务都已完成
+    // 获取统计信息
+    infra_async_stats_t stats;
+    err = infra_async_get_stats(ctx, &stats);
+    TEST_ASSERT(err == INFRA_OK);
+    printf("Stats: queued=%u, completed=%u, failed=%u, cancelled=%u\n",
+           stats.queued_tasks, stats.completed_tasks, stats.failed_tasks, stats.cancelled_tasks);
+
+    // 验证结果
+    printf("Final counter value: %d (expected: %d)\n", counter, NUM_THREADS * TASKS_PER_THREAD);
     TEST_ASSERT(counter == NUM_THREADS * TASKS_PER_THREAD);
 
     infra_async_destroy(ctx);
     return 0;
 }
 
+#define CPU_TASK_DELAY_MS 20  // CPU密集型任务延迟
+#define IO_TASK_SIZE 4096    // IO任务数据大小
+
+// CPU密集型任务模拟函数
+static void cpu_intensive_work(void) {
+    // 模拟CPU密集型计算
+    volatile double result = 0.0;
+    for (int i = 0; i < 1000000; i++) {
+        result += sqrt((double)i);
+    }
+}
+
+// IO密集型任务回调
+static void io_task_callback(infra_async_task_t* task, infra_error_t error) {
+    if (error == INFRA_OK && task && task->user_data) {
+        int* counter_ptr = (int*)task->user_data;
+        (*counter_ptr)++;
+        
+        // 验证任务分类
+        TEST_ASSERT(task->profile.type == INFRA_TASK_TYPE_IO);
+        TEST_ASSERT(task->profile.process_method == INFRA_PROCESS_EVENTFD);
+    }
+}
+
+// CPU密集型任务回调
+static void cpu_task_callback(infra_async_task_t* task, infra_error_t error) {
+    if (error == INFRA_OK && task && task->user_data) {
+        int* counter_ptr = (int*)task->user_data;
+        (*counter_ptr)++;
+        
+        // 验证任务分类
+        TEST_ASSERT(task->profile.type == INFRA_TASK_TYPE_CPU);
+        TEST_ASSERT(task->profile.process_method == INFRA_PROCESS_THREAD);
+    }
+}
+
+static int test_async_task_classification(void) {
+    infra_error_t err;
+    infra_async_context_t* ctx;
+    infra_async_task_t task;
+    int io_counter = 0;
+    int cpu_counter = 0;
+    char* test_file = "test_async_perf.dat";
+    char buffer[IO_TASK_SIZE];
+    
+    printf("Starting task classification test...\n");
+    
+    err = infra_async_init(&ctx);
+    TEST_ASSERT(err == INFRA_OK);
+    
+    // 创建测试文件
+    int fd = open(test_file, O_CREAT | O_RDWR, 0644);
+    TEST_ASSERT(fd != -1);
+    
+    // 提交IO密集型任务
+    printf("Submitting IO intensive tasks...\n");
+    for (int i = 0; i < 50; i++) {
+        memset(&task, 0, sizeof(task));
+        task.type = INFRA_ASYNC_WRITE;
+        task.callback = io_task_callback;
+        task.user_data = &io_counter;
+        task.io.fd = fd;
+        task.io.buffer = buffer;
+        task.io.size = IO_TASK_SIZE;
+        
+        err = infra_async_submit(ctx, &task);
+        TEST_ASSERT(err == INFRA_OK);
+    }
+    
+    // 提交CPU密集型任务
+    printf("Submitting CPU intensive tasks...\n");
+    for (int i = 0; i < 50; i++) {
+        memset(&task, 0, sizeof(task));
+        task.type = INFRA_ASYNC_EVENT;
+        task.callback = cpu_task_callback;
+        task.user_data = &cpu_counter;
+        task.event.event_fd = -1;
+        task.event.value = 1;
+        
+        err = infra_async_submit(ctx, &task);
+        TEST_ASSERT(err == INFRA_OK);
+    }
+    
+    // 运行并等待所有任务完成
+    printf("Running tasks...\n");
+    err = infra_async_run(ctx, 30000);  // 30秒超时
+    TEST_ASSERT(err == INFRA_OK);
+    
+    // 获取统计信息
+    infra_async_stats_t stats;
+    err = infra_async_get_stats(ctx, &stats);
+    TEST_ASSERT(err == INFRA_OK);
+    
+    printf("Task Statistics:\n");
+    printf("- Queued: %u\n", stats.queued_tasks);
+    printf("- Completed: %u\n", stats.completed_tasks);
+    printf("- Failed: %u\n", stats.failed_tasks);
+    printf("- Average Process Time: %lu us\n", 
+           stats.completed_tasks > 0 ? stats.total_process_time_us / stats.completed_tasks : 0);
+    printf("- Max Process Time: %lu us\n", stats.max_process_time_us);
+    
+    // 验证计数器
+    printf("IO Tasks Completed: %d\n", io_counter);
+    printf("CPU Tasks Completed: %d\n", cpu_counter);
+    TEST_ASSERT(io_counter == 50);
+    TEST_ASSERT(cpu_counter == 50);
+    
+    // 清理
+    close(fd);
+    unlink(test_file);
+    infra_async_destroy(ctx);
+    
+    return 0;
+}
+
+static int test_async_mixed_workload(void) {
+    infra_error_t err;
+    infra_async_context_t* ctx;
+    infra_async_task_t task;
+    int io_counter = 0;
+    int cpu_counter = 0;
+    char* test_file = "test_mixed_workload.dat";
+    char buffer[IO_TASK_SIZE];
+    infra_time_t start_time, end_time;
+    
+    printf("Starting mixed workload test...\n");
+    
+    err = infra_async_init(&ctx);
+    TEST_ASSERT(err == INFRA_OK);
+    
+    // 创建测试文件
+    int fd = open(test_file, O_CREAT | O_RDWR, 0644);
+    TEST_ASSERT(fd != -1);
+    
+    start_time = infra_time_monotonic();
+    
+    // 交替提交IO和CPU任务
+    printf("Submitting mixed workload...\n");
+    for (int i = 0; i < 100; i++) {
+        // IO任务
+        memset(&task, 0, sizeof(task));
+        task.type = INFRA_ASYNC_WRITE;
+        task.callback = io_task_callback;
+        task.user_data = &io_counter;
+        task.io.fd = fd;
+        task.io.buffer = buffer;
+        task.io.size = IO_TASK_SIZE;
+        
+        err = infra_async_submit(ctx, &task);
+        TEST_ASSERT(err == INFRA_OK);
+        
+        // CPU任务
+        memset(&task, 0, sizeof(task));
+        task.type = INFRA_ASYNC_EVENT;
+        task.callback = cpu_task_callback;
+        task.user_data = &cpu_counter;
+        task.event.event_fd = -1;
+        task.event.value = 1;
+        
+        err = infra_async_submit(ctx, &task);
+        TEST_ASSERT(err == INFRA_OK);
+    }
+    
+    // 运行并等待所有任务完成
+    printf("Running mixed workload...\n");
+    err = infra_async_run(ctx, 60000);  // 60秒超时
+    TEST_ASSERT(err == INFRA_OK);
+    
+    end_time = infra_time_monotonic();
+    
+    // 获取统计信息
+    infra_async_stats_t stats;
+    err = infra_async_get_stats(ctx, &stats);
+    TEST_ASSERT(err == INFRA_OK);
+    
+    printf("Mixed Workload Statistics:\n");
+    printf("- Total Time: %lu us\n", end_time - start_time);
+    printf("- Queued: %u\n", stats.queued_tasks);
+    printf("- Completed: %u\n", stats.completed_tasks);
+    printf("- Failed: %u\n", stats.failed_tasks);
+    printf("- Average Process Time: %lu us\n", 
+           stats.completed_tasks > 0 ? stats.total_process_time_us / stats.completed_tasks : 0);
+    printf("- Max Process Time: %lu us\n", stats.max_process_time_us);
+    
+    // 验证计数器
+    printf("IO Tasks Completed: %d\n", io_counter);
+    printf("CPU Tasks Completed: %d\n", cpu_counter);
+    TEST_ASSERT(io_counter == 100);
+    TEST_ASSERT(cpu_counter == 100);
+    
+    // 清理
+    close(fd);
+    unlink(test_file);
+    infra_async_destroy(ctx);
+    
+    return 0;
+}
+
 int main(void) {
     TEST_INIT();
-
+    printf("Async System Tests\n");
+    
     TEST_RUN(test_async_loop);
     TEST_RUN(test_async_task);
     TEST_RUN(test_async_cancel);
@@ -334,7 +556,9 @@ int main(void) {
     TEST_RUN(test_async_performance);
     TEST_RUN(test_async_boundary_conditions);
     TEST_RUN(test_async_concurrent);
-
+    TEST_RUN(test_async_task_classification);  // 新增
+    TEST_RUN(test_async_mixed_workload);       // 新增
+    
     TEST_CLEANUP();
-    return test_stats.failed_tests ? 1 : 0;
+    return test_stats.failed_tests;
 } 

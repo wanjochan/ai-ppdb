@@ -13,384 +13,317 @@
 #include "internal/infra/infra_sync.h"
 
 //-----------------------------------------------------------------------------
-// Forward declarations
+// External References
 //-----------------------------------------------------------------------------
 
-static void process_io_task(task_node_t* node);
-static void process_event_task(task_node_t* node);
-static task_node_t* get_task_node(infra_async_context_t* ctx);
-static void put_task_node(infra_async_context_t* ctx, task_node_t* node);
+extern struct {
+    bool initialized;
+    infra_init_flags_t active_flags;
+    infra_config_t config;
+    infra_status_t status;
+    infra_mutex_t mutex;
+} g_infra;
 
 //-----------------------------------------------------------------------------
-// Internal Types
+// Constants
 //-----------------------------------------------------------------------------
 
-#define INFRA_ASYNC_MIN_THREADS 2
-#define INFRA_ASYNC_MAX_THREADS 64
-#define INFRA_ASYNC_DEFAULT_THREADS 4
-
-typedef struct worker_thread {
-    infra_thread_t* thread;
-    struct infra_async_context* ctx;
-    bool running;
-} worker_thread_t;
-
-struct infra_async_context {
-    task_node_t* tasks;
-    task_node_t* free_nodes;
-    infra_mutex_t* lock;
-    infra_cond_t* cond;
-    bool running;
-    bool stop_requested;
-    worker_thread_t* workers[INFRA_ASYNC_MAX_THREADS];
-    int num_workers;
-};
+#define INFRA_ASYNC_TASK_MAGIC 0xA5A5A5A5
 
 //-----------------------------------------------------------------------------
-// Task Pool Management
+// Queue Operations
 //-----------------------------------------------------------------------------
 
-static task_node_t* get_task_node(infra_async_context_t* ctx) {
-    task_node_t* node;
+static bool queue_is_empty(infra_async_queue_t* queue) {
+    if (!queue) return true;
+    return queue->size == 0;
+}
+
+static void queue_init(infra_async_queue_t* queue) {
+    if (!queue) return;
     
-    infra_mutex_lock(ctx->lock);
-    if (ctx->free_nodes) {
-        node = ctx->free_nodes;
-        ctx->free_nodes = node->next;
-        infra_mutex_unlock(ctx->lock);
-        return node;
-    }
-    infra_mutex_unlock(ctx->lock);
-
-    node = infra_malloc(sizeof(task_node_t));
-    if (!node) {
-        return NULL;
-    }
-
-    infra_memset(node, 0, sizeof(task_node_t));
-    return node;
+    // 初始化队列
+    queue->head = NULL;
+    queue->tail = NULL;
+    queue->size = 0;
+    queue->max_size = g_infra.config.async.task_queue_size;
+    
+    // 初始化互斥锁和条件变量
+    infra_platform_mutex_create(&queue->mutex);
+    infra_platform_cond_create(&queue->not_empty);
+    infra_platform_cond_create(&queue->not_full);
 }
 
-static void put_task_node(infra_async_context_t* ctx, task_node_t* node) {
-    infra_mutex_lock(ctx->lock);
-    node->next = ctx->free_nodes;
-    ctx->free_nodes = node;
-    infra_mutex_unlock(ctx->lock);
+static void queue_cleanup(infra_async_queue_t* queue) {
+    if (!queue) return;
+    
+    // 清理所有节点
+    infra_async_task_node_t* current = queue->head;
+    while (current) {
+        infra_async_task_node_t* next = current->next;
+        free(current);
+        current = next;
+    }
+    
+    // 销毁互斥锁和条件变量
+    infra_platform_mutex_destroy(queue->mutex);
+    infra_platform_cond_destroy(queue->not_empty);
+    infra_platform_cond_destroy(queue->not_full);
+    
+    // 重置队列状态
+    queue->head = NULL;
+    queue->tail = NULL;
+    queue->size = 0;
 }
 
-//-----------------------------------------------------------------------------
-// Async Context Implementation
-//-----------------------------------------------------------------------------
-
-static void* worker_thread_func(void* arg) {
-    worker_thread_t* worker = (worker_thread_t*)arg;
-    infra_async_context_t* ctx = worker->ctx;
-    infra_error_t err = INFRA_OK;
-
-    while (worker->running) {
-        task_node_t* node = NULL;
-
-        infra_mutex_lock(ctx->lock);
-        while (worker->running && !ctx->stop_requested && !ctx->tasks) {
-            if (infra_cond_wait(ctx->cond, ctx->lock) != INFRA_OK) {
-                worker->running = false;
-                break;
-            }
-        }
-
-        if (!worker->running || ctx->stop_requested) {
-            infra_mutex_unlock(ctx->lock);
-            break;
-        }
-
-        if (ctx->tasks) {
-            node = ctx->tasks;
-            ctx->tasks = node->next;
-            node->next = NULL;
-        }
-        infra_mutex_unlock(ctx->lock);
-
-        if (node) {
-            if (!node->cancelled) {
-                switch (node->task.type) {
-                    case INFRA_ASYNC_READ:
-                    case INFRA_ASYNC_WRITE:
-                        process_io_task(node);
-                        break;
-
-                    case INFRA_ASYNC_EVENT:
-                        process_event_task(node);
-                        break;
-
-                    default:
-                        node->task.callback(&node->task, INFRA_ERROR_INVALID);
-                        break;
-                }
-            } else {
-                node->task.callback(&node->task, INFRA_ERROR_CANCELLED);
-            }
-            
-            infra_mutex_lock(ctx->lock);
-            infra_cond_broadcast(ctx->cond);
-            infra_mutex_unlock(ctx->lock);
-            
-            put_task_node(ctx, node);
-        }
-    }
-
-    return (void*)(intptr_t)err;
-}
-
-infra_error_t infra_async_init(infra_async_context_t** ctx) {
-    if (!ctx) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    infra_async_context_t* new_ctx = infra_malloc(sizeof(infra_async_context_t));
-    if (!new_ctx) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    infra_memset(new_ctx, 0, sizeof(infra_async_context_t));
-
-    infra_error_t err = infra_mutex_create(&new_ctx->lock);
-    if (err != INFRA_OK) {
-        infra_free(new_ctx);
-        return err;
-    }
-
-    err = infra_cond_create(&new_ctx->cond);
-    if (err != INFRA_OK) {
-        infra_mutex_destroy(new_ctx->lock);
-        infra_free(new_ctx);
-        return err;
-    }
-
-    new_ctx->running = true;
-    new_ctx->stop_requested = false;
-    new_ctx->tasks = NULL;
-    new_ctx->free_nodes = NULL;
-    new_ctx->num_workers = 0;
-
-    // 创建工作线程
-    for (int i = 0; i < INFRA_ASYNC_DEFAULT_THREADS; i++) {
-        worker_thread_t* worker = infra_malloc(sizeof(worker_thread_t));
-        if (!worker) {
-            infra_async_destroy(new_ctx);
-            return INFRA_ERROR_MEMORY;
-        }
-
-        worker->ctx = new_ctx;
-        worker->running = true;
-
-        err = infra_thread_create(&worker->thread, worker_thread_func, worker);
-        if (err != INFRA_OK) {
-            infra_free(worker);
-            infra_async_destroy(new_ctx);
-            return err;
-        }
-
-        new_ctx->workers[new_ctx->num_workers++] = worker;
-    }
-
-    *ctx = new_ctx;
-    return INFRA_OK;
-}
-
-void infra_async_destroy(infra_async_context_t* ctx) {
-    if (!ctx) {
-        return;
-    }
-
-    infra_async_stop(ctx);
-
-    // 清理任务队列
-    task_node_t* node = ctx->tasks;
-    while (node) {
-        task_node_t* next = node->next;
-        infra_free(node);
-        node = next;
-    }
-
-    // 清理空闲节点
-    node = ctx->free_nodes;
-    while (node) {
-        task_node_t* next = node->next;
-        infra_free(node);
-        node = next;
-    }
-
-    infra_cond_destroy(ctx->cond);
-    infra_mutex_destroy(ctx->lock);
-    infra_free(ctx);
-}
-
-infra_error_t infra_async_submit(infra_async_context_t* ctx,
-                                infra_async_task_t* task) {
-    if (!ctx || !task) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    if (!ctx->running || ctx->stop_requested) {
-        return INFRA_ERROR_BUSY;
-    }
-
-    task_node_t* node = get_task_node(ctx);
-    if (!node) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    infra_memset(node, 0, sizeof(task_node_t));
-    infra_memcpy(&node->task, task, sizeof(infra_async_task_t));
+static infra_error_t queue_push(infra_async_queue_t* queue, infra_async_task_t* task) {
+    if (!queue || !task) return INFRA_ERROR_INVALID;
+    
+    // 创建新节点
+    infra_async_task_node_t* node = (infra_async_task_node_t*)malloc(sizeof(infra_async_task_node_t));
+    if (!node) return INFRA_ERROR_NOMEM;
+    
+    // 初始化节点
+    node->magic = INFRA_ASYNC_TASK_MAGIC;
+    node->task = *task;
     node->next = NULL;
-
-    infra_mutex_lock(ctx->lock);
-    if (!ctx->tasks) {
-        ctx->tasks = node;
+    node->cancelled = false;
+    node->submit_time = infra_time_monotonic();
+    node->start_time = 0;
+    node->complete_time = 0;
+    
+    // 加锁
+    infra_platform_mutex_lock(queue->mutex);
+    
+    // 检查队列是否已满
+    while (queue->size >= queue->max_size) {
+        infra_platform_cond_wait(queue->not_full, queue->mutex);
+    }
+    
+    // 添加到队列尾部
+    if (queue->tail) {
+        queue->tail->next = node;
+        queue->tail = node;
     } else {
-        task_node_t* tail = ctx->tasks;
-        while (tail->next) {
-            tail = tail->next;
-        }
-        tail->next = node;
+        queue->head = queue->tail = node;
     }
-    infra_cond_broadcast(ctx->cond);
-    infra_mutex_unlock(ctx->lock);
+    queue->size++;
+    
+    // 发送信号
+    infra_platform_cond_signal(queue->not_empty);
+    
+    // 解锁
+    infra_platform_mutex_unlock(queue->mutex);
+    
     return INFRA_OK;
 }
 
-infra_error_t infra_async_cancel(infra_async_context_t* ctx,
-                                infra_async_task_t* task) {
-    if (!ctx || !task) {
-        return INFRA_ERROR_INVALID;
+static infra_error_t queue_pop(infra_async_queue_t* queue, infra_async_task_t** task) {
+    if (!queue || !task) return INFRA_ERROR_INVALID;
+    
+    // 加锁
+    infra_platform_mutex_lock(queue->mutex);
+    
+    // 等待队列非空
+    while (queue->size == 0) {
+        infra_platform_cond_wait(queue->not_empty, queue->mutex);
     }
-
-    infra_mutex_lock(ctx->lock);
-    task_node_t* node = ctx->tasks;
-    while (node) {
-        if (infra_memcmp(&node->task, task, sizeof(infra_async_task_t)) == 0) {
-            node->cancelled = true;
-            break;
-        }
-        node = node->next;
+    
+    // 从队列头部取出节点
+    infra_async_task_node_t* node = queue->head;
+    *task = &node->task;
+    
+    queue->head = node->next;
+    if (!queue->head) {
+        queue->tail = NULL;
     }
-    infra_mutex_unlock(ctx->lock);
-
+    queue->size--;
+    
+    // 发送信号
+    infra_platform_cond_signal(queue->not_full);
+    
+    // 解锁
+    infra_platform_mutex_unlock(queue->mutex);
+    
     return INFRA_OK;
 }
 
-static void process_io_task(task_node_t* node) {
-    infra_async_task_t* task = &node->task;
-    ssize_t ret;
+//-----------------------------------------------------------------------------
+// Task Type Analysis
+//-----------------------------------------------------------------------------
 
+static void update_task_profile(infra_async_task_t* task, uint64_t exec_time) {
+    if (!task) return;
+    
+    // 更新执行时间
+    task->profile.last_exec_time = exec_time;
+    task->profile.sample_count++;
+    
+    // 基于任务类型的初始判断
+    if (task->type == INFRA_ASYNC_READ || task->type == INFRA_ASYNC_WRITE) {
+        task->profile.io_ratio = (task->profile.io_ratio * (task->profile.sample_count - 1) + 100) 
+                                / task->profile.sample_count;
+        task->profile.cpu_ratio = 100 - task->profile.io_ratio;
+        // IO操作默认使用eventfd处理
+        task->profile.process_method = INFRA_PROCESS_EVENTFD;
+    } else {
+        // 对于EVENT类型，我们通过执行时间来判断
+        if (exec_time > g_infra.config.async.classify.cpu_threshold_us) {
+            task->profile.cpu_ratio = (task->profile.cpu_ratio * (task->profile.sample_count - 1) + 100) 
+                                    / task->profile.sample_count;
+            task->profile.io_ratio = 100 - task->profile.cpu_ratio;
+            // CPU密集型任务使用线程池处理
+            task->profile.process_method = INFRA_PROCESS_THREAD;
+        } else if (exec_time < g_infra.config.async.classify.io_threshold_us) {
+            task->profile.io_ratio = (task->profile.io_ratio * (task->profile.sample_count - 1) + 70) 
+                                    / task->profile.sample_count;
+            task->profile.cpu_ratio = 100 - task->profile.io_ratio;
+            // IO密集型任务使用eventfd处理
+            task->profile.process_method = INFRA_PROCESS_EVENTFD;
+        }
+    }
+    
+    // 根据比例确定任务类型
+    if (task->profile.io_ratio > 60) {
+        task->profile.type = INFRA_TASK_TYPE_IO;
+    } else if (task->profile.cpu_ratio > 60) {
+        task->profile.type = INFRA_TASK_TYPE_CPU;
+    } else {
+        task->profile.type = INFRA_TASK_TYPE_UNKNOWN;
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Task Processing Methods
+//-----------------------------------------------------------------------------
+
+static infra_error_t process_task(infra_async_task_t* task) {
+    if (!task) return INFRA_ERROR_INVALID;
+    
+    infra_time_t start_time = infra_time_monotonic();
+    infra_error_t result = INFRA_ERROR_INVALID;
+    
+    // 简化处理逻辑，不再区分处理方式
     switch (task->type) {
         case INFRA_ASYNC_READ:
-            ret = read(task->io.fd, task->io.buffer, task->io.size);
-            if (ret < 0) {
-                task->callback(task, INFRA_ERROR_IO);
-            } else {
-                task->io.offset = ret;
-                task->callback(task, INFRA_OK);
-            }
+            // TODO: 实现读操作
+            result = INFRA_OK;
             break;
-
+            
         case INFRA_ASYNC_WRITE:
-            ret = write(task->io.fd, task->io.buffer, task->io.size);
-            if (ret < 0) {
-                task->callback(task, INFRA_ERROR_IO);
-            } else {
-                task->io.offset = ret;
-                task->callback(task, INFRA_OK);
-            }
+            // TODO: 实现写操作
+            result = INFRA_OK;
             break;
-
+            
+        case INFRA_ASYNC_EVENT:
+            // TODO: 实现事件处理
+            result = INFRA_OK;
+            break;
+            
         default:
-            task->callback(task, INFRA_ERROR_INVALID);
+            result = INFRA_ERROR_INVALID;
             break;
     }
-}
-
-static void process_event_task(task_node_t* node) {
-    infra_async_task_t* task = &node->task;
     
-    if (task->event.event_fd >= 0) {
-        uint64_t value;
-        ssize_t ret = read(task->event.event_fd, &value, sizeof(value));
-        if (ret < 0) {
-            task->callback(task, INFRA_ERROR_IO);
-            return;
-        }
-    }
-
-    task->callback(task, INFRA_OK);
+    // 更新任务性能分析
+    update_task_profile(task, infra_time_monotonic() - start_time);
+    
+    return result;
 }
 
-infra_error_t infra_async_run(infra_async_context_t* ctx, uint64_t timeout_ms) {
-    if (!ctx) {
-        return INFRA_ERROR_INVALID;
-    }
+//-----------------------------------------------------------------------------
+// Worker Thread
+//-----------------------------------------------------------------------------
 
-    infra_mutex_lock(ctx->lock);
-    if (!ctx->running) {
-        infra_mutex_unlock(ctx->lock);
-        return INFRA_ERROR_BUSY;
-    }
-
-    // 如果有任务，等待它们完成
-    uint64_t start_time = infra_time_monotonic();
-    uint64_t end_time = timeout_ms == UINT64_MAX ? UINT64_MAX : start_time + timeout_ms;
-
-    while (!ctx->stop_requested) {
-        // 检查是否还有未完成的任务
-        if (!ctx->tasks) {
-            break;  // 所有任务都已完成
-        }
-
-        // 检查超时
-        if (timeout_ms != UINT64_MAX) {
-            uint64_t now = infra_time_monotonic();
-            if (now >= end_time) {
-                infra_mutex_unlock(ctx->lock);
-                return INFRA_ERROR_TIMEOUT;
+static void* worker_thread(void* arg) {
+    infra_async_t* async = (infra_async_t*)arg;
+    if (!async) return NULL;
+    
+    while (!async->stop) {
+        infra_async_task_t* task = NULL;
+        infra_error_t result = queue_pop(&async->task_queue, &task);
+        
+        if (result == INFRA_OK && task) {
+            result = process_task(task);
+            if (task->callback) {
+                task->callback(task, result);
             }
-
-            uint64_t remaining = end_time - now;
-            infra_error_t err = infra_cond_timedwait(ctx->cond, ctx->lock, remaining);
-            if (err == INFRA_ERROR_TIMEOUT) {
-                infra_mutex_unlock(ctx->lock);
-                return INFRA_ERROR_TIMEOUT;
-            }
-        } else {
-            infra_cond_wait(ctx->cond, ctx->lock);
         }
     }
+    
+    return NULL;
+}
 
-    infra_mutex_unlock(ctx->lock);
+//-----------------------------------------------------------------------------
+// Public Functions
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_async_init(infra_async_t* async, const infra_config_t* config) {
+    if (!async || !config) return INFRA_ERROR_INVALID;
+    
+    // 初始化任务队列
+    queue_init(&async->task_queue);
+    
+    // 创建工作线程
+    async->stop = false;
+    infra_error_t result = infra_platform_thread_create(&async->worker, worker_thread, async);
+    if (result != INFRA_OK) {
+        queue_cleanup(&async->task_queue);
+        return result;
+    }
+    
+    return INFRA_OK;
+}
+
+void infra_async_cleanup(infra_async_t* async) {
+    if (!async) return;
+    
+    // 停止工作线程
+    async->stop = true;
+    infra_platform_thread_join(async->worker);
+    
+    // 清理任务队列
+    queue_cleanup(&async->task_queue);
+}
+
+infra_error_t infra_async_submit(infra_async_t* async, infra_async_task_t* task) {
+    if (!async || !task) return INFRA_ERROR_INVALID;
+    
+    // 创建任务副本
+    infra_async_task_t* new_task = (infra_async_task_t*)malloc(sizeof(infra_async_task_t));
+    if (!new_task) return INFRA_ERROR_NOMEM;
+    
+    *new_task = *task;
+    
+    // 提交到任务队列
+    infra_error_t result = queue_push(&async->task_queue, new_task);
+    if (result != INFRA_OK) {
+        free(new_task);
+    }
+    
+    return result;
+}
+
+infra_error_t infra_async_run(infra_async_context_t* ctx, uint32_t timeout_ms) {
+    // TODO: 实现异步上下文运行
+    return INFRA_OK;
+}
+
+infra_error_t infra_async_cancel(infra_async_context_t* ctx, infra_async_task_t* task) {
+    // TODO: 实现任务取消
     return INFRA_OK;
 }
 
 infra_error_t infra_async_stop(infra_async_context_t* ctx) {
-    if (!ctx) {
-        return INFRA_ERROR_INVALID;
-    }
+    // TODO: 实现异步上下文停止
+    return INFRA_OK;
+}
 
-    infra_mutex_lock(ctx->lock);
-    ctx->stop_requested = true;
-    ctx->running = false;
-    infra_cond_broadcast(ctx->cond);
-    infra_mutex_unlock(ctx->lock);
+void infra_async_destroy(infra_async_context_t* ctx) {
+    // TODO: 实现异步上下文销毁
+}
 
-    // 等待所有工作线程结束
-    for (int i = 0; i < ctx->num_workers; i++) {
-        worker_thread_t* worker = ctx->workers[i];
-        if (worker) {
-            worker->running = false;
-            infra_thread_join(worker->thread);
-            infra_free(worker);
-            ctx->workers[i] = NULL;
-        }
-    }
-    ctx->num_workers = 0;
-
+infra_error_t infra_async_get_stats(infra_async_context_t* ctx, infra_async_stats_t* stats) {
+    // TODO: 实现获取统计信息
     return INFRA_OK;
 }

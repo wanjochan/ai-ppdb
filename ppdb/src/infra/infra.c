@@ -5,6 +5,255 @@
 #include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 #include "internal/infra/infra_platform.h"
+#include "internal/infra/infra_sync.h"
+#include "internal/infra/infra_async.h"
+
+//-----------------------------------------------------------------------------
+// Global State
+//-----------------------------------------------------------------------------
+
+struct {
+    bool initialized;
+    infra_init_flags_t active_flags;
+    infra_config_t config;
+    infra_status_t status;
+    infra_mutex_t mutex;
+} g_infra = {0};
+
+//-----------------------------------------------------------------------------
+// Default Configuration
+//-----------------------------------------------------------------------------
+
+const infra_config_t INFRA_DEFAULT_CONFIG = {
+    .memory = {
+        .use_memory_pool = false,
+        .pool_initial_size = 1024 * 1024,  // 1MB
+        .pool_alignment = 8
+    },
+    .log = {
+        .level = INFRA_LOG_LEVEL_INFO,
+        .buffer_size = 4096,
+        .async_logging = true,
+        .log_file = NULL
+    },
+    .ds = {
+        .hash_initial_size = 16,
+        .hash_load_factor = 75,  // 75%
+        .thread_safe = true
+    }
+};
+
+//-----------------------------------------------------------------------------
+// Configuration Management
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_config_init(infra_config_t* config) {
+    if (!config) {
+        return INFRA_ERROR_INVALID;
+    }
+    *config = INFRA_DEFAULT_CONFIG;
+    return INFRA_OK;
+}
+
+infra_error_t infra_config_validate(const infra_config_t* config) {
+    if (!config) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 验证内存配置
+    if (config->memory.pool_initial_size == 0 ||
+        config->memory.pool_alignment == 0 ||
+        (config->memory.pool_alignment & (config->memory.pool_alignment - 1)) != 0) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 验证日志配置
+    if (config->log.level < INFRA_LOG_LEVEL_NONE ||
+        config->log.level > INFRA_LOG_LEVEL_TRACE ||
+        config->log.buffer_size == 0) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 验证数据结构配置
+    if (config->ds.hash_initial_size == 0 ||
+        config->ds.hash_load_factor == 0 ||
+        config->ds.hash_load_factor > 100) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 验证任务分类配置
+    if (config->async.classify.io_threshold_us >= config->async.classify.cpu_threshold_us ||
+        config->async.classify.sample_window == 0) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    return INFRA_OK;
+}
+
+infra_error_t infra_config_apply(const infra_config_t* config) {
+    if (!config) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_error_t err = infra_config_validate(config);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    if (g_infra.initialized) {
+        return INFRA_ERROR_BUSY;  // 不能在运行时修改配置
+    }
+
+    g_infra.config = *config;
+    return INFRA_OK;
+}
+
+//-----------------------------------------------------------------------------
+// Initialization and Cleanup
+//-----------------------------------------------------------------------------
+
+static infra_error_t init_module(infra_init_flags_t flag) {
+    infra_error_t err = INFRA_OK;
+
+    switch (flag) {
+        case INFRA_INIT_MEMORY:
+            // 初始化内存管理
+            if (g_infra.config.memory.use_memory_pool) {
+                // TODO: 实现内存池
+            }
+            break;
+
+        case INFRA_INIT_ASYNC:
+            // 初始化异步系统
+            // TODO: 使用配置的线程数和队列大小
+            break;
+
+        case INFRA_INIT_LOG:
+            // 初始化日志系统
+            infra_log_set_level(g_infra.config.log.level);
+            if (g_infra.config.log.async_logging) {
+                // TODO: 实现异步日志
+            }
+            break;
+
+        case INFRA_INIT_DS:
+            // 初始化数据结构
+            // TODO: 应用数据结构配置
+            break;
+
+        default:
+            return INFRA_ERROR_INVALID;
+    }
+
+    if (err == INFRA_OK) {
+        g_infra.active_flags |= flag;
+    }
+
+    return err;
+}
+
+infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_config_t* config) {
+    if (g_infra.initialized) {
+        return INFRA_ERROR_BUSY;
+    }
+
+    // 应用配置
+    infra_error_t err = INFRA_OK;
+    if (config) {
+        err = infra_config_apply(config);
+        if (err != INFRA_OK) {
+            return err;
+        }
+    } else {
+        g_infra.config = INFRA_DEFAULT_CONFIG;
+    }
+
+    // 创建全局锁
+    err = infra_mutex_create(&g_infra.mutex);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // 按顺序初始化各个模块
+    if (flags & INFRA_INIT_MEMORY) {
+        err = init_module(INFRA_INIT_MEMORY);
+        if (err != INFRA_OK) goto cleanup;
+    }
+
+    if (flags & INFRA_INIT_LOG) {
+        err = init_module(INFRA_INIT_LOG);
+        if (err != INFRA_OK) goto cleanup;
+    }
+
+    if (flags & INFRA_INIT_ASYNC) {
+        err = init_module(INFRA_INIT_ASYNC);
+        if (err != INFRA_OK) goto cleanup;
+    }
+
+    if (flags & INFRA_INIT_DS) {
+        err = init_module(INFRA_INIT_DS);
+        if (err != INFRA_OK) goto cleanup;
+    }
+
+    g_infra.initialized = true;
+    return INFRA_OK;
+
+cleanup:
+    infra_cleanup();
+    return err;
+}
+
+infra_error_t infra_init(void) {
+    return infra_init_with_config(INFRA_INIT_ALL, NULL);
+}
+
+void infra_cleanup(void) {
+    if (!g_infra.initialized) {
+        return;
+    }
+
+    // 按相反顺序清理各个模块
+    if (g_infra.active_flags & INFRA_INIT_DS) {
+        // TODO: 清理数据结构
+    }
+
+    if (g_infra.active_flags & INFRA_INIT_ASYNC) {
+        // TODO: 清理异步系统
+    }
+
+    if (g_infra.active_flags & INFRA_INIT_LOG) {
+        // TODO: 清理日志系统
+    }
+
+    if (g_infra.active_flags & INFRA_INIT_MEMORY) {
+        // TODO: 清理内存管理
+    }
+
+    infra_mutex_destroy(g_infra.mutex);
+    memset(&g_infra, 0, sizeof(g_infra));
+}
+
+bool infra_is_initialized(infra_init_flags_t flag) {
+    return g_infra.initialized && (g_infra.active_flags & flag) == flag;
+}
+
+//-----------------------------------------------------------------------------
+// Status Management
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_get_status(infra_status_t* status) {
+    if (!status) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_mutex_lock(g_infra.mutex);
+    *status = g_infra.status;
+    status->initialized = g_infra.initialized;
+    status->active_flags = g_infra.active_flags;
+    infra_mutex_unlock(g_infra.mutex);
+
+    return INFRA_OK;
+}
 
 //-----------------------------------------------------------------------------
 // Error Handling
@@ -12,26 +261,22 @@
 
 const char* infra_error_string(infra_error_t error) {
     switch (error) {
-        case INFRA_OK:               return "Success";
-        case INFRA_ERROR_GENERIC:    return "Generic error";
-        case INFRA_ERROR_MEMORY:     return "Memory error";
-        case INFRA_ERROR_IO:         return "IO error";
-        case INFRA_ERROR_TIMEOUT:    return "Timeout error";
-        case INFRA_ERROR_BUSY:       return "Resource busy";
-        case INFRA_ERROR_AGAIN:      return "Try again";
-        case INFRA_ERROR_INVALID:    return "Invalid argument";
-        case INFRA_ERROR_NOTFOUND:   return "Not found";
-        case INFRA_ERROR_EXISTS:     return "Already exists";
-        case INFRA_ERROR_FULL:       return "Resource full";
-        case INFRA_ERROR_EMPTY:      return "Resource empty";
-        case INFRA_ERROR_OVERFLOW:   return "Overflow error";
-        case INFRA_ERROR_UNDERFLOW:  return "Underflow error";
-        case INFRA_ERROR_SYSTEM:     return "System error";
-        case INFRA_ERROR_PROTOCOL:   return "Protocol error";
-        case INFRA_ERROR_NETWORK:    return "Network error";
-        case INFRA_ERROR_SECURITY:   return "Security error";
-        case INFRA_ERROR_CANCELLED:  return "Operation cancelled";
-        default:                     return "Unknown error";
+        case INFRA_OK:                  return "Success";
+        case INFRA_ERROR_INVALID:       return "Invalid argument";
+        case INFRA_ERROR_MEMORY:        return "Out of memory";
+        case INFRA_ERROR_IO:            return "I/O error";
+        case INFRA_ERROR_TIMEOUT:       return "Timeout";
+        case INFRA_ERROR_BUSY:          return "Resource busy";
+        case INFRA_ERROR_NOTFOUND:      return "Not found";
+        case INFRA_ERROR_EXISTS:        return "Already exists";
+        case INFRA_ERROR_FULL:          return "Resource full";
+        case INFRA_ERROR_EMPTY:         return "Resource empty";
+        case INFRA_ERROR_AGAIN:         return "Try again";
+        case INFRA_ERROR_INTERRUPTED:   return "Operation interrupted";
+        case INFRA_ERROR_CANCELLED:     return "Operation cancelled";
+        case INFRA_ERROR_STATE:         return "Invalid state";
+        case INFRA_ERROR_UNKNOWN:       return "Unknown error";
+        default:                        return "Undefined error";
     }
 }
 

@@ -83,7 +83,7 @@ infra_error_t infra_platform_thread_create(void** handle, infra_thread_func_t fu
 
     if (pthread_create(pthread, NULL, (void* (*)(void*))func, arg) != 0) {
         infra_free(pthread);
-        return INFRA_ERROR_SYSTEM;
+        return INFRA_ERROR_IO;
     }
 
     *handle = pthread;
@@ -98,7 +98,7 @@ infra_error_t infra_platform_thread_join(void* handle) {
     pthread_t* pthread = (pthread_t*)handle;
     int ret = pthread_join(*pthread, NULL);
     infra_free(pthread);
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (ret == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 infra_error_t infra_platform_thread_detach(void* handle) {
@@ -109,7 +109,7 @@ infra_error_t infra_platform_thread_detach(void* handle) {
     pthread_t* pthread = (pthread_t*)handle;
     int ret = pthread_detach(*pthread);
     infra_free(pthread);
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (ret == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 //-----------------------------------------------------------------------------
@@ -128,7 +128,7 @@ infra_error_t infra_platform_mutex_create(void** handle) {
 
     if (pthread_mutex_init(mutex, NULL) != 0) {
         infra_free(mutex);
-        return INFRA_ERROR_SYSTEM;
+        return INFRA_ERROR_IO;
     }
 
     *handle = mutex;
@@ -136,13 +136,11 @@ infra_error_t infra_platform_mutex_create(void** handle) {
 }
 
 void infra_platform_mutex_destroy(void* handle) {
-    if (!handle) {
-        return;
+    if (handle) {
+        pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
+        pthread_mutex_destroy(mutex);
+        infra_free(mutex);
     }
-
-    pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
-    pthread_mutex_destroy(mutex);
-    infra_free(mutex);
 }
 
 infra_error_t infra_platform_mutex_lock(void* handle) {
@@ -151,7 +149,7 @@ infra_error_t infra_platform_mutex_lock(void* handle) {
     }
 
     pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
-    return (pthread_mutex_lock(mutex) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (pthread_mutex_lock(mutex) == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 infra_error_t infra_platform_mutex_trylock(void* handle) {
@@ -161,10 +159,7 @@ infra_error_t infra_platform_mutex_trylock(void* handle) {
 
     pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
     int ret = pthread_mutex_trylock(mutex);
-    if (ret == EBUSY) {
-        return INFRA_ERROR_BUSY;
-    }
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (ret == 0) ? INFRA_OK : (ret == EBUSY ? INFRA_ERROR_BUSY : INFRA_ERROR_IO);
 }
 
 infra_error_t infra_platform_mutex_unlock(void* handle) {
@@ -173,7 +168,7 @@ infra_error_t infra_platform_mutex_unlock(void* handle) {
     }
 
     pthread_mutex_t* mutex = (pthread_mutex_t*)handle;
-    return (pthread_mutex_unlock(mutex) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (pthread_mutex_unlock(mutex) == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 //-----------------------------------------------------------------------------
@@ -192,7 +187,7 @@ infra_error_t infra_platform_cond_create(void** handle) {
 
     if (pthread_cond_init(cond, NULL) != 0) {
         infra_free(cond);
-        return INFRA_ERROR_SYSTEM;
+        return INFRA_ERROR_IO;
     }
 
     *handle = cond;
@@ -200,13 +195,11 @@ infra_error_t infra_platform_cond_create(void** handle) {
 }
 
 void infra_platform_cond_destroy(void* handle) {
-    if (!handle) {
-        return;
+    if (handle) {
+        pthread_cond_t* cond = (pthread_cond_t*)handle;
+        pthread_cond_destroy(cond);
+        infra_free(cond);
     }
-
-    pthread_cond_t* cond = (pthread_cond_t*)handle;
-    pthread_cond_destroy(cond);
-    infra_free(cond);
 }
 
 infra_error_t infra_platform_cond_wait(void* cond_handle, void* mutex_handle) {
@@ -216,13 +209,16 @@ infra_error_t infra_platform_cond_wait(void* cond_handle, void* mutex_handle) {
 
     pthread_cond_t* cond = (pthread_cond_t*)cond_handle;
     pthread_mutex_t* mutex = (pthread_mutex_t*)mutex_handle;
-    return (pthread_cond_wait(cond, mutex) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (pthread_cond_wait(cond, mutex) == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 infra_error_t infra_platform_cond_timedwait(void* cond_handle, void* mutex_handle, uint64_t timeout_ms) {
     if (!cond_handle || !mutex_handle) {
         return INFRA_ERROR_INVALID;
     }
+
+    pthread_cond_t* cond = (pthread_cond_t*)cond_handle;
+    pthread_mutex_t* mutex = (pthread_mutex_t*)mutex_handle;
 
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -233,14 +229,8 @@ infra_error_t infra_platform_cond_timedwait(void* cond_handle, void* mutex_handl
         ts.tv_nsec -= 1000000000;
     }
 
-    pthread_cond_t* cond = (pthread_cond_t*)cond_handle;
-    pthread_mutex_t* mutex = (pthread_mutex_t*)mutex_handle;
     int ret = pthread_cond_timedwait(cond, mutex, &ts);
-    
-    if (ret == ETIMEDOUT) {
-        return INFRA_ERROR_TIMEOUT;
-    }
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (ret == 0) ? INFRA_OK : (ret == ETIMEDOUT ? INFRA_ERROR_TIMEOUT : INFRA_ERROR_IO);
 }
 
 infra_error_t infra_platform_cond_signal(void* handle) {
@@ -249,7 +239,7 @@ infra_error_t infra_platform_cond_signal(void* handle) {
     }
 
     pthread_cond_t* cond = (pthread_cond_t*)handle;
-    return (pthread_cond_signal(cond) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (pthread_cond_signal(cond) == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 infra_error_t infra_platform_cond_broadcast(void* handle) {
@@ -258,7 +248,7 @@ infra_error_t infra_platform_cond_broadcast(void* handle) {
     }
 
     pthread_cond_t* cond = (pthread_cond_t*)handle;
-    return (pthread_cond_broadcast(cond) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (pthread_cond_broadcast(cond) == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 //-----------------------------------------------------------------------------
@@ -277,7 +267,7 @@ infra_error_t infra_platform_rwlock_create(void** handle) {
 
     if (pthread_rwlock_init(rwlock, NULL) != 0) {
         infra_free(rwlock);
-        return INFRA_ERROR_SYSTEM;
+        return INFRA_ERROR_IO;
     }
 
     *handle = rwlock;
@@ -285,13 +275,11 @@ infra_error_t infra_platform_rwlock_create(void** handle) {
 }
 
 void infra_platform_rwlock_destroy(void* handle) {
-    if (!handle) {
-        return;
+    if (handle) {
+        pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+        pthread_rwlock_destroy(rwlock);
+        infra_free(rwlock);
     }
-
-    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
-    pthread_rwlock_destroy(rwlock);
-    infra_free(rwlock);
 }
 
 infra_error_t infra_platform_rwlock_rdlock(void* handle) {
@@ -300,7 +288,7 @@ infra_error_t infra_platform_rwlock_rdlock(void* handle) {
     }
 
     pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
-    return (pthread_rwlock_rdlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (pthread_rwlock_rdlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 infra_error_t infra_platform_rwlock_tryrdlock(void* handle) {
@@ -310,10 +298,7 @@ infra_error_t infra_platform_rwlock_tryrdlock(void* handle) {
 
     pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
     int ret = pthread_rwlock_tryrdlock(rwlock);
-    if (ret == EBUSY) {
-        return INFRA_ERROR_BUSY;
-    }
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (ret == 0) ? INFRA_OK : (ret == EBUSY ? INFRA_ERROR_BUSY : INFRA_ERROR_IO);
 }
 
 infra_error_t infra_platform_rwlock_wrlock(void* handle) {
@@ -322,7 +307,7 @@ infra_error_t infra_platform_rwlock_wrlock(void* handle) {
     }
 
     pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
-    return (pthread_rwlock_wrlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (pthread_rwlock_wrlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 infra_error_t infra_platform_rwlock_trywrlock(void* handle) {
@@ -332,10 +317,7 @@ infra_error_t infra_platform_rwlock_trywrlock(void* handle) {
 
     pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
     int ret = pthread_rwlock_trywrlock(rwlock);
-    if (ret == EBUSY) {
-        return INFRA_ERROR_BUSY;
-    }
-    return (ret == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (ret == 0) ? INFRA_OK : (ret == EBUSY ? INFRA_ERROR_BUSY : INFRA_ERROR_IO);
 }
 
 infra_error_t infra_platform_rwlock_unlock(void* handle) {
@@ -344,5 +326,5 @@ infra_error_t infra_platform_rwlock_unlock(void* handle) {
     }
 
     pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
-    return (pthread_rwlock_unlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    return (pthread_rwlock_unlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_IO;
 } 
