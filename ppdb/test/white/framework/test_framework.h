@@ -56,21 +56,8 @@ extern int g_test_stats[3];  // total, passed, failed
         } \
     } while (0)
 
-#define TEST_ASSERT_MSG_INT(condition, format, ...) \
-    do { \
-        if (!(condition)) { \
-            g_test_stats[TEST_STATS_FAILED]++; \
-            printf("Assertion failed at %s:%d: " format "\n", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
-            return 0; \
-        } \
-    } while (0)
-
-#define TEST_ASSERT_MSG(condition, format, ...) \
-    TEST_ASSERT_MSG_VOID(condition, format, ##__VA_ARGS__)
-
-#define TEST_ASSERT(condition) \
-    TEST_ASSERT_MSG(condition, #condition)
+#define TEST_ASSERT_MSG(condition, format, ...) TEST_ASSERT_MSG_VOID(condition, format, ##__VA_ARGS__)
+#define TEST_ASSERT(condition) TEST_ASSERT_MSG(condition, "%s", #condition)
 
 #define TEST_ASSERT_EQUAL(expected, actual) \
     TEST_ASSERT_MSG((expected) == (actual), \

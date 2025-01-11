@@ -1,5 +1,7 @@
+#include "cosmopolitan.h"
+#define TEST_MAIN
+#include "test/white/framework/test_framework.h"
 #include "internal/infra/infra_core.h"
-#include "../framework/test_framework.h"
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_platform.h"
 
@@ -118,18 +120,26 @@ static void test_rwlock(void) {
     TEST_ASSERT(counter == 2);
 }
 
-// 暂时注释掉线程池测试，等内存管理模块稳定后再启用
-/*
+static void* task_func(void* arg) {
+    void** args = (void**)arg;
+    int* counter = (int*)args[0];
+    infra_mutex_t* mutex = (infra_mutex_t*)args[1];
+    
+    infra_mutex_lock(*mutex);
+    (*counter)++;
+    infra_mutex_unlock(*mutex);
+    
+    return NULL;
+}
+
 static void test_thread_pool(void) {
     infra_error_t err;
     infra_thread_pool_t* pool = NULL;
-    
-    // 创建线程池配置
     infra_thread_pool_config_t config = {
-        .min_threads = 1,
-        .max_threads = 2,
-        .queue_size = 5,
-        .idle_timeout = 100
+        .min_threads = 2,
+        .max_threads = 4,
+        .queue_size = 10,
+        .idle_timeout = 1000
     };
     
     // 创建线程池
@@ -137,41 +147,50 @@ static void test_thread_pool(void) {
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(pool != NULL);
     
-    // 测试任务计数器
+    // 准备测试数据
     int counter = 0;
-    
-    // 提交任务
-    err = infra_thread_pool_submit(pool, thread_func, &counter);
+    infra_mutex_t mutex;
+    err = infra_mutex_create(&mutex);
     TEST_ASSERT(err == INFRA_OK);
     
-    // 等待任务完成
-    infra_platform_sleep(200);
+    void* args[2] = { &counter, &mutex };
     
-    // 检查任务是否执行
-    TEST_ASSERT(counter == 1);
+    // 提交多个任务
+    for (int i = 0; i < 5; i++) {
+        err = infra_thread_pool_submit(pool, task_func, args);
+        TEST_ASSERT(err == INFRA_OK);
+    }
     
-    // 获取线程池统计信息
+    // 等待任务完成（增加等待时间）
+    infra_sleep(500);
+    
+    // 检查结果
+    TEST_ASSERT(counter == 5);
+    
+    // 获取线程池状态
     size_t active_threads, queued_tasks;
     err = infra_thread_pool_get_stats(pool, &active_threads, &queued_tasks);
     TEST_ASSERT(err == INFRA_OK);
-    TEST_ASSERT(queued_tasks == 0);
+    TEST_ASSERT(queued_tasks == 0);  // 所有任务都应该完成
     
-    // 销毁线程池
+    // 清理
+    infra_mutex_destroy(mutex);
     err = infra_thread_pool_destroy(pool);
     TEST_ASSERT(err == INFRA_OK);
 }
-*/
 
 int main(void) {
     infra_error_t err = infra_init();
-    TEST_ASSERT(err == INFRA_OK);
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
 
+    TEST_BEGIN();
     RUN_TEST(test_thread);
     RUN_TEST(test_mutex);
     RUN_TEST(test_cond);
     RUN_TEST(test_rwlock);
-    // RUN_TEST(test_thread_pool);  // 暂时注释掉
-
-    infra_cleanup();
-    return 0;
+    RUN_TEST(test_thread_pool);
+    TEST_END();
 } 
