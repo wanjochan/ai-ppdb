@@ -1,6 +1,5 @@
-#include "test_common.h"
-#include "test_framework.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
+#include "../framework/test_framework.h"
 #include "internal/infra/infra_sync.h"
 
 static void* thread_func(void* arg) {
@@ -9,7 +8,7 @@ static void* thread_func(void* arg) {
     return NULL;
 }
 
-static int test_thread(void) {
+static void test_thread(void) {
     infra_error_t err;
     infra_thread_t thread;
     int counter = 0;
@@ -22,11 +21,9 @@ static int test_thread(void) {
     err = infra_thread_join(thread);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(counter == 1);
-
-    return 0;
 }
 
-static int test_mutex(void) {
+static void test_mutex(void) {
     infra_error_t err;
     infra_mutex_t mutex;
     int counter = 0;
@@ -52,10 +49,9 @@ static int test_mutex(void) {
     // 销毁互斥锁
     infra_mutex_destroy(mutex);
     TEST_ASSERT(counter == 2);
-    return 0;
 }
 
-static int test_cond(void) {
+static void test_cond(void) {
     infra_error_t err;
     infra_mutex_t mutex;
     infra_cond_t cond;
@@ -90,10 +86,9 @@ static int test_cond(void) {
     // 销毁条件变量和互斥锁
     infra_cond_destroy(cond);
     infra_mutex_destroy(mutex);
-    return 0;
 }
 
-static int test_rwlock(void) {
+static void test_rwlock(void) {
     infra_error_t err;
     infra_rwlock_t rwlock;
     int counter = 0;
@@ -103,24 +98,23 @@ static int test_rwlock(void) {
     TEST_ASSERT(err == INFRA_OK);
 
     // 读锁
-    err = infra_rwlock_rdlock(&rwlock);
+    err = infra_rwlock_rdlock(rwlock);
     TEST_ASSERT(err == INFRA_OK);
     counter++;
-    err = infra_rwlock_unlock(&rwlock);
+    err = infra_rwlock_unlock(rwlock);
     TEST_ASSERT(err == INFRA_OK);
 
     // 写锁
-    err = infra_rwlock_wrlock(&rwlock);
+    err = infra_rwlock_wrlock(rwlock);
     TEST_ASSERT(err == INFRA_OK);
     counter++;
-    err = infra_rwlock_unlock(&rwlock);
+    err = infra_rwlock_unlock(rwlock);
     TEST_ASSERT(err == INFRA_OK);
 
     // 销毁读写锁
-    err = infra_rwlock_destroy(&rwlock);
+    err = infra_rwlock_destroy(rwlock);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(counter == 2);
-    return 0;
 }
 
 int main(void) {
@@ -131,14 +125,14 @@ int main(void) {
         return 1;
     }
 
-    TEST_INIT();
+    TEST_BEGIN();
 
-    TEST_RUN(test_thread);
-    TEST_RUN(test_mutex);
-    TEST_RUN(test_cond);
-    TEST_RUN(test_rwlock);
+    RUN_TEST(test_thread);
+    RUN_TEST(test_mutex);
+    RUN_TEST(test_cond);
+    RUN_TEST(test_rwlock);
 
-    TEST_CLEANUP();
+    TEST_END();
 
     // 清理infra系统
     infra_cleanup();

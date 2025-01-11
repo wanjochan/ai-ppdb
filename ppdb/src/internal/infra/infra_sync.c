@@ -85,35 +85,35 @@ infra_error_t infra_rwlock_init(infra_rwlock_t* rwlock) {
     return infra_platform_rwlock_create((void**)rwlock);
 }
 
-infra_error_t infra_rwlock_destroy(infra_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_destroy(infra_rwlock_t rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    infra_platform_rwlock_destroy(*rwlock);
+    infra_platform_rwlock_destroy(rwlock);
     return INFRA_OK;
 }
 
-infra_error_t infra_rwlock_rdlock(infra_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_rdlock(infra_rwlock_t rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_rdlock(*rwlock);
+    return infra_platform_rwlock_rdlock(rwlock);
 }
 
-infra_error_t infra_rwlock_tryrdlock(infra_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_tryrdlock(infra_rwlock_t rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_tryrdlock(*rwlock);
+    return infra_platform_rwlock_tryrdlock(rwlock);
 }
 
-infra_error_t infra_rwlock_wrlock(infra_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_wrlock(infra_rwlock_t rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_wrlock(*rwlock);
+    return infra_platform_rwlock_wrlock(rwlock);
 }
 
-infra_error_t infra_rwlock_trywrlock(infra_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_trywrlock(infra_rwlock_t rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_trywrlock(*rwlock);
+    return infra_platform_rwlock_trywrlock(rwlock);
 }
 
-infra_error_t infra_rwlock_unlock(infra_rwlock_t* rwlock) {
+infra_error_t infra_rwlock_unlock(infra_rwlock_t rwlock) {
     if (!rwlock) return INFRA_ERROR_INVALID;
-    return infra_platform_rwlock_unlock(*rwlock);
+    return infra_platform_rwlock_unlock(rwlock);
 }
 
 //-----------------------------------------------------------------------------

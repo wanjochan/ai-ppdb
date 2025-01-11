@@ -1,6 +1,5 @@
-#include "test_common.h"
-#include "internal/infra/infra.h"
-#include "test_framework.h"
+#include "internal/infra/infra_core.h"
+#include "../framework/test_framework.h"
 
 // 性能统计结构
 typedef struct {
@@ -15,7 +14,7 @@ typedef struct {
 static mem_stats_t g_stats = {0};
 
 // 基本内存分配测试
-static int test_memory_basic(void) {
+static void test_memory_basic(void) {
     // 测试基本分配和释放
     void* ptr = infra_malloc(100);
     TEST_ASSERT(ptr != NULL);
@@ -31,12 +30,10 @@ static int test_memory_basic(void) {
     ptr = infra_malloc(1024 * 1024);
     TEST_ASSERT(ptr != NULL);
     infra_free(ptr);
-
-    return 0;
 }
 
 // 内存操作测试
-static int test_memory_operations(void) {
+static void test_memory_operations(void) {
     // 测试memset
     void* ptr = infra_malloc(100);
     TEST_ASSERT(ptr != NULL);
@@ -53,11 +50,10 @@ static int test_memory_operations(void) {
     
     infra_free(ptr);
     infra_free(dest);
-    return 0;
 }
 
 // 内存性能测试
-static int test_memory_performance(void) {
+static void test_memory_performance(void) {
     const int iterations = 1000;
     const int sizes[] = {8, 16, 32, 64, 128, 256, 512, 1024};
     const int num_sizes = sizeof(sizes) / sizeof(sizes[0]);
@@ -81,12 +77,10 @@ static int test_memory_performance(void) {
     infra_time_t end = infra_time_monotonic();
     double time_spent = (double)(end - start) / 1000000.0;  // Convert to seconds
     TEST_ASSERT(time_spent < 30.0);  // 性能测试应在30秒内完成
-    
-    return 0;
 }
 
 // 内存压力测试
-static int test_memory_stress(void) {
+static void test_memory_stress(void) {
     const int iterations = 100;
     const int max_allocs = 1000;
     void* ptrs[1000];
@@ -110,8 +104,6 @@ static int test_memory_stress(void) {
             infra_free(ptrs[j]);
         }
     }
-    
-    return 0;
 }
 
 int main(void) {
@@ -122,14 +114,14 @@ int main(void) {
         return 1;
     }
 
-    TEST_INIT();
+    TEST_BEGIN();
     
-    TEST_RUN(test_memory_basic);
-    TEST_RUN(test_memory_operations);
-    TEST_RUN(test_memory_performance);
-    TEST_RUN(test_memory_stress);
+    RUN_TEST(test_memory_basic);
+    RUN_TEST(test_memory_operations);
+    RUN_TEST(test_memory_performance);
+    RUN_TEST(test_memory_stress);
     
-    TEST_CLEANUP();
+    TEST_END();
     
     // 打印内存统计信息
     infra_printf("\nMemory Statistics:\n");

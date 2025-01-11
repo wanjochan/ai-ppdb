@@ -1,4 +1,4 @@
-#include "test/white/framework/test_framework.h"
+#include "test_framework.h"
 #include "internal/infra/infra_core.h"
 
 int g_test_stats[3] = {0};  // total, passed, failed

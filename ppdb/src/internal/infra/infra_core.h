@@ -44,6 +44,7 @@
 #define INFRA_ERROR_AGAIN       -16
 #define INFRA_ERROR_INTERRUPTED -17
 #define INFRA_ERROR_NOMEM      -18
+#define INFRA_ERROR_NO_SPACE   -19
 
 //-----------------------------------------------------------------------------
 // Basic Types
@@ -54,6 +55,10 @@ typedef uint32_t infra_flags_t;
 typedef uint64_t infra_time_t;
 typedef uint64_t infra_handle_t;
 typedef uint64_t INFRA_CORE_Handle_t;
+typedef int infra_bool_t;
+
+#define INFRA_TRUE  1
+#define INFRA_FALSE 0
 
 //-----------------------------------------------------------------------------
 // Thread Types

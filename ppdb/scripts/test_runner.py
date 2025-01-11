@@ -204,7 +204,7 @@ def run_test(args):
 def main():
     parser = argparse.ArgumentParser(description='智能测试运行器')
     parser.add_argument('command', help='要运行的命令')
-    parser.add_argument('-t', '--timeout', type=float, default=10.0, help='超时时间（秒），默认10秒')
+    parser.add_argument('-t', '--timeout', type=float, default=20.0, help='超时时间（秒），默认20秒')
     parser.add_argument('-i', '--interactive', action='store_true', help='是否需要交互')
     parser.add_argument('-d', '--debug', action='store_true', help='是否打印调试信息')
     parser.add_argument('-n', '--no-warmup', action='store_true', help='是否跳过预热')

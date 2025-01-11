@@ -106,6 +106,11 @@ mock 机制通过替换真实函数调用来模拟组件行为。主要用于:
 框架提供 MOCK_FUNC() 定义 mock 函数,通过 mock_register_expectation() 设置预期行为。目前已实现了内存管理、平台抽象等模块的 mock。
 
 .\ppdb\scripts\build_test_mock.bat
+或者用我们的工具（有超时机制可以防止死循环卡住）
+python ppdb/scripts/test_runner.py -t 20 ".\ppdb\scripts\build_test_mock.bat"
+
+
+
 ```
 
 test/white/
@@ -132,5 +137,5 @@ test/
 
 构建工具：
 .\pdpb\scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
-.\ppdb\scripts\build_{layer}_{module}.bat 用于构建指定层和模块的代码 （这个还没确定，可能还要讨论？）
+.\ppdb\scripts\build_test_{layer}.bat 用于构建指定层?
 .\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）

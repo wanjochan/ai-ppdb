@@ -46,12 +46,12 @@ infra_error_t infra_cond_broadcast(infra_cond_t cond);
 //-----------------------------------------------------------------------------
 
 infra_error_t infra_rwlock_init(infra_rwlock_t* rwlock);
-infra_error_t infra_rwlock_destroy(infra_rwlock_t* rwlock);
-infra_error_t infra_rwlock_rdlock(infra_rwlock_t* rwlock);
-infra_error_t infra_rwlock_tryrdlock(infra_rwlock_t* rwlock);
-infra_error_t infra_rwlock_wrlock(infra_rwlock_t* rwlock);
-infra_error_t infra_rwlock_trywrlock(infra_rwlock_t* rwlock);
-infra_error_t infra_rwlock_unlock(infra_rwlock_t* rwlock);
+infra_error_t infra_rwlock_destroy(infra_rwlock_t rwlock);
+infra_error_t infra_rwlock_rdlock(infra_rwlock_t rwlock);
+infra_error_t infra_rwlock_tryrdlock(infra_rwlock_t rwlock);
+infra_error_t infra_rwlock_wrlock(infra_rwlock_t rwlock);
+infra_error_t infra_rwlock_trywrlock(infra_rwlock_t rwlock);
+infra_error_t infra_rwlock_unlock(infra_rwlock_t rwlock);
 
 //-----------------------------------------------------------------------------
 // Thread Operations

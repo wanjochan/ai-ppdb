@@ -18,8 +18,12 @@ rem Build platform module
 "%GCC%" %CFLAGS% -I"%SRC_DIR%" "%PPDB_DIR%\src\internal\infra\infra_platform.c" -c -o "%BUILD_DIR%\infra\infra_platform.o"
 if errorlevel 1 exit /b 1
 
+rem Build sync module
+"%GCC%" %CFLAGS% -I"%SRC_DIR%" "%PPDB_DIR%\src\internal\infra\infra_sync.c" -c -o "%BUILD_DIR%\infra\infra_sync.o"
+if errorlevel 1 exit /b 1
+
 rem Create static library
-"%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o"
+"%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o"
 if errorlevel 1 exit /b 1
 
 echo Build infra complete.
