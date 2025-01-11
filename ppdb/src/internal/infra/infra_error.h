@@ -23,4 +23,15 @@ void infra_set_expected_error(infra_error_t err);
 void infra_clear_expected_error(void);
 bool infra_is_expected_error(infra_error_t err);
 
+//-----------------------------------------------------------------------------
+// System Error Code Mapping
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_error_from_system(int system_error);
+int infra_error_to_system(infra_error_t error);
+
+//-----------------------------------------------------------------------------
+// Error String Operations
+//-----------------------------------------------------------------------------
+
 #endif // INFRA_ERROR_H_ 

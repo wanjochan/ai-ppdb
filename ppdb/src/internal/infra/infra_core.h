@@ -127,28 +127,13 @@ typedef struct {
     
     struct {
         int level;
-        size_t buffer_size;
-        bool async_logging;
         const char* log_file;
     } log;
     
     struct {
         size_t hash_initial_size;
         uint32_t hash_load_factor;
-        bool thread_safe;
     } ds;
-
-    struct {
-        uint32_t min_threads;      // 最小线程数
-        uint32_t max_threads;      // 最大线程数
-        uint32_t task_queue_size;  // 任务队列大小
-        uint32_t task_timeout_ms;  // 任务超时时间
-        struct {
-            uint32_t io_threshold_us;   // IO任务判定阈值
-            uint32_t cpu_threshold_us;  // CPU任务判定阈值
-            uint32_t sample_window;     // 采样窗口大小
-        } classify;
-    } async;
 } infra_config_t;
 
 // 默认配置
@@ -167,7 +152,6 @@ typedef enum {
     INFRA_INIT_MEMORY = 1 << 0,
     INFRA_INIT_LOG    = 1 << 1,
     INFRA_INIT_DS     = 1 << 2,
-    INFRA_INIT_ASYNC  = 1 << 3,
     INFRA_INIT_ALL    = 0xFFFFFFFF
 } infra_init_flags_t;
 
@@ -338,28 +322,6 @@ void infra_log_set_callback(infra_log_callback_t callback);
 void infra_log(int level, const char* file, int line, const char* func, const char* format, ...);
 
 //-----------------------------------------------------------------------------
-// Statistics
-//-----------------------------------------------------------------------------
-
-typedef struct {
-    uint64_t total_operations;
-    uint64_t successful_operations;
-    uint64_t failed_operations;
-    uint64_t total_bytes;
-    uint64_t min_latency_us;
-    uint64_t max_latency_us;
-    uint64_t avg_latency_us;
-    infra_error_t last_error;
-    uint64_t last_error_time;
-} infra_stats_t;
-
-void infra_stats_init(infra_stats_t* stats);
-void infra_stats_reset(infra_stats_t* stats);
-void infra_stats_update(infra_stats_t* stats, bool success, uint64_t latency_us, size_t bytes, infra_error_t error);
-void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src);
-void infra_stats_print(const infra_stats_t* stats, const char* prefix);
-
-//-----------------------------------------------------------------------------
 // Printf Operations
 //-----------------------------------------------------------------------------
 
@@ -368,74 +330,26 @@ int infra_vprintf(const char* format, va_list args);
 int infra_snprintf(char* str, size_t size, const char* format, ...);
 int infra_vsnprintf(char* str, size_t size, const char* format, va_list args);
 
-//-----------------------------------------------------------------------------
-// Time Management
-//-----------------------------------------------------------------------------
-
-infra_time_t infra_time_now(void);
-infra_time_t infra_time_monotonic(void);
-void infra_time_sleep(uint32_t ms);
-void infra_time_yield(void);
-
-//-----------------------------------------------------------------------------
-// File Operations
-//-----------------------------------------------------------------------------
-
-#define INFRA_FILE_CREATE  (1 << 0)
-#define INFRA_FILE_RDONLY  (1 << 1)
-#define INFRA_FILE_WRONLY  (1 << 2)
-#define INFRA_FILE_RDWR    (INFRA_FILE_RDONLY | INFRA_FILE_WRONLY)
-#define INFRA_FILE_APPEND  (1 << 3)
-#define INFRA_FILE_TRUNC   (1 << 4)
-
-#define INFRA_SEEK_SET 0
-#define INFRA_SEEK_CUR 1
-#define INFRA_SEEK_END 2
-
-infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle);
-infra_error_t infra_file_close(INFRA_CORE_Handle_t handle);
-infra_error_t infra_file_read(INFRA_CORE_Handle_t handle, void* buffer, size_t size, size_t* bytes_read);
-infra_error_t infra_file_write(INFRA_CORE_Handle_t handle, const void* buffer, size_t size, size_t* bytes_written);
-infra_error_t infra_file_seek(INFRA_CORE_Handle_t handle, int64_t offset, int whence);
-infra_error_t infra_file_size(INFRA_CORE_Handle_t handle, size_t* size);
-infra_error_t infra_file_remove(const char* path);
-infra_error_t infra_file_rename(const char* old_path, const char* new_path);
-infra_error_t infra_file_exists(const char* path, bool* exists);
-
 const char* infra_error_string(int error_code);
 
 //-----------------------------------------------------------------------------
-// Skip List
+// Ring Buffer Operations
 //-----------------------------------------------------------------------------
 
-// Maximum level for skip list
-#define INFRA_SKIPLIST_MAX_LEVEL 32
+typedef struct {
+    uint8_t* buffer;
+    size_t size;
+    size_t read_pos;
+    size_t write_pos;
+    bool full;
+} infra_ring_buffer_t;
 
-// Skip list node structure
-typedef struct infra_skiplist_node {
-    void* key;                  // Key data
-    size_t key_size;           // Size of key data
-    void* value;               // Value data
-    size_t value_size;         // Size of value data
-    size_t level;              // Current level of the node
-    struct infra_skiplist_node* forward[INFRA_SKIPLIST_MAX_LEVEL];  // Forward pointers
-} infra_skiplist_node_t;
-
-// Skip list structure
-typedef struct infra_skiplist {
-    infra_skiplist_node_t* header;  // Header node
-    size_t level;                   // Current maximum level
-    size_t size;                    // Number of elements
-    int (*compare)(const void*, const void*);  // Compare function
-} infra_skiplist_t;
-
-// Skip list functions
-infra_error_t infra_skiplist_init(infra_skiplist_t* list, size_t max_level);
-infra_error_t infra_skiplist_destroy(infra_skiplist_t* list);
-infra_error_t infra_skiplist_insert(infra_skiplist_t* list, const void* key, size_t key_size, const void* value, size_t value_size);
-infra_error_t infra_skiplist_find(infra_skiplist_t* list, const void* key, size_t key_size, void** value, size_t* value_size);
-infra_error_t infra_skiplist_remove(infra_skiplist_t* list, const void* key, size_t key_size);
-infra_error_t infra_skiplist_size(infra_skiplist_t* list, size_t* size);
-infra_error_t infra_skiplist_clear(infra_skiplist_t* list);
+infra_error_t infra_ring_buffer_init(infra_ring_buffer_t* rb, size_t size);
+void infra_ring_buffer_destroy(infra_ring_buffer_t* rb);
+infra_error_t infra_ring_buffer_write(infra_ring_buffer_t* rb, const void* data, size_t size);
+infra_error_t infra_ring_buffer_read(infra_ring_buffer_t* rb, void* data, size_t size);
+size_t infra_ring_buffer_readable(const infra_ring_buffer_t* rb);
+size_t infra_ring_buffer_writable(const infra_ring_buffer_t* rb);
+void infra_ring_buffer_reset(infra_ring_buffer_t* rb);
 
 #endif /* INFRA_CORE_H */

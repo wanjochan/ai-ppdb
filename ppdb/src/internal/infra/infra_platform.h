@@ -84,4 +84,66 @@ infra_error_t infra_platform_rwlock_wrlock(void* handle);
 infra_error_t infra_platform_rwlock_trywrlock(void* handle);
 infra_error_t infra_platform_rwlock_unlock(void* handle);
 
+//-----------------------------------------------------------------------------
+// Byte Order Operations
+//-----------------------------------------------------------------------------
+
+uint16_t infra_htons(uint16_t host16);
+uint32_t infra_htonl(uint32_t host32);
+uint64_t infra_htonll(uint64_t host64);
+uint16_t infra_ntohs(uint16_t net16);
+uint32_t infra_ntohl(uint32_t net32);
+uint64_t infra_ntohll(uint64_t net64);
+
+//-----------------------------------------------------------------------------
+// Time Management
+//-----------------------------------------------------------------------------
+
+infra_time_t infra_time_now(void);
+infra_time_t infra_time_monotonic(void);
+void infra_time_sleep(uint32_t ms);
+void infra_time_yield(void);
+
+//-----------------------------------------------------------------------------
+// File Operations
+//-----------------------------------------------------------------------------
+
+#define INFRA_FILE_CREATE  (1 << 0)
+#define INFRA_FILE_RDONLY  (1 << 1)
+#define INFRA_FILE_WRONLY  (1 << 2)
+#define INFRA_FILE_RDWR    (INFRA_FILE_RDONLY | INFRA_FILE_WRONLY)
+#define INFRA_FILE_APPEND  (1 << 3)
+#define INFRA_FILE_TRUNC   (1 << 4)
+
+#define INFRA_SEEK_SET 0
+#define INFRA_SEEK_CUR 1
+#define INFRA_SEEK_END 2
+
+infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle);
+infra_error_t infra_file_close(INFRA_CORE_Handle_t handle);
+infra_error_t infra_file_read(INFRA_CORE_Handle_t handle, void* buffer, size_t size, size_t* bytes_read);
+infra_error_t infra_file_write(INFRA_CORE_Handle_t handle, const void* buffer, size_t size, size_t* bytes_written);
+infra_error_t infra_file_seek(INFRA_CORE_Handle_t handle, int64_t offset, int whence);
+infra_error_t infra_file_size(INFRA_CORE_Handle_t handle, size_t* size);
+infra_error_t infra_file_remove(const char* path);
+infra_error_t infra_file_rename(const char* old_path, const char* new_path);
+infra_error_t infra_file_exists(const char* path, bool* exists);
+
+//-----------------------------------------------------------------------------
+// Atomic Operations
+//-----------------------------------------------------------------------------
+
+typedef struct {
+    volatile int32_t value;
+} infra_atomic_t;
+
+void infra_atomic_init(infra_atomic_t* atomic, int32_t value);
+int32_t infra_atomic_get(infra_atomic_t* atomic);
+void infra_atomic_set(infra_atomic_t* atomic, int32_t value);
+int32_t infra_atomic_add(infra_atomic_t* atomic, int32_t value);
+int32_t infra_atomic_sub(infra_atomic_t* atomic, int32_t value);
+int32_t infra_atomic_inc(infra_atomic_t* atomic);
+int32_t infra_atomic_dec(infra_atomic_t* atomic);
+bool infra_atomic_cas(infra_atomic_t* atomic, int32_t expected, int32_t desired);
+
 #endif /* INFRA_PLATFORM_H */ 

@@ -1,4 +1,5 @@
 #include "internal/infra/infra_core.h"
+#include "internal/infra/infra_platform.h"
 #include "../framework/test_framework.h"
 
 // 性能统计结构

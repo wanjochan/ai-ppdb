@@ -63,4 +63,36 @@ infra_error_t infra_thread_create(infra_thread_t* thread, infra_thread_func_t fu
 infra_error_t infra_thread_join(infra_thread_t thread);
 infra_error_t infra_thread_detach(infra_thread_t thread);
 
+//-----------------------------------------------------------------------------
+// Spinlock Operations
+//-----------------------------------------------------------------------------
+
+typedef struct {
+    volatile int32_t lock;
+} infra_spinlock_t;
+
+void infra_spinlock_init(infra_spinlock_t* spinlock);
+void infra_spinlock_destroy(infra_spinlock_t* spinlock);
+void infra_spinlock_lock(infra_spinlock_t* spinlock);
+bool infra_spinlock_trylock(infra_spinlock_t* spinlock);
+void infra_spinlock_unlock(infra_spinlock_t* spinlock);
+
+//-----------------------------------------------------------------------------
+// Semaphore Operations
+//-----------------------------------------------------------------------------
+
+typedef struct {
+    volatile int32_t value;
+    infra_mutex_t mutex;
+    infra_cond_t cond;
+} infra_sem_t;
+
+infra_error_t infra_sem_init(infra_sem_t* sem, uint32_t value);
+void infra_sem_destroy(infra_sem_t* sem);
+infra_error_t infra_sem_wait(infra_sem_t* sem);
+infra_error_t infra_sem_trywait(infra_sem_t* sem);
+infra_error_t infra_sem_timedwait(infra_sem_t* sem, uint32_t timeout_ms);
+infra_error_t infra_sem_post(infra_sem_t* sem);
+infra_error_t infra_sem_getvalue(infra_sem_t* sem, int* value);
+
 #endif // INFRA_SYNC_H 

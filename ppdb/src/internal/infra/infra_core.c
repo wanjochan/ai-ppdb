@@ -12,17 +12,32 @@
 // Global State
 //-----------------------------------------------------------------------------
 
-struct {
+// 全局状态
+static struct {
     bool initialized;
     infra_init_flags_t active_flags;
-    infra_config_t config;
-    infra_status_t status;
     infra_mutex_t mutex;
+
+    // 内存管理状态
+    struct {
+        size_t current_usage;
+        size_t peak_usage;
+        size_t total_allocations;
+    } memory;
+
+    // 日志系统状态
     struct {
         int level;
+        const char* log_file;
         infra_log_callback_t callback;
         infra_mutex_t mutex;
     } log;
+
+    // 数据结构状态
+    struct {
+        size_t hash_initial_size;
+        uint32_t hash_load_factor;
+    } ds;
 } g_infra = {0};
 
 //-----------------------------------------------------------------------------
@@ -37,14 +52,11 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
     },
     .log = {
         .level = INFRA_LOG_LEVEL_INFO,
-        .buffer_size = 4096,
-        .async_logging = true,
         .log_file = NULL
     },
     .ds = {
         .hash_initial_size = 16,
-        .hash_load_factor = 75,  // 75%
-        .thread_safe = true
+        .hash_load_factor = 75  // 75%
     }
 };
 
@@ -62,34 +74,24 @@ infra_error_t infra_config_init(infra_config_t* config) {
 
 infra_error_t infra_config_validate(const infra_config_t* config) {
     if (!config) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
     // 验证内存配置
-    if (config->memory.pool_initial_size == 0 ||
-        config->memory.pool_alignment == 0 ||
-        (config->memory.pool_alignment & (config->memory.pool_alignment - 1)) != 0) {
-        return INFRA_ERROR_INVALID;
+    if (config->memory.use_memory_pool &&
+        (config->memory.pool_initial_size == 0 || config->memory.pool_alignment == 0)) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
     // 验证日志配置
-    if (config->log.level < INFRA_LOG_LEVEL_NONE ||
-        config->log.level > INFRA_LOG_LEVEL_TRACE ||
-        config->log.buffer_size == 0) {
-        return INFRA_ERROR_INVALID;
+    if (config->log.level < INFRA_LOG_LEVEL_NONE || config->log.level > INFRA_LOG_LEVEL_TRACE) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
     // 验证数据结构配置
-    if (config->ds.hash_initial_size == 0 ||
-        config->ds.hash_load_factor == 0 ||
+    if (config->ds.hash_initial_size == 0 || config->ds.hash_load_factor == 0 || 
         config->ds.hash_load_factor > 100) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    // 验证任务分类配置
-    if (config->async.classify.io_threshold_us >= config->async.classify.cpu_threshold_us ||
-        config->async.classify.sample_window == 0) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
     return INFRA_OK;
@@ -97,7 +99,7 @@ infra_error_t infra_config_validate(const infra_config_t* config) {
 
 infra_error_t infra_config_apply(const infra_config_t* config) {
     if (!config) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
     infra_error_t err = infra_config_validate(config);
@@ -105,11 +107,19 @@ infra_error_t infra_config_apply(const infra_config_t* config) {
         return err;
     }
 
-    if (g_infra.initialized) {
-        return INFRA_ERROR_BUSY;  // 不能在运行时修改配置
+    // 应用内存配置
+    if (config->memory.use_memory_pool) {
+        // TODO: 实现内存池
     }
 
-    g_infra.config = *config;
+    // 应用日志配置
+    g_infra.log.level = config->log.level;
+    g_infra.log.log_file = config->log.log_file;
+
+    // 应用数据结构配置
+    g_infra.ds.hash_initial_size = config->ds.hash_initial_size;
+    g_infra.ds.hash_load_factor = config->ds.hash_load_factor;
+
     return INFRA_OK;
 }
 
@@ -117,126 +127,104 @@ infra_error_t infra_config_apply(const infra_config_t* config) {
 // Initialization and Cleanup
 //-----------------------------------------------------------------------------
 
-static infra_error_t init_module(infra_init_flags_t flag) {
-    infra_error_t err = INFRA_OK;
-
+static infra_error_t init_module(infra_init_flags_t flag, const infra_config_t* config) {
     switch (flag) {
         case INFRA_INIT_MEMORY:
             // 初始化内存管理
-            if (g_infra.config.memory.use_memory_pool) {
+            if (config->memory.use_memory_pool) {
                 // TODO: 实现内存池
             }
             break;
 
-        case INFRA_INIT_ASYNC:
-            // 初始化异步系统
-            // TODO: 使用配置的线程数和队列大小
-            break;
-
         case INFRA_INIT_LOG:
-            err = infra_mutex_create(&g_infra.log.mutex);
-            if (err != INFRA_OK) {
-                return err;
-            }
-            g_infra.log.level = g_infra.config.log.level;
-            g_infra.log.callback = NULL;
+            // 初始化日志系统
+            g_infra.log.level = config->log.level;
+            g_infra.log.log_file = config->log.log_file;
             break;
 
         case INFRA_INIT_DS:
             // 初始化数据结构
-            // TODO: 应用数据结构配置
+            g_infra.ds.hash_initial_size = config->ds.hash_initial_size;
+            g_infra.ds.hash_load_factor = config->ds.hash_load_factor;
             break;
 
         default:
-            return INFRA_ERROR_INVALID;
+            return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (err == INFRA_OK) {
-        g_infra.active_flags |= flag;
-    }
-
-    return err;
+    return INFRA_OK;
 }
 
 infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_config_t* config) {
-    if (g_infra.initialized) {
-        return INFRA_ERROR_BUSY;
+    infra_error_t err;
+
+    // 验证参数
+    if (!config) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 应用配置
-    infra_error_t err = INFRA_OK;
-    if (config) {
-        err = infra_config_apply(config);
-        if (err != INFRA_OK) {
-            return err;
-        }
-    } else {
-        g_infra.config = INFRA_DEFAULT_CONFIG;
-    }
-
-    // 创建全局锁
-    err = infra_mutex_create(&g_infra.mutex);
+    // 验证配置
+    err = infra_config_validate(config);
     if (err != INFRA_OK) {
         return err;
     }
 
-    // 按顺序初始化各个模块
+    // 初始化内存管理
     if (flags & INFRA_INIT_MEMORY) {
-        err = init_module(INFRA_INIT_MEMORY);
-        if (err != INFRA_OK) goto cleanup;
+        err = init_module(INFRA_INIT_MEMORY, config);
+        if (err != INFRA_OK) {
+            return err;
+        }
+        g_infra.active_flags |= INFRA_INIT_MEMORY;
     }
 
+    // 初始化日志系统
     if (flags & INFRA_INIT_LOG) {
-        err = init_module(INFRA_INIT_LOG);
-        if (err != INFRA_OK) goto cleanup;
+        err = init_module(INFRA_INIT_LOG, config);
+        if (err != INFRA_OK) {
+            return err;
+        }
+        g_infra.active_flags |= INFRA_INIT_LOG;
     }
 
-    if (flags & INFRA_INIT_ASYNC) {
-        err = init_module(INFRA_INIT_ASYNC);
-        if (err != INFRA_OK) goto cleanup;
-    }
-
+    // 初始化数据结构
     if (flags & INFRA_INIT_DS) {
-        err = init_module(INFRA_INIT_DS);
-        if (err != INFRA_OK) goto cleanup;
+        err = init_module(INFRA_INIT_DS, config);
+        if (err != INFRA_OK) {
+            return err;
+        }
+        g_infra.active_flags |= INFRA_INIT_DS;
     }
 
     g_infra.initialized = true;
     return INFRA_OK;
-
-cleanup:
-    infra_cleanup();
-    return err;
 }
 
 infra_error_t infra_init(void) {
-    return infra_init_with_config(INFRA_INIT_ALL, NULL);
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    if (err != INFRA_OK) {
+        return err;
+    }
+    return infra_init_with_config(INFRA_INIT_ALL, &config);
 }
 
 void infra_cleanup(void) {
-    if (!g_infra.initialized) {
-        return;
-    }
-
-    // 按相反顺序清理各个模块
+    // 按照初始化的相反顺序清理
     if (g_infra.active_flags & INFRA_INIT_DS) {
-        // TODO: 清理数据结构
-    }
-
-    if (g_infra.active_flags & INFRA_INIT_ASYNC) {
-        // TODO: 清理异步系统
+        // 清理数据结构
+        g_infra.active_flags &= ~INFRA_INIT_DS;
     }
 
     if (g_infra.active_flags & INFRA_INIT_LOG) {
-        // TODO: 清理日志系统
+        // 清理日志系统
+        g_infra.active_flags &= ~INFRA_INIT_LOG;
     }
 
     if (g_infra.active_flags & INFRA_INIT_MEMORY) {
-        // TODO: 清理内存管理
+        // 清理内存管理
+        g_infra.active_flags &= ~INFRA_INIT_MEMORY;
     }
-
-    infra_mutex_destroy(g_infra.mutex);
-    memset(&g_infra, 0, sizeof(g_infra));
 }
 
 bool infra_is_initialized(infra_init_flags_t flag) {
@@ -249,14 +237,16 @@ bool infra_is_initialized(infra_init_flags_t flag) {
 
 infra_error_t infra_get_status(infra_status_t* status) {
     if (!status) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    infra_mutex_lock(g_infra.mutex);
-    *status = g_infra.status;
     status->initialized = g_infra.initialized;
     status->active_flags = g_infra.active_flags;
-    infra_mutex_unlock(g_infra.mutex);
+    status->memory.current_usage = g_infra.memory.current_usage;
+    status->memory.peak_usage = g_infra.memory.peak_usage;
+    status->memory.total_allocations = g_infra.memory.total_allocations;
+    status->log.log_entries = 0;  // TODO: 实现日志统计
+    status->log.dropped_entries = 0;  // TODO: 实现日志统计
 
     return INFRA_OK;
 }
@@ -493,644 +483,6 @@ void infra_log(int level, const char* file, int line, const char* func,
 }
 
 //-----------------------------------------------------------------------------
-// Statistics
-//-----------------------------------------------------------------------------
-
-void infra_stats_init(infra_stats_t* stats) {
-    if (stats) {
-        infra_memset(stats, 0, sizeof(infra_stats_t));
-        stats->min_latency_us = (uint64_t)-1;
-    }
-}
-
-void infra_stats_reset(infra_stats_t* stats) {
-    infra_stats_init(stats);
-}
-
-void infra_stats_update(infra_stats_t* stats, bool success, uint64_t latency_us,
-                       size_t bytes, infra_error_t error) {
-    if (!stats) return;
-
-    stats->total_operations++;
-    if (success) {
-        stats->successful_operations++;
-    } else {
-        stats->failed_operations++;
-        stats->last_error = error;
-        stats->last_error_time = time(NULL);
-    }
-
-    stats->total_bytes += bytes;
-
-    if (latency_us < stats->min_latency_us) {
-        stats->min_latency_us = latency_us;
-    }
-    if (latency_us > stats->max_latency_us) {
-        stats->max_latency_us = latency_us;
-    }
-
-    // Update average latency
-    uint64_t total = stats->avg_latency_us * (stats->total_operations - 1);
-    total += latency_us;
-    stats->avg_latency_us = total / stats->total_operations;
-}
-
-void infra_stats_merge(infra_stats_t* dest, const infra_stats_t* src) {
-    if (!dest || !src) return;
-
-    dest->total_operations += src->total_operations;
-    dest->successful_operations += src->successful_operations;
-    dest->failed_operations += src->failed_operations;
-    dest->total_bytes += src->total_bytes;
-
-    if (src->min_latency_us < dest->min_latency_us) {
-        dest->min_latency_us = src->min_latency_us;
-    }
-    if (src->max_latency_us > dest->max_latency_us) {
-        dest->max_latency_us = src->max_latency_us;
-    }
-
-    // Update average latency
-    uint64_t total1 = dest->avg_latency_us * (dest->total_operations - src->total_operations);
-    uint64_t total2 = src->avg_latency_us * src->total_operations;
-    dest->avg_latency_us = (total1 + total2) / dest->total_operations;
-
-    if (src->last_error_time > dest->last_error_time) {
-        dest->last_error = src->last_error;
-        dest->last_error_time = src->last_error_time;
-    }
-}
-
-void infra_stats_print(const infra_stats_t* stats, const char* prefix) {
-    if (!stats) return;
-    printf("%sTotal operations: %lu\n", prefix ? prefix : "", (unsigned long)stats->total_operations);
-    printf("%sSuccessful operations: %lu\n", prefix ? prefix : "", (unsigned long)stats->successful_operations);
-    printf("%sFailed operations: %lu\n", prefix ? prefix : "", (unsigned long)stats->failed_operations);
-    printf("%sTotal bytes: %lu\n", prefix ? prefix : "", (unsigned long)stats->total_bytes);
-    printf("%sMin latency: %lu us\n", prefix ? prefix : "", (unsigned long)stats->min_latency_us);
-    printf("%sMax latency: %lu us\n", prefix ? prefix : "", (unsigned long)stats->max_latency_us);
-    printf("%sAvg latency: %lu us\n", prefix ? prefix : "", (unsigned long)stats->avg_latency_us);
-    if (stats->last_error_time) {
-        printf("%sLast error: %s at %lu\n", prefix ? prefix : "",
-               infra_error_string(stats->last_error), (unsigned long)stats->last_error_time);
-    }
-}
-
-//-----------------------------------------------------------------------------
-// Data Structures
-//-----------------------------------------------------------------------------
-
-// List Implementation
-infra_error_t infra_list_create(infra_list_t** list) {
-    if (!list) {
-        return INFRA_ERROR_INVALID;
-    }
-    *list = infra_malloc(sizeof(infra_list_t));
-    if (!*list) {
-        return INFRA_ERROR_MEMORY;
-    }
-    (*list)->head = NULL;
-    (*list)->tail = NULL;
-    (*list)->size = 0;
-    return INFRA_OK;
-}
-
-void infra_list_destroy(infra_list_t* list) {
-    if (!list) {
-        return;
-    }
-    infra_list_node_t* current = list->head;
-    while (current) {
-        infra_list_node_t* next = current->next;
-        infra_free(current);
-        current = next;
-    }
-    infra_free(list);
-}
-
-infra_error_t infra_list_append(infra_list_t* list, void* value) {
-    if (!list) {
-        return INFRA_ERROR_INVALID;
-    }
-    infra_list_node_t* node = infra_malloc(sizeof(infra_list_node_t));
-    if (!node) {
-        return INFRA_ERROR_MEMORY;
-    }
-    node->value = value;
-    node->next = NULL;
-    node->prev = list->tail;
-    
-    if (list->tail) {
-        list->tail->next = node;
-    } else {
-        list->head = node;
-    }
-    list->tail = node;
-    list->size++;
-    return INFRA_OK;
-}
-
-infra_error_t infra_list_remove(infra_list_t* list, infra_list_node_t* node) {
-    if (!list || !node) {
-        return INFRA_ERROR_INVALID;
-    }
-    if (node->prev) {
-        node->prev->next = node->next;
-    } else {
-        list->head = node->next;
-    }
-    if (node->next) {
-        node->next->prev = node->prev;
-    } else {
-        list->tail = node->prev;
-    }
-    infra_free(node);
-    list->size--;
-    return INFRA_OK;
-}
-
-infra_list_node_t* infra_list_head(infra_list_t* list) {
-    return list ? list->head : NULL;
-}
-
-infra_list_node_t* infra_list_node_next(infra_list_node_t* node) {
-    return node ? node->next : NULL;
-}
-
-void* infra_list_node_value(infra_list_node_t* node) {
-    return node ? node->value : NULL;
-}
-
-// Hash Table Implementation
-infra_error_t infra_hash_create(infra_hash_t** hash, size_t capacity) {
-    if (!hash || capacity == 0) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    *hash = infra_malloc(sizeof(infra_hash_t));
-    if (!*hash) {
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    (*hash)->buckets = infra_calloc(capacity, sizeof(infra_hash_node_t*));
-    if (!(*hash)->buckets) {
-        infra_free(*hash);
-        *hash = NULL;
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    (*hash)->size = 0;
-    (*hash)->capacity = capacity;
-    return INFRA_OK;
-}
-
-void infra_hash_destroy(infra_hash_t* hash) {
-    if (!hash) {
-        return;
-    }
-
-    for (size_t i = 0; i < hash->capacity; i++) {
-        infra_hash_node_t* current = hash->buckets[i];
-        while (current) {
-            infra_hash_node_t* next = current->next;
-            infra_free(current->key);
-            infra_free(current);
-            current = next;
-        }
-    }
-
-    infra_free(hash->buckets);
-    infra_free(hash);
-}
-
-static size_t hash_function(const char* key) {
-    size_t hash = 5381;
-    int c;
-    while ((c = *key++)) {
-        hash = ((hash << 5) + hash) + c;
-    }
-    return hash;
-}
-
-infra_error_t infra_hash_put(infra_hash_t* hash, const char* key, void* value) {
-    if (!hash || !key) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    size_t index = hash_function(key) % hash->capacity;
-    infra_hash_node_t* node = hash->buckets[index];
-
-    while (node) {
-        if (infra_strcmp(node->key, key) == 0) {
-            node->value = value;
-            return INFRA_OK;
-        }
-        node = node->next;
-    }
-
-    node = infra_malloc(sizeof(infra_hash_node_t));
-    if (!node) {
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    node->key = infra_strdup(key);
-    if (!node->key) {
-        infra_free(node);
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    node->value = value;
-    node->next = hash->buckets[index];
-    hash->buckets[index] = node;
-    hash->size++;
-
-    return INFRA_OK;
-}
-
-void* infra_hash_get(infra_hash_t* hash, const char* key) {
-    if (!hash || !key) {
-        return NULL;
-    }
-
-    size_t index = hash_function(key) % hash->capacity;
-    infra_hash_node_t* node = hash->buckets[index];
-
-    while (node) {
-        if (infra_strcmp(node->key, key) == 0) {
-            return node->value;
-        }
-        node = node->next;
-    }
-
-    return NULL;
-}
-
-void* infra_hash_remove(infra_hash_t* hash, const char* key) {
-    if (!hash || !key) {
-        return NULL;
-    }
-
-    size_t index = hash_function(key) % hash->capacity;
-    infra_hash_node_t* node = hash->buckets[index];
-    infra_hash_node_t* prev = NULL;
-
-    while (node) {
-        if (infra_strcmp(node->key, key) == 0) {
-            void* value = node->value;
-            if (prev) {
-                prev->next = node->next;
-            } else {
-                hash->buckets[index] = node->next;
-            }
-            infra_free(node->key);
-            infra_free(node);
-            hash->size--;
-            return value;
-        }
-        prev = node;
-        node = node->next;
-    }
-
-    return NULL;
-}
-
-void infra_hash_clear(infra_hash_t* hash) {
-    if (!hash) {
-        return;
-    }
-
-    for (size_t i = 0; i < hash->capacity; i++) {
-        infra_hash_node_t* current = hash->buckets[i];
-        while (current) {
-            infra_hash_node_t* next = current->next;
-            infra_free(current->key);
-            infra_free(current);
-            current = next;
-        }
-        hash->buckets[i] = NULL;
-    }
-    hash->size = 0;
-}
-
-// Red-Black Tree Implementation
-static infra_rbtree_node_t* rbtree_create_node(int key, void* value) {
-    infra_rbtree_node_t* node = infra_malloc(sizeof(infra_rbtree_node_t));
-    if (node) {
-        node->key = key;
-        node->value = value;
-        node->color = INFRA_RBTREE_RED;
-        node->left = node->right = node->parent = NULL;
-    }
-    return node;
-}
-
-static void rbtree_rotate_left(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
-    infra_rbtree_node_t* right = node->right;
-    node->right = right->left;
-    if (right->left) {
-        right->left->parent = node;
-    }
-    right->parent = node->parent;
-    if (!node->parent) {
-        tree->root = right;
-    } else if (node == node->parent->left) {
-        node->parent->left = right;
-    } else {
-        node->parent->right = right;
-    }
-    right->left = node;
-    node->parent = right;
-}
-
-static void rbtree_rotate_right(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
-    infra_rbtree_node_t* left = node->left;
-    node->left = left->right;
-    if (left->right) {
-        left->right->parent = node;
-    }
-    left->parent = node->parent;
-    if (!node->parent) {
-        tree->root = left;
-    } else if (node == node->parent->right) {
-        node->parent->right = left;
-    } else {
-        node->parent->left = left;
-    }
-    left->right = node;
-    node->parent = left;
-}
-
-static void rbtree_fix_insert(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
-    while (node != tree->root && node->parent->color == INFRA_RBTREE_RED) {
-        if (node->parent == node->parent->parent->left) {
-            infra_rbtree_node_t* uncle = node->parent->parent->right;
-            if (uncle && uncle->color == INFRA_RBTREE_RED) {
-                node->parent->color = INFRA_RBTREE_BLACK;
-                uncle->color = INFRA_RBTREE_BLACK;
-                node->parent->parent->color = INFRA_RBTREE_RED;
-                node = node->parent->parent;
-            } else {
-                if (node == node->parent->right) {
-                    node = node->parent;
-                    rbtree_rotate_left(tree, node);
-                }
-                node->parent->color = INFRA_RBTREE_BLACK;
-                node->parent->parent->color = INFRA_RBTREE_RED;
-                rbtree_rotate_right(tree, node->parent->parent);
-            }
-        } else {
-            infra_rbtree_node_t* uncle = node->parent->parent->left;
-            if (uncle && uncle->color == INFRA_RBTREE_RED) {
-                node->parent->color = INFRA_RBTREE_BLACK;
-                uncle->color = INFRA_RBTREE_BLACK;
-                node->parent->parent->color = INFRA_RBTREE_RED;
-                node = node->parent->parent;
-            } else {
-                if (node == node->parent->left) {
-                    node = node->parent;
-                    rbtree_rotate_right(tree, node);
-                }
-                node->parent->color = INFRA_RBTREE_BLACK;
-                node->parent->parent->color = INFRA_RBTREE_RED;
-                rbtree_rotate_left(tree, node->parent->parent);
-            }
-        }
-    }
-    tree->root->color = INFRA_RBTREE_BLACK;
-}
-
-infra_error_t infra_rbtree_create(infra_rbtree_t** tree) {
-    if (!tree) {
-        return INFRA_ERROR_INVALID;
-    }
-    *tree = infra_malloc(sizeof(infra_rbtree_t));
-    if (!*tree) {
-        return INFRA_ERROR_MEMORY;
-    }
-    (*tree)->root = NULL;
-    (*tree)->size = 0;
-    return INFRA_OK;
-}
-
-static void rbtree_destroy_recursive(infra_rbtree_node_t* node) {
-    if (node) {
-        rbtree_destroy_recursive(node->left);
-        rbtree_destroy_recursive(node->right);
-        infra_free(node);
-    }
-}
-
-void infra_rbtree_destroy(infra_rbtree_t* tree) {
-    if (tree) {
-        rbtree_destroy_recursive(tree->root);
-        infra_free(tree);
-    }
-}
-
-infra_error_t infra_rbtree_insert(infra_rbtree_t* tree, int key, void* value) {
-    if (!tree) {
-        return INFRA_ERROR_INVALID;
-    }
-    infra_rbtree_node_t* node = rbtree_create_node(key, value);
-    if (!node) {
-        return INFRA_ERROR_MEMORY;
-    }
-    infra_rbtree_node_t* y = NULL;
-    infra_rbtree_node_t* x = tree->root;
-    while (x) {
-        y = x;
-        if (key < x->key) {
-            x = x->left;
-        } else if (key > x->key) {
-            x = x->right;
-        } else {
-            x->value = value;
-            infra_free(node);
-            return INFRA_OK;
-        }
-    }
-    node->parent = y;
-    if (!y) {
-        tree->root = node;
-    } else if (key < y->key) {
-        y->left = node;
-    } else {
-        y->right = node;
-    }
-    tree->size++;
-    rbtree_fix_insert(tree, node);
-    return INFRA_OK;
-}
-
-static infra_rbtree_node_t* rbtree_find_node(infra_rbtree_t* tree, int key) {
-    infra_rbtree_node_t* node = tree->root;
-    while (node) {
-        if (key < node->key) {
-            node = node->left;
-        } else if (key > node->key) {
-            node = node->right;
-        } else {
-            return node;
-        }
-    }
-    return NULL;
-}
-
-void* infra_rbtree_find(infra_rbtree_t* tree, int key) {
-    if (!tree) {
-        return NULL;
-    }
-    infra_rbtree_node_t* node = rbtree_find_node(tree, key);
-    return node ? node->value : NULL;
-}
-
-static void rbtree_transplant(infra_rbtree_t* tree, infra_rbtree_node_t* u, infra_rbtree_node_t* v) {
-    if (!u->parent) {
-        tree->root = v;
-    } else if (u == u->parent->left) {
-        u->parent->left = v;
-    } else {
-        u->parent->right = v;
-    }
-    if (v) {
-        v->parent = u->parent;
-    }
-}
-
-static infra_rbtree_node_t* rbtree_minimum(infra_rbtree_node_t* node) {
-    while (node->left) {
-        node = node->left;
-    }
-    return node;
-}
-
-static void rbtree_fix_delete(infra_rbtree_t* tree, infra_rbtree_node_t* x, infra_rbtree_node_t* parent) {
-    while (x != tree->root && (!x || x->color == INFRA_RBTREE_BLACK)) {
-        if (x == parent->left) {
-            infra_rbtree_node_t* w = parent->right;
-            if (w->color == INFRA_RBTREE_RED) {
-                w->color = INFRA_RBTREE_BLACK;
-                parent->color = INFRA_RBTREE_RED;
-                rbtree_rotate_left(tree, parent);
-                w = parent->right;
-            }
-            if ((!w->left || w->left->color == INFRA_RBTREE_BLACK) &&
-                (!w->right || w->right->color == INFRA_RBTREE_BLACK)) {
-                w->color = INFRA_RBTREE_RED;
-                x = parent;
-                parent = x->parent;
-            } else {
-                if (!w->right || w->right->color == INFRA_RBTREE_BLACK) {
-                    if (w->left) {
-                        w->left->color = INFRA_RBTREE_BLACK;
-                    }
-                    w->color = INFRA_RBTREE_RED;
-                    rbtree_rotate_right(tree, w);
-                    w = parent->right;
-                }
-                w->color = parent->color;
-                parent->color = INFRA_RBTREE_BLACK;
-                if (w->right) {
-                    w->right->color = INFRA_RBTREE_BLACK;
-                }
-                rbtree_rotate_left(tree, parent);
-                x = tree->root;
-                break;
-            }
-        } else {
-            infra_rbtree_node_t* w = parent->left;
-            if (w->color == INFRA_RBTREE_RED) {
-                w->color = INFRA_RBTREE_BLACK;
-                parent->color = INFRA_RBTREE_RED;
-                rbtree_rotate_right(tree, parent);
-                w = parent->left;
-            }
-            if ((!w->right || w->right->color == INFRA_RBTREE_BLACK) &&
-                (!w->left || w->left->color == INFRA_RBTREE_BLACK)) {
-                w->color = INFRA_RBTREE_RED;
-                x = parent;
-                parent = x->parent;
-            } else {
-                if (!w->left || w->left->color == INFRA_RBTREE_BLACK) {
-                    if (w->right) {
-                        w->right->color = INFRA_RBTREE_BLACK;
-                    }
-                    w->color = INFRA_RBTREE_RED;
-                    rbtree_rotate_left(tree, w);
-                    w = parent->left;
-                }
-                w->color = parent->color;
-                parent->color = INFRA_RBTREE_BLACK;
-                if (w->right) {
-                    w->right->color = INFRA_RBTREE_BLACK;
-                }
-                rbtree_rotate_right(tree, parent);
-                x = tree->root;
-                break;
-            }
-        }
-    }
-    if (x) {
-        x->color = INFRA_RBTREE_BLACK;
-    }
-}
-
-void* infra_rbtree_remove(infra_rbtree_t* tree, int key) {
-    if (!tree) {
-        return NULL;
-    }
-    infra_rbtree_node_t* z = rbtree_find_node(tree, key);
-    if (!z) {
-        return NULL;
-    }
-    void* value = z->value;
-    infra_rbtree_node_t* y = z;
-    infra_rbtree_node_t* x;
-    infra_rbtree_color_t y_original_color = y->color;
-    
-    if (!z->left) {
-        x = z->right;
-        rbtree_transplant(tree, z, z->right);
-    } else if (!z->right) {
-        x = z->left;
-        rbtree_transplant(tree, z, z->left);
-    } else {
-        y = rbtree_minimum(z->right);
-        y_original_color = y->color;
-        x = y->right;
-        if (y->parent == z) {
-            if (x) {
-                x->parent = y;
-            }
-        } else {
-            rbtree_transplant(tree, y, y->right);
-            y->right = z->right;
-            y->right->parent = y;
-        }
-        rbtree_transplant(tree, z, y);
-        y->left = z->left;
-        y->left->parent = y;
-        y->color = z->color;
-    }
-    
-    if (y_original_color == INFRA_RBTREE_BLACK) {
-        rbtree_fix_delete(tree, x, x ? x->parent : NULL);
-    }
-    
-    infra_free(z);
-    tree->size--;
-    return value;
-}
-
-void infra_rbtree_clear(infra_rbtree_t* tree) {
-    if (tree) {
-        rbtree_destroy_recursive(tree->root);
-        tree->root = NULL;
-        tree->size = 0;
-    }
-}
-
-//-----------------------------------------------------------------------------
 // I/O Operations
 //-----------------------------------------------------------------------------
 
@@ -1295,252 +647,5 @@ void infra_time_sleep(uint32_t ms) {
 
 void infra_time_yield(void) {
     infra_platform_yield();
-}
-
-//-----------------------------------------------------------------------------
-// Skip List Implementation
-//-----------------------------------------------------------------------------
-
-// Helper function to create a new node
-static infra_skiplist_node_t* create_node(size_t level, const void* key, size_t key_size, const void* value, size_t value_size) {
-    infra_skiplist_node_t* node = (infra_skiplist_node_t*)infra_malloc(sizeof(infra_skiplist_node_t));
-    if (!node) return NULL;
-
-    node->key = infra_malloc(key_size);
-    if (!node->key) {
-        infra_free(node);
-        return NULL;
-    }
-
-    node->value = infra_malloc(value_size);
-    if (!node->value) {
-        infra_free(node->key);
-        infra_free(node);
-        return NULL;
-    }
-
-    memcpy(node->key, key, key_size);
-    memcpy(node->value, value, value_size);
-    node->key_size = key_size;
-    node->value_size = value_size;
-    node->level = level;
-
-    return node;
-}
-
-// Helper function to free a node
-static void free_node(infra_skiplist_node_t* node) {
-    if (node) {
-        infra_free(node->key);
-        infra_free(node->value);
-        infra_free(node);
-    }
-}
-
-// Helper function to generate a random level
-static size_t random_level(void) {
-    size_t level = 1;
-    while ((rand() & 0xFFFF) < (0xFFFF >> 1) && level < INFRA_SKIPLIST_MAX_LEVEL) {
-        level++;
-    }
-    return level;
-}
-
-infra_error_t infra_skiplist_init(infra_skiplist_t* list, size_t max_level) {
-    if (!list || max_level == 0 || max_level > INFRA_SKIPLIST_MAX_LEVEL) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    list->header = create_node(INFRA_SKIPLIST_MAX_LEVEL, NULL, 0, NULL, 0);
-    if (!list->header) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    for (size_t i = 0; i < INFRA_SKIPLIST_MAX_LEVEL; i++) {
-        list->header->forward[i] = NULL;
-    }
-
-    list->level = 1;
-    list->size = 0;
-    list->compare = NULL;
-
-    return INFRA_OK;
-}
-
-infra_error_t infra_skiplist_destroy(infra_skiplist_t* list) {
-    if (!list) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    infra_skiplist_node_t* current = list->header;
-    while (current) {
-        infra_skiplist_node_t* next = current->forward[0];
-        free_node(current);
-        current = next;
-    }
-
-    list->header = NULL;
-    list->level = 0;
-    list->size = 0;
-    list->compare = NULL;
-
-    return INFRA_OK;
-}
-
-infra_error_t infra_skiplist_insert(infra_skiplist_t* list, const void* key, size_t key_size, const void* value, size_t value_size) {
-    if (!list || !key || !value || key_size == 0 || value_size == 0 || !list->compare) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    infra_skiplist_node_t* update[INFRA_SKIPLIST_MAX_LEVEL];
-    infra_skiplist_node_t* current = list->header;
-
-    // Find position to insert
-    for (int i = list->level - 1; i >= 0; i--) {
-        while (current->forward[i] && list->compare(current->forward[i]->key, key) < 0) {
-            current = current->forward[i];
-        }
-        update[i] = current;
-    }
-
-    current = current->forward[0];
-
-    // Check if key already exists
-    if (current && list->compare(current->key, key) == 0) {
-        // Update value
-        void* new_value = infra_malloc(value_size);
-        if (!new_value) {
-            return INFRA_ERROR_MEMORY;
-        }
-
-        memcpy(new_value, value, value_size);
-        infra_free(current->value);
-        current->value = new_value;
-        current->value_size = value_size;
-
-        return INFRA_OK;
-    }
-
-    // Insert new node
-    size_t level = random_level();
-    if (level > list->level) {
-        for (size_t i = list->level; i < level; i++) {
-            update[i] = list->header;
-        }
-        list->level = level;
-    }
-
-    infra_skiplist_node_t* node = create_node(level, key, key_size, value, value_size);
-    if (!node) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    for (size_t i = 0; i < level; i++) {
-        node->forward[i] = update[i]->forward[i];
-        update[i]->forward[i] = node;
-    }
-
-    list->size++;
-    return INFRA_OK;
-}
-
-infra_error_t infra_skiplist_find(infra_skiplist_t* list, const void* key, size_t key_size, void** value, size_t* value_size) {
-    if (!list || !key || !value || !value_size || key_size == 0 || !list->compare) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    infra_skiplist_node_t* current = list->header;
-
-    for (int i = list->level - 1; i >= 0; i--) {
-        while (current->forward[i] && list->compare(current->forward[i]->key, key) < 0) {
-            current = current->forward[i];
-        }
-    }
-
-    current = current->forward[0];
-
-    if (current && list->compare(current->key, key) == 0) {
-        *value = current->value;
-        *value_size = current->value_size;
-        return INFRA_OK;
-    }
-
-    return INFRA_ERROR_NOT_FOUND;
-}
-
-infra_error_t infra_skiplist_remove(infra_skiplist_t* list, const void* key, size_t key_size) {
-    if (!list || !key || key_size == 0 || !list->compare) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    infra_skiplist_node_t* update[INFRA_SKIPLIST_MAX_LEVEL];
-    infra_skiplist_node_t* current = list->header;
-
-    for (int i = list->level - 1; i >= 0; i--) {
-        while (current->forward[i] && list->compare(current->forward[i]->key, key) < 0) {
-            current = current->forward[i];
-        }
-        update[i] = current;
-    }
-
-    current = current->forward[0];
-
-    if (current && list->compare(current->key, key) == 0) {
-        for (size_t i = 0; i < list->level; i++) {
-            if (update[i]->forward[i] != current) {
-                break;
-            }
-            update[i]->forward[i] = current->forward[i];
-        }
-
-        while (list->level > 1 && list->header->forward[list->level - 1] == NULL) {
-            list->level--;
-        }
-
-        free_node(current);
-        list->size--;
-        return INFRA_OK;
-    }
-
-    return INFRA_ERROR_NOT_FOUND;
-}
-
-infra_error_t infra_skiplist_size(infra_skiplist_t* list, size_t* size) {
-    if (!list || !size) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    *size = list->size;
-    return INFRA_OK;
-}
-
-infra_error_t infra_skiplist_clear(infra_skiplist_t* list) {
-    if (!list) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    infra_skiplist_node_t* current = list->header->forward[0];
-    while (current) {
-        infra_skiplist_node_t* next = current->forward[0];
-        free_node(current);
-        current = next;
-    }
-
-    for (size_t i = 0; i < INFRA_SKIPLIST_MAX_LEVEL; i++) {
-        list->header->forward[i] = NULL;
-    }
-
-    list->level = 1;
-    list->size = 0;
-
-    return INFRA_OK;
-}
-
-//-----------------------------------------------------------------------------
-// String Operations
-//-----------------------------------------------------------------------------
-
-int infra_vsnprintf(char* str, size_t size, const char* format, va_list args) {
-    return vsnprintf(str, size, format, args);
 }
 
