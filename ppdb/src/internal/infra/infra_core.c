@@ -41,7 +41,7 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
     .memory = {
         .use_memory_pool = false,
         .pool_initial_size = 1024 * 1024,  // 1MB
-        .pool_alignment = 8
+        .pool_alignment = sizeof(void*)
     },
     .log = {
         .level = INFRA_LOG_LEVEL_INFO,
@@ -70,13 +70,25 @@ infra_error_t infra_config_validate(const infra_config_t* config) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    // 验证内存配置
+    if (config->memory.use_memory_pool) {
+        if (config->memory.pool_initial_size == 0 || 
+            config->memory.pool_alignment == 0 || 
+            config->memory.pool_alignment < sizeof(void*) || 
+            (config->memory.pool_alignment & (config->memory.pool_alignment - 1)) != 0) {
+            return INFRA_ERROR_INVALID_PARAM;
+        }
+    }
+
     // 验证日志配置
-    if (config->log.level < INFRA_LOG_LEVEL_NONE || config->log.level > INFRA_LOG_LEVEL_TRACE) {
+    if (config->log.level < INFRA_LOG_LEVEL_NONE || 
+        config->log.level > INFRA_LOG_LEVEL_TRACE) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
     // 验证数据结构配置
-    if (config->ds.hash_initial_size == 0 || config->ds.hash_load_factor == 0 || 
+    if (config->ds.hash_initial_size == 0 || 
+        config->ds.hash_load_factor == 0 || 
         config->ds.hash_load_factor > 100) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -137,33 +149,29 @@ static infra_error_t init_module(infra_init_flags_t flag, const infra_config_t* 
 }
 
 infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_config_t* config) {
-    infra_error_t err;
-
-    // 检查参数
     if (!config) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 验证配置
-    err = infra_config_validate(config);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
-    // 检查是否已初始化
+    // 检查是否已经初始化
     if (g_infra.initialized) {
         return INFRA_ERROR_EXISTS;
     }
 
     // 创建全局互斥锁
-    err = infra_mutex_create(&g_infra.mutex);
+    infra_error_t err = infra_mutex_create(&g_infra.mutex);
     if (err != INFRA_OK) {
         return err;
     }
 
+    // 如果需要日志系统，必须先初始化内存系统
+    if ((flags & INFRA_INIT_LOG) && !(flags & INFRA_INIT_MEMORY)) {
+        flags |= INFRA_INIT_MEMORY;
+    }
+
     // 初始化内存管理
     if (flags & INFRA_INIT_MEMORY) {
-        err = init_module(INFRA_INIT_MEMORY, config);
+        err = infra_memory_init(&config->memory);
         if (err != INFRA_OK) {
             infra_mutex_destroy(g_infra.mutex);
             return err;
@@ -173,7 +181,7 @@ infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_confi
 
     // 初始化日志系统
     if (flags & INFRA_INIT_LOG) {
-        err = init_module(INFRA_INIT_LOG, config);
+        err = infra_mutex_create(&g_infra.log.mutex);
         if (err != INFRA_OK) {
             if (g_infra.active_flags & INFRA_INIT_MEMORY) {
                 infra_memory_cleanup();
@@ -181,22 +189,26 @@ infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_confi
             infra_mutex_destroy(g_infra.mutex);
             return err;
         }
+        
+        g_infra.log.level = config->log.level;
+        g_infra.log.log_file = config->log.log_file;
+        g_infra.log.callback = NULL;
+        
         g_infra.active_flags |= INFRA_INIT_LOG;
     }
 
     // 初始化数据结构
     if (flags & INFRA_INIT_DS) {
-        err = init_module(INFRA_INIT_DS, config);
-        if (err != INFRA_OK) {
+        if (!(g_infra.active_flags & INFRA_INIT_MEMORY)) {
             if (g_infra.active_flags & INFRA_INIT_LOG) {
-                // 清理日志系统
-            }
-            if (g_infra.active_flags & INFRA_INIT_MEMORY) {
-                infra_memory_cleanup();
+                infra_mutex_destroy(g_infra.log.mutex);
             }
             infra_mutex_destroy(g_infra.mutex);
-            return err;
+            return INFRA_ERROR_DEPENDENCY;
         }
+        
+        g_infra.ds.hash_initial_size = config->ds.hash_initial_size;
+        g_infra.ds.hash_load_factor = config->ds.hash_load_factor;
         g_infra.active_flags |= INFRA_INIT_DS;
     }
 
@@ -205,12 +217,37 @@ infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_confi
 }
 
 infra_error_t infra_init(void) {
+    // 使用默认配置初始化
     infra_config_t config;
     infra_error_t err = infra_config_init(&config);
     if (err != INFRA_OK) {
+        infra_printf("Failed to initialize config: %d\n", err);
         return err;
     }
-    return infra_init_with_config(INFRA_INIT_ALL, &config);
+
+    // 验证配置
+    err = infra_config_validate(&config);
+    if (err != INFRA_OK) {
+        infra_printf("Failed to validate config: %d\n", err);
+        infra_printf("Memory config: use_pool=%d, size=%zu, align=%zu\n",
+                    config.memory.use_memory_pool,
+                    config.memory.pool_initial_size,
+                    config.memory.pool_alignment);
+        infra_printf("Log config: level=%d, file=%s\n",
+                    config.log.level,
+                    config.log.log_file ? config.log.log_file : "NULL");
+        infra_printf("DS config: hash_size=%zu, load_factor=%u\n",
+                    config.ds.hash_initial_size,
+                    config.ds.hash_load_factor);
+        return err;
+    }
+
+    // 初始化所有模块
+    err = infra_init_with_config(INFRA_INIT_ALL, &config);
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize with config: %d\n", err);
+    }
+    return err;
 }
 
 void infra_cleanup(void) {
@@ -348,11 +385,11 @@ char* infra_strstr(const char* haystack, const char* needle) {
 
 infra_error_t infra_buffer_init(infra_buffer_t* buf, size_t initial_capacity) {
     if (!buf || initial_capacity == 0) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
     buf->data = infra_malloc(initial_capacity);
     if (!buf->data) {
-        return INFRA_ERROR_MEMORY;
+        return INFRA_ERROR_NO_MEMORY;
     }
     buf->size = 0;
     buf->capacity = initial_capacity;
@@ -370,14 +407,14 @@ void infra_buffer_destroy(infra_buffer_t* buf) {
 
 infra_error_t infra_buffer_reserve(infra_buffer_t* buf, size_t capacity) {
     if (!buf) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
     if (capacity <= buf->capacity) {
         return INFRA_OK;
     }
     uint8_t* new_data = infra_realloc(buf->data, capacity);
     if (!new_data) {
-        return INFRA_ERROR_MEMORY;
+        return INFRA_ERROR_NO_MEMORY;
     }
     buf->data = new_data;
     buf->capacity = capacity;
@@ -386,7 +423,7 @@ infra_error_t infra_buffer_reserve(infra_buffer_t* buf, size_t capacity) {
 
 infra_error_t infra_buffer_write(infra_buffer_t* buf, const void* data, size_t size) {
     if (!buf || !data || size == 0) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
     if (buf->size + size > buf->capacity) {
         size_t new_capacity = buf->capacity * 2;
@@ -405,10 +442,10 @@ infra_error_t infra_buffer_write(infra_buffer_t* buf, const void* data, size_t s
 
 infra_error_t infra_buffer_read(infra_buffer_t* buf, void* data, size_t size) {
     if (!buf || !data || size == 0) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
     if (size > buf->size) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
     infra_memcpy(data, buf->data, size);
     return INFRA_OK;

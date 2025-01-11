@@ -66,8 +66,8 @@ memory: 内存管理
 error: 错误处理
 struct: 数据结构
 sync: 同步（互斥、锁、条件变量、信号量、无锁lockfree、线程池等）
-net：网络
 mux：多路复用
+net：网络
 
 1. **第一阶段：MemKV**
    - 实现基础设施层
@@ -143,8 +143,11 @@ test/white/
 
 使用示例：
 ```batch
-# 运行全量测试
-.\ppdb\scripts\build_test_infra.bat
+# 运行日志测试
+.\ppdb\scripts\build_test_infra.bat log
+
+# 运行同步测试
+.\ppdb\scripts\build_test_infra.bat sync
 
 # 只测试内存管理模块
 .\ppdb\scripts\build_test_infra.bat memory

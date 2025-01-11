@@ -74,22 +74,22 @@ infra_error_t infra_platform_get_monotonic_time(infra_time_t* time) {
 // Thread Management
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_platform_thread_create(void** handle, infra_thread_func_t func, void* arg) {
-    if (!handle || !func) {
-        return INFRA_ERROR_INVALID;
+infra_error_t infra_platform_thread_create(infra_thread_t* thread, infra_thread_func_t func, void* arg) {
+    if (!thread || !func) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    pthread_t* pthread = infra_malloc(sizeof(pthread_t));
-    if (!pthread) {
-        return INFRA_ERROR_MEMORY;
+    pthread_t* handle = malloc(sizeof(pthread_t));
+    if (!handle) {
+        return INFRA_ERROR_NO_MEMORY;
     }
 
-    if (pthread_create(pthread, NULL, (void* (*)(void*))func, arg) != 0) {
-        infra_free(pthread);
-        return INFRA_ERROR_IO;
+    if (pthread_create(handle, NULL, func, arg) != 0) {
+        free(handle);
+        return INFRA_ERROR_SYSTEM;
     }
 
-    *handle = pthread;
+    *thread = handle;
     return INFRA_OK;
 }
 
@@ -119,22 +119,22 @@ infra_error_t infra_platform_thread_detach(void* handle) {
 // Mutex Operations
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_platform_mutex_create(void** handle) {
-    if (!handle) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    pthread_mutex_t* mutex = infra_malloc(sizeof(pthread_mutex_t));
+infra_error_t infra_platform_mutex_create(infra_mutex_t* mutex) {
     if (!mutex) {
-        return INFRA_ERROR_MEMORY;
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (pthread_mutex_init(mutex, NULL) != 0) {
-        infra_free(mutex);
-        return INFRA_ERROR_IO;
+    pthread_mutex_t* handle = malloc(sizeof(pthread_mutex_t));
+    if (!handle) {
+        return INFRA_ERROR_NO_MEMORY;
     }
 
-    *handle = mutex;
+    if (pthread_mutex_init(handle, NULL) != 0) {
+        free(handle);
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    *mutex = handle;
     return INFRA_OK;
 }
 
@@ -178,22 +178,22 @@ infra_error_t infra_platform_mutex_unlock(void* handle) {
 // Condition Variable Operations
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_platform_cond_create(void** handle) {
-    if (!handle) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    pthread_cond_t* cond = infra_malloc(sizeof(pthread_cond_t));
+infra_error_t infra_platform_cond_create(infra_cond_t* cond) {
     if (!cond) {
-        return INFRA_ERROR_MEMORY;
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (pthread_cond_init(cond, NULL) != 0) {
-        infra_free(cond);
-        return INFRA_ERROR_IO;
+    pthread_cond_t* handle = malloc(sizeof(pthread_cond_t));
+    if (!handle) {
+        return INFRA_ERROR_NO_MEMORY;
     }
 
-    *handle = cond;
+    if (pthread_cond_init(handle, NULL) != 0) {
+        free(handle);
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    *cond = handle;
     return INFRA_OK;
 }
 
@@ -266,22 +266,22 @@ infra_error_t infra_platform_cond_broadcast(void* handle) {
 // Read-Write Lock Operations
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_platform_rwlock_create(void** handle) {
-    if (!handle) {
-        return INFRA_ERROR_INVALID;
-    }
-
-    pthread_rwlock_t* rwlock = infra_malloc(sizeof(pthread_rwlock_t));
+infra_error_t infra_platform_rwlock_create(infra_rwlock_t* rwlock) {
     if (!rwlock) {
-        return INFRA_ERROR_MEMORY;
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (pthread_rwlock_init(rwlock, NULL) != 0) {
-        infra_free(rwlock);
-        return INFRA_ERROR_IO;
+    pthread_rwlock_t* handle = malloc(sizeof(pthread_rwlock_t));
+    if (!handle) {
+        return INFRA_ERROR_NO_MEMORY;
     }
 
-    *handle = rwlock;
+    if (pthread_rwlock_init(handle, NULL) != 0) {
+        free(handle);
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    *rwlock = handle;
     return INFRA_OK;
 }
 

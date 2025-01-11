@@ -16,8 +16,8 @@ const char* infra_error_string(infra_error_t err) {
             return "Success";
         case INFRA_ERROR_INVALID:
             return "Invalid parameter";
-        case INFRA_ERROR_MEMORY:
-            return "Memory error";
+        case INFRA_ERROR_NO_MEMORY:
+            return "No memory";
         case INFRA_ERROR_TIMEOUT:
             return "Timeout";
         case INFRA_ERROR_BUSY:

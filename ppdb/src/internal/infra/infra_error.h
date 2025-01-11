@@ -10,24 +10,20 @@
 // Error Type
 //-----------------------------------------------------------------------------
 
-typedef int32_t infra_error_t;
-
-//-----------------------------------------------------------------------------
-// Error Codes
-//-----------------------------------------------------------------------------
-
-#define INFRA_OK              0   // Success
-#define INFRA_ERROR_INVALID   -1  // Invalid parameter
-#define INFRA_ERROR_MEMORY    -2  // Memory error
-#define INFRA_ERROR_TIMEOUT   -3  // Timeout
-#define INFRA_ERROR_BUSY      -4  // Resource busy
-#define INFRA_ERROR_NOT_FOUND -5  // Not found
-#define INFRA_ERROR_EXISTS    -6  // Already exists
-#define INFRA_ERROR_IO        -7  // I/O error
-#define INFRA_ERROR_NOT_READY -8  // Not ready
-#define INFRA_ERROR_INVALID_PARAM -9  // Invalid parameter
-#define INFRA_ERROR_NO_MEMORY -10 // Out of memory
-#define INFRA_ERROR_SYSTEM    -11 // System error
+typedef enum {
+    INFRA_OK = 0,
+    INFRA_ERROR_INVALID = -1,
+    INFRA_ERROR_INVALID_PARAM = -2,
+    INFRA_ERROR_NO_MEMORY = -3,
+    INFRA_ERROR_EXISTS = -4,
+    INFRA_ERROR_NOT_READY = -5,
+    INFRA_ERROR_IO = -6,
+    INFRA_ERROR_TIMEOUT = -7,
+    INFRA_ERROR_BUSY = -8,
+    INFRA_ERROR_DEPENDENCY = -9,
+    INFRA_ERROR_NOT_FOUND = -10,
+    INFRA_ERROR_SYSTEM = -11
+} infra_error_t;
 
 //-----------------------------------------------------------------------------
 // Error Handling Functions
