@@ -26,7 +26,30 @@ typedef struct {
     size_t current_usage;
     size_t peak_usage;
     size_t total_allocations;
+    size_t pool_fragmentation;    // 内存池碎片率
+    size_t pool_utilization;      // 内存池利用率
 } infra_memory_stats_t;
+
+//-----------------------------------------------------------------------------
+// Memory Pool Internal Structures
+//-----------------------------------------------------------------------------
+
+#ifdef INFRA_INTERNAL
+typedef struct memory_block {
+    struct memory_block* next;    // 链表指针
+    size_t size;                  // 块大小
+    bool is_used;                // 使用标志
+    uint8_t padding[4];          // 对齐填充
+} memory_block_t;
+
+typedef struct {
+    void* pool_start;            // 内存池起始地址
+    size_t pool_size;            // 内存池总大小
+    memory_block_t* free_list;   // 空闲块链表
+    size_t used_size;            // 已使用大小
+    size_t block_count;          // 块数量
+} memory_pool_t;
+#endif
 
 //-----------------------------------------------------------------------------
 // Memory Management Functions
