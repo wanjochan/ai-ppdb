@@ -1,0 +1,115 @@
+{
+    "task_id": "003",
+    "type": "code_refactoring",
+    "description": "将infra_core中的内存管理相关代码迁移到独立的infra_memory模块，仅进行代码迁移，不改变功能",
+    "priority": "high",
+    "project_context": {
+        "root_dir": "ppdb",
+        "source_dir": "ppdb/src/internal/infra",
+        "test_dir": "ppdb/test/white/infra",
+        "scripts_dir": "ppdb/scripts"
+    },
+    "reporting": {
+        "required": true,
+        "interval": "per_step",
+        "files": {
+            "log": "ppdb/ai/dev/logs/task_003.log",
+            "status": "ppdb/ai/dev/status/task_003.json"
+        },
+        "rules": [
+            "每个步骤开始前必须更新状态文件的 current_step",
+            "每个步骤完成后必须更新状态文件的 status",
+            "每个关键操作必须记录到日志文件",
+            "如果5分钟内没有日志更新，视为任务异常"
+        ]
+    },
+    "steps": [
+        {
+            "step": 1,
+            "action": "代码分析",
+            "description": "分析infra_core中的内存管理相关代码",
+            "tool": "codebase_search",
+            "params": {
+                "query": "memory management in infra_core",
+                "target_directories": ["ppdb/src/internal/infra"]
+            },
+            "log_required": {
+                "before": "开始分析infra_core中的内存管理代码",
+                "during": "正在分析文件: {file}",
+                "after": "分析完成，找到的内存管理相关代码: {findings}",
+                "details": "代码依赖关系: {dependencies}"
+            }
+        },
+        {
+            "step": 2,
+            "action": "创建新文件",
+            "description": "创建infra_memory.h和infra_memory.c文件",
+            "tool": "edit_file",
+            "log_required": {
+                "before": "开始创建infra_memory模块文件",
+                "during": "正在创建文件: {file}",
+                "after": "文件创建完成",
+                "details": "文件结构: {structure}"
+            }
+        },
+        {
+            "step": 3,
+            "action": "代码迁移",
+            "description": "将内存管理代码从infra_core迁移到infra_memory，保持原有功能不变",
+            "tool": "edit_file",
+            "log_required": {
+                "before": "开始迁移内存管理代码",
+                "during": "正在迁移: {component}",
+                "after": "代码迁移完成",
+                "details": "迁移的内容: {content}"
+            }
+        },
+        {
+            "step": 4,
+            "action": "更新引用",
+            "description": "在infra_core中添加对infra_memory的引用",
+            "tool": "edit_file",
+            "log_required": {
+                "before": "开始更新infra_core中的引用",
+                "during": "正在更新文件: {file}",
+                "after": "引用更新完成",
+                "details": "更新的内容: {content}"
+            }
+        },
+        {
+            "step": 5,
+            "action": "运行测试",
+            "description": "运行infra模块的测试",
+            "tool": "run_terminal_cmd",
+            "command": "ppdb/scripts/test_runner.py --scope=infra",
+            "log_required": {
+                "before": "开始运行测试",
+                "during": "正在执行测试: {test}",
+                "after": "测试完成",
+                "details": [
+                    "测试结果: {result}",
+                    "覆盖率报告: {coverage}"
+                ]
+            }
+        }
+    ],
+    "status": "pending",
+    "error_handling": {
+        "on_missing_logs": "pause_and_notify",
+        "on_status_timeout": "request_update",
+        "on_test_failure": "pause_and_review"
+    },
+    "success_criteria": [
+        "所有内存管理代码成功迁移到infra_memory模块",
+        "infra_core中正确引用infra_memory",
+        "代码功能保持不变",
+        "所有测试通过",
+        "无编译警告"
+    ],
+    "constraints": [
+        "不改变任何现有功能",
+        "不修改其他模块",
+        "保持接口兼容性",
+        "仅涉及代码迁移"
+    ]
+} 
