@@ -37,6 +37,9 @@ infra_error_t infra_platform_yield(void);
 infra_error_t infra_platform_get_time(infra_time_t* time);
 infra_error_t infra_platform_get_monotonic_time(infra_time_t* time);
 
+// 平台相关的函数
+// void infra_sleep(uint32_t ms);  // 已在infra_sync.h中定义
+
 //-----------------------------------------------------------------------------
 // Thread Management
 //-----------------------------------------------------------------------------

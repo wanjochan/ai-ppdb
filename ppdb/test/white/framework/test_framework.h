@@ -36,28 +36,33 @@ extern int g_test_stats[3];  // total, passed, failed
         } \
     } while (0)
 
-#define TEST_ASSERT_MSG_VOID(condition, format, ...) \
+// For void functions
+#define TEST_ASSERT_VOID(cond, msg) \
     do { \
-        if (!(condition)) { \
+        if (!(cond)) { \
+            infra_printf("[FAILED] %s:%d: %s\n", __FILE__, __LINE__, msg); \
             g_test_stats[TEST_STATS_FAILED]++; \
-            printf("Assertion failed at %s:%d: " format "\n", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
             return; \
         } \
     } while (0)
 
-#define TEST_ASSERT_MSG_PTR(condition, format, ...) \
+// For int functions
+#define TEST_ASSERT_INT(cond, msg) \
     do { \
-        if (!(condition)) { \
+        if (!(cond)) { \
+            infra_printf("[FAILED] %s:%d: %s\n", __FILE__, __LINE__, msg); \
             g_test_stats[TEST_STATS_FAILED]++; \
-            printf("Assertion failed at %s:%d: " format "\n", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
-            return NULL; \
+            return 1; \
         } \
     } while (0)
 
-#define TEST_ASSERT_MSG(condition, format, ...) TEST_ASSERT_MSG_VOID(condition, format, ##__VA_ARGS__)
-#define TEST_ASSERT(condition) TEST_ASSERT_MSG(condition, "%s", #condition)
+// Default to void version for test cases
+#define TEST_ASSERT_MSG(cond, msg) TEST_ASSERT_VOID(cond, msg)
+#define TEST_ASSERT(cond) TEST_ASSERT_MSG(cond, #cond)
+
+// For main function
+#define MAIN_ASSERT_MSG(cond, msg) TEST_ASSERT_INT(cond, msg)
+#define MAIN_ASSERT(cond) MAIN_ASSERT_MSG(cond, #cond)
 
 #define TEST_ASSERT_EQUAL(expected, actual) \
     TEST_ASSERT_MSG((expected) == (actual), \

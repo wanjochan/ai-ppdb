@@ -22,7 +22,9 @@ typedef enum {
     INFRA_ERROR_BUSY = -8,
     INFRA_ERROR_DEPENDENCY = -9,
     INFRA_ERROR_NOT_FOUND = -10,
-    INFRA_ERROR_SYSTEM = -11
+    INFRA_ERROR_SYSTEM = -11,
+    INFRA_ERROR_WOULD_BLOCK = -12,
+    INFRA_ERROR_CLOSED = -13
 } infra_error_t;
 
 //-----------------------------------------------------------------------------

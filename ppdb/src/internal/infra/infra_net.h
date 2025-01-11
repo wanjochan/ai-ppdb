@@ -14,8 +14,14 @@ typedef struct infra_net_addr {
     uint16_t port;     // 端口号
 } infra_net_addr_t;
 
+// 套接字结构
+struct infra_socket {
+    int fd;           // 文件描述符
+    bool is_udp;      // 是否为UDP套接字
+};
+
 // 套接字句柄类型
-typedef void* infra_socket_t;
+typedef struct infra_socket* infra_socket_t;
 
 // 服务端接口
 infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* sock);
@@ -29,10 +35,18 @@ infra_error_t infra_net_close(infra_socket_t sock);
 infra_error_t infra_net_set_nonblock(infra_socket_t sock, bool enable);
 infra_error_t infra_net_set_keepalive(infra_socket_t sock, bool enable);
 infra_error_t infra_net_set_reuseaddr(infra_socket_t sock, bool enable);
+infra_error_t infra_net_set_nodelay(infra_socket_t sock, bool enable);
+infra_error_t infra_net_set_timeout(infra_socket_t sock, uint32_t timeout_ms);
 
 // 数据传输
 infra_error_t infra_net_send(infra_socket_t sock, const void* buf, size_t len, size_t* sent);
 infra_error_t infra_net_recv(infra_socket_t sock, void* buf, size_t len, size_t* received);
+
+// UDP 操作
+infra_error_t infra_net_udp_socket(infra_socket_t* sock);
+infra_error_t infra_net_udp_bind(const infra_net_addr_t* addr, infra_socket_t* sock);
+infra_error_t infra_net_sendto(infra_socket_t sock, const void* buf, size_t len, const infra_net_addr_t* addr, size_t* sent);
+infra_error_t infra_net_recvfrom(infra_socket_t sock, void* buf, size_t len, infra_net_addr_t* addr, size_t* received);
 
 // 地址转换
 infra_error_t infra_net_resolve(const char* host, infra_net_addr_t* addr);
