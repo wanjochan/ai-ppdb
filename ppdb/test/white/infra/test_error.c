@@ -8,7 +8,7 @@ static void test_error_basic(void) {
     // 测试错误码转字符串
     TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_OK), "Success") == 0);
     TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_INVALID), "Invalid parameter") == 0);
-    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_MEMORY), "Memory error") == 0);
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_NO_MEMORY), "No memory") == 0);
     TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_TIMEOUT), "Timeout") == 0);
     TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_BUSY), "Resource busy") == 0);
     TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_NOT_FOUND), "Not found") == 0);
@@ -21,7 +21,7 @@ static void test_error_propagation(void) {
     infra_error_t err;
     
     // 测试内存分配失败的错误传播
-    infra_set_expected_error(INFRA_ERROR_MEMORY);  // 标记这是预期的内存错误
+    infra_set_expected_error(INFRA_ERROR_NO_MEMORY);  // 标记这是预期的内存错误
     void* ptr = infra_malloc((size_t)-1);  // 尝试分配过大的内存
     TEST_ASSERT(ptr == NULL);
     infra_clear_expected_error();  // 清除预期错误标记

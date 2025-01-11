@@ -192,21 +192,70 @@ static void test_memory_pool_fragmentation(void) {
     infra_free(ptr2);  // 释放中间的块
     infra_free(ptr4);
 
-    // 尝试分配一个大块，应该失败
+    // 尝试分配一个大块，应该成功（因为相邻的空闲块会被合并）
     void* big_ptr = infra_malloc(800);
-    TEST_ASSERT(big_ptr == NULL);
+    TEST_ASSERT(big_ptr != NULL);
 
-    // 分配适合碎片的小块
-    void* small_ptr1 = infra_malloc(150);
-    void* small_ptr2 = infra_malloc(350);
-    TEST_ASSERT(small_ptr1 && small_ptr2);
+    // 验证内存统计
+    infra_memory_stats_t stats;
+    err = infra_memory_get_stats(&stats);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(stats.current_usage == 100 + 300 + 500 + 800);  // ptr1 + ptr3 + ptr5 + big_ptr
 
     // 清理
     infra_free(ptr1);
     infra_free(ptr3);
     infra_free(ptr5);
-    infra_free(small_ptr1);
-    infra_free(small_ptr2);
+    infra_free(big_ptr);
+
+    // 验证最终状态
+    err = infra_memory_get_stats(&stats);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(stats.current_usage == 0);
+
+    infra_memory_cleanup();
+}
+
+static void test_system_allocator(void) {
+    // 确保内存系统已清理
+    infra_memory_cleanup();
+
+    infra_memory_config_t config = {
+        .use_memory_pool = false,  // 使用系统分配器
+        .pool_initial_size = 1024 * 1024,
+        .pool_alignment = 8
+    };
+    
+    infra_error_t err = infra_memory_init(&config);
+    TEST_ASSERT(err == INFRA_OK);
+
+    // 基本分配和释放
+    void* ptr1 = infra_malloc(100);
+    void* ptr2 = infra_malloc(200);
+    TEST_ASSERT(ptr1 != NULL && ptr2 != NULL);
+    TEST_ASSERT(((uintptr_t)ptr1 & 7) == 0);  // 检查对齐
+    TEST_ASSERT(((uintptr_t)ptr2 & 7) == 0);
+
+    // 验证内存统计
+    infra_memory_stats_t stats;
+    err = infra_memory_get_stats(&stats);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(stats.current_usage == 300);  // 100 + 200
+    TEST_ASSERT(stats.total_allocations == 2);
+
+    // 重新分配测试
+    ptr1 = infra_realloc(ptr1, 150);
+    TEST_ASSERT(ptr1 != NULL);
+    TEST_ASSERT(((uintptr_t)ptr1 & 7) == 0);
+
+    // 释放内存
+    infra_free(ptr1);
+    infra_free(ptr2);
+
+    // 验证最终状态
+    err = infra_memory_get_stats(&stats);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(stats.current_usage == 0);
 
     infra_memory_cleanup();
 }
@@ -219,6 +268,7 @@ int test_memory_pool_run(void) {
     RUN_TEST(test_memory_pool_alignment);
     RUN_TEST(test_memory_pool_stress);
     RUN_TEST(test_memory_pool_fragmentation);
+    RUN_TEST(test_system_allocator);  // 添加系统分配器测试
 
     TEST_END();
 

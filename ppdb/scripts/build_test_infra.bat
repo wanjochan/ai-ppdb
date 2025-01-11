@@ -8,7 +8,7 @@ rem 检查是否指定了测试模块
 set "TEST_MODULE=%~1"
 
 rem 设置测试文件列表
-set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c
+set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c test_async.c
 
 rem 如果没有指定测试模块，显示可用的测试模块
 if "%TEST_MODULE%"=="" (
