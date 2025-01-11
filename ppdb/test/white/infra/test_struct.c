@@ -4,6 +4,7 @@
 
 #include "cosmopolitan.h"
 #include "internal/infra/infra_core.h"
+#include "internal/infra/infra_ds.h"
 #include "test/white/framework/test_framework.h"
 
 static void test_list(void) {
@@ -119,11 +120,22 @@ static void test_rbtree(void) {
 }
 
 int main(void) {
-    TEST_BEGIN();
+    // 初始化infra系统
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
 
+    TEST_BEGIN();
+    
     RUN_TEST(test_list);
     RUN_TEST(test_hash);
     RUN_TEST(test_rbtree);
-
+    
     TEST_END();
+    
+    // 清理infra系统
+    infra_cleanup();
+    return 0;
 } 

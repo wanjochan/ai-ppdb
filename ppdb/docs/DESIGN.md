@@ -64,7 +64,7 @@ core: 基础功能
 platform: 平台抽象（在cosmopolitan已经封装好绝大部分的基础上再稍微消除一些平台差异）
 memory: 内存管理
 error: 错误处理
-struct: 数据结构
+ds: 数据结构
 sync: 同步（互斥、锁、条件变量、信号量、无锁lockfree、线程池等）
 mux：多路复用
 net：网络
