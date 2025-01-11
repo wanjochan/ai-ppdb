@@ -52,20 +52,18 @@ src/internal/                 # 内部头文件目录
 
 特别注意：这一层不要出现 ppdb_ 字眼，这是基础设施层infra
 
-ppdb/src/internal/infra/infra.h: 基础设施头文件 （等infra层完全稳定我们是要打包出ppdbinfra这个静态库和动态库，所以到时把infra.h移动到ppdb.h同一个目录）
-ppdb/src/infra/infra.c: 基础功能（内存、字符串、日志、基础数据结构等）
+所在目录：ppdb/src/internal/infra/
+文件命名模式：infra_{module}.h 和 infra_{module}.c
 
-ppdb/src/internal/infra/infra_platform.h: 平台抽象头文件
-ppdb/src/infra/infra_platform.c: 平台抽象（线程等）
+infra.h: 合并头文件（等infra层完全稳定我们是要打包出ppdbinfra这个静态库和动态库，所以到时把infra.h移动到ppdb.h同一个目录）
 
-ppdb/src/internal/infra/infra_async.h: 异步头文件
-ppdb/src/infra/infra_async.c: 异步
-
-ppdb/src/internal/infra/infra_sync.h: 同步头文件
-ppdb/src/infra/infra_sync.c: 同步
-
-ppdb/src/internal/infra/infra_peer.h: 实例头文件
-ppdb/src/infra/infra_peer.c: 实例（进程、网络）
+模块分类：
+core: 基础功能
+platform: 平台抽象（在cosmopolitan已经封装好绝大部分的基础上再稍微消除一些平台差异）
+memory: 内存管理
+sync: 同步（互斥、锁、条件变量、信号量、无锁等）
+async.h: 异步（暂时遇到设计瓶颈，考虑先只封装基本的，比如epoll? iocp?）
+peer: 实例、进程、网络等
 
 1. **第一阶段：MemKV**
    - 实现基础设施层
@@ -96,13 +94,37 @@ ppdb/src/infra/infra_peer.c: 实例（进程、网络）
 
 ## 测试结构
 
+采用 mock 机制
+
+
 ```
+
+test/white/
+├── framework/              # 测试框架
+│   ├── test_framework.h   # 现有测试框架
+│   └── mock_framework/    # mock框架核心
+│       ├── mock_framework.h
+│       └── mock_framework.c
+
+
+test/white/infra/
+├── mock/
+│   ├── memory/
+│   │   ├── mock_memory.h   # 内存管理mock接口
+│   │   └── mock_memory.c   # 实现
+│   └── platform/
+│       ├── mock_platform.h # 平台抽象mock接口
+│       └── mock_platform.c # 实现
+
+之前的测试结构（准备删除）
 test/
 ├── infra/                    # 基础设施测试
 ├── memkv/                    # memkv测试
 ├── diskv/                    # diskv测试
 └── ppdb/                     # 产品集成测试
 ```
+
+
 
 构建工具：
 .\pdpb\scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
