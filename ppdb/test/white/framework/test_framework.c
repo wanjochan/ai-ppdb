@@ -16,7 +16,7 @@ void test_cleanup(void) {
 void test_report(void) {
     printf("\nTest Summary:\n");
     printf("Total tests:  %d\n", g_test_stats[TEST_STATS_TOTAL]);
-    printf("Passed tests: %d\n", g_test_stats[TEST_STATS_TOTAL] - g_test_stats[TEST_STATS_FAILED]);
+    printf("Passed tests: %d\n", g_test_stats[TEST_STATS_PASSED]);
     printf("Failed tests: %d\n", g_test_stats[TEST_STATS_FAILED]);
     printf("Time spent: %.2f seconds\n", 0.0);  // TODO: Add time tracking if needed
 } 

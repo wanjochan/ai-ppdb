@@ -3,6 +3,7 @@
 #include "test/white/infra/mock_memory.h"
 
 void test_mock_malloc(void) {
+    mock_init();
     void* ptr = (void*)0x12345678;
 
     mock_expect_function_call("mock_malloc");
@@ -13,9 +14,11 @@ void test_mock_malloc(void) {
     TEST_ASSERT_EQUAL_PTR(ptr, result);
 
     mock_verify();
+    mock_cleanup();
 }
 
 void test_mock_free(void) {
+    mock_init();
     void* ptr = (void*)0x12345678;
 
     mock_expect_function_call("mock_free");
@@ -24,9 +27,11 @@ void test_mock_free(void) {
     mock_free(ptr);
 
     mock_verify();
+    mock_cleanup();
 }
 
 void test_mock_memset(void) {
+    mock_init();
     char buffer[10];
     void* result = buffer;
 
@@ -40,9 +45,11 @@ void test_mock_memset(void) {
     TEST_ASSERT_EQUAL_PTR(result, ptr);
 
     mock_verify();
+    mock_cleanup();
 }
 
 void test_mock_memcpy(void) {
+    mock_init();
     char src[10] = "test";
     char dest[10];
     void* result = dest;
@@ -57,9 +64,11 @@ void test_mock_memcpy(void) {
     TEST_ASSERT_EQUAL_PTR(result, ptr);
 
     mock_verify();
+    mock_cleanup();
 }
 
 void test_mock_memmove(void) {
+    mock_init();
     char buffer[10] = "test";
     void* result = buffer + 2;
 
@@ -73,18 +82,17 @@ void test_mock_memmove(void) {
     TEST_ASSERT_EQUAL_PTR(result, ptr);
 
     mock_verify();
+    mock_cleanup();
 }
 
 int main(void) {
     TEST_BEGIN();
 
-    mock_init();
     RUN_TEST(test_mock_malloc);
     RUN_TEST(test_mock_free);
     RUN_TEST(test_mock_memset);
     RUN_TEST(test_mock_memcpy);
     RUN_TEST(test_mock_memmove);
-    mock_cleanup();
 
     TEST_END();
 } 

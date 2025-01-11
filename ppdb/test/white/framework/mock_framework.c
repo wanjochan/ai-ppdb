@@ -2,6 +2,7 @@
 #include "test/white/framework/test_framework.h"
 #include "internal/infra/infra_core.h"
 
+#define UNUSED(x) (void)(x)
 #define MAX_MOCK_CALLS 1024
 #define MAX_PARAMS_PER_CALL 16
 
@@ -25,6 +26,7 @@ typedef struct {
     } return_val;
     int called;
     int returned;
+    int has_return_value;
 } mock_call_t;
 
 static mock_call_t g_mock_calls[MAX_MOCK_CALLS];
@@ -50,7 +52,7 @@ void mock_verify(void) {
             TEST_ASSERT_MSG_VOID(false, "Expected function %s was not called",
                 g_mock_calls[i].function_name);
         }
-        if (!g_mock_calls[i].returned) {
+        if (g_mock_calls[i].has_return_value && !g_mock_calls[i].returned) {
             TEST_ASSERT_MSG_VOID(false, "Function %s was called but return value not used",
                 g_mock_calls[i].function_name);
         }
@@ -121,6 +123,7 @@ void mock_expect_function_call(const char* function_name) {
     call->param_count = 0;
     call->called = 0;
     call->returned = 0;
+    call->has_return_value = 0;
     g_mock_call_count++;
 }
 
@@ -161,27 +164,36 @@ void mock_expect_param_str(const char* param_name, const char* str) {
 }
 
 void* mock_expect_return_ptr(const char* function_name, void* ptr) {
+    UNUSED(function_name);
     TEST_ASSERT_MSG_PTR(g_mock_call_count > 0,
         "No function call to expect return value for");
-    g_mock_calls[g_mock_call_count - 1].return_val.ptr = ptr;
+    mock_call_t* call = &g_mock_calls[g_mock_call_count - 1];
+    call->return_val.ptr = ptr;
+    call->has_return_value = 1;
     return ptr;
 }
 
 uint64_t mock_expect_return_value(const char* function_name, uint64_t value) {
+    UNUSED(function_name);
     TEST_ASSERT_MSG_INT(g_mock_call_count > 0,
         "No function call to expect return value for");
-    g_mock_calls[g_mock_call_count - 1].return_val.value = value;
+    mock_call_t* call = &g_mock_calls[g_mock_call_count - 1];
+    call->return_val.value = value;
+    call->has_return_value = 1;
     return value;
 }
 
 uint64_t mock_return_value(const char* function_name) {
     TEST_ASSERT_MSG_INT(g_current_call < g_mock_call_count,
         "Unexpected return value request");
-    TEST_ASSERT_MSG_INT(infra_strcmp(g_mock_calls[g_current_call].function_name, function_name) == 0,
+    mock_call_t* call = &g_mock_calls[g_current_call];
+    TEST_ASSERT_MSG_INT(infra_strcmp(call->function_name, function_name) == 0,
         "Expected return value for function %s but got %s",
-        g_mock_calls[g_current_call].function_name, function_name);
-    g_mock_calls[g_current_call].returned = 1;
-    uint64_t value = g_mock_calls[g_current_call].return_val.value;
+        call->function_name, function_name);
+    TEST_ASSERT_MSG_INT(call->has_return_value,
+        "Function %s does not have a return value", function_name);
+    call->returned = 1;
+    uint64_t value = call->return_val.value;
     g_mock_call_index++;
     return value;
 }
@@ -189,11 +201,14 @@ uint64_t mock_return_value(const char* function_name) {
 void* mock_return_ptr(const char* function_name) {
     TEST_ASSERT_MSG_PTR(g_current_call < g_mock_call_count,
         "Unexpected return pointer request");
-    TEST_ASSERT_MSG_PTR(infra_strcmp(g_mock_calls[g_current_call].function_name, function_name) == 0,
+    mock_call_t* call = &g_mock_calls[g_current_call];
+    TEST_ASSERT_MSG_PTR(infra_strcmp(call->function_name, function_name) == 0,
         "Expected return pointer for function %s but got %s",
-        g_mock_calls[g_current_call].function_name, function_name);
-    g_mock_calls[g_current_call].returned = 1;
-    void* ptr = g_mock_calls[g_current_call].return_val.ptr;
+        call->function_name, function_name);
+    TEST_ASSERT_MSG_PTR(call->has_return_value,
+        "Function %s does not have a return value", function_name);
+    call->returned = 1;
+    void* ptr = call->return_val.ptr;
     g_mock_call_index++;
     return ptr;
 } 

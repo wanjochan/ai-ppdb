@@ -22,9 +22,12 @@ extern int g_test_stats[3];  // total, passed, failed
 
 #define RUN_TEST(test_func) \
     do { \
+        int failed_before = g_test_stats[TEST_STATS_FAILED]; \
         printf("\nRunning test: %s\n", #test_func); \
+        g_test_stats[TEST_STATS_TOTAL]++; \
         test_func(); \
-        if (g_test_stats[TEST_STATS_FAILED] == 0) { \
+        if (g_test_stats[TEST_STATS_FAILED] == failed_before) { \
+            g_test_stats[TEST_STATS_PASSED]++; \
             printf("  PASS\n"); \
         } \
     } while (0)
