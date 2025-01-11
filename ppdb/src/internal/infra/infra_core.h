@@ -52,6 +52,7 @@
 typedef int32_t infra_error_t;
 typedef uint32_t infra_flags_t;
 typedef uint64_t infra_time_t;
+typedef uint64_t infra_handle_t;
 typedef uint64_t INFRA_CORE_Handle_t;
 
 //-----------------------------------------------------------------------------
@@ -250,24 +251,24 @@ void* infra_list_node_value(infra_list_node_t* node);
 // Hash Operations
 //-----------------------------------------------------------------------------
 
-typedef struct INFRA_CORE_Hash_node {
+typedef struct infra_hash_node {
     char* key;
     void* value;
-    struct INFRA_CORE_Hash_node* next;
-} INFRA_CORE_Hash_node_t;
+    struct infra_hash_node* next;
+} infra_hash_node_t;
 
 typedef struct {
-    INFRA_CORE_Hash_node_t** buckets;
+    infra_hash_node_t** buckets;
     size_t size;
     size_t capacity;
-} INFRA_CORE_Hash_t;
+} infra_hash_t;
 
-infra_error_t INFRA_CORE_Hash_create(INFRA_CORE_Hash_t** hash, size_t capacity);
-void INFRA_CORE_Hash_destroy(INFRA_CORE_Hash_t* hash);
-infra_error_t INFRA_CORE_Hash_put(INFRA_CORE_Hash_t* hash, const char* key, void* value);
-void* INFRA_CORE_Hash_get(INFRA_CORE_Hash_t* hash, const char* key);
-void* INFRA_CORE_Hash_remove(INFRA_CORE_Hash_t* hash, const char* key);
-void INFRA_CORE_Hash_clear(INFRA_CORE_Hash_t* hash);
+infra_error_t infra_hash_create(infra_hash_t** hash, size_t capacity);
+void infra_hash_destroy(infra_hash_t* hash);
+infra_error_t infra_hash_put(infra_hash_t* hash, const char* key, void* value);
+void* infra_hash_get(infra_hash_t* hash, const char* key);
+void* infra_hash_remove(infra_hash_t* hash, const char* key);
+void infra_hash_clear(infra_hash_t* hash);
 
 //-----------------------------------------------------------------------------
 // Red-Black Tree Operations

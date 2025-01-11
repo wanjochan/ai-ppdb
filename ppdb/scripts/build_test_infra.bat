@@ -1,6 +1,8 @@
 @echo off
 setlocal EnableDelayedExpansion
 
+echo "This file is old, to be removed"
+
 rem Load environment variables and common functions
 call "%~dp0\build_env.bat"
 if errorlevel 1 exit /b 1
@@ -18,7 +20,7 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 rem Build infra library first
 echo Building infra library...
-"%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra.c" -o "%BUILD_DIR%\infra.o"
+"%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra_core.c" -o "%BUILD_DIR%\infra_core.o"
 if errorlevel 1 exit /b 1
 
 "%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra_platform.c" -o "%BUILD_DIR%\infra_platform.o"
@@ -33,7 +35,7 @@ if errorlevel 1 exit /b 1
 echo Building %TEST_CASE%...
 
 if exist "%TEST_DIR%\white\infra\%TEST_CASE%.c" (
-    "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%TEST_CASE%.c" "%BUILD_DIR%\infra.o" "%BUILD_DIR%\infra_platform.o" "%BUILD_DIR%\infra_sync.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%TEST_CASE%.exe.dbg"
+    "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%TEST_CASE%.c" "%BUILD_DIR%\infra_core.o" "%BUILD_DIR%\infra_platform.o" "%BUILD_DIR%\infra_sync.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%TEST_CASE%.exe.dbg"
     if errorlevel 1 exit /b 1
     "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%TEST_CASE%.exe.dbg" "%BUILD_DIR%\%TEST_CASE%.exe"
     if errorlevel 1 exit /b 1

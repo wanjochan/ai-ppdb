@@ -1,8 +1,8 @@
 #ifndef PPDB_TEST_INFRA_MOCK_MEMORY_H
 #define PPDB_TEST_INFRA_MOCK_MEMORY_H
 
+#include "internal/infra/infra_core.h"
 #include "framework/mock_framework/mock_framework.h"
-#include "internal/infra/infra.h"
 
 // Memory allocation mocks
 MOCK_FUNC(void*, infra_malloc, size_t size);

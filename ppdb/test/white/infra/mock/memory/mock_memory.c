@@ -1,5 +1,6 @@
 #include "mock_memory.h"
 #include "framework/mock_framework/mock_framework.h"
+#include "internal/infra/infra_core.h"
 
 // 原始函数指针
 void* (*real_infra_malloc)(size_t size);

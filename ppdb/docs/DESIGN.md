@@ -52,12 +52,14 @@ src/internal/                 # 内部头文件目录
 
 特别注意：这一层不要出现 ppdb_ 字眼，这是基础设施层infra
 
-所在目录：ppdb/src/internal/infra/
-文件命名模式：infra_{module}.h 和 infra_{module}.c
+layer：infra
 
-infra.h: 合并头文件（等infra层完全稳定我们是要打包出ppdbinfra这个静态库和动态库，所以到时把infra.h移动到ppdb.h同一个目录）
+所在目录：ppdb/src/internal/{layer}/
+{layer}.h: 合并头文件（等infra层完全稳定我们是要打包出ppdbinfra这个静态库和动态库，所以到时移动到ppdb.h同一个目录）
 
-模块分类：
+模块文件命名模式：{layer}_{module}.h 和 {layer}_{module}.c
+
+infra层的模块分类：
 core: 基础功能
 platform: 平台抽象（在cosmopolitan已经封装好绝大部分的基础上再稍微消除一些平台差异）
 memory: 内存管理
@@ -94,7 +96,14 @@ peer: 实例、进程、网络等
 
 ## 测试结构
 
-采用 mock 机制
+采用 mock 机制进行单元测试:
+
+mock 机制通过替换真实函数调用来模拟组件行为。主要用于:
+- 隔离外部依赖(文件系统、网络等)
+- 模拟错误情况
+- 验证函数调用是否符合预期
+
+框架提供 MOCK_FUNC() 定义 mock 函数,通过 mock_register_expectation() 设置预期行为。目前已实现了内存管理、平台抽象等模块的 mock。
 
 
 ```

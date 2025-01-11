@@ -1,8 +1,6 @@
 #include "mock_framework.h"
 #include "internal/infra/infra.h"
-
-// 声明 infra_vsnprintf 函数
-extern int infra_vsnprintf(char* str, size_t size, const char* format, va_list args);
+#include "cosmopolitan.h"
 
 // Global state
 static mock_expectation_t* g_expectations = NULL;

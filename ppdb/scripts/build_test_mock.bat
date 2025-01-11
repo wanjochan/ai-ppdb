@@ -1,66 +1,54 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
-REM 设置环境变量
-call "%~dp0\build_env.bat"
+rem Build environment setup
+call "%~dp0build_env.bat"
 if errorlevel 1 exit /b 1
 
-REM 确保 infra 库已经构建
-if not exist "%BUILD_DIR%\infra\libinfra.a" (
-    echo Building infra library first...
-    call "%~dp0\build_infra.bat"
-    if errorlevel 1 exit /b 1
-)
+rem Build infra library first...
+echo Building infra library first...
+call "%~dp0build_infra.bat"
+if errorlevel 1 exit /b 1
 
-REM 创建构建目录
-if not exist "%BUILD_DIR%\test\white\framework\mock_framework" mkdir "%BUILD_DIR%\test\white\framework\mock_framework"
-if not exist "%BUILD_DIR%\test\white\infra\mock\memory" mkdir "%BUILD_DIR%\test\white\infra\mock\memory"
+rem Create build directories if they don't exist
+if not exist "%BUILD_DIR%\test\white\mock" mkdir "%BUILD_DIR%\test\white\mock"
+if not exist "%BUILD_DIR%\test\white\framework" mkdir "%BUILD_DIR%\test\white\framework"
 
-REM 编译 mock 框架
+rem Build test framework
+echo Building test framework...
+"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\framework\test_framework.c" -c -o "%BUILD_DIR%\test\white\framework\test_framework.o"
+if errorlevel 1 exit /b 1
+
+rem Build mock framework
 echo Building mock framework...
-"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" ^
-    "%PPDB_DIR%\test\white\framework\mock_framework\mock_framework.c" ^
-    -c -o "%BUILD_DIR%\test\white\framework\mock_framework\mock_framework.o"
+"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\framework\mock_framework.c" -c -o "%BUILD_DIR%\test\white\framework\mock_framework.o"
 if errorlevel 1 exit /b 1
 
-REM 编译 memory mock
+rem Build core mock
+echo Building core mock...
+"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\mock\mock_core.c" -c -o "%BUILD_DIR%\test\white\mock\mock_core.o"
+if errorlevel 1 exit /b 1
+
+rem Build memory mock
 echo Building memory mock...
-"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" ^
-    "%PPDB_DIR%\test\white\infra\mock\memory\mock_memory.c" ^
-    -c -o "%BUILD_DIR%\test\white\infra\mock\memory\mock_memory.o"
+"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\mock\mock_memory.c" -c -o "%BUILD_DIR%\test\white\mock\mock_memory.o"
 if errorlevel 1 exit /b 1
 
-REM 编译 memory mock 测试
-echo Building memory mock tests...
-"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" ^
-    "%PPDB_DIR%\test\white\infra\mock\memory\test_memory_mock.c" ^
-    -c -o "%BUILD_DIR%\test\white\infra\mock\memory\test_memory_mock.o"
+rem Build test cases
+echo Building test cases...
+"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\test_core_mock.c" -c -o "%BUILD_DIR%\test\white\test_core_mock.o"
 if errorlevel 1 exit /b 1
 
-REM 链接测试可执行文件
-echo Linking memory mock tests...
-"%GCC%" %LDFLAGS% ^
-    "%BUILD_DIR%\test\white\framework\mock_framework\mock_framework.o" ^
-    "%BUILD_DIR%\test\white\infra\mock\memory\mock_memory.o" ^
-    "%BUILD_DIR%\test\white\infra\mock\memory\test_memory_mock.o" ^
-    "%BUILD_DIR%\infra\libinfra.a" ^
-    %LIBS% ^
-    -o "%BUILD_DIR%\test\white\infra\mock\memory\test_memory_mock.exe.dbg"
+"%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\test_memory_mock.c" -c -o "%BUILD_DIR%\test\white\test_memory_mock.o"
 if errorlevel 1 exit /b 1
 
-REM 创建最终可执行文件
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\test\white\infra\mock\memory\test_memory_mock.exe.dbg" ^
-    "%BUILD_DIR%\test\white\infra\mock\memory\test_memory_mock.exe"
+rem Link test executables
+echo Linking test executables...
+"%GCC%" %LDFLAGS% "%BUILD_DIR%\test\white\test_core_mock.o" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\mock\mock_core.o" "%BUILD_DIR%\infra\libinfra.a" %LIBS% -o "%BUILD_DIR%\test\white\test_core_mock.exe"
 if errorlevel 1 exit /b 1
 
-REM 运行测试
-echo Running memory mock tests...
-"%BUILD_DIR%\test\white\infra\mock\memory\test_memory_mock.exe"
-if errorlevel 1 (
-    echo Memory mock tests FAILED
-    exit /b 1
-) else (
-    echo Memory mock tests PASSED
-)
+"%GCC%" %LDFLAGS% "%BUILD_DIR%\test\white\test_memory_mock.o" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\mock\mock_memory.o" "%BUILD_DIR%\infra\libinfra.a" %LIBS% -o "%BUILD_DIR%\test\white\test_memory_mock.exe"
+if errorlevel 1 exit /b 1
 
+echo Build complete.
 exit /b 0 
