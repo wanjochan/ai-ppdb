@@ -146,11 +146,11 @@ test/white/
 # 运行日志测试
 .\ppdb\scripts\build_test_infra.bat log
 
-# 运行同步测试
-.\ppdb\scripts\build_test_infra.bat sync
-
 # 只测试内存管理模块
 .\ppdb\scripts\build_test_infra.bat memory
+
+# 运行同步测试（暂时屏蔽了线程池，晚些再打开测试）
+.\ppdb\scripts\build_test_infra.bat sync
 
 # 只构建不运行测试
 .\ppdb\scripts\build_test_infra.bat memory norun

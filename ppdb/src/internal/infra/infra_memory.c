@@ -243,17 +243,23 @@ void infra_memory_cleanup(void) {
         return;
     }
 
-    infra_mutex_lock(g_memory.mutex);
+    infra_mutex_t mutex = g_memory.mutex;  // 保存互斥锁
+    infra_mutex_lock(mutex);
 
     if (g_memory.config.use_memory_pool) {
         cleanup_pool();
     }
 
-    infra_mutex_unlock(g_memory.mutex);
-    infra_mutex_destroy(g_memory.mutex);
-    
-    // 重置所有状态
-    reset_memory_state();
+    // 重置状态（除了互斥锁）
+    bool was_initialized = g_memory.initialized;
+    memset(&g_memory, 0, sizeof(g_memory));
+    g_memory.mutex = mutex;  // 恢复互斥锁
+
+    infra_mutex_unlock(mutex);  // 解锁
+
+    if (was_initialized) {
+        infra_mutex_destroy(mutex);  // 最后销毁互斥锁
+    }
 }
 
 infra_error_t infra_memory_get_stats(infra_memory_stats_t* stats) {
