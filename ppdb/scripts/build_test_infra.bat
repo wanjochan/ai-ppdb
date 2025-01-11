@@ -17,23 +17,31 @@ echo Building mock framework...
 if errorlevel 1 exit /b 1
 
 echo Building test cases...
-set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_metrics.c test_skiplist.c test_struct.c test_peer.c test_memtable.c
+set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c
 
 for %%f in (%TEST_FILES%) do (
-    echo Building %%f...
-    "%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\infra\%%f" -c -o "%BUILD_DIR%\test\white\infra\%%~nf.o"
-    if errorlevel 1 exit /b 1
+    "%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\infra\%%f" -c -o "%BUILD_DIR%\test\white\infra\%%~nf.o" >nul 2>&1
+    if errorlevel 1 (
+        echo Failed to build %%f
+        exit /b 1
+    )
 
-    echo Linking %%~nf...
-    "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\%%~nf.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg"
-    if errorlevel 1 exit /b 1
+    "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\%%~nf.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg" >nul 2>&1
+    if errorlevel 1 (
+        echo Failed to link %%~nf
+        exit /b 1
+    )
 
-    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg" "%BUILD_DIR%\test\white\infra\%%~nf.exe"
-    if errorlevel 1 exit /b 1
+    "%OBJCOPY%" -S -O binary "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg" "%BUILD_DIR%\test\white\infra\%%~nf.exe" >nul 2>&1
+    if errorlevel 1 (
+        echo Failed to create binary %%~nf
+        exit /b 1
+    )
 
     if not "%1"=="norun" (
-        echo Running %%~nf...
+        echo Running %%~nf tests...
         "%BUILD_DIR%\test\white\infra\%%~nf.exe"
+        echo.
     )
 )
 

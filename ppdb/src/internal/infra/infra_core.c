@@ -6,7 +6,7 @@
 #include "internal/infra/infra.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_sync.h"
-//#include "internal/infra/infra_async.h"
+#include "internal/infra/infra_error.h"
 
 //-----------------------------------------------------------------------------
 // Global State
@@ -259,30 +259,6 @@ infra_error_t infra_get_status(infra_status_t* status) {
     infra_mutex_unlock(g_infra.mutex);
 
     return INFRA_OK;
-}
-
-//-----------------------------------------------------------------------------
-// Error Handling
-//-----------------------------------------------------------------------------
-
-const char* infra_error_string(int error_code) {
-    switch (error_code) {
-        case INFRA_OK:                  return "Success";
-        case INFRA_ERROR_INVALID:       return "Invalid parameter";
-        case INFRA_ERROR_MEMORY:        return "Memory error";
-        case INFRA_ERROR_TIMEOUT:       return "Timeout";
-        case INFRA_ERROR_BUSY:          return "Resource busy";
-        case INFRA_ERROR_NOT_FOUND:     return "Not found";
-        case INFRA_ERROR_EXISTS:        return "Already exists";
-        case INFRA_ERROR_IO:           return "I/O error";
-        case INFRA_ERROR_CANCELLED:    return "Operation cancelled";
-        case INFRA_ERROR_NOT_READY:    return "Not ready";
-        case INFRA_ERROR_FULL:        return "Resource full";
-        case INFRA_ERROR_EMPTY:       return "Resource empty";
-        case INFRA_ERROR_INVALID_PARAM: return "Invalid parameter";
-        case INFRA_ERROR_NO_MEMORY:    return "Out of memory";
-        default:                       return "Unknown error";
-    }
 }
 
 //-----------------------------------------------------------------------------
@@ -1175,43 +1151,6 @@ infra_error_t infra_printf(const char* format, ...) {
 //-----------------------------------------------------------------------------
 // File Operations
 //-----------------------------------------------------------------------------
-
-infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, infra_handle_t* handle) {
-    if (!path || !handle) return INFRA_ERROR_INVALID;
-
-    int os_flags = 0;
-    
-    // 基本访问模式
-    if ((flags & INFRA_FILE_RDWR) == INFRA_FILE_RDWR) {
-        os_flags |= O_RDWR;
-    } else if (flags & INFRA_FILE_WRONLY) {
-        os_flags |= O_WRONLY;
-    } else {
-        os_flags |= O_RDONLY;  // 默认为只读
-    }
-    
-    // 创建和修改标志
-    if (flags & INFRA_FILE_CREATE) {
-        os_flags |= O_CREAT;
-        if (!(flags & INFRA_FILE_APPEND)) {
-            os_flags |= O_TRUNC;  // 如果不是追加模式，则截断文件
-        }
-    }
-    if (flags & INFRA_FILE_APPEND) os_flags |= O_APPEND;
-    if (flags & INFRA_FILE_TRUNC) os_flags |= O_TRUNC;
-
-    printf("Opening file %s with flags 0x%x (os_flags 0x%x) mode 0%o\n", 
-           path, flags, os_flags, mode);
-           
-    int fd = open(path, os_flags, mode);
-    if (fd == -1) {
-        printf("Failed to open file: %s (errno: %d)\n", strerror(errno), errno);
-        return INFRA_ERROR_IO;
-    }
-
-    *handle = (infra_handle_t)fd;
-    return INFRA_OK;
-}
 
 infra_error_t infra_file_close(infra_handle_t handle) {
     if (!handle) return INFRA_ERROR_INVALID;

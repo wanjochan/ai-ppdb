@@ -1,4 +1,4 @@
-#include "test_common.h"
+#include "framework/test_framework.h"
 #include "internal/infra/infra.h"
 
 // Test event loop creation and destruction

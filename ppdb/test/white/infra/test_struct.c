@@ -5,7 +5,7 @@
 #include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 #include "test_framework.h"
-#include "test_common.h"
+#include "../framework/test_framework.h"
 
 static int test_list(void) {
     infra_list_t* list;

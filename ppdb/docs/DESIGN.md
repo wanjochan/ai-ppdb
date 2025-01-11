@@ -63,6 +63,8 @@ infra层的模块分类：
 core: 基础功能
 platform: 平台抽象（在cosmopolitan已经封装好绝大部分的基础上再稍微消除一些平台差异）
 memory: 内存管理
+error: 错误处理
+struct: 数据结构
 sync: 同步（互斥、锁、条件变量、信号量、无锁等）
 async.h: 异步（暂时遇到设计瓶颈，考虑先只封装基本的，比如epoll? iocp?）
 peer: 实例、进程、网络等

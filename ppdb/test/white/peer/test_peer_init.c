@@ -1,7 +1,7 @@
 #include <ppdb/ppdb.h>
 #include "../../../src/internal/peer.h"
 #include "../test_framework.h"
-#include "test_common.h"
+#include "../framework/test_framework.h"
 #include "internal/infra/infra.h"
 
 // Test peer initialization and cleanup

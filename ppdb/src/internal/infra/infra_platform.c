@@ -11,6 +11,7 @@
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_sync.h"
+#include "internal/infra/infra_error.h"
 
 //-----------------------------------------------------------------------------
 // Platform-specific Functions
@@ -337,4 +338,35 @@ infra_error_t infra_platform_rwlock_unlock(void* handle) {
 
     pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
     return (pthread_rwlock_unlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle) {
+    if (!path || !handle) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 转换 flags 到系统标志
+    int os_flags = 0;
+    if (flags & INFRA_FILE_RDONLY) os_flags |= O_RDONLY;
+    if (flags & INFRA_FILE_WRONLY) os_flags |= O_WRONLY;
+    if (flags & INFRA_FILE_RDWR)   os_flags |= O_RDWR;
+    if (flags & INFRA_FILE_CREATE) os_flags |= O_CREAT;
+    if (flags & INFRA_FILE_APPEND) os_flags |= O_APPEND;
+    if (flags & INFRA_FILE_TRUNC)  os_flags |= O_TRUNC;
+
+    infra_printf("Opening file %s with flags 0x%x (os_flags 0x%x) mode %02o\n", 
+                 path, flags, os_flags, mode);
+    
+    int fd = open(path, os_flags, mode);
+    if (fd < 0) {
+        if (!infra_is_expected_error(INFRA_ERROR_IO)) {
+            infra_printf("[UNEXPECTED] Failed to open file: %s (errno: %d)\n", strerror(errno), errno);
+        } else {
+            infra_printf("[EXPECTED] Failed to open file: %s (errno: %d)\n", strerror(errno), errno);
+        }
+        return INFRA_ERROR_IO;
+    }
+    
+    *handle = fd;
+    return INFRA_OK;
 } 

@@ -1,6 +1,6 @@
 #include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
-#include "test_common.h"
+#include "white/framework/test_framework.h"
 #include "internal/infra/infra.h"
 
 //-----------------------------------------------------------------------------

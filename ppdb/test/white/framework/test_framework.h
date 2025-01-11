@@ -2,6 +2,10 @@
 #define TEST_FRAMEWORK_H
 
 #include "cosmopolitan.h"
+#include "internal/infra/infra.h"
+
+// Utility macros
+#define INFRA_UNUSED(x) ((void)(x))
 
 typedef void (*test_func_t)(void);
 
@@ -82,6 +86,18 @@ extern int g_test_stats[3];  // total, passed, failed
     TEST_ASSERT_MSG(infra_strcmp(expected, actual) == 0, \
                     "Expected string \"%s\" but got \"%s\"", \
                     expected, actual)
+
+#define TEST_ASSERT_NULL(x) \
+    TEST_ASSERT_MSG((x) == NULL, "%s is not NULL", #x)
+
+#define TEST_ASSERT_NOT_NULL(x) \
+    TEST_ASSERT_MSG((x) != NULL, "%s is NULL", #x)
+
+#define TEST_ASSERT_TRUE(x) \
+    TEST_ASSERT_MSG((x), "%s is not true", #x)
+
+#define TEST_ASSERT_FALSE(x) \
+    TEST_ASSERT_MSG(!(x), "%s is not false", #x)
 
 void test_init(void);
 void test_cleanup(void);
