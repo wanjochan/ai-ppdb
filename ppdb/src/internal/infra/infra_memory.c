@@ -2,11 +2,9 @@
  * infra_memory.c - Memory Management Module Implementation
  */
 
-#include "internal/infra/infra_memory.h"
-#include "internal/infra/infra_sync.h"
-
 #define INFRA_INTERNAL
 #include "internal/infra/infra_memory.h"
+#include "internal/infra/infra_sync.h"
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -79,14 +77,14 @@ static void* allocate_from_pool(size_t size) {
     }
 
     // 计算需要的总大小，包括块头
-    size_t block_size = sizeof(memory_block_t) + size;
-    if (block_size < size) {  // 检查溢出
+    size_t total_size = sizeof(memory_block_t) + size;
+    if (total_size < size) {  // 检查溢出
         return NULL;
     }
 
     // 计算对齐后的大小
-    size_t aligned_size = ALIGN_SIZE(block_size, g_memory.config.pool_alignment);
-    if (aligned_size < block_size) {  // 检查溢出
+    size_t aligned_size = ALIGN_SIZE(total_size, g_memory.config.pool_alignment);
+    if (aligned_size < total_size) {  // 检查溢出
         return NULL;
     }
 
@@ -95,11 +93,11 @@ static void* allocate_from_pool(size_t size) {
         return NULL;
     }
 
-    memory_block_t* current = g_memory.pool.first_block;
+    memory_block_t* current = g_memory.pool.free_list;
     while (current) {
-        if (!current->is_used && current->size >= aligned_size) {
+        if (!current->is_used && current->size >= size) {
             // 找到足够大的空闲块
-            if (current->size >= aligned_size + MIN_BLOCK_SIZE) {
+            if (current->size >= size + MIN_BLOCK_SIZE) {
                 // 分割块
                 memory_block_t* new_block = (memory_block_t*)((char*)current + aligned_size);
                 new_block->size = current->size - aligned_size;
@@ -107,9 +105,10 @@ static void* allocate_from_pool(size_t size) {
                 new_block->next = current->next;
                 current->size = size;  // 存储原始请求大小
                 current->next = new_block;
+                g_memory.pool.block_count++;
             }
             current->is_used = true;
-            g_memory.pool.used_size += size;  // 使用原始大小
+            g_memory.pool.used_size += aligned_size;  // 使用对齐后的大小
             g_memory.stats.current_usage += size;  // 使用原始大小
             g_memory.stats.total_allocations++;
             if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
@@ -132,19 +131,22 @@ static bool initialize_pool(void) {
 
     // 初始化第一个块
     memory_block_t* first_block = (memory_block_t*)g_memory.pool.pool_start;
-    first_block->size = g_memory.config.pool_initial_size - sizeof(memory_block_t);  // 修正大小
+    first_block->size = g_memory.config.pool_initial_size - sizeof(memory_block_t);
     first_block->is_used = false;
     first_block->next = NULL;
 
     // 初始化内存池状态
     g_memory.pool.pool_size = g_memory.config.pool_initial_size;
     g_memory.pool.used_size = 0;
-    g_memory.pool.first_block = first_block;
+    g_memory.pool.block_count = 1;  // 初始有一个块
+    g_memory.pool.free_list = first_block;
 
     // 初始化统计信息
     g_memory.stats.current_usage = 0;
     g_memory.stats.peak_usage = 0;
     g_memory.stats.total_allocations = 0;
+    g_memory.stats.pool_fragmentation = 0;
+    g_memory.stats.pool_utilization = 0;
 
     return true;
 }
@@ -165,7 +167,7 @@ static memory_block_t* get_block_header(void* ptr) {
 }
 
 static void try_merge_blocks(void) {
-    memory_block_t* current = g_memory.pool.first_block;
+    memory_block_t* current = g_memory.pool.free_list;
     while (current && current->next) {
         if (!current->is_used && !current->next->is_used) {
             // 合并相邻的空闲块
@@ -197,7 +199,12 @@ infra_error_t infra_memory_init(const infra_memory_config_t* config) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 验证配置
+    // 检查重复初始化
+    if (g_memory.initialized) {
+        return INFRA_ERROR_EXISTS;
+    }
+
+    // 验证内存池参数
     if (config->use_memory_pool) {
         if (config->pool_initial_size == 0 || 
             config->pool_alignment == 0 || 
@@ -208,11 +215,6 @@ infra_error_t infra_memory_init(const infra_memory_config_t* config) {
             reset_memory_state();  // 确保状态被重置
             return INFRA_ERROR_INVALID_PARAM;
         }
-    }
-
-    // 检查重复初始化
-    if (g_memory.initialized) {
-        return INFRA_ERROR_EXISTS;
     }
 
     // 重置状态
@@ -292,34 +294,87 @@ infra_error_t infra_memory_get_stats(infra_memory_stats_t* stats) {
 // Memory Management Functions
 //-----------------------------------------------------------------------------
 
-void* infra_malloc(size_t size) {
-    if (!g_memory.initialized || size == 0) {  // 明确检查大小为0的情况
+static void* allocate_memory(size_t size) {
+    // 首先检查 size 为 0 的情况
+    if (size == 0) {
         return NULL;
     }
 
-    void* ptr = NULL;
-    infra_mutex_lock(g_memory.mutex);
-
+    // 如果使用内存池
     if (g_memory.config.use_memory_pool) {
-        ptr = allocate_from_pool(size);
+        return allocate_from_pool(size);
     }
+
+    // 使用系统内存
+    // 分配额外空间存储大小信息
+    size_t total_size = sizeof(size_t) + size;
+    if (total_size < size) {  // 检查溢出
+        return NULL;
+    }
+
+    size_t* block = (size_t*)malloc(total_size);
+    if (!block) {
+        return NULL;
+    }
+
+    // 存储大小信息
+    *block = size;
     
-    if (!ptr) {
-        size_t total_size = sizeof(size_t) + size;
-        if (total_size > size) {  // 检查溢出
-            size_t* block = (size_t*)malloc(total_size);
-            if (block) {
-                *block = size;
-                ptr = block + 1;
-                g_memory.stats.current_usage += size;
-                g_memory.stats.total_allocations++;
-                if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
-                    g_memory.stats.peak_usage = g_memory.stats.current_usage;
-                }
+    // 更新统计信息
+    g_memory.stats.current_usage += size;
+    g_memory.stats.total_allocations++;
+    if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
+        g_memory.stats.peak_usage = g_memory.stats.current_usage;
+    }
+
+    // 返回数据区域的指针
+    return (void*)(block + 1);
+}
+
+static void free_memory(void* ptr) {
+    if (!ptr) return;
+    
+    if (g_memory.config.use_memory_pool) {
+        // 检查指针是否在内存池范围内
+        if (ptr >= g_memory.pool.pool_start && 
+            ptr < (void*)((char*)g_memory.pool.pool_start + g_memory.pool.pool_size)) {
+            memory_block_t* block = get_block_header(ptr);
+            if (block->is_used) {
+                block->is_used = false;
+                g_memory.pool.used_size -= block->size + sizeof(memory_block_t);
+                g_memory.stats.current_usage -= block->size;
+                try_merge_blocks();
+            }
+        }
+    } else {
+        // 获取存储的大小信息
+        size_t* block = (size_t*)ptr - 1;
+        size_t size = *block;
+        
+        // 更新统计信息
+        g_memory.stats.current_usage -= size;
+        
+        // 释放整个内存块
+        free(block);
+    }
+}
+
+void* infra_malloc(size_t size) {
+    if (!g_memory.initialized) {
+        return NULL;
+    }
+
+    infra_mutex_lock(g_memory.mutex);
+    void* ptr = allocate_memory(size);
+    if (ptr) {
+        g_memory.stats.total_allocations++;
+        if (!g_memory.config.use_memory_pool) {
+            g_memory.stats.current_usage += size;
+            if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
+                g_memory.stats.peak_usage = g_memory.stats.current_usage;
             }
         }
     }
-
     infra_mutex_unlock(g_memory.mutex);
     return ptr;
 }
@@ -419,32 +474,12 @@ void* infra_realloc(void* ptr, size_t size) {
 }
 
 void infra_free(void* ptr) {
-    if (!ptr || !g_memory.initialized) {
+    if (!g_memory.initialized || !ptr) {
         return;
     }
 
     infra_mutex_lock(g_memory.mutex);
-
-    if (g_memory.config.use_memory_pool && 
-        ptr >= g_memory.pool.pool_start && 
-        ptr < (void*)((char*)g_memory.pool.pool_start + g_memory.pool.pool_size)) {
-        memory_block_t* block = get_block_header(ptr);
-        if (block && block->is_used) {  // 添加对block的有效性检查
-            size_t original_size = block->size;
-            size_t aligned_size = ALIGN_SIZE(sizeof(memory_block_t) + original_size, g_memory.config.pool_alignment);
-            block->is_used = false;
-            g_memory.pool.used_size -= aligned_size;
-            g_memory.stats.current_usage -= original_size;
-            try_merge_blocks();
-        }
-    } else if (ptr > (void*)sizeof(size_t)) {
-        size_t* size_ptr = (size_t*)ptr - 1;
-        if (size_ptr && *size_ptr > 0 && *size_ptr <= SIZE_MAX - sizeof(size_t)) {
-            g_memory.stats.current_usage -= *size_ptr;
-            free(size_ptr);
-        }
-    }
-
+    free_memory(ptr);
     infra_mutex_unlock(g_memory.mutex);
 }
 

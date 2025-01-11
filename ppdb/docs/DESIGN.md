@@ -66,9 +66,8 @@ memory: 内存管理
 error: 错误处理
 struct: 数据结构
 sync: 同步（互斥、锁、条件变量、信号量、无锁lockfree、线程池等）
+net：网络
 mux：多路复用
-async.h: 异步（暂时遇到设计瓶颈，考虑先只封装基本的，比如epoll? iocp?）
-peer: 实例、进程、网络等
 
 1. **第一阶段：MemKV**
    - 实现基础设施层

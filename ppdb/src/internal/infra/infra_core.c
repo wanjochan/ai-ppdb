@@ -139,7 +139,7 @@ static infra_error_t init_module(infra_init_flags_t flag, const infra_config_t* 
 infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_config_t* config) {
     infra_error_t err;
 
-    // 验证参数
+    // 检查参数
     if (!config) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -150,10 +150,22 @@ infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_confi
         return err;
     }
 
+    // 检查是否已初始化
+    if (g_infra.initialized) {
+        return INFRA_ERROR_EXISTS;
+    }
+
+    // 创建全局互斥锁
+    err = infra_mutex_create(&g_infra.mutex);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
     // 初始化内存管理
     if (flags & INFRA_INIT_MEMORY) {
         err = init_module(INFRA_INIT_MEMORY, config);
         if (err != INFRA_OK) {
+            infra_mutex_destroy(g_infra.mutex);
             return err;
         }
         g_infra.active_flags |= INFRA_INIT_MEMORY;
@@ -163,6 +175,10 @@ infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_confi
     if (flags & INFRA_INIT_LOG) {
         err = init_module(INFRA_INIT_LOG, config);
         if (err != INFRA_OK) {
+            if (g_infra.active_flags & INFRA_INIT_MEMORY) {
+                infra_memory_cleanup();
+            }
+            infra_mutex_destroy(g_infra.mutex);
             return err;
         }
         g_infra.active_flags |= INFRA_INIT_LOG;
@@ -172,6 +188,13 @@ infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_confi
     if (flags & INFRA_INIT_DS) {
         err = init_module(INFRA_INIT_DS, config);
         if (err != INFRA_OK) {
+            if (g_infra.active_flags & INFRA_INIT_LOG) {
+                // 清理日志系统
+            }
+            if (g_infra.active_flags & INFRA_INIT_MEMORY) {
+                infra_memory_cleanup();
+            }
+            infra_mutex_destroy(g_infra.mutex);
             return err;
         }
         g_infra.active_flags |= INFRA_INIT_DS;
@@ -191,6 +214,10 @@ infra_error_t infra_init(void) {
 }
 
 void infra_cleanup(void) {
+    if (!g_infra.initialized) {
+        return;
+    }
+
     // 按照初始化的相反顺序清理
     if (g_infra.active_flags & INFRA_INIT_DS) {
         // 清理数据结构
@@ -204,8 +231,16 @@ void infra_cleanup(void) {
 
     if (g_infra.active_flags & INFRA_INIT_MEMORY) {
         // 清理内存管理
+        infra_memory_cleanup();
         g_infra.active_flags &= ~INFRA_INIT_MEMORY;
     }
+
+    // 清理全局互斥锁
+    infra_mutex_destroy(g_infra.mutex);
+
+    // 重置全局状态
+    g_infra.initialized = false;
+    g_infra.active_flags = 0;
 }
 
 bool infra_is_initialized(infra_init_flags_t flag) {

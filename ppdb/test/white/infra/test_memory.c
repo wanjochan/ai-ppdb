@@ -14,6 +14,33 @@ typedef struct {
 
 static mem_stats_t g_stats = {0};
 
+// 测试初始化
+static void test_memory_init(void) {
+    // 确保系统未初始化
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
+
+    // 初始化默认配置
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK);
+
+    // 修改内存配置
+    config.memory.use_memory_pool = false;  // 使用系统内存
+    config.memory.pool_initial_size = 1024 * 1024;  // 1MB
+    config.memory.pool_alignment = sizeof(void*);
+
+    // 初始化infra系统
+    err = infra_init_with_config((infra_init_flags_t)INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(infra_is_initialized(INFRA_INIT_MEMORY));
+}
+
+// 测试清理
+static void test_memory_cleanup(void) {
+    infra_cleanup();
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
+}
+
 // 基本内存分配测试
 static void test_memory_basic(void) {
     // 测试基本分配和释放
@@ -108,19 +135,14 @@ static void test_memory_stress(void) {
 }
 
 int main(void) {
-    // 初始化infra系统
-    infra_error_t err = infra_init();
-    if (err != INFRA_OK) {
-        infra_printf("Failed to initialize infra system: %d\n", err);
-        return 1;
-    }
-
     TEST_BEGIN();
     
+    RUN_TEST(test_memory_init);
     RUN_TEST(test_memory_basic);
     RUN_TEST(test_memory_operations);
     RUN_TEST(test_memory_performance);
     RUN_TEST(test_memory_stress);
+    RUN_TEST(test_memory_cleanup);
     
     TEST_END();
     
@@ -132,7 +154,5 @@ int main(void) {
     infra_printf("Peak memory usage: %ld bytes\n", g_stats.peak_bytes);
     infra_printf("Average allocation size: %.2f bytes\n", g_stats.avg_alloc_size);
     
-    // 清理infra系统
-    infra_cleanup();
     return 0;
 } 
