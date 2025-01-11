@@ -2,7 +2,8 @@
 #include "test/white/framework/test_framework.h"
 #include "internal/infra/infra_core.h"
 
-// Mock framework state
+#define MAX_MOCK_CALLS 1024
+
 typedef struct {
     const char* function_name;
     const char* param_name;
@@ -14,10 +15,9 @@ typedef struct {
     union {
         uint64_t value;
         void* ptr;
-    } return_value;
+    } return_val;
 } mock_call_t;
 
-#define MAX_MOCK_CALLS 1024
 static mock_call_t g_mock_calls[MAX_MOCK_CALLS];
 static size_t g_mock_call_count = 0;
 static size_t g_mock_call_index = 0;
@@ -116,27 +116,23 @@ void mock_expect_param_str(const char* param_name, const char* str) {
 }
 
 void mock_expect_return_value(const char* function_name, uint64_t value) {
-    TEST_ASSERT_MSG(g_mock_call_count > 0,
-                   "No function call to attach return value to");
-    g_mock_calls[g_mock_call_count - 1].return_value.value = value;
+    (void)function_name;  // Suppress unused parameter warning
+    g_mock_calls[g_mock_call_count].return_val.value = value;
 }
 
 void* mock_expect_return_ptr(const char* function_name, void* ptr) {
-    TEST_ASSERT_MSG(g_mock_call_count > 0,
-                   "No function call to attach return pointer to");
-    g_mock_calls[g_mock_call_count - 1].return_value.ptr = ptr;
+    (void)function_name;  // Suppress unused parameter warning
+    g_mock_calls[g_mock_call_count].return_val.ptr = ptr;
     return ptr;
 }
 
 // Mock function return values
 uint64_t mock_return_value(const char* function_name) {
-    uint64_t value = g_mock_calls[g_mock_call_index].return_value.value;
-    g_mock_call_index++;
-    return value;
+    (void)function_name;  // Suppress unused parameter warning
+    return g_mock_calls[g_mock_call_index].return_val.value;
 }
 
 void* mock_return_ptr(const char* function_name) {
-    void* ptr = g_mock_calls[g_mock_call_index].return_value.ptr;
-    g_mock_call_index++;
-    return ptr;
+    (void)function_name;  // Suppress unused parameter warning
+    return g_mock_calls[g_mock_call_index].return_val.ptr;
 } 

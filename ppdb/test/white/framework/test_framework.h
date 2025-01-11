@@ -113,4 +113,16 @@ void test_framework_report(void);
         } \
     } while (0)
 
+#define TEST_ASSERT_EQUAL_PTR(expected, actual) \
+    do { \
+        if ((expected) != (actual)) { \
+            g_test_stats.failed_tests++; \
+            printf("Assertion failed: %s == %s\n", #expected, #actual); \
+            printf("  Expected: %p\n", (void*)(expected)); \
+            printf("  Actual: %p\n", (void*)(actual)); \
+            printf("  at %s:%d\n", __FILE__, __LINE__); \
+            return; \
+        } \
+    } while (0)
+
 #endif // PPDB_TEST_FRAMEWORK_H

@@ -60,8 +60,11 @@ typedef uint64_t INFRA_CORE_Handle_t;
 //-----------------------------------------------------------------------------
 
 typedef void* infra_mutex_t;
+typedef void* infra_mutex_attr_t;
 typedef void* infra_cond_t;
+typedef void* infra_cond_attr_t;
 typedef void* infra_thread_t;
+typedef void* infra_thread_attr_t;
 typedef void* (*infra_thread_func_t)(void*);
 
 //-----------------------------------------------------------------------------

@@ -105,25 +105,20 @@ mock 机制通过替换真实函数调用来模拟组件行为。主要用于:
 
 框架提供 MOCK_FUNC() 定义 mock 函数,通过 mock_register_expectation() 设置预期行为。目前已实现了内存管理、平台抽象等模块的 mock。
 
-
+.\ppdb\scripts\build_test_mock.bat
 ```
 
 test/white/
 ├── framework/              # 测试框架
-│   ├── test_framework.h   # 现有测试框架
-│   └── mock_framework/    # mock框架核心
-│       ├── mock_framework.h
-│       └── mock_framework.c
-
-
-test/white/infra/
-├── mock/
-│   ├── memory/
-│   │   ├── mock_memory.h   # 内存管理mock接口
-│   │   └── mock_memory.c   # 实现
-│   └── platform/
-│       ├── mock_platform.h # 平台抽象mock接口
-│       └── mock_platform.c # 实现
+│   ├── test_framework.h   # 测试框架
+│   ├── mock_framework.h   # mock框架
+│   └── mock_framework.c
+│
+└── infra/                 # infra层的mock实现
+    ├── mock_memory.h      # 内存管理mock
+    ├── mock_memory.c
+    ├── mock_platform.h    # 平台抽象mock
+    └── mock_platform.c
 
 之前的测试结构（准备删除）
 test/
