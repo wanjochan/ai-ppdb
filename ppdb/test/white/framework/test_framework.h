@@ -1,128 +1,87 @@
-#ifndef PPDB_TEST_FRAMEWORK_H
-#define PPDB_TEST_FRAMEWORK_H
+#ifndef TEST_FRAMEWORK_H
+#define TEST_FRAMEWORK_H
 
-#include "internal/infra/infra_core.h"
+#include "cosmopolitan.h"
 
-// 测试统计信息
-typedef struct test_stats {
-    size_t total_tests;
-    size_t passed_tests;
-    size_t failed_tests;
-    infra_time_t start_time;
-} test_stats_t;
-
-// 全局测试统计
-extern test_stats_t g_test_stats;
-
-// 测试函数类型
 typedef void (*test_func_t)(void);
 
-// 测试用例结构
-typedef struct {
-    const char* name;
-    test_func_t func;
-} test_case_t;
+extern int g_test_stats[3];  // total, passed, failed
 
-// 测试套件结构
-typedef struct {
-    const char* name;
-    test_case_t* cases;
-    size_t case_count;
-} test_suite_t;
+#define TEST_STATS_TOTAL   0
+#define TEST_STATS_PASSED  1
+#define TEST_STATS_FAILED  2
 
-// 测试框架主要宏
-#define TEST_BEGIN(name) \
-    do { \
-        printf("\nRunning test suite: %s\n", name); \
-        test_framework_init(); \
-    } while (0)
+#define TEST_BEGIN() \
+    test_init(); \
+    printf("\nRunning tests...\n");
 
 #define TEST_END() \
-    do { \
-        test_framework_report(); \
-        test_framework_cleanup(); \
-        return g_test_stats.failed_tests ? 1 : 0; \
-    } while (0)
+    test_report(); \
+    test_cleanup(); \
+    return g_test_stats[TEST_STATS_FAILED] ? 1 : 0;
 
 #define RUN_TEST(test_func) \
     do { \
-        printf("Running test: %s\n", #test_func); \
-        test_case_t test_case = {#test_func, test_func}; \
-        test_framework_run_case(&test_case); \
+        printf("\nRunning test: %s\n", #test_func); \
+        test_func(); \
+        if (g_test_stats[TEST_STATS_FAILED] == 0) { \
+            printf("  PASS\n"); \
+        } \
     } while (0)
 
-// 测试框架函数
-void test_framework_init(void);
-void test_framework_cleanup(void);
-void test_framework_run_suite(test_suite_t* suite);
-void test_framework_run_case(test_case_t* test_case);
-void test_framework_report(void);
-
-// 断言宏
-#define TEST_ASSERT(condition) \
+#define TEST_ASSERT_MSG_VOID(condition, format, ...) \
     do { \
         if (!(condition)) { \
-            printf("Assertion failed: %s\n", #condition); \
-            g_test_stats.failed_tests++; \
+            g_test_stats[TEST_STATS_FAILED]++; \
+            printf("Assertion failed at %s:%d: " format "\n", \
+                   __FILE__, __LINE__, ##__VA_ARGS__); \
             return; \
+        } \
+    } while (0)
+
+#define TEST_ASSERT_MSG_PTR(condition, format, ...) \
+    do { \
+        if (!(condition)) { \
+            g_test_stats[TEST_STATS_FAILED]++; \
+            printf("Assertion failed at %s:%d: " format "\n", \
+                   __FILE__, __LINE__, ##__VA_ARGS__); \
+            return NULL; \
+        } \
+    } while (0)
+
+#define TEST_ASSERT_MSG_INT(condition, format, ...) \
+    do { \
+        if (!(condition)) { \
+            g_test_stats[TEST_STATS_FAILED]++; \
+            printf("Assertion failed at %s:%d: " format "\n", \
+                   __FILE__, __LINE__, ##__VA_ARGS__); \
+            return 0; \
         } \
     } while (0)
 
 #define TEST_ASSERT_MSG(condition, format, ...) \
-    do { \
-        if (!(condition)) { \
-            printf("Assertion failed: " format "\n", ##__VA_ARGS__); \
-            g_test_stats.failed_tests++; \
-            return; \
-        } \
-    } while (0)
+    TEST_ASSERT_MSG_VOID(condition, format, ##__VA_ARGS__)
+
+#define TEST_ASSERT(condition) \
+    TEST_ASSERT_MSG(condition, #condition)
 
 #define TEST_ASSERT_EQUAL(expected, actual) \
-    do { \
-        if ((expected) != (actual)) { \
-            printf("Assertion failed: expected %d, got %d\n", (int)(expected), (int)(actual)); \
-            g_test_stats.failed_tests++; \
-            return; \
-        } \
-    } while (0)
-
-#define TEST_ASSERT_STRING_EQUAL(expected, actual) \
-    do { \
-        if (infra_strcmp((expected), (actual)) != 0) { \
-            printf("Assertion failed: expected \"%s\", got \"%s\"\n", (expected), (actual)); \
-            g_test_stats.failed_tests++; \
-            return; \
-        } \
-    } while (0)
-
-#define TEST_ASSERT_NULL(ptr) \
-    do { \
-        if ((ptr) != NULL) { \
-            printf("Assertion failed: expected NULL, got %p\n", (void*)(ptr)); \
-            g_test_stats.failed_tests++; \
-            return; \
-        } \
-    } while (0)
-
-#define TEST_ASSERT_NOT_NULL(ptr) \
-    do { \
-        if ((ptr) == NULL) { \
-            printf("Assertion failed: expected non-NULL\n"); \
-            g_test_stats.failed_tests++; \
-            return; \
-        } \
-    } while (0)
+    TEST_ASSERT_MSG((expected) == (actual), \
+                    "Expected %lu but got %lu", \
+                    (uint64_t)(expected), (uint64_t)(actual))
 
 #define TEST_ASSERT_EQUAL_PTR(expected, actual) \
-    do { \
-        if ((expected) != (actual)) { \
-            g_test_stats.failed_tests++; \
-            printf("Assertion failed: %s == %s\n", #expected, #actual); \
-            printf("  Expected: %p\n", (void*)(expected)); \
-            printf("  Actual: %p\n", (void*)(actual)); \
-            printf("  at %s:%d\n", __FILE__, __LINE__); \
-            return; \
-        } \
-    } while (0)
+    TEST_ASSERT_MSG((expected) == (actual), \
+                    "Expected pointer %p but got %p", \
+                    (void*)(expected), (void*)(actual))
 
-#endif // PPDB_TEST_FRAMEWORK_H
+#define TEST_ASSERT_EQUAL_STR(expected, actual) \
+    TEST_ASSERT_MSG(infra_strcmp(expected, actual) == 0, \
+                    "Expected string \"%s\" but got \"%s\"", \
+                    expected, actual)
+
+void test_init(void);
+void test_cleanup(void);
+void test_report(void);
+
+#endif /* TEST_FRAMEWORK_H */

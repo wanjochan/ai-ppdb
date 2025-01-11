@@ -76,14 +76,15 @@ void test_mock_memmove(void) {
 }
 
 int main(void) {
-    TEST_BEGIN("Memory Mock Tests");
+    TEST_BEGIN();
 
+    mock_init();
     RUN_TEST(test_mock_malloc);
     RUN_TEST(test_mock_free);
     RUN_TEST(test_mock_memset);
     RUN_TEST(test_mock_memcpy);
     RUN_TEST(test_mock_memmove);
+    mock_cleanup();
 
     TEST_END();
-    return 0;
 } 

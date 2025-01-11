@@ -1,25 +1,11 @@
-#include "test/white/framework/test_framework.h"
 #include "test/white/framework/mock_framework.h"
 #include "test/white/infra/mock_memory.h"
+#include "cosmopolitan.h"
 
 void* mock_malloc(size_t size) {
     mock_function_call("mock_malloc");
     mock_param_value("size", size);
     return mock_return_ptr("mock_malloc");
-}
-
-void* mock_calloc(size_t nmemb, size_t size) {
-    mock_function_call("mock_calloc");
-    mock_param_value("nmemb", nmemb);
-    mock_param_value("size", size);
-    return mock_return_ptr("mock_calloc");
-}
-
-void* mock_realloc(void* ptr, size_t size) {
-    mock_function_call("mock_realloc");
-    mock_param_ptr("ptr", ptr);
-    mock_param_value("size", size);
-    return mock_return_ptr("mock_realloc");
 }
 
 void mock_free(void* ptr) {
