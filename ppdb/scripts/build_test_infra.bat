@@ -30,16 +30,10 @@ if errorlevel 1 exit /b 1
 @rem "%GCC%" %CFLAGS% -c "%SRC_DIR%\infra\infra_async.c" -o "%BUILD_DIR%\infra_async.o"
 @rem if errorlevel 1 exit /b 1
 
-rem Build test framework
-echo Building test framework...
-"%GCC%" %CFLAGS% -c "%TEST_DIR%\white\test_framework.c" -o "%BUILD_DIR%\test_framework.o"
-if errorlevel 1 exit /b 1
-
 echo Building %TEST_CASE%...
 
 if exist "%TEST_DIR%\white\infra\%TEST_CASE%.c" (
-    @rem "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%TEST_CASE%.c" "%BUILD_DIR%\infra.o" "%BUILD_DIR%\infra_platform.o" "%BUILD_DIR%\infra_sync.o" "%BUILD_DIR%\infra_async.o" "%BUILD_DIR%\test_framework.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%TEST_CASE%.exe.dbg"
-    "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%TEST_CASE%.c" "%BUILD_DIR%\infra.o" "%BUILD_DIR%\infra_platform.o" "%BUILD_DIR%\infra_sync.o" "%BUILD_DIR%\test_framework.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%TEST_CASE%.exe.dbg"
+    "%GCC%" %CFLAGS% "%TEST_DIR%\white\infra\%TEST_CASE%.c" "%BUILD_DIR%\infra.o" "%BUILD_DIR%\infra_platform.o" "%BUILD_DIR%\infra_sync.o" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\%TEST_CASE%.exe.dbg"
     if errorlevel 1 exit /b 1
     "%OBJCOPY%" -S -O binary "%BUILD_DIR%\%TEST_CASE%.exe.dbg" "%BUILD_DIR%\%TEST_CASE%.exe"
     if errorlevel 1 exit /b 1

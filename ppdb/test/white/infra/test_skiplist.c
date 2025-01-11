@@ -10,11 +10,12 @@ static int compare_int(const void* a, const void* b) {
 }
 
 // Helper function to verify value
-static void verify_value(infra_skiplist_t* list, intptr_t key, const char* expected) {
+static int verify_value(infra_skiplist_t* list, intptr_t key, const char* expected) {
     void* actual_value;
     size_t value_size;
     TEST_ASSERT(infra_skiplist_find(list, &key, sizeof(key), &actual_value, &value_size) == INFRA_OK);
     TEST_ASSERT(infra_strcmp((char*)actual_value, expected) == 0);
+    return 0;
 }
 
 // Basic skiplist test
@@ -44,8 +45,8 @@ static int test_skiplist_basic(void) {
     TEST_ASSERT(size == 2);
     
     // Verify values
-    verify_value(&list, key1, value1);
-    verify_value(&list, key2, value2);
+    TEST_ASSERT(verify_value(&list, key1, value1) == 0);
+    TEST_ASSERT(verify_value(&list, key2, value2) == 0);
     
     // Remove a value
     TEST_ASSERT(infra_skiplist_remove(&list, &key1, sizeof(key1)) == INFRA_OK);
@@ -55,7 +56,7 @@ static int test_skiplist_basic(void) {
     TEST_ASSERT(size == 1);
     
     // Verify remaining value
-    verify_value(&list, key2, value2);
+    TEST_ASSERT(verify_value(&list, key2, value2) == 0);
     
     // Clear the list
     TEST_ASSERT(infra_skiplist_clear(&list) == INFRA_OK);
@@ -71,10 +72,20 @@ static int test_skiplist_basic(void) {
 }
 
 int main(void) {
+    // 初始化infra系统
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
+
     TEST_INIT();
     
     TEST_RUN(test_skiplist_basic);
     
     TEST_CLEANUP();
+
+    // 清理infra系统
+    infra_cleanup();
     return 0;
 }

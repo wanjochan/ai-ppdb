@@ -30,9 +30,17 @@ static struct {
     printf("Total tests: %d\n", test_stats.total_tests); \
     printf("Failed tests: %d\n", test_stats.failed_tests); \
     printf("Time spent: %.2f seconds\n", time_spent); \
+    return test_stats.failed_tests; \
 } while(0)
 
-#define TEST_RUN(test_fn) run_test_case(&(test_case_t){.name = #test_fn, .fn = test_fn})
+#define TEST_RUN(test_fn) do { \
+    test_stats.total_tests++; \
+    printf("Running test: %s\n", #test_fn); \
+    if (test_fn() != 0) { \
+        test_stats.failed_tests++; \
+        printf("Test %s failed\n", #test_fn); \
+    } \
+} while(0)
 
 // Test assertion macros
 #define TEST_ASSERT(condition) \
@@ -40,7 +48,7 @@ static struct {
         if (!(condition)) { \
             fprintf(stderr, "Assertion failed: %s\n", #condition); \
             fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
-            exit(1); \
+            return 1; \
         } \
     } while (0)
 
@@ -49,7 +57,7 @@ static struct {
         if ((expected) != (actual)) { \
             fprintf(stderr, "Assertion failed: %s != %s\n", #expected, #actual); \
             fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
-            exit(1); \
+            return 1; \
         } \
     } while (0)
 
@@ -59,11 +67,8 @@ static struct {
         if (__err != INFRA_OK) { \
             fprintf(stderr, "Error %d at %s:%d: %s failed\n", \
                     __err, __FILE__, __LINE__, #expr); \
-            exit(1); \
+            return 1; \
         } \
     } while (0)
-
-// Function declarations
-int run_test_case(const test_case_t* test_case);
 
 #endif /* TEST_FRAMEWORK_H */
