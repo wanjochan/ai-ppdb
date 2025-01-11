@@ -65,7 +65,8 @@ platform: 平台抽象（在cosmopolitan已经封装好绝大部分的基础上�
 memory: 内存管理
 error: 错误处理
 struct: 数据结构
-sync: 同步（互斥、锁、条件变量、信号量、无锁等）
+sync: 同步（互斥、锁、条件变量、信号量、无锁lockfree、线程池等）
+mux：多路复用
 async.h: 异步（暂时遇到设计瓶颈，考虑先只封装基本的，比如epoll? iocp?）
 peer: 实例、进程、网络等
 
@@ -126,5 +127,29 @@ test/white/
 测试顺序：
 .\pdpb\scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
 .\ppdb\scripts\build_test_mock.bat 用于确定 mock 机制运作正常
-.\ppdb\scripts\build_test_infra.bat 用于确定 infra 层运作正常
+.\ppdb\scripts\build_test_infra.bat [module] [norun] 用于确定 infra 层运作正常
+  - 不带参数：执行全量测试
+  - module参数：指定要测试的模块（如memory、log等）
+  - norun参数：只构建不运行测试
 .\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）
+
+## 测试模块
+当前支持的测试模块包括：
+- memory：内存管理测试
+- log：日志功能测试
+- sync：同步机制测试
+- error：错误处理测试
+- struct：数据结构测试
+- memory_pool：内存池测试
+
+使用示例：
+```batch
+# 运行全量测试
+.\ppdb\scripts\build_test_infra.bat
+
+# 只测试内存管理模块
+.\ppdb\scripts\build_test_infra.bat memory
+
+# 只构建不运行测试
+.\ppdb\scripts\build_test_infra.bat memory norun
+```

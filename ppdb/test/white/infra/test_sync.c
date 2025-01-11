@@ -117,6 +117,49 @@ static void test_rwlock(void) {
     TEST_ASSERT(counter == 2);
 }
 
+static void test_thread_pool(void) {
+    infra_error_t err;
+    infra_thread_pool_t* pool;
+    
+    // 创建线程池配置
+    infra_thread_pool_config_t config = {
+        .min_threads = 2,
+        .max_threads = 4,
+        .queue_size = 10,
+        .idle_timeout = 1000
+    };
+    
+    // 创建线程池
+    err = infra_thread_pool_create(&config, &pool);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(pool != NULL);
+    
+    // 测试任务计数器
+    int counter = 0;
+    
+    // 提交多个任务
+    for (int i = 0; i < 5; i++) {
+        err = infra_thread_pool_submit(pool, thread_func, &counter);
+        TEST_ASSERT(err == INFRA_OK);
+    }
+    
+    // 等待一段时间让任务完成
+    infra_sleep(100);
+    
+    // 检查任务是否都执行了
+    TEST_ASSERT(counter == 5);
+    
+    // 获取线程池统计信息
+    size_t active_threads, queued_tasks;
+    err = infra_thread_pool_get_stats(pool, &active_threads, &queued_tasks);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(queued_tasks == 0);  // 所有任务应该已完成
+    
+    // 销毁线程池
+    err = infra_thread_pool_destroy(pool);
+    TEST_ASSERT(err == INFRA_OK);
+}
+
 int main(void) {
     // 初始化infra系统
     infra_error_t err = infra_init();
@@ -131,6 +174,7 @@ int main(void) {
     RUN_TEST(test_mutex);
     RUN_TEST(test_cond);
     RUN_TEST(test_rwlock);
+    RUN_TEST(test_thread_pool);
 
     TEST_END();
 

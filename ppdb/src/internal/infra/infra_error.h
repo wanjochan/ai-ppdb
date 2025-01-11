@@ -27,6 +27,7 @@ typedef int32_t infra_error_t;
 #define INFRA_ERROR_NOT_READY -8  // Not ready
 #define INFRA_ERROR_INVALID_PARAM -9  // Invalid parameter
 #define INFRA_ERROR_NO_MEMORY -10 // Out of memory
+#define INFRA_ERROR_SYSTEM    -11 // System error
 
 //-----------------------------------------------------------------------------
 // Error Handling Functions
