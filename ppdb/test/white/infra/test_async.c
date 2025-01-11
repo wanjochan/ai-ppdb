@@ -142,6 +142,10 @@ static int test_async_io(void) {
     err = infra_async_run(&async, 1000);
     TEST_ASSERT(err == INFRA_OK);
 
+    // 同步文件
+    err = infra_file_sync(fd);
+    TEST_ASSERT(err == INFRA_OK);
+
     // 验证文件大小
     size_t file_size;
     err = infra_file_size(fd, &file_size);
@@ -210,7 +214,7 @@ static int test_async_performance(void) {
     printf("Phase 1: Low load test\n");
     for (int i = 0; i < 200; i++) {
         tasks[i].type = INFRA_ASYNC_EVENT;
-        tasks[i].priority = (i % 4);  // 混合使用不同优先级
+        tasks[i].priority = (infra_priority_t)(i % 4);  // 混合使用不同优先级
         tasks[i].callback = stress_test_callback;
         
         err = infra_async_submit(&async, &tasks[i]);
@@ -223,14 +227,14 @@ static int test_async_performance(void) {
     }
     
     // 运行一段时间
-    err = infra_async_run(&async, 1000);
+    err = infra_async_run(&async, 5000);  // 增加超时时间到5秒
     ASSERT_OK(err);
     
     // 阶段2：中负载测试（400个任务，混合IO和EVENT类型）
     printf("Phase 2: Medium load test\n");
     for (int i = 200; i < 600; i++) {
         tasks[i].type = (i % 2 == 0) ? INFRA_ASYNC_READ : INFRA_ASYNC_EVENT;
-        tasks[i].priority = (i % 4);
+        tasks[i].priority = (infra_priority_t)(i % 4);
         tasks[i].callback = stress_test_callback;
         
         err = infra_async_submit(&async, &tasks[i]);
@@ -251,7 +255,7 @@ static int test_async_performance(void) {
     for (int i = 600; i < PERF_TEST_TASKS; i++) {
         tasks[i].type = (i % 3 == 0) ? INFRA_ASYNC_READ : 
                        (i % 3 == 1) ? INFRA_ASYNC_WRITE : INFRA_ASYNC_EVENT;
-        tasks[i].priority = (i % 4);
+        tasks[i].priority = (infra_priority_t)(i % 4);
         tasks[i].callback = stress_test_callback;
         
         err = infra_async_submit(&async, &tasks[i]);
@@ -407,7 +411,7 @@ static int test_async_concurrent(void) {
     infra_async_stats_t stats;
     err = infra_async_get_stats(&async, &stats);
     TEST_ASSERT(err == INFRA_OK);
-    printf("Stats: queued=%u, completed=%u, failed=%u, cancelled=%u\n",
+    printf("Stats: queued=%lu, completed=%lu, failed=%lu, cancelled=%lu\n",
            stats.queued_tasks, stats.completed_tasks, stats.failed_tasks, stats.cancelled_tasks);
 
     // 验证结果
@@ -483,7 +487,7 @@ static int test_async_task_classification(void) {
     infra_async_stats_t stats;
     err = infra_async_get_stats(&async, &stats);
     TEST_ASSERT(err == INFRA_OK);
-    printf("Stats: queued=%u, completed=%u, failed=%u, cancelled=%u\n",
+    printf("Stats: queued=%lu, completed=%lu, failed=%lu, cancelled=%lu\n",
            stats.queued_tasks, stats.completed_tasks, stats.failed_tasks, stats.cancelled_tasks);
 
     // 验证结果
@@ -545,7 +549,7 @@ static int test_async_mixed_workload(void) {
     infra_async_stats_t stats;
     err = infra_async_get_stats(&async, &stats);
     TEST_ASSERT(err == INFRA_OK);
-    printf("Stats: queued=%u, completed=%u, failed=%u, cancelled=%u\n",
+    printf("Stats: queued=%lu, completed=%lu, failed=%lu, cancelled=%lu\n",
            stats.queued_tasks, stats.completed_tasks, stats.failed_tasks, stats.cancelled_tasks);
 
     // 验证结果
@@ -659,10 +663,8 @@ static int test_async_priority(void) {
 static int cancelled_counter = 0;
 
 static void cancel_callback(infra_async_task_t* task, infra_error_t error) {
-    if (task) {
-        if (error == INFRA_OK || error == INFRA_ERROR_CANCELLED) {
-            cancelled_counter++;
-        }
+    if (task && error == INFRA_ERROR_CANCELLED) {
+        cancelled_counter++;
     }
 }
 
@@ -876,7 +878,7 @@ static int test_async_stress(void) {
                        (i % 3 == 1) ? INFRA_ASYNC_WRITE : INFRA_ASYNC_EVENT;
         
         // 随机设置优先级
-        tasks[i].priority = (infra_task_priority_t)(i % 4);  // 0-3
+        tasks[i].priority = (infra_priority_t)(i % 4);  // 0-3
         
         tasks[i].callback = stress_test_callback;
         

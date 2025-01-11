@@ -22,6 +22,30 @@
 #define INFRA_VERSION_STRING "1.0.0"
 
 //-----------------------------------------------------------------------------
+// Error Codes
+//-----------------------------------------------------------------------------
+
+#define INFRA_OK                  0
+#define INFRA_ERROR_INVALID      -1
+#define INFRA_ERROR_MEMORY       -2
+#define INFRA_ERROR_TIMEOUT      -3
+#define INFRA_ERROR_BUSY         -4
+#define INFRA_ERROR_NOT_FOUND    -5
+#define INFRA_ERROR_EXISTS       -6
+#define INFRA_ERROR_IO          -7
+#define INFRA_ERROR_CANCELLED   -8
+#define INFRA_ERROR_NOT_READY   -9
+#define INFRA_ERROR_FULL       -10
+#define INFRA_ERROR_EMPTY      -11
+#define INFRA_ERROR_INVALID_PARAM -12
+#define INFRA_ERROR_NO_MEMORY    -13
+#define INFRA_ERROR_STATE       -14
+#define INFRA_ERROR_STOPPED     -15
+#define INFRA_ERROR_AGAIN       -16
+#define INFRA_ERROR_INTERRUPTED -17
+#define INFRA_ERROR_NOMEM      -18
+
+//-----------------------------------------------------------------------------
 // Basic Types
 //-----------------------------------------------------------------------------
 
@@ -61,27 +85,6 @@ void infra_thread_exit(void* retval);
 infra_thread_t infra_thread_self(void);
 
 //-----------------------------------------------------------------------------
-// Error Codes
-//-----------------------------------------------------------------------------
-
-#define INFRA_OK                 0
-#define INFRA_ERROR_INVALID     -1
-#define INFRA_ERROR_MEMORY      -2
-#define INFRA_ERROR_IO          -3
-#define INFRA_ERROR_TIMEOUT     -4
-#define INFRA_ERROR_BUSY        -5
-#define INFRA_ERROR_NOTFOUND    -6
-#define INFRA_ERROR_EXISTS      -7
-#define INFRA_ERROR_FULL        -8
-#define INFRA_ERROR_EMPTY       -9
-#define INFRA_ERROR_AGAIN       -10
-#define INFRA_ERROR_INTERRUPTED -11
-#define INFRA_ERROR_CANCELLED   -12
-#define INFRA_ERROR_STATE       -13
-#define INFRA_ERROR_NOMEM       -14
-#define INFRA_ERROR_UNKNOWN     -99
-
-//-----------------------------------------------------------------------------
 // Log Levels
 //-----------------------------------------------------------------------------
 
@@ -91,6 +94,16 @@ infra_thread_t infra_thread_self(void);
 #define INFRA_LOG_LEVEL_INFO  3
 #define INFRA_LOG_LEVEL_DEBUG 4
 #define INFRA_LOG_LEVEL_TRACE 5
+
+//-----------------------------------------------------------------------------
+// Log Macros
+//-----------------------------------------------------------------------------
+
+#define INFRA_LOG_ERROR(fmt, ...) infra_log(INFRA_LOG_LEVEL_ERROR, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define INFRA_LOG_WARN(fmt, ...)  infra_log(INFRA_LOG_LEVEL_WARN,  __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define INFRA_LOG_INFO(fmt, ...)  infra_log(INFRA_LOG_LEVEL_INFO,  __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define INFRA_LOG_DEBUG(fmt, ...) infra_log(INFRA_LOG_LEVEL_DEBUG, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
+#define INFRA_LOG_TRACE(fmt, ...) infra_log(INFRA_LOG_LEVEL_TRACE, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
 
 //-----------------------------------------------------------------------------
 // Configuration
@@ -376,5 +389,41 @@ infra_error_t infra_file_size(infra_handle_t handle, size_t* size);
 infra_error_t infra_file_remove(const char* path);
 infra_error_t infra_file_rename(const char* old_path, const char* new_path);
 infra_error_t infra_file_exists(const char* path, bool* exists);
+
+const char* infra_error_string(int error_code);
+
+//-----------------------------------------------------------------------------
+// Skip List
+//-----------------------------------------------------------------------------
+
+// Maximum level for skip list
+#define INFRA_SKIPLIST_MAX_LEVEL 32
+
+// Skip list node structure
+typedef struct infra_skiplist_node {
+    void* key;                  // Key data
+    size_t key_size;           // Size of key data
+    void* value;               // Value data
+    size_t value_size;         // Size of value data
+    size_t level;              // Current level of the node
+    struct infra_skiplist_node* forward[INFRA_SKIPLIST_MAX_LEVEL];  // Forward pointers
+} infra_skiplist_node_t;
+
+// Skip list structure
+typedef struct infra_skiplist {
+    infra_skiplist_node_t* header;  // Header node
+    size_t level;                   // Current maximum level
+    size_t size;                    // Number of elements
+    int (*compare)(const void*, const void*);  // Compare function
+} infra_skiplist_t;
+
+// Skip list functions
+infra_error_t infra_skiplist_init(infra_skiplist_t* list, size_t max_level);
+infra_error_t infra_skiplist_destroy(infra_skiplist_t* list);
+infra_error_t infra_skiplist_insert(infra_skiplist_t* list, const void* key, size_t key_size, const void* value, size_t value_size);
+infra_error_t infra_skiplist_find(infra_skiplist_t* list, const void* key, size_t key_size, void** value, size_t* value_size);
+infra_error_t infra_skiplist_remove(infra_skiplist_t* list, const void* key, size_t key_size);
+infra_error_t infra_skiplist_size(infra_skiplist_t* list, size_t* size);
+infra_error_t infra_skiplist_clear(infra_skiplist_t* list);
 
 #endif /* INFRA_H */

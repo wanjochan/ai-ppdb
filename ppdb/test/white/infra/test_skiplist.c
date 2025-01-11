@@ -1,66 +1,80 @@
-#include "test/test_common.h"
+#include "test_common.h"
 #include "internal/infra/infra.h"
-#include "internal/infra/infra_struct.h"
-#include "test/test_framework.h"
+#include "test_framework.h"
 
 // Compare function for integers
 static int compare_int(const void* a, const void* b) {
-    return (intptr_t)a - (intptr_t)b;
+    intptr_t va = *(const intptr_t*)a;
+    intptr_t vb = *(const intptr_t*)b;
+    return (va > vb) - (va < vb);
 }
 
 // Helper function to verify value
-static void verify_value(ppdb_base_skiplist_t* list, intptr_t key, const char* expected) {
+static void verify_value(infra_skiplist_t* list, intptr_t key, const char* expected) {
     void* actual_value;
     size_t value_size;
-    assert(ppdb_base_skiplist_find(list, (void*)key, sizeof(intptr_t), &actual_value, &value_size) == PPDB_OK);
-    assert(strcmp((char*)actual_value, expected) == 0);
+    TEST_ASSERT(infra_skiplist_find(list, &key, sizeof(key), &actual_value, &value_size) == INFRA_OK);
+    TEST_ASSERT(infra_strcmp((char*)actual_value, expected) == 0);
 }
 
 // Basic skiplist test
-void test_skiplist_basic(void) {
-    ppdb_base_skiplist_t list;
+static int test_skiplist_basic(void) {
+    infra_skiplist_t list;
     size_t size;
     
     // Initialize skiplist
-    assert(ppdb_base_skiplist_init(&list, 4) == PPDB_OK);
+    TEST_ASSERT(infra_skiplist_init(&list, 4) == INFRA_OK);
+    list.compare = compare_int;
     
     // Check initial size
-    assert(ppdb_base_skiplist_size(&list, &size) == PPDB_OK);
-    assert(size == 0);
+    TEST_ASSERT(infra_skiplist_size(&list, &size) == INFRA_OK);
+    TEST_ASSERT(size == 0);
     
     // Insert some data
-    const char* key1 = "key1";
+    intptr_t key1 = 1;
     const char* value1 = "value1";
-    assert(ppdb_base_skiplist_insert(&list, key1, strlen(key1), value1, strlen(value1) + 1) == PPDB_OK);
+    TEST_ASSERT(infra_skiplist_insert(&list, &key1, sizeof(key1), value1, strlen(value1) + 1) == INFRA_OK);
     
-    const char* key2 = "key2";
+    intptr_t key2 = 2;
     const char* value2 = "value2";
-    assert(ppdb_base_skiplist_insert(&list, key2, strlen(key2), value2, strlen(value2) + 1) == PPDB_OK);
+    TEST_ASSERT(infra_skiplist_insert(&list, &key2, sizeof(key2), value2, strlen(value2) + 1) == INFRA_OK);
     
     // Check size after insertions
-    assert(ppdb_base_skiplist_size(&list, &size) == PPDB_OK);
-    assert(size == 2);
+    TEST_ASSERT(infra_skiplist_size(&list, &size) == INFRA_OK);
+    TEST_ASSERT(size == 2);
+    
+    // Verify values
+    verify_value(&list, key1, value1);
+    verify_value(&list, key2, value2);
+    
+    // Remove a value
+    TEST_ASSERT(infra_skiplist_remove(&list, &key1, sizeof(key1)) == INFRA_OK);
+    
+    // Check size after removal
+    TEST_ASSERT(infra_skiplist_size(&list, &size) == INFRA_OK);
+    TEST_ASSERT(size == 1);
+    
+    // Verify remaining value
+    verify_value(&list, key2, value2);
+    
+    // Clear the list
+    TEST_ASSERT(infra_skiplist_clear(&list) == INFRA_OK);
+    
+    // Check size after clear
+    TEST_ASSERT(infra_skiplist_size(&list, &size) == INFRA_OK);
+    TEST_ASSERT(size == 0);
     
     // Cleanup
-    assert(ppdb_base_skiplist_destroy(&list) == PPDB_OK);
-}
-
-// Run all skiplist tests
-void run_skiplist_tests(void) {
-    printf("Running test suite: Skiplist Tests\n");
-    printf("  Running test: test_skiplist_basic\n");
-    test_skiplist_basic();
-    printf("  Test passed: test_skiplist_basic\n");
-    printf("Test suite completed\n");
+    TEST_ASSERT(infra_skiplist_destroy(&list) == INFRA_OK);
+    
+    return 0;
 }
 
 int main(void) {
-    printf("Running test suite: Skiplist Tests\n");
+    TEST_INIT();
     
-    printf("  Running test: test_skiplist_basic\n");
-    test_skiplist_basic();
-    printf("  Test passed: test_skiplist_basic\n");
+    TEST_RUN(test_skiplist_basic);
     
-    printf("Test suite completed\n");
+    TEST_CLEANUP();
     return 0;
 }

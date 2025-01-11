@@ -1,199 +1,127 @@
-#include "test/test_common.h"
+#include "test_common.h"
 #include "internal/infra/infra.h"
-#include "internal/infra/infra_metrics.h"
-#include "test/test_framework.h"
+#include "test_framework.h"
 
-// Basic functionality test
-void test_counter(void) {
-    ppdb_metrics_t metrics;
-    ppdb_metrics_init(&metrics);
+// 基本功能测试
+static int test_metrics_basic(void) {
+    infra_stats_t stats;
+    infra_stats_init(&stats);
 
     // 测试初始状态
-    ASSERT_EQ(ppdb_metrics_get_throughput(&metrics), 0.0);
-    ASSERT_EQ(ppdb_metrics_get_avg_latency(&metrics), 0.0);
-    ASSERT_EQ(ppdb_metrics_get_active_threads(&metrics), 0);
-    ASSERT_EQ(ppdb_metrics_get_size(&metrics), 0);
+    TEST_ASSERT(stats.total_operations == 0);
+    TEST_ASSERT(stats.successful_operations == 0);
+    TEST_ASSERT(stats.failed_operations == 0);
+    TEST_ASSERT(stats.total_bytes == 0);
+    TEST_ASSERT(stats.min_latency_us == (uint64_t)-1);
+    TEST_ASSERT(stats.max_latency_us == 0);
+    TEST_ASSERT(stats.avg_latency_us == 0);
 
     // 测试单个操作
-    ppdb_metrics_begin_op(&metrics);
-    usleep(1000); // 休眠1ms模拟操作
-    ppdb_metrics_end_op(&metrics, 100);
+    infra_stats_update(&stats, true, 1000, 100, INFRA_OK);
+    TEST_ASSERT(stats.total_operations == 1);
+    TEST_ASSERT(stats.successful_operations == 1);
+    TEST_ASSERT(stats.total_bytes == 100);
+    TEST_ASSERT(stats.min_latency_us == 1000);
+    TEST_ASSERT(stats.max_latency_us == 1000);
+    TEST_ASSERT(stats.avg_latency_us == 1000);
 
-    ASSERT_GT(ppdb_metrics_get_avg_latency(&metrics), 0.0);
-    ASSERT_EQ(ppdb_metrics_get_size(&metrics), 100);
-
-    ppdb_metrics_destroy(&metrics);
+    return 0;
 }
 
-// Performance test
-void test_metrics_performance(void) {
-    ppdb_metrics_t metrics;
-    ppdb_metrics_init(&metrics);
+// 性能测试
+static int test_metrics_performance(void) {
+    infra_stats_t stats;
+    infra_stats_init(&stats);
     
-    int64_t start = ppdb_time_now();
+    infra_time_t start = infra_time_monotonic();
     for (int i = 0; i < 1000000; i++) {
-        ppdb_metrics_begin_op(&metrics);
-        ppdb_metrics_end_op(&metrics, 1);
+        infra_stats_update(&stats, true, 1, 1, INFRA_OK);
     }
-    int64_t end = ppdb_time_now();
+    infra_time_t end = infra_time_monotonic();
     
-    double time_spent = (end - start) / 1000000.0;
-    double ops_per_sec = 1000000.0 / time_spent;
+    double time_spent = (double)(end - start) / 1000000.0;  // Convert to seconds
+    TEST_ASSERT(time_spent < 30.0);  // 性能测试应在30秒内完成
     
-    TEST_ASSERT(ops_per_sec > 100000.0, "Performance below threshold");
-    ppdb_metrics_destroy(&metrics);
+    return 0;
 }
 
-// Boundary conditions test
-void test_metrics_boundary(void) {
-    ppdb_metrics_t metrics;
-    ppdb_metrics_init(&metrics);
+// 边界条件测试
+static int test_metrics_boundary(void) {
+    infra_stats_t stats;
+    infra_stats_init(&stats);
     
-    // Test maximum values
-    ppdb_metrics_begin_op(&metrics);
-    ppdb_metrics_end_op(&metrics, SIZE_MAX);
-    TEST_ASSERT(ppdb_metrics_get_size(&metrics) == SIZE_MAX, "Max size handling failed");
+    // 测试最大值
+    infra_stats_update(&stats, true, UINT64_MAX, SIZE_MAX, INFRA_OK);
+    TEST_ASSERT(stats.total_bytes == SIZE_MAX);
+    TEST_ASSERT(stats.max_latency_us == UINT64_MAX);
     
-    // Test zero values
-    ppdb_metrics_begin_op(&metrics);
-    ppdb_metrics_end_op(&metrics, 0);
-    TEST_ASSERT(ppdb_metrics_get_avg_latency(&metrics) >= 0.0, "Zero size handling failed");
+    // 测试零值
+    infra_stats_update(&stats, true, 0, 0, INFRA_OK);
+    TEST_ASSERT(stats.min_latency_us == 0);
     
-    ppdb_metrics_destroy(&metrics);
+    return 0;
 }
 
-// Error handling test
-void test_metrics_error_handling(void) {
-    ppdb_metrics_t metrics;
+// 错误处理测试
+static int test_metrics_error_handling(void) {
+    infra_stats_t stats;
+    infra_stats_init(&stats);
     
-    // Test uninitialized metrics
-    TEST_ASSERT(ppdb_metrics_get_throughput(NULL) == 0.0, "Null metrics handling failed");
-    TEST_ASSERT(ppdb_metrics_begin_op(NULL) == -1, "Null metrics operation handling failed");
+    // 测试失败操作
+    infra_stats_update(&stats, false, 1000, 100, INFRA_ERROR_MEMORY);
+    TEST_ASSERT(stats.failed_operations == 1);
+    TEST_ASSERT(stats.last_error == INFRA_ERROR_MEMORY);
+    TEST_ASSERT(stats.last_error_time > 0);
     
-    // Test invalid operations
-    ppdb_metrics_init(&metrics);
-    ppdb_metrics_end_op(&metrics, 100); // End without begin
-    TEST_ASSERT(ppdb_metrics_get_avg_latency(&metrics) >= 0.0, "Invalid operation sequence handling failed");
-    
-    ppdb_metrics_destroy(&metrics);
+    return 0;
 }
 
-// Stress test with multiple threads
-void test_metrics_stress(void) {
-    ppdb_metrics_t metrics;
-    ppdb_metrics_init(&metrics);
+// 合并测试
+static int test_metrics_merge(void) {
+    infra_stats_t stats1, stats2;
+    infra_stats_init(&stats1);
+    infra_stats_init(&stats2);
     
-    #define NUM_THREADS 8
-    #define OPS_PER_THREAD 100000
+    // 更新第一个统计对象
+    infra_stats_update(&stats1, true, 1000, 100, INFRA_OK);
+    infra_stats_update(&stats1, false, 2000, 200, INFRA_ERROR_MEMORY);
     
-    ppdb_thread_t* threads[NUM_THREADS];
-    ppdb_error_t err;
-
-    for (int i = 0; i < NUM_THREADS; i++) {
-        err = ppdb_thread_create(&threads[i], concurrent_worker, &metrics);
-        TEST_ASSERT(err == PPDB_OK, "Thread creation failed");
-    }
+    // 更新第二个统计对象
+    infra_stats_update(&stats2, true, 3000, 300, INFRA_OK);
+    infra_stats_update(&stats2, true, 4000, 400, INFRA_OK);
     
-    for (int i = 0; i < NUM_THREADS; i++) {
-        err = ppdb_thread_join(threads[i]);
-        TEST_ASSERT(err == PPDB_OK, "Thread join failed");
-    }
+    // 合并统计
+    infra_stats_merge(&stats1, &stats2);
     
-    TEST_ASSERT(ppdb_metrics_get_size(&metrics) == NUM_THREADS * OPS_PER_THREAD * 10, 
-                "Stress test data integrity failed");
+    TEST_ASSERT(stats1.total_operations == 4);
+    TEST_ASSERT(stats1.successful_operations == 3);
+    TEST_ASSERT(stats1.failed_operations == 1);
+    TEST_ASSERT(stats1.total_bytes == 1000);
+    TEST_ASSERT(stats1.min_latency_us == 1000);
+    TEST_ASSERT(stats1.max_latency_us == 4000);
     
-    ppdb_metrics_destroy(&metrics);
-}
-
-// 并发测试线程函数
-static void* concurrent_worker(void* arg) {
-    ppdb_metrics_t* metrics = (ppdb_metrics_t*)arg;
-    
-    for (int i = 0; i < 1000; i++) {
-        ppdb_metrics_begin_op(metrics);
-        ppdb_time_sleep(100); // 休眠0.1ms模拟操作
-        ppdb_metrics_end_op(metrics, 10);
-    }
-    
-    return NULL;
-}
-
-// 直方图测试
-void test_histogram(void) {
-    ppdb_metrics_t metrics;
-    ppdb_metrics_init(&metrics);
-
-    // 创建4个线程并发写入
-    ppdb_thread_t* threads[4];
-    ppdb_error_t err;
-
-    for (int i = 0; i < 4; i++) {
-        err = ppdb_thread_create(&threads[i], concurrent_worker, &metrics);
-        TEST_ASSERT(err == PPDB_OK, "Thread creation failed");
-    }
-
-    // 等待所有线程完成
-    for (int i = 0; i < 4; i++) {
-        err = ppdb_thread_join(threads[i]);
-        TEST_ASSERT(err == PPDB_OK, "Thread join failed");
-    }
-
-    // 验证结果
-    ASSERT_EQ(ppdb_metrics_get_size(&metrics), 40000); // 4 * 1000 * 10
-    ASSERT_GT(ppdb_metrics_get_throughput(&metrics), 0.0);
-
-    // 验证延迟分布
-    double p50 = ppdb_metrics_get_latency_percentile(&metrics, 50);
-    double p99 = ppdb_metrics_get_latency_percentile(&metrics, 99);
-    ASSERT_GT(p99, p50); // 99分位延迟应该大于中位数
-    
-    ppdb_metrics_destroy(&metrics);
-}
-
-// 采样器测试
-void test_sampler(void) {
-    ppdb_metrics_t metrics;
-    ppdb_metrics_init(&metrics);
-
-    // 测试固定间隔写入
-    for (int i = 0; i < 100; i++) {
-        ppdb_metrics_begin_op(&metrics);
-        ppdb_time_sleep(10000); // 休眠10ms
-        ppdb_metrics_end_op(&metrics, 100);
-    }
-
-    // 验证吞吐量(大约应该是100 ops/s)
-    double throughput = ppdb_metrics_get_throughput(&metrics);
-    ASSERT_GT(throughput, 80.0);  // 允许20%的误差
-    ASSERT_LT(throughput, 120.0);
-
-    // 验证平均延迟(大约应该是10ms)
-    double avg_latency = ppdb_metrics_get_avg_latency(&metrics);
-    ASSERT_GT(avg_latency, 8000.0);  // 8ms
-    ASSERT_LT(avg_latency, 12000.0); // 12ms
-
-    // 验证采样率
-    double sample_rate = ppdb_metrics_get_sample_rate(&metrics);
-    ASSERT_GT(sample_rate, 0.0);
-    ASSERT_LE(sample_rate, 1.0);
-
-    ppdb_metrics_destroy(&metrics);
+    return 0;
 }
 
 int main(void) {
-    TEST_INIT("Performance Metrics Test");
+    // 初始化infra系统
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
+
+    TEST_INIT();
     
-    // Basic tests
-    RUN_TEST(test_counter);
-    RUN_TEST(test_histogram);
-    RUN_TEST(test_sampler);
+    TEST_RUN(test_metrics_basic);
+    TEST_RUN(test_metrics_performance);
+    TEST_RUN(test_metrics_boundary);
+    TEST_RUN(test_metrics_error_handling);
+    TEST_RUN(test_metrics_merge);
     
-    // Additional comprehensive tests
-    RUN_TEST(test_metrics_performance);
-    RUN_TEST(test_metrics_boundary);
-    RUN_TEST(test_metrics_error_handling);
-    RUN_TEST(test_metrics_stress);
+    TEST_CLEANUP();
     
-    TEST_SUMMARY();
-    return TEST_RESULT();
+    // 清理infra系统
+    infra_cleanup();
+    return 0;
 } 

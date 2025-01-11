@@ -18,7 +18,7 @@ static void test_log_callback(int level, const char* file, int line,
 }
 
 // Basic functionality test
-static void test_log_basic(void) {
+static int test_log_basic(void) {
     const char* test_msg = "Test log message";
     log_message_found = false;
     
@@ -28,10 +28,11 @@ static void test_log_basic(void) {
     INFRA_LOG_INFO("%s", test_msg);
     TEST_ASSERT(log_message_found);
     TEST_ASSERT(infra_strcmp(last_log_message, test_msg) == 0);
+    return 0;
 }
 
 // Performance test
-static void test_log_performance(void) {
+static int test_log_performance(void) {
     infra_time_t start, end;
     const int iterations = 100;
     
@@ -41,12 +42,13 @@ static void test_log_performance(void) {
     }
     end = infra_time_monotonic();
     
-    double time_spent = (end - start) / 1000.0;
-    TEST_ASSERT(time_spent < 30.0); // 放宽到30秒
+    double time_spent = (double)(end - start) / 1000000.0;  // Convert to seconds
+    TEST_ASSERT(time_spent < 30.0);
+    return 0;
 }
 
 // Boundary conditions test
-static void test_log_boundary(void) {
+static int test_log_boundary(void) {
     char* large_msg = infra_malloc(4096);
     infra_memset(large_msg, 'A', 4095);
     large_msg[4095] = '\0';
@@ -55,10 +57,11 @@ static void test_log_boundary(void) {
     INFRA_LOG_INFO("%s", large_msg);  // Large message
     
     infra_free(large_msg);
+    return 0;
 }
 
 // Error handling test
-static void test_log_error_handling(void) {
+static int test_log_error_handling(void) {
     log_message_found = false;
     infra_log_set_level(INFRA_LOG_LEVEL_NONE);
     INFRA_LOG_INFO("Should not appear");
@@ -73,6 +76,7 @@ static void test_log_error_handling(void) {
     infra_log_set_callback(NULL);  // Remove callback
     INFRA_LOG_INFO("Should not trigger callback");
     TEST_ASSERT(!log_message_found);
+    return 0;
 }
 
 // Concurrent access test
@@ -84,42 +88,46 @@ static void* concurrent_log_thread(void* arg) {
     return NULL;
 }
 
-static void test_log_concurrent(void) {
-    void* threads[5];
+static int test_log_concurrent(void) {
+    infra_thread_t threads[5];
     infra_error_t err;
     
     infra_log_set_callback(test_log_callback);
     infra_log_set_level(INFRA_LOG_LEVEL_INFO);
     
     for (int i = 0; i < 5; i++) {
-        err = infra_platform_thread_create(&threads[i], concurrent_log_thread, NULL);
+        err = infra_thread_create(&threads[i], concurrent_log_thread, NULL);
         TEST_ASSERT(err == INFRA_OK);
     }
     
     for (int i = 0; i < 5; i++) {
-        err = infra_platform_thread_join(threads[i]);
+        err = infra_thread_join(threads[i]);
         TEST_ASSERT(err == INFRA_OK);
     }
+    return 0;
 }
 
 int main(void) {
+    // 初始化infra系统
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
+
+    TEST_INIT();
+    
     infra_printf("Running test suite: Log Tests\n");
     
-    infra_printf("  Running test: test_log_basic\n");
-    test_log_basic();
+    TEST_RUN(test_log_basic);
+    TEST_RUN(test_log_performance);
+    TEST_RUN(test_log_boundary);
+    TEST_RUN(test_log_error_handling);
+    TEST_RUN(test_log_concurrent);
     
-    infra_printf("  Running test: test_log_performance\n");
-    test_log_performance();
+    TEST_CLEANUP();
     
-    infra_printf("  Running test: test_log_boundary\n");
-    test_log_boundary();
-    
-    infra_printf("  Running test: test_log_error_handling\n");
-    test_log_error_handling();
-    
-    infra_printf("  Running test: test_log_concurrent\n");
-    test_log_concurrent();
-    
-    infra_printf("Test suite completed successfully\n");
+    // 清理infra系统
+    infra_cleanup();
     return 0;
 } 

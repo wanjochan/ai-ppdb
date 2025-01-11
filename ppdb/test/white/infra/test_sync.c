@@ -9,9 +9,9 @@ static void* thread_func(void* arg) {
     return NULL;
 }
 
-static void test_thread(void) {
+static int test_thread(void) {
     infra_error_t err;
-    void* thread;
+    infra_thread_t thread;
     int counter = 0;
 
     // 创建线程
@@ -23,13 +23,12 @@ static void test_thread(void) {
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(counter == 1);
 
-    // 销毁线程
-    infra_free(thread);
+    return 0;
 }
 
-static void test_mutex(void) {
+static int test_mutex(void) {
     infra_error_t err;
-    void* mutex;
+    infra_mutex_t mutex;
     int counter = 0;
 
     // 创建互斥锁
@@ -53,18 +52,19 @@ static void test_mutex(void) {
     // 销毁互斥锁
     infra_mutex_destroy(mutex);
     TEST_ASSERT(counter == 2);
+    return 0;
 }
 
-static void test_cond(void) {
+static int test_cond(void) {
     infra_error_t err;
-    void* mutex;
-    void* cond;
+    infra_mutex_t mutex;
+    infra_cond_t cond;
 
     // 创建互斥锁和条件变量
     err = infra_mutex_create(&mutex);
     TEST_ASSERT(err == INFRA_OK);
 
-    err = infra_cond_create(&cond);
+    err = infra_cond_init(&cond);
     TEST_ASSERT(err == INFRA_OK);
 
     // 测试信号
@@ -90,44 +90,57 @@ static void test_cond(void) {
     // 销毁条件变量和互斥锁
     infra_cond_destroy(cond);
     infra_mutex_destroy(mutex);
+    return 0;
 }
 
-static void test_rwlock(void) {
+static int test_rwlock(void) {
     infra_error_t err;
-    void* rwlock;
+    infra_rwlock_t rwlock;
     int counter = 0;
 
     // 创建读写锁
-    err = infra_rwlock_create(&rwlock);
+    err = infra_rwlock_init(&rwlock);
     TEST_ASSERT(err == INFRA_OK);
 
     // 读锁
-    err = infra_rwlock_rdlock(rwlock);
+    err = infra_rwlock_rdlock(&rwlock);
     TEST_ASSERT(err == INFRA_OK);
     counter++;
-    err = infra_rwlock_unlock(rwlock);
+    err = infra_rwlock_unlock(&rwlock);
     TEST_ASSERT(err == INFRA_OK);
 
     // 写锁
-    err = infra_rwlock_wrlock(rwlock);
+    err = infra_rwlock_wrlock(&rwlock);
     TEST_ASSERT(err == INFRA_OK);
     counter++;
-    err = infra_rwlock_unlock(rwlock);
+    err = infra_rwlock_unlock(&rwlock);
     TEST_ASSERT(err == INFRA_OK);
 
     // 销毁读写锁
-    infra_rwlock_destroy(rwlock);
+    err = infra_rwlock_destroy(&rwlock);
+    TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(counter == 2);
+    return 0;
 }
 
 int main(void) {
+    // 初始化infra系统
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
+
     TEST_INIT();
 
-    test_thread();
-    test_mutex();
-    test_cond();
-    test_rwlock();
+    TEST_RUN(test_thread);
+    TEST_RUN(test_mutex);
+    TEST_RUN(test_cond);
+    TEST_RUN(test_rwlock);
 
     TEST_CLEANUP();
+
+    // 清理infra系统
+    infra_cleanup();
     return 0;
 }

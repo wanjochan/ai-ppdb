@@ -6,7 +6,7 @@
 #include "internal/infra/infra.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_sync.h"
-#include "internal/infra/infra_async.h"
+//#include "internal/infra/infra_async.h"
 
 //-----------------------------------------------------------------------------
 // Global State
@@ -18,6 +18,11 @@ struct {
     infra_config_t config;
     infra_status_t status;
     infra_mutex_t mutex;
+    struct {
+        int level;
+        infra_log_callback_t callback;
+        infra_mutex_t mutex;
+    } log;
 } g_infra = {0};
 
 //-----------------------------------------------------------------------------
@@ -129,11 +134,12 @@ static infra_error_t init_module(infra_init_flags_t flag) {
             break;
 
         case INFRA_INIT_LOG:
-            // 初始化日志系统
-            infra_log_set_level(g_infra.config.log.level);
-            if (g_infra.config.log.async_logging) {
-                // TODO: 实现异步日志
+            err = infra_mutex_create(&g_infra.log.mutex);
+            if (err != INFRA_OK) {
+                return err;
             }
+            g_infra.log.level = g_infra.config.log.level;
+            g_infra.log.callback = NULL;
             break;
 
         case INFRA_INIT_DS:
@@ -259,24 +265,23 @@ infra_error_t infra_get_status(infra_status_t* status) {
 // Error Handling
 //-----------------------------------------------------------------------------
 
-const char* infra_error_string(infra_error_t error) {
-    switch (error) {
+const char* infra_error_string(int error_code) {
+    switch (error_code) {
         case INFRA_OK:                  return "Success";
-        case INFRA_ERROR_INVALID:       return "Invalid argument";
-        case INFRA_ERROR_MEMORY:        return "Out of memory";
-        case INFRA_ERROR_IO:            return "I/O error";
+        case INFRA_ERROR_INVALID:       return "Invalid parameter";
+        case INFRA_ERROR_MEMORY:        return "Memory error";
         case INFRA_ERROR_TIMEOUT:       return "Timeout";
         case INFRA_ERROR_BUSY:          return "Resource busy";
-        case INFRA_ERROR_NOTFOUND:      return "Not found";
+        case INFRA_ERROR_NOT_FOUND:     return "Not found";
         case INFRA_ERROR_EXISTS:        return "Already exists";
-        case INFRA_ERROR_FULL:          return "Resource full";
-        case INFRA_ERROR_EMPTY:         return "Resource empty";
-        case INFRA_ERROR_AGAIN:         return "Try again";
-        case INFRA_ERROR_INTERRUPTED:   return "Operation interrupted";
-        case INFRA_ERROR_CANCELLED:     return "Operation cancelled";
-        case INFRA_ERROR_STATE:         return "Invalid state";
-        case INFRA_ERROR_UNKNOWN:       return "Unknown error";
-        default:                        return "Undefined error";
+        case INFRA_ERROR_IO:           return "I/O error";
+        case INFRA_ERROR_CANCELLED:    return "Operation cancelled";
+        case INFRA_ERROR_NOT_READY:    return "Not ready";
+        case INFRA_ERROR_FULL:        return "Resource full";
+        case INFRA_ERROR_EMPTY:       return "Resource empty";
+        case INFRA_ERROR_INVALID_PARAM: return "Invalid parameter";
+        case INFRA_ERROR_NO_MEMORY:    return "Out of memory";
+        default:                       return "Unknown error";
     }
 }
 
@@ -470,41 +475,44 @@ void infra_buffer_reset(infra_buffer_t* buf) {
 // Logging
 //-----------------------------------------------------------------------------
 
-static int current_log_level = INFRA_LOG_LEVEL_INFO;
-static infra_log_callback_t log_callback = NULL;
-static void* log_mutex = NULL;
-
 void infra_log_set_level(int level) {
     if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
-        current_log_level = level;
+        g_infra.log.level = level;
     }
 }
 
 void infra_log_set_callback(infra_log_callback_t callback) {
-    if (!log_mutex) {
-        infra_platform_mutex_create(&log_mutex);
-    }
-    log_callback = callback;
+    g_infra.log.callback = callback;
 }
 
 void infra_log(int level, const char* file, int line, const char* func,
                const char* format, ...) {
-    if (level > current_log_level || !log_callback) {
+    if (!g_infra.initialized || level > g_infra.log.level || !format) {
         return;
     }
 
-    char message[256];  // 使用较小的缓冲区
+    char message[4096];
     va_list args;
     va_start(args, format);
     vsnprintf(message, sizeof(message), format, args);
     va_end(args);
 
-    if (log_mutex) {
-        infra_platform_mutex_lock(log_mutex);
-    }
-    log_callback(level, file, line, func, message);
-    if (log_mutex) {
-        infra_platform_mutex_unlock(log_mutex);
+    if (g_infra.log.callback) {
+        g_infra.log.callback(level, file, line, func, message);
+    } else {
+        const char* level_str = "UNKNOWN";
+        switch (level) {
+            case INFRA_LOG_LEVEL_ERROR: level_str = "ERROR"; break;
+            case INFRA_LOG_LEVEL_WARN:  level_str = "WARN"; break;
+            case INFRA_LOG_LEVEL_INFO:  level_str = "INFO"; break;
+            case INFRA_LOG_LEVEL_DEBUG: level_str = "DEBUG"; break;
+            case INFRA_LOG_LEVEL_TRACE: level_str = "TRACE"; break;
+        }
+        
+        infra_mutex_lock(g_infra.log.mutex);
+        fprintf(stderr, "[%s] %s:%d %s(): %s\n", level_str, file, line, func, message);
+        fflush(stderr);
+        infra_mutex_unlock(g_infra.log.mutex);
     }
 }
 
@@ -1199,24 +1207,39 @@ infra_error_t infra_file_close(infra_handle_t handle) {
 infra_error_t infra_file_read(infra_handle_t handle, void* buffer, size_t size, size_t* bytes_read) {
     if (!handle || !buffer || !bytes_read) return INFRA_ERROR_INVALID;
 
-    ssize_t result = read((int)handle, buffer, size);
-    if (result == -1) {
-        return INFRA_ERROR_IO;
+    size_t total_read = 0;
+    uint8_t* buf = (uint8_t*)buffer;
+
+    while (total_read < size) {
+        ssize_t result = read((int)handle, buf + total_read, size - total_read);
+        if (result == -1) {
+            if (errno == EINTR) continue;  // 被信号中断，重试
+            return INFRA_ERROR_IO;
+        }
+        if (result == 0) break;  // EOF
+        total_read += result;
     }
 
-    *bytes_read = (size_t)result;
+    *bytes_read = total_read;
     return INFRA_OK;
 }
 
 infra_error_t infra_file_write(infra_handle_t handle, const void* buffer, size_t size, size_t* bytes_written) {
     if (!handle || !buffer || !bytes_written) return INFRA_ERROR_INVALID;
 
-    ssize_t result = write((int)handle, buffer, size);
-    if (result == -1) {
-        return INFRA_ERROR_IO;
+    size_t total_written = 0;
+    const uint8_t* buf = (const uint8_t*)buffer;
+
+    while (total_written < size) {
+        ssize_t result = write((int)handle, buf + total_written, size - total_written);
+        if (result == -1) {
+            if (errno == EINTR) continue;  // 被信号中断，重试
+            return INFRA_ERROR_IO;
+        }
+        total_written += result;
     }
 
-    *bytes_written = (size_t)result;
+    *bytes_written = total_written;
     return INFRA_OK;
 }
 
@@ -1314,5 +1337,244 @@ void infra_time_sleep(uint32_t ms) {
 
 void infra_time_yield(void) {
     infra_platform_yield();
+}
+
+//-----------------------------------------------------------------------------
+// Skip List Implementation
+//-----------------------------------------------------------------------------
+
+// Helper function to create a new node
+static infra_skiplist_node_t* create_node(size_t level, const void* key, size_t key_size, const void* value, size_t value_size) {
+    infra_skiplist_node_t* node = (infra_skiplist_node_t*)infra_malloc(sizeof(infra_skiplist_node_t));
+    if (!node) return NULL;
+
+    node->key = infra_malloc(key_size);
+    if (!node->key) {
+        infra_free(node);
+        return NULL;
+    }
+
+    node->value = infra_malloc(value_size);
+    if (!node->value) {
+        infra_free(node->key);
+        infra_free(node);
+        return NULL;
+    }
+
+    memcpy(node->key, key, key_size);
+    memcpy(node->value, value, value_size);
+    node->key_size = key_size;
+    node->value_size = value_size;
+    node->level = level;
+
+    return node;
+}
+
+// Helper function to free a node
+static void free_node(infra_skiplist_node_t* node) {
+    if (node) {
+        infra_free(node->key);
+        infra_free(node->value);
+        infra_free(node);
+    }
+}
+
+// Helper function to generate a random level
+static size_t random_level(void) {
+    size_t level = 1;
+    while ((rand() & 0xFFFF) < (0xFFFF >> 1) && level < INFRA_SKIPLIST_MAX_LEVEL) {
+        level++;
+    }
+    return level;
+}
+
+infra_error_t infra_skiplist_init(infra_skiplist_t* list, size_t max_level) {
+    if (!list || max_level == 0 || max_level > INFRA_SKIPLIST_MAX_LEVEL) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    list->header = create_node(INFRA_SKIPLIST_MAX_LEVEL, NULL, 0, NULL, 0);
+    if (!list->header) {
+        return INFRA_ERROR_MEMORY;
+    }
+
+    for (size_t i = 0; i < INFRA_SKIPLIST_MAX_LEVEL; i++) {
+        list->header->forward[i] = NULL;
+    }
+
+    list->level = 1;
+    list->size = 0;
+    list->compare = NULL;
+
+    return INFRA_OK;
+}
+
+infra_error_t infra_skiplist_destroy(infra_skiplist_t* list) {
+    if (!list) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_skiplist_node_t* current = list->header;
+    while (current) {
+        infra_skiplist_node_t* next = current->forward[0];
+        free_node(current);
+        current = next;
+    }
+
+    list->header = NULL;
+    list->level = 0;
+    list->size = 0;
+    list->compare = NULL;
+
+    return INFRA_OK;
+}
+
+infra_error_t infra_skiplist_insert(infra_skiplist_t* list, const void* key, size_t key_size, const void* value, size_t value_size) {
+    if (!list || !key || !value || key_size == 0 || value_size == 0 || !list->compare) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_skiplist_node_t* update[INFRA_SKIPLIST_MAX_LEVEL];
+    infra_skiplist_node_t* current = list->header;
+
+    // Find position to insert
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (current->forward[i] && list->compare(current->forward[i]->key, key) < 0) {
+            current = current->forward[i];
+        }
+        update[i] = current;
+    }
+
+    current = current->forward[0];
+
+    // Check if key already exists
+    if (current && list->compare(current->key, key) == 0) {
+        // Update value
+        void* new_value = infra_malloc(value_size);
+        if (!new_value) {
+            return INFRA_ERROR_MEMORY;
+        }
+
+        memcpy(new_value, value, value_size);
+        infra_free(current->value);
+        current->value = new_value;
+        current->value_size = value_size;
+
+        return INFRA_OK;
+    }
+
+    // Insert new node
+    size_t level = random_level();
+    if (level > list->level) {
+        for (size_t i = list->level; i < level; i++) {
+            update[i] = list->header;
+        }
+        list->level = level;
+    }
+
+    infra_skiplist_node_t* node = create_node(level, key, key_size, value, value_size);
+    if (!node) {
+        return INFRA_ERROR_MEMORY;
+    }
+
+    for (size_t i = 0; i < level; i++) {
+        node->forward[i] = update[i]->forward[i];
+        update[i]->forward[i] = node;
+    }
+
+    list->size++;
+    return INFRA_OK;
+}
+
+infra_error_t infra_skiplist_find(infra_skiplist_t* list, const void* key, size_t key_size, void** value, size_t* value_size) {
+    if (!list || !key || !value || !value_size || key_size == 0 || !list->compare) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_skiplist_node_t* current = list->header;
+
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (current->forward[i] && list->compare(current->forward[i]->key, key) < 0) {
+            current = current->forward[i];
+        }
+    }
+
+    current = current->forward[0];
+
+    if (current && list->compare(current->key, key) == 0) {
+        *value = current->value;
+        *value_size = current->value_size;
+        return INFRA_OK;
+    }
+
+    return INFRA_ERROR_NOT_FOUND;
+}
+
+infra_error_t infra_skiplist_remove(infra_skiplist_t* list, const void* key, size_t key_size) {
+    if (!list || !key || key_size == 0 || !list->compare) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_skiplist_node_t* update[INFRA_SKIPLIST_MAX_LEVEL];
+    infra_skiplist_node_t* current = list->header;
+
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (current->forward[i] && list->compare(current->forward[i]->key, key) < 0) {
+            current = current->forward[i];
+        }
+        update[i] = current;
+    }
+
+    current = current->forward[0];
+
+    if (current && list->compare(current->key, key) == 0) {
+        for (size_t i = 0; i < list->level; i++) {
+            if (update[i]->forward[i] != current) {
+                break;
+            }
+            update[i]->forward[i] = current->forward[i];
+        }
+
+        while (list->level > 1 && list->header->forward[list->level - 1] == NULL) {
+            list->level--;
+        }
+
+        free_node(current);
+        list->size--;
+        return INFRA_OK;
+    }
+
+    return INFRA_ERROR_NOT_FOUND;
+}
+
+infra_error_t infra_skiplist_size(infra_skiplist_t* list, size_t* size) {
+    if (!list || !size) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    *size = list->size;
+    return INFRA_OK;
+}
+
+infra_error_t infra_skiplist_clear(infra_skiplist_t* list) {
+    if (!list) {
+        return INFRA_ERROR_INVALID;
+    }
+
+    infra_skiplist_node_t* current = list->header->forward[0];
+    while (current) {
+        infra_skiplist_node_t* next = current->forward[0];
+        free_node(current);
+        current = next;
+    }
+
+    for (size_t i = 0; i < INFRA_SKIPLIST_MAX_LEVEL; i++) {
+        list->header->forward[i] = NULL;
+    }
+
+    list->level = 1;
+    list->size = 0;
+
+    return INFRA_OK;
 }
 

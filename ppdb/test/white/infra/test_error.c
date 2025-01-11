@@ -1,96 +1,85 @@
-#include "test/test_common.h"
+#include "test_common.h"
 #include "internal/infra/infra.h"
-#include "internal/infra/infra_error.h"
-#include "test/test_framework.h"
+#include "test_framework.h"
 
-// Basic functionality tests
-static void test_error_basic(void) {
-    TEST_ASSERT(PPDB_ERR_MEMORY != PPDB_OK);
-    TEST_ASSERT(ppdb_base_error_init() == PPDB_OK);
-    TEST_ASSERT(ppdb_base_error_get_context() != NULL);
-}
-
-// Error context handling tests
-static void test_error_context(void) {
-    ppdb_error_context_t ctx = {0};
-    ctx.code = PPDB_ERR_MEMORY;
-    ctx.file = __FILE__;
-    ctx.line = __LINE__;
-    ctx.func = __func__;
-    strncpy(ctx.message, "Test error", PPDB_MAX_ERROR_MESSAGE - 1);
+// 基本错误测试
+static int test_error_basic(void) {
+    // 测试错误码转字符串
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_OK), "Success") == 0);
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_INVALID), "Invalid parameter") == 0);
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_MEMORY), "Memory error") == 0);
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_TIMEOUT), "Timeout") == 0);
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_BUSY), "Resource busy") == 0);
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_NOT_FOUND), "Not found") == 0);
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_EXISTS), "Already exists") == 0);
+    TEST_ASSERT(infra_strcmp(infra_error_string(INFRA_ERROR_IO), "I/O error") == 0);
     
-    TEST_ASSERT(ppdb_base_error_set_context(&ctx) == PPDB_OK);
+    return 0;
+}
+
+// 错误传播测试
+static int test_error_propagation(void) {
+    infra_error_t err;
     
-    const ppdb_error_context_t* get_ctx = ppdb_base_error_get_context();
-    TEST_ASSERT(get_ctx != NULL);
-    TEST_ASSERT(get_ctx->code == ctx.code);
-    TEST_ASSERT(strcmp(get_ctx->file, ctx.file) == 0);
-    TEST_ASSERT(get_ctx->line == ctx.line);
-    TEST_ASSERT(strcmp(get_ctx->func, ctx.func) == 0);
-    TEST_ASSERT(strcmp(get_ctx->message, ctx.message) == 0);
-}
-
-// Boundary condition tests
-static void test_error_boundary(void) {
-    ppdb_error_context_t ctx = {0};
-    char long_message[PPDB_MAX_ERROR_MESSAGE * 2] = {0};
-    memset(long_message, 'A', PPDB_MAX_ERROR_MESSAGE * 2 - 1);
+    // 测试内存分配失败的错误传播
+    void* ptr = infra_malloc((size_t)-1);  // 尝试分配过大的内存
+    TEST_ASSERT(ptr == NULL);
     
-    ctx.code = PPDB_ERR_MEMORY;
-    strncpy(ctx.message, long_message, PPDB_MAX_ERROR_MESSAGE - 1);
-    TEST_ASSERT(ppdb_base_error_set_context(&ctx) == PPDB_OK);
-    TEST_ASSERT(strlen(ppdb_base_error_get_context()->message) < PPDB_MAX_ERROR_MESSAGE);
+    // 测试文件操作错误传播
+    infra_handle_t handle;
+    err = infra_file_open("non_existent_file", INFRA_FILE_RDONLY, 0, &handle);
+    TEST_ASSERT(err == INFRA_ERROR_IO);
+    
+    return 0;
 }
 
-// Performance test
-static void test_error_performance(void) {
-    int64_t start = ppdb_time_now();
-    for(int i = 0; i < 10000; i++) {
-        ppdb_error_context_t ctx = {0};
-        ctx.code = PPDB_ERR_MEMORY;
-        ppdb_base_error_set_context(&ctx);
-        ppdb_base_error_get_context();
-    }
-    int64_t end = ppdb_time_now();
-    double time_spent = (end - start) / 1000000.0;
-    TEST_ASSERT(time_spent < 1.0); // Should complete within 1 second
+// 边界条件测试
+static int test_error_boundary(void) {
+    // 测试未知错误码
+    TEST_ASSERT(infra_strcmp(infra_error_string(-999), "Unknown error") == 0);
+    
+    // 测试最大错误码
+    TEST_ASSERT(infra_strcmp(infra_error_string(INT32_MAX), "Unknown error") == 0);
+    
+    return 0;
 }
 
-// Thread safety test
-static void* concurrent_error_test(void* arg) {
-    for(int i = 0; i < 1000; i++) {
-        ppdb_error_context_t ctx = {0};
-        ctx.code = PPDB_ERR_MEMORY;
-        TEST_ASSERT(ppdb_base_error_set_context(&ctx) == PPDB_OK);
-        TEST_ASSERT(ppdb_base_error_get_context() != NULL);
-    }
-    return NULL;
-}
-
-static void test_error_concurrent(void) {
-    ppdb_thread_t* threads[10];
-    ppdb_error_t err;
-
-    for(int i = 0; i < 10; i++) {
-        err = ppdb_thread_create(&threads[i], concurrent_error_test, NULL);
-        TEST_ASSERT(err == PPDB_OK, "Thread creation failed");
-    }
-
-    for(int i = 0; i < 10; i++) {
-        err = ppdb_thread_join(threads[i]);
-        TEST_ASSERT(err == PPDB_OK, "Thread join failed");
-    }
+// 错误状态测试
+static int test_error_status(void) {
+    infra_status_t status;
+    infra_error_t err;
+    
+    // 获取状态
+    err = infra_get_status(&status);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(status.initialized == true);
+    TEST_ASSERT((status.active_flags & INFRA_INIT_ALL) != 0);
+    
+    // 测试空指针
+    err = infra_get_status(NULL);
+    TEST_ASSERT(err == INFRA_ERROR_INVALID);
+    
+    return 0;
 }
 
 int main(void) {
-    printf("Running comprehensive error test suite\n");
+    // 初始化infra系统
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
+
+    TEST_INIT();
     
-    RUN_TEST(test_error_basic);
-    RUN_TEST(test_error_context);
-    RUN_TEST(test_error_boundary);
-    RUN_TEST(test_error_performance);
-    RUN_TEST(test_error_concurrent);
+    TEST_RUN(test_error_basic);
+    TEST_RUN(test_error_propagation);
+    TEST_RUN(test_error_boundary);
+    TEST_RUN(test_error_status);
     
-    printf("All tests completed successfully\n");
+    TEST_CLEANUP();
+    
+    // 清理infra系统
+    infra_cleanup();
     return 0;
 }
