@@ -26,8 +26,12 @@ rem Build error module
 "%GCC%" %CFLAGS% -I"%SRC_DIR%" "%PPDB_DIR%\src\internal\infra\infra_error.c" -c -o "%BUILD_DIR%\infra\infra_error.o"
 if errorlevel 1 exit /b 1
 
+rem Build struct module
+"%GCC%" %CFLAGS% -I"%SRC_DIR%" "%PPDB_DIR%\src\internal\infra\infra_struct.c" -c -o "%BUILD_DIR%\infra\infra_struct.o"
+if errorlevel 1 exit /b 1
+
 rem Create static library
-"%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o"
+"%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_struct.o"
 if errorlevel 1 exit /b 1
 
 echo Build infra complete.
