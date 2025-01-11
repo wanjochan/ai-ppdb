@@ -10,5 +10,5 @@ int main(void) {
     srand((unsigned int)time(NULL));
     
     // 运行测试套件
-    return run_memory_pool_test_suite();
+    return test_memory_pool_run();
 } 

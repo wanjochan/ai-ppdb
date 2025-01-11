@@ -38,6 +38,7 @@ typedef struct {
 typedef struct memory_block {
     struct memory_block* next;    // 链表指针
     size_t size;                  // 块大小
+    size_t original_size;         // 原始分配大小
     bool is_used;                // 使用标志
     uint8_t padding[4];          // 对齐填充
 } memory_block_t;

@@ -231,6 +231,13 @@ infra_error_t infra_thread_pool_create(const infra_thread_pool_config_t* config,
     p->max_threads = config->max_threads;
     p->queue_size = config->queue_size;
     p->idle_timeout = config->idle_timeout;
+    p->thread_count = 0;
+    p->active_count = 0;
+    p->task_count = 0;
+    p->task_head = NULL;
+    p->task_tail = NULL;
+    p->running = true;
+    p->shutting_down = false;
 
     // 初始化同步原语
     infra_error_t err = INFRA_OK;
@@ -249,48 +256,32 @@ infra_error_t infra_thread_pool_create(const infra_thread_pool_config_t* config,
 
     err = infra_cond_init(&p->not_full);
     if (err != INFRA_OK) {
-        infra_mutex_destroy(p->mutex);
         infra_cond_destroy(p->not_empty);
+        infra_mutex_destroy(p->mutex);
         infra_free(p);
         return err;
     }
 
-    // 分配线程数组
-    p->threads = (infra_thread_t*)infra_malloc(sizeof(infra_thread_t) * p->max_threads);
-    if (!p->threads) {
-        infra_mutex_destroy(p->mutex);
-        infra_cond_destroy(p->not_empty);
-        infra_cond_destroy(p->not_full);
-        infra_free(p);
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    // 初始化状态
-    p->thread_count = 0;
-    p->active_count = 0;
-    p->task_head = NULL;
-    p->task_tail = NULL;
-    p->task_count = 0;
-    p->running = true;
-    p->shutting_down = false;
-
     // 创建初始线程
     for (size_t i = 0; i < p->min_threads; i++) {
-        err = infra_thread_create(&p->threads[i], worker_thread, p);
+        infra_thread_t thread;
+        err = infra_thread_create(&thread, worker_thread, p);
         if (err != INFRA_OK) {
-            // 清理已创建的线程
+            // 如果创建失败，设置关闭标志并等待已创建的线程退出
             p->shutting_down = true;
             infra_cond_broadcast(p->not_empty);
-            for (size_t j = 0; j < i; j++) {
-                infra_thread_join(p->threads[j]);
+            // 等待所有线程退出
+            while (p->thread_count > 0) {
+                infra_sleep(10);
             }
-            infra_free(p->threads);
-            infra_mutex_destroy(p->mutex);
-            infra_cond_destroy(p->not_empty);
+            // 清理资源
             infra_cond_destroy(p->not_full);
+            infra_cond_destroy(p->not_empty);
+            infra_mutex_destroy(p->mutex);
             infra_free(p);
             return err;
         }
+        infra_thread_detach(thread);  // 分离线程
         p->thread_count++;
     }
 
@@ -303,15 +294,25 @@ infra_error_t infra_thread_pool_destroy(infra_thread_pool_t* pool) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 标记关闭
+    // 设置关闭标志
     infra_mutex_lock(pool->mutex);
     pool->shutting_down = true;
-    infra_cond_broadcast(pool->not_empty);
+    pool->running = false;
     infra_mutex_unlock(pool->mutex);
 
-    // 等待所有线程结束
-    for (size_t i = 0; i < pool->thread_count; i++) {
-        infra_thread_join(pool->threads[i]);
+    // 唤醒所有等待的线程
+    infra_cond_broadcast(pool->not_empty);
+    infra_cond_broadcast(pool->not_full);
+
+    // 等待所有线程退出
+    while (true) {
+        infra_mutex_lock(pool->mutex);
+        if (pool->thread_count == 0) {
+            infra_mutex_unlock(pool->mutex);
+            break;
+        }
+        infra_mutex_unlock(pool->mutex);
+        infra_sleep(10);
     }
 
     // 清理任务队列
@@ -322,13 +323,13 @@ infra_error_t infra_thread_pool_destroy(infra_thread_pool_t* pool) {
         task = next;
     }
 
-    // 清理资源
-    infra_free(pool->threads);
-    infra_mutex_destroy(pool->mutex);
-    infra_cond_destroy(pool->not_empty);
+    // 销毁同步原语
     infra_cond_destroy(pool->not_full);
-    infra_free(pool);
+    infra_cond_destroy(pool->not_empty);
+    infra_mutex_destroy(pool->mutex);
 
+    // 释放线程池结构
+    infra_free(pool);
     return INFRA_OK;
 }
 
@@ -337,30 +338,41 @@ infra_error_t infra_thread_pool_submit(infra_thread_pool_t* pool, infra_thread_f
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 创建任务
+    infra_mutex_lock(pool->mutex);
+
+    // 检查是否正在关闭
+    if (pool->shutting_down) {
+        infra_mutex_unlock(pool->mutex);
+        return INFRA_ERROR_NOT_READY;
+    }
+
+    // 检查队列是否已满
+    while (pool->task_count >= pool->queue_size && !pool->shutting_down) {
+        infra_error_t err = infra_cond_wait(pool->not_full, pool->mutex);
+        if (err != INFRA_OK) {
+            infra_mutex_unlock(pool->mutex);
+            return err;
+        }
+    }
+
+    // 如果正在关闭，返回错误
+    if (pool->shutting_down) {
+        infra_mutex_unlock(pool->mutex);
+        return INFRA_ERROR_NOT_READY;
+    }
+
+    // 创建新任务
     infra_task_t* task = (infra_task_t*)infra_malloc(sizeof(infra_task_t));
     if (!task) {
+        infra_mutex_unlock(pool->mutex);
         return INFRA_ERROR_NO_MEMORY;
     }
+
     task->func = func;
     task->arg = arg;
     task->next = NULL;
 
-    // 加入任务队列
-    infra_mutex_lock(pool->mutex);
-
-    // 检查队列是否已满
-    while (pool->task_count >= pool->queue_size && !pool->shutting_down) {
-        infra_cond_wait(pool->not_full, pool->mutex);
-    }
-
-    if (pool->shutting_down) {
-        infra_mutex_unlock(pool->mutex);
-        infra_free(task);
-        return INFRA_ERROR_NOT_READY;
-    }
-
-    // 添加任务
+    // 添加到任务队列
     if (pool->task_tail) {
         pool->task_tail->next = task;
     } else {
@@ -372,12 +384,14 @@ infra_error_t infra_thread_pool_submit(infra_thread_pool_t* pool, infra_thread_f
     // 如果有空闲线程，唤醒一个
     infra_cond_signal(pool->not_empty);
 
-    // 如果任务较多且有空余线程槽，创建新线程
-    if (pool->task_count > pool->thread_count && 
-        pool->thread_count < pool->max_threads) {
+    // 如果当前线程数小于最大线程数且所有线程都在工作，创建新线程
+    if (pool->thread_count < pool->max_threads && 
+        pool->active_count == pool->thread_count) {
         infra_thread_t thread;
-        if (infra_thread_create(&thread, worker_thread, pool) == INFRA_OK) {
-            pool->threads[pool->thread_count++] = thread;
+        infra_error_t err = infra_thread_create(&thread, worker_thread, pool);
+        if (err == INFRA_OK) {
+            infra_thread_detach(thread);
+            pool->thread_count++;
         }
     }
 

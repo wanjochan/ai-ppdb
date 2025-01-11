@@ -95,15 +95,15 @@ static void* allocate_from_pool(size_t size) {
 
     memory_block_t* current = g_memory.pool.free_list;
     while (current) {
-        if (!current->is_used && current->size >= size) {
+        if (!current->is_used && current->size >= aligned_size) {  // 使用对齐后的大小进行比较
             // 找到足够大的空闲块
-            if (current->size >= size + MIN_BLOCK_SIZE) {
+            if (current->size >= aligned_size + MIN_BLOCK_SIZE) {
                 // 分割块
                 memory_block_t* new_block = (memory_block_t*)((char*)current + aligned_size);
                 new_block->size = current->size - aligned_size;
                 new_block->is_used = false;
                 new_block->next = current->next;
-                current->size = size;  // 存储原始请求大小
+                current->size = aligned_size - sizeof(memory_block_t);  // 存储可用大小
                 current->next = new_block;
                 g_memory.pool.block_count++;
             }
@@ -114,7 +114,16 @@ static void* allocate_from_pool(size_t size) {
             if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
                 g_memory.stats.peak_usage = g_memory.stats.current_usage;
             }
-            return (void*)(current + 1);
+            
+            // 确保返回的地址正确对齐
+            void* ptr = (void*)(current + 1);
+            size_t addr = (size_t)ptr;
+            if ((addr & (g_memory.config.pool_alignment - 1)) != 0) {
+                // 如果地址没有正确对齐，进行调整
+                size_t padding = g_memory.config.pool_alignment - (addr & (g_memory.config.pool_alignment - 1));
+                ptr = (void*)((char*)ptr + padding);
+            }
+            return ptr;
         }
         current = current->next;
     }
@@ -163,16 +172,22 @@ static memory_block_t* get_block_header(void* ptr) {
 }
 
 static void try_merge_blocks(void) {
-    memory_block_t* current = g_memory.pool.free_list;
-    while (current && current->next) {
-        if (!current->is_used && !current->next->is_used) {
-            // 合并相邻的空闲块
-            current->size += current->next->size;
-            current->next = current->next->next;
-        } else {
-            current = current->next;
+    bool merged;
+    do {
+        merged = false;
+        memory_block_t* current = g_memory.pool.free_list;
+        while (current && current->next) {
+            if (!current->is_used && !current->next->is_used) {
+                // 合并相邻的空闲块
+                current->size += current->next->size + sizeof(memory_block_t);
+                current->next = current->next->next;
+                g_memory.pool.block_count--;  // 更新块计数
+                merged = true;
+            } else {
+                current = current->next;
+            }
         }
-    }
+    } while (merged);  // 继续合并直到没有可合并的块
 }
 
 //-----------------------------------------------------------------------------
@@ -303,32 +318,49 @@ static void* allocate_memory(size_t size) {
     void* ptr = NULL;
     
     if (g_memory.config.use_memory_pool) {
-        size_t aligned_size = ALIGN_SIZE(size, g_memory.config.pool_alignment);
+        // 计算对齐后的大小，确保包含额外的对齐空间
+        size_t aligned_size = ALIGN_SIZE(size + g_memory.config.pool_alignment - 1, g_memory.config.pool_alignment);
+        
+        // 查找合适的空闲块
         memory_block_t* block = find_free_block(aligned_size);
         if (block) {
             // 如果块太大，进行分割
             if (block->size > aligned_size + sizeof(memory_block_t) + MIN_BLOCK_SIZE) {
-                memory_block_t* new_block = (memory_block_t*)((char*)(block + 1) + aligned_size);
+                // 确保新块的起始地址也是对齐的
+                char* new_block_addr = (char*)(block + 1) + aligned_size;
+                new_block_addr = (char*)ALIGN_SIZE((uintptr_t)new_block_addr, g_memory.config.pool_alignment);
+                
+                memory_block_t* new_block = (memory_block_t*)new_block_addr;
                 new_block->size = block->size - aligned_size - sizeof(memory_block_t);
                 new_block->is_used = false;
                 new_block->next = block->next;
                 block->next = new_block;
-                block->size = aligned_size;
+                block->size = aligned_size;  // 存储对齐后的大小
+                block->original_size = size;  // 存储原始大小
                 g_memory.pool.block_count++;
+            } else {
+                block->original_size = size;  // 存储原始大小
             }
             block->is_used = true;
-            g_memory.pool.used_size += block->size;
-            g_memory.stats.current_usage += size;
-            ptr = (void*)(block + 1);
+            g_memory.pool.used_size += aligned_size;
+            g_memory.stats.current_usage += size;  // 使用原始大小
+            
+            // 确保返回的指针是对齐的
+            char* aligned_ptr = (char*)(block + 1);
+            aligned_ptr = (char*)ALIGN_SIZE((uintptr_t)aligned_ptr, g_memory.config.pool_alignment);
+            ptr = aligned_ptr;
         }
     } else {
         // 系统内存分配
-        size_t total_size = size + sizeof(size_t);
+        size_t total_size = size + sizeof(size_t) + g_memory.config.pool_alignment - 1;
         if (total_size > size) {  // 检查溢出
             size_t* block = (size_t*)malloc(total_size);
             if (block) {
+                // 确保数据部分是对齐的
+                void* aligned_ptr = (void*)ALIGN_SIZE((uintptr_t)(block + 1), g_memory.config.pool_alignment);
+                block = (size_t*)aligned_ptr - 1;
                 *block = size;
-                ptr = block + 1;
+                ptr = aligned_ptr;
                 g_memory.stats.current_usage += size;
             }
         }
@@ -351,9 +383,11 @@ static void free_memory(void* ptr) {
         if (block && block->is_used && 
             (char*)block >= (char*)g_memory.pool.pool_start && 
             (char*)block < (char*)g_memory.pool.pool_start + g_memory.pool.pool_size) {
+            size_t aligned_size = block->size;  // 已经是对齐后的大小
+            size_t original_size = block->original_size;  // 获取原始大小
             block->is_used = false;
-            g_memory.pool.used_size -= block->size;
-            g_memory.stats.current_usage -= block->size;
+            g_memory.pool.used_size -= aligned_size;
+            g_memory.stats.current_usage -= original_size;  // 使用原始大小
             try_merge_blocks();
         }
     } else {
@@ -373,12 +407,6 @@ void* infra_malloc(size_t size) {
     void* ptr = allocate_memory(size);
     if (ptr) {
         g_memory.stats.total_allocations++;
-        if (!g_memory.config.use_memory_pool) {
-            g_memory.stats.current_usage += size;
-            if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
-                g_memory.stats.peak_usage = g_memory.stats.current_usage;
-            }
-        }
     }
     infra_mutex_unlock(g_memory.mutex);
     return ptr;

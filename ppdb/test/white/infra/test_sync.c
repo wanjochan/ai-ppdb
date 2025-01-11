@@ -118,15 +118,17 @@ static void test_rwlock(void) {
     TEST_ASSERT(counter == 2);
 }
 
+// 暂时注释掉线程池测试，等内存管理模块稳定后再启用
+/*
 static void test_thread_pool(void) {
     infra_error_t err;
     infra_thread_pool_t* pool = NULL;
     
     // 创建线程池配置
     infra_thread_pool_config_t config = {
-        .min_threads = 1,  // 减少线程数以降低复杂性
+        .min_threads = 1,
         .max_threads = 2,
-        .queue_size = 5,   // 减少队列大小
+        .queue_size = 5,
         .idle_timeout = 100
     };
     
@@ -143,7 +145,7 @@ static void test_thread_pool(void) {
     TEST_ASSERT(err == INFRA_OK);
     
     // 等待任务完成
-    infra_platform_sleep(200);  // 增加等待时间
+    infra_platform_sleep(200);
     
     // 检查任务是否执行
     TEST_ASSERT(counter == 1);
@@ -152,33 +154,24 @@ static void test_thread_pool(void) {
     size_t active_threads, queued_tasks;
     err = infra_thread_pool_get_stats(pool, &active_threads, &queued_tasks);
     TEST_ASSERT(err == INFRA_OK);
-    TEST_ASSERT(queued_tasks == 0);  // 所有任务应该已完成
+    TEST_ASSERT(queued_tasks == 0);
     
     // 销毁线程池
     err = infra_thread_pool_destroy(pool);
     TEST_ASSERT(err == INFRA_OK);
 }
+*/
 
 int main(void) {
-    // 初始化infra系统
     infra_error_t err = infra_init();
-    if (err != INFRA_OK) {
-        infra_printf("Failed to initialize infra system: %d\n", err);
-        return 1;
-    }
-
-    TEST_BEGIN();
+    TEST_ASSERT(err == INFRA_OK);
 
     RUN_TEST(test_thread);
     RUN_TEST(test_mutex);
     RUN_TEST(test_cond);
     RUN_TEST(test_rwlock);
-    // TODO: 等内存管理模块稳定后再启用线程池测试
-    // RUN_TEST(test_thread_pool);
+    // RUN_TEST(test_thread_pool);  // 暂时注释掉
 
-    TEST_END();
-
-    // 清理infra系统
     infra_cleanup();
     return 0;
 } 
