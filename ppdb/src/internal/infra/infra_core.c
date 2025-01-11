@@ -2,8 +2,8 @@
  * infra.c - Infrastructure Layer Implementation
  */
 
-#include "cosmopolitan.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_memory.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_error.h"
@@ -17,13 +17,6 @@ static struct {
     bool initialized;
     infra_init_flags_t active_flags;
     infra_mutex_t mutex;
-
-    // 内存管理状态
-    struct {
-        size_t current_usage;
-        size_t peak_usage;
-        size_t total_allocations;
-    } memory;
 
     // 日志系统状态
     struct {
@@ -66,7 +59,7 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
 
 infra_error_t infra_config_init(infra_config_t* config) {
     if (!config) {
-        return INFRA_ERROR_INVALID;
+        return INFRA_ERROR_INVALID_PARAM;
     }
     *config = INFRA_DEFAULT_CONFIG;
     return INFRA_OK;
@@ -74,12 +67,6 @@ infra_error_t infra_config_init(infra_config_t* config) {
 
 infra_error_t infra_config_validate(const infra_config_t* config) {
     if (!config) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    // 验证内存配置
-    if (config->memory.use_memory_pool &&
-        (config->memory.pool_initial_size == 0 || config->memory.pool_alignment == 0)) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
@@ -107,11 +94,6 @@ infra_error_t infra_config_apply(const infra_config_t* config) {
         return err;
     }
 
-    // 应用内存配置
-    if (config->memory.use_memory_pool) {
-        // TODO: 实现内存池
-    }
-
     // 应用日志配置
     g_infra.log.level = config->log.level;
     g_infra.log.log_file = config->log.log_file;
@@ -128,12 +110,11 @@ infra_error_t infra_config_apply(const infra_config_t* config) {
 //-----------------------------------------------------------------------------
 
 static infra_error_t init_module(infra_init_flags_t flag, const infra_config_t* config) {
+    infra_error_t err = INFRA_OK;
+
     switch (flag) {
         case INFRA_INIT_MEMORY:
-            // 初始化内存管理
-            if (config->memory.use_memory_pool) {
-                // TODO: 实现内存池
-            }
+            err = infra_memory_init(&config->memory);
             break;
 
         case INFRA_INIT_LOG:
@@ -152,7 +133,7 @@ static infra_error_t init_module(infra_init_flags_t flag, const infra_config_t* 
             return INFRA_ERROR_INVALID_PARAM;
     }
 
-    return INFRA_OK;
+    return err;
 }
 
 infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_config_t* config) {
@@ -242,9 +223,14 @@ infra_error_t infra_get_status(infra_status_t* status) {
 
     status->initialized = g_infra.initialized;
     status->active_flags = g_infra.active_flags;
-    status->memory.current_usage = g_infra.memory.current_usage;
-    status->memory.peak_usage = g_infra.memory.peak_usage;
-    status->memory.total_allocations = g_infra.memory.total_allocations;
+    
+    // 获取内存统计信息
+    if (g_infra.active_flags & INFRA_INIT_MEMORY) {
+        infra_memory_get_stats(&status->memory);
+    } else {
+        memset(&status->memory, 0, sizeof(infra_memory_stats_t));
+    }
+
     status->log.log_entries = 0;  // TODO: 实现日志统计
     status->log.dropped_entries = 0;  // TODO: 实现日志统计
 
@@ -255,37 +241,7 @@ infra_error_t infra_get_status(infra_status_t* status) {
 // Memory Management
 //-----------------------------------------------------------------------------
 
-void* infra_malloc(size_t size) {
-    return malloc(size);
-}
-
-void* infra_calloc(size_t nmemb, size_t size) {
-    return calloc(nmemb, size);
-}
-
-void* infra_realloc(void* ptr, size_t size) {
-    return realloc(ptr, size);
-}
-
-void infra_free(void* ptr) {
-    free(ptr);
-}
-
-void* infra_memset(void* s, int c, size_t n) {
-    return memset(s, c, n);
-}
-
-void* infra_memcpy(void* dest, const void* src, size_t n) {
-    return memcpy(dest, src, n);
-}
-
-void* infra_memmove(void* dest, const void* src, size_t n) {
-    return memmove(dest, src, n);
-}
-
-int infra_memcmp(const void* s1, const void* s2, size_t n) {
-    return memcmp(s1, s2, n);
-}
+// 内存管理函数已迁移到 infra_memory.c
 
 //-----------------------------------------------------------------------------
 // String Operations

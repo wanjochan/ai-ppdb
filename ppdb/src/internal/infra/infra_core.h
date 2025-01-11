@@ -10,6 +10,8 @@
 #define INFRA_CORE_H
 
 #include "cosmopolitan.h"
+#include "internal/infra/infra_memory.h"
+#include "internal/infra/infra_error.h"
 
 //-----------------------------------------------------------------------------
 // Version Information
@@ -22,35 +24,9 @@
 #define INFRA_VERSION_STRING "1.0.0"
 
 //-----------------------------------------------------------------------------
-// Error Codes
-//-----------------------------------------------------------------------------
-
-#define INFRA_OK                  0
-#define INFRA_ERROR_INVALID      -1
-#define INFRA_ERROR_MEMORY       -2
-#define INFRA_ERROR_TIMEOUT      -3
-#define INFRA_ERROR_BUSY         -4
-#define INFRA_ERROR_NOT_FOUND    -5
-#define INFRA_ERROR_EXISTS       -6
-#define INFRA_ERROR_IO          -7
-#define INFRA_ERROR_CANCELLED   -8
-#define INFRA_ERROR_NOT_READY   -9
-#define INFRA_ERROR_FULL       -10
-#define INFRA_ERROR_EMPTY      -11
-#define INFRA_ERROR_INVALID_PARAM -12
-#define INFRA_ERROR_NO_MEMORY    -13
-#define INFRA_ERROR_STATE       -14
-#define INFRA_ERROR_STOPPED     -15
-#define INFRA_ERROR_AGAIN       -16
-#define INFRA_ERROR_INTERRUPTED -17
-#define INFRA_ERROR_NOMEM      -18
-#define INFRA_ERROR_NO_SPACE   -19
-
-//-----------------------------------------------------------------------------
 // Basic Types
 //-----------------------------------------------------------------------------
 
-typedef int32_t infra_error_t;
 typedef uint32_t infra_flags_t;
 typedef uint64_t infra_time_t;
 typedef uint64_t infra_handle_t;
@@ -119,11 +95,7 @@ infra_thread_t infra_thread_self(void);
 //-----------------------------------------------------------------------------
 
 typedef struct {
-    struct {
-        bool use_memory_pool;
-        size_t pool_initial_size;
-        size_t pool_alignment;
-    } memory;
+    infra_memory_config_t memory;
     
     struct {
         int level;
@@ -167,11 +139,7 @@ bool infra_is_initialized(infra_init_flags_t flag);
 typedef struct {
     bool initialized;                  // 是否已初始化
     infra_init_flags_t active_flags;   // 当前激活的模块
-    struct {
-        size_t current_usage;          // 当前内存使用量
-        size_t peak_usage;            // 峰值内存使用量
-        size_t total_allocations;      // 总分配次数
-    } memory;
+    infra_memory_stats_t memory;      // 内存统计信息
     struct {
         uint64_t log_entries;         // 日志条目数
         uint64_t dropped_entries;     // 丢弃的日志条目数
@@ -179,19 +147,6 @@ typedef struct {
 } infra_status_t;
 
 infra_error_t infra_get_status(infra_status_t* status);
-
-//-----------------------------------------------------------------------------
-// Memory Management
-//-----------------------------------------------------------------------------
-
-void* infra_malloc(size_t size);
-void* infra_calloc(size_t nmemb, size_t size);
-void* infra_realloc(void* ptr, size_t size);
-void infra_free(void* ptr);
-void* infra_memset(void* s, int c, size_t n);
-void* infra_memcpy(void* dest, const void* src, size_t n);
-void* infra_memmove(void* dest, const void* src, size_t n);
-int infra_memcmp(const void* s1, const void* s2, size_t n);
 
 //-----------------------------------------------------------------------------
 // String Operations
