@@ -112,6 +112,10 @@ extern int g_test_stats[3];  // total, passed, failed
 #define TEST_ASSERT_MSG_INT(cond, fmt, ...) TEST_ASSERT_INT(cond, fmt, ##__VA_ARGS__)
 #define TEST_ASSERT_MSG_PTR(cond, fmt, ...) TEST_ASSERT_PTR(cond, fmt, ##__VA_ARGS__)
 
+// 比较宏
+#define TEST_ASSERT_MSG_INT_GT(expected, actual, fmt, ...) \
+    TEST_ASSERT_MSG((actual) > (expected), fmt ": expected > %d but got %d", ##__VA_ARGS__, (int)(expected), (int)(actual))
+
 void test_init(void);
 void test_cleanup(void);
 void test_report(void);

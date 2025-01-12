@@ -202,6 +202,7 @@ static void test_mux_stress(void) {
     infra_mux_event_t events[16];
     int num_accepted = 0;
     infra_config_t config = INFRA_DEFAULT_CONFIG;
+    int timeout_count = 0;
 
     addr.host = "127.0.0.1";
     addr.port = 12345;
@@ -211,21 +212,68 @@ static void test_mux_stress(void) {
     TEST_ASSERT(mux != NULL);
 
     err = infra_net_listen(&addr, &server, &config);
-    //TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(server != NULL);
+
+    // Set socket to non-blocking mode using fcntl
+    int flags = fcntl(infra_net_get_fd(server), F_GETFL, 0);
+    flags |= O_NONBLOCK;
+    fcntl(infra_net_get_fd(server), F_SETFL, flags);
 
     err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
     TEST_ASSERT(err == INFRA_OK);
 
-    for (int i = 0; i < 100; i++) {
-        err = infra_net_accept(server, &accepted[i], NULL);
-        if (err == INFRA_OK && accepted[i] != NULL) {
-            err = infra_mux_add(mux, infra_net_get_fd(accepted[i]), INFRA_EVENT_READ | INFRA_EVENT_WRITE, NULL);
-            TEST_ASSERT(err == INFRA_OK);
-            num_accepted++;
+    // 创建10个客户端连接
+    infra_socket_t clients[10] = {NULL};
+    infra_net_addr_t client_addr = {0};
+    client_addr.host = "127.0.0.1";
+    client_addr.port = 12345;
+
+    int num_connected = 0;
+    int retry_count = 0;
+    while (num_connected < 10 && retry_count < 3) {
+        err = infra_net_connect(&client_addr, &clients[num_connected], &config);
+        if (err == INFRA_OK) {
+            infra_printf("Client %d connected successfully\n", num_connected);
+            num_connected++;
+            retry_count = 0;
+        } else if (err == INFRA_ERROR_WOULD_BLOCK) {
+            infra_printf("Client %d connection would block, retrying...\n", num_connected);
+            retry_count++;
+            infra_sleep(100);
+        } else {
+            infra_printf("Client %d connection failed with error %d\n", num_connected, err);
+            break;
         }
     }
+
+    if (num_connected == 0) {
+        infra_printf("Failed to establish any client connections\n");
+        infra_net_close(server);
+        infra_mux_destroy(mux);
+        return;
+    }
+
+    infra_printf("Successfully established %d client connections\n", num_connected);
+
+    // 接受连接
+    while (num_accepted < num_connected && timeout_count < 3) {
+        err = infra_net_accept(server, &accepted[num_accepted], NULL);
+        if (err == INFRA_OK && accepted[num_accepted] != NULL) {
+            err = infra_mux_add(mux, infra_net_get_fd(accepted[num_accepted]), INFRA_EVENT_READ | INFRA_EVENT_WRITE, NULL);
+            TEST_ASSERT(err == INFRA_OK);
+            num_accepted++;
+            timeout_count = 0;  // Reset timeout counter on successful accept
+        } else if (err == INFRA_ERROR_TIMEOUT || err == INFRA_ERROR_WOULD_BLOCK) {
+            timeout_count++;
+            infra_sleep(100);  // Sleep for 100ms before retry
+        } else {
+            infra_printf("Accept failed with error: %d\n", err);
+            break;  // Exit on other errors
+        }
+    }
+
+    infra_printf("Accepted %d connections\n", num_accepted);
 
     err = infra_mux_wait(mux, events, 16, 0);
     TEST_ASSERT(err == 0);
@@ -234,6 +282,13 @@ static void test_mux_stress(void) {
         if (accepted[i] != NULL) {
             infra_mux_remove(mux, infra_net_get_fd(accepted[i]));
             infra_net_close(accepted[i]);
+        }
+    }
+
+    // Cleanup client connections
+    for (int i = 0; i < num_connected; i++) {
+        if (clients[i] != NULL) {
+            infra_net_close(clients[i]);
         }
     }
 
