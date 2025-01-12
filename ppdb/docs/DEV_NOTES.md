@@ -65,8 +65,6 @@
 
 ## TODO （有时候会再跳出来，所以不删除，留着一轮轮清）
 
-- 要不要补 sync_perf 和 async_perf 做并发性能测试
-- 异步框架可能未考虑中断？
 - 等未来infra完全稳定后，可以考虑封装 libppdbinfra.a （静态库）和 ppdbinfra.lib （动态库）供应我们别的工具包
 
 ## 重要说明
