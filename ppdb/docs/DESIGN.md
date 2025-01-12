@@ -127,11 +127,11 @@ test/white/
 
 ```
 
-测试顺序：
-.\pdpb\scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
-.\ppdb\scripts\build_test_mock.bat 用于确定 mock 机制运作正常
-.\ppdb\scripts\build_test_infra.bat [module] [norun] 用于确定 infra 层运作正常
-  - 不带参数：执行全量测试
+测试顺序（如果已经在仓库根目录就不用cd改变目录）：
+.\pdpb\scripts\build_test42.bat  //用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
+.\ppdb\scripts\build_test_mock.bat  //用于确定 mock 机制运作正常
+.\ppdb\scripts\build_test_infra.bat [module] [norun]  //用于确定 infra 层运作正常
+  - 不带参数：会触发帮助
   - module参数：指定要测试的模块（如memory、log等）
   - norun参数：只构建不运行测试
 .\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）
