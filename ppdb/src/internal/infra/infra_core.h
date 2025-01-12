@@ -66,8 +66,12 @@ infra_error_t infra_cond_broadcast(infra_cond_t cond);
 
 infra_error_t infra_thread_create(infra_thread_t* thread, infra_thread_func_t func, void* arg);
 infra_error_t infra_thread_join(infra_thread_t thread);
-void infra_thread_exit(void* retval);
-infra_thread_t infra_thread_self(void);
+
+//TODO
+//void infra_thread_exit(void* retval);
+
+//TODO
+//infra_thread_t infra_thread_self(void);
 
 //-----------------------------------------------------------------------------
 // Log Levels
@@ -106,6 +110,14 @@ typedef struct {
         size_t hash_initial_size;
         uint32_t hash_load_factor;
     } ds;
+
+    struct {
+        bool prefer_iocp;    // 是否优先使用IOCP（Windows平台下默认为true）
+        bool force_epoll;    // 强制使用epoll
+        bool force_iocp;     // 强制使用iocp
+        size_t max_events;   // 单次处理的最大事件数
+        bool edge_trigger;   // 是否启用边缘触发(仅epoll)
+    } mux;
 } infra_config_t;
 
 // 默认配置

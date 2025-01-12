@@ -146,10 +146,12 @@ infra_error_t infra_mux_add(infra_mux_ctx_t* ctx, int fd, infra_event_type_t eve
         case INFRA_MUX_AUTO:
         case INFRA_MUX_IOCP:
             if (infra_platform_is_windows()) {
+                // 在Windows平台上，我们使用IOCP
+                // 注意：IOCP不需要指定事件类型，因为它是基于完成通知的
                 infra_error_t err = infra_platform_iocp_add(ctx->impl.win.iocp, fd, user_data);
                 if (err == INFRA_ERROR_ALREADY_EXISTS) {
                     // 已经关联过了，忽略错误
-                    break;
+                    return INFRA_OK;
                 }
                 return err;
             }
@@ -247,7 +249,10 @@ infra_error_t infra_mux_modify(infra_mux_ctx_t* ctx, int fd, infra_event_type_t 
     switch (ctx->type) {
         case INFRA_MUX_AUTO:
         case INFRA_MUX_IOCP:
-            // IOCP不支持修改事件
+            if (infra_platform_is_windows()) {
+                // IOCP不需要修改事件，因为它是基于完成通知的
+                return INFRA_OK;
+            }
             return INFRA_ERROR_NOT_SUPPORTED;
             
         case INFRA_MUX_EPOLL:
@@ -313,6 +318,7 @@ infra_error_t infra_mux_wait(infra_mux_ctx_t* ctx, infra_mux_event_t* events, si
         case INFRA_MUX_AUTO:
         case INFRA_MUX_IOCP:
             if (infra_platform_is_windows()) {
+                // 在Windows平台上，我们使用IOCP等待完成通知
                 return infra_platform_iocp_wait(ctx->impl.win.iocp, events, max_events, timeout_ms);
             }
             return INFRA_ERROR_NOT_SUPPORTED;

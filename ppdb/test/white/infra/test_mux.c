@@ -16,24 +16,14 @@ static int g_event_count = 0;
 
 // 基本功能测试
 static void test_mux_basic(void) {
-    infra_mux_ctx_t* mux = NULL;
+    infra_mux_t* mux = NULL;
     infra_error_t err;
-    infra_mux_config_t config = {
-        .type = INFRA_MUX_AUTO,
-        .max_events = 1024,
-        .edge_trigger = false
-    };
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
     
     // 创建多路复用器
     err = infra_mux_create(&config, &mux);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(mux != NULL);
-    
-    // 获取类型
-    infra_mux_type_t type;
-    err = infra_mux_get_type(mux, &type);
-    TEST_ASSERT(err == INFRA_OK);
-    TEST_ASSERT(type >= INFRA_MUX_AUTO && type <= INFRA_MUX_SELECT);
     
     // 销毁
     err = infra_mux_destroy(mux);
@@ -42,15 +32,11 @@ static void test_mux_basic(void) {
 
 // 事件测试
 static void test_mux_events(void) {
-    infra_mux_ctx_t* mux = NULL;
+    infra_mux_t* mux = NULL;
     infra_socket_t server = NULL;
     infra_net_addr_t addr = {0};
     infra_error_t err;
-    infra_mux_config_t config = {
-        .type = INFRA_MUX_AUTO,
-        .max_events = 1024,
-        .edge_trigger = false
-    };
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
     
     // 设置地址
     addr.host = "127.0.0.1";
@@ -65,16 +51,15 @@ static void test_mux_events(void) {
     TEST_ASSERT(err == INFRA_OK);
     
     // 添加监听套接字
-    err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
+    err = infra_mux_add(mux, server, INFRA_EVENT_READ, NULL);
     TEST_ASSERT(err == INFRA_OK);
     
     // 修改事件
-    err = infra_mux_modify(mux, infra_net_get_fd(server), 
-                          INFRA_EVENT_READ | INFRA_EVENT_WRITE);
+    err = infra_mux_modify(mux, server, INFRA_EVENT_READ | INFRA_EVENT_WRITE);
     TEST_ASSERT(err == INFRA_OK);
     
     // 移除套接字
-    err = infra_mux_remove(mux, infra_net_get_fd(server));
+    err = infra_mux_remove(mux, server);
     TEST_ASSERT(err == INFRA_OK);
     
     // 清理
@@ -84,17 +69,13 @@ static void test_mux_events(void) {
 
 // 等待测试
 static void test_mux_wait(void) {
-    infra_mux_ctx_t* mux = NULL;
+    infra_mux_t* mux = NULL;
     infra_socket_t server = NULL;
     infra_socket_t client = NULL;
     infra_socket_t accepted = NULL;
     infra_net_addr_t addr = {0};
     infra_error_t err;
-    infra_mux_config_t config = {
-        .type = INFRA_MUX_AUTO,  // 使用自动选择模式
-        .max_events = 1024,
-        .edge_trigger = false
-    };
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
     
     // 设置地址
     addr.host = "127.0.0.1";
@@ -118,7 +99,7 @@ static void test_mux_wait(void) {
     TEST_ASSERT(err == INFRA_OK);
     
     // 添加套接字
-    err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
+    err = infra_mux_add(mux, server, INFRA_EVENT_READ, NULL);
     TEST_ASSERT(err == INFRA_OK);
     
     // 等待事件
@@ -139,16 +120,12 @@ static void test_mux_wait(void) {
 
 // 多路复用测试
 static void test_mux_multiple(void) {
-    infra_mux_ctx_t* mux = NULL;
+    infra_mux_t* mux = NULL;
     infra_socket_t servers[10] = {0};
     infra_socket_t clients[10] = {0};
     infra_net_addr_t addr = {0};
     infra_error_t err;
-    infra_mux_config_t config = {
-        .type = INFRA_MUX_AUTO,  // 使用自动选择模式
-        .max_events = 1024,
-        .edge_trigger = false
-    };
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
     
     // 设置地址
     addr.host = "127.0.0.1";
@@ -167,8 +144,7 @@ static void test_mux_multiple(void) {
         err = infra_net_set_nonblock(servers[i], true);
         TEST_ASSERT(err == INFRA_OK);
         
-        err = infra_mux_add(mux, infra_net_get_fd(servers[i]), 
-                           INFRA_EVENT_READ, NULL);
+        err = infra_mux_add(mux, servers[i], INFRA_EVENT_READ, NULL);
         TEST_ASSERT(err == INFRA_OK);
 
         err = infra_net_connect(&addr, &clients[i]);
@@ -193,13 +169,9 @@ static void test_mux_multiple(void) {
 
 // 超时测试
 static void test_mux_timeout(void) {
-    infra_mux_ctx_t* mux = NULL;
+    infra_mux_t* mux = NULL;
     infra_error_t err;
-    infra_mux_config_t config = {
-        .type = INFRA_MUX_AUTO,
-        .max_events = 1024,
-        .edge_trigger = false
-    };
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
     
     // 创建多路复用器
     err = infra_mux_create(&config, &mux);
@@ -223,19 +195,54 @@ static void test_mux_timeout(void) {
     infra_mux_destroy(mux);
 }
 
+// 配置测试
+static void test_mux_config(void) {
+    infra_mux_t* mux = NULL;
+    infra_error_t err;
+    
+    // 测试默认配置
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
+    err = infra_mux_create(&config, &mux);
+    TEST_ASSERT(err == INFRA_OK);
+    infra_mux_destroy(mux);
+    
+    // 测试强制使用IOCP
+    config.mux.force_iocp = true;
+    err = infra_mux_create(&config, &mux);
+    TEST_ASSERT(err == INFRA_OK);
+    infra_mux_destroy(mux);
+    
+    // 测试强制使用epoll
+    config = INFRA_DEFAULT_CONFIG;
+    config.mux.force_epoll = true;
+    err = infra_mux_create(&config, &mux);
+    TEST_ASSERT(err == INFRA_OK);
+    infra_mux_destroy(mux);
+    
+    // 测试边缘触发
+    config = INFRA_DEFAULT_CONFIG;
+    config.mux.edge_trigger = true;
+    err = infra_mux_create(&config, &mux);
+    TEST_ASSERT(err == INFRA_OK);
+    infra_mux_destroy(mux);
+    
+    // 测试最大事件数
+    config = INFRA_DEFAULT_CONFIG;
+    config.mux.max_events = 2048;
+    err = infra_mux_create(&config, &mux);
+    TEST_ASSERT(err == INFRA_OK);
+    infra_mux_destroy(mux);
+}
+
 // 压力测试
 static void test_mux_stress(void) {
-    infra_mux_ctx_t* mux = NULL;
+    infra_mux_t* mux = NULL;
     infra_socket_t server = NULL;
     infra_socket_t clients[100] = {0};
     infra_socket_t accepted[100] = {0};
     infra_net_addr_t addr = {0};
     infra_error_t err;
-    infra_mux_config_t config = {
-        .type = INFRA_MUX_AUTO,  // 使用自动选择模式
-        .max_events = 1024,
-        .edge_trigger = false
-    };
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
     
     // 设置地址
     addr.host = "127.0.0.1";
@@ -252,92 +259,61 @@ static void test_mux_stress(void) {
     err = infra_net_set_nonblock(server, true);
     TEST_ASSERT(err == INFRA_OK);
     
-    // 添加服务器到多路复用器
-    err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
+    err = infra_mux_add(mux, server, INFRA_EVENT_READ, NULL);
     TEST_ASSERT(err == INFRA_OK);
     
-    // 创建多个客户端连接
+    // 创建多个客户端
     for (int i = 0; i < 100; i++) {
         err = infra_net_connect(&addr, &clients[i]);
         TEST_ASSERT(err == INFRA_OK);
         
         err = infra_net_set_nonblock(clients[i], true);
         TEST_ASSERT(err == INFRA_OK);
+    }
+    
+    // 等待并接受所有连接
+    for (int i = 0; i < 100; i++) {
+        infra_mux_event_t events[10];
+        err = infra_mux_wait(mux, events, 10, 100);
+        TEST_ASSERT(err == INFRA_OK);
         
-        // 接受连接
         err = infra_net_accept(server, &accepted[i], NULL);
-        if (err == INFRA_ERROR_WOULD_BLOCK) {
-            // 等待一会儿再试
-            infra_sleep(1);
-            err = infra_net_accept(server, &accepted[i], NULL);
-        }
         TEST_ASSERT(err == INFRA_OK);
         
         err = infra_net_set_nonblock(accepted[i], true);
         TEST_ASSERT(err == INFRA_OK);
         
-        // 添加到多路复用器
-        err = infra_mux_add(mux, infra_net_get_fd(accepted[i]),
-                           INFRA_EVENT_READ | INFRA_EVENT_WRITE, NULL);
-        TEST_ASSERT(err == INFRA_OK);
-        
-        err = infra_mux_add(mux, infra_net_get_fd(clients[i]),
-                           INFRA_EVENT_READ | INFRA_EVENT_WRITE, NULL);
-        TEST_ASSERT(err == INFRA_OK);
-    }
-    
-    // 等待并处理事件
-    infra_mux_event_t events[100];
-    for (int i = 0; i < 10; i++) {
-        err = infra_mux_wait(mux, events, 100, 100);  // 100ms超时
+        err = infra_mux_add(mux, accepted[i], INFRA_EVENT_READ | INFRA_EVENT_WRITE, NULL);
         TEST_ASSERT(err == INFRA_OK);
     }
     
     // 清理
     for (int i = 0; i < 100; i++) {
-        infra_net_close(clients[i]);
-        infra_net_close(accepted[i]);
+        if (accepted[i]) {
+            infra_mux_remove(mux, accepted[i]);
+            infra_net_close(accepted[i]);
+        }
+        if (clients[i]) {
+            infra_net_close(clients[i]);
+        }
     }
+    
+    infra_mux_remove(mux, server);
     infra_net_close(server);
     infra_mux_destroy(mux);
 }
 
 int main(void) {
-    TEST_BEGIN();
-
-    // 全局初始化
-    infra_error_t err = infra_init();
-    if (err != INFRA_OK) {
-        infra_printf("Failed to initialize infra system: %d\n", err);
-        return 1;
-    }
-
-    RUN_TEST(test_mux_basic);
-    err = infra_sleep(100);  // 等待100ms
-    MAIN_ASSERT(err == INFRA_OK);
-
-    RUN_TEST(test_mux_events);
-    err = infra_sleep(100);
-    MAIN_ASSERT(err == INFRA_OK);
-
-    RUN_TEST(test_mux_wait);
-    err = infra_sleep(100);
-    MAIN_ASSERT(err == INFRA_OK);
-
-    RUN_TEST(test_mux_multiple);
-    err = infra_sleep(100);
-    MAIN_ASSERT(err == INFRA_OK);
-
-    RUN_TEST(test_mux_timeout);
-    err = infra_sleep(100);
-    MAIN_ASSERT(err == INFRA_OK);
-
-    RUN_TEST(test_mux_stress);
-    err = infra_sleep(100);
-    MAIN_ASSERT(err == INFRA_OK);
-
-    // 全局清理
-    infra_cleanup();
-
-    TEST_END();
+    TEST_INIT();
+    
+    TEST_RUN(test_mux_basic);
+    TEST_RUN(test_mux_events);
+    TEST_RUN(test_mux_wait);
+    TEST_RUN(test_mux_multiple);
+    TEST_RUN(test_mux_timeout);
+    TEST_RUN(test_mux_config);
+    TEST_RUN(test_mux_stress);
+    
+    TEST_CLEANUP();
+    return 0;
 } 

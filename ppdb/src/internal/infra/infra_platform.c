@@ -26,7 +26,8 @@ infra_error_t infra_platform_get_pid(infra_pid_t* pid) {
 }
 
 infra_error_t infra_platform_get_tid(infra_tid_t* tid) {
-    *tid = gettid();
+    //*tid = gettid();
+    *tid = pthread_self();//@cosmopolitan
     return INFRA_OK;
 }
 
@@ -157,7 +158,8 @@ infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_even
     struct NtOverlapped* overlapped = NULL;
     
     if (!GetQueuedCompletionStatus((int64_t)iocp, &bytes, &key, &overlapped, timeout_ms)) {
-        return GetLastError() == WAIT_TIMEOUT ? 0 : INFRA_ERROR_SYSTEM;
+        return GetLastError() == WSA_WAIT_TIMEOUT //@cosmopolitan
+		? 0 : INFRA_ERROR_SYSTEM;
     }
     
     if (events && max_events > 0) {
@@ -209,4 +211,104 @@ infra_error_t infra_platform_epoll_remove(int epoll_fd, int fd) {
 infra_error_t infra_platform_epoll_wait(int epoll_fd, void* events, size_t max_events, int timeout_ms) {
     int num_events = epoll_wait(epoll_fd, (struct epoll_event*)events, max_events, timeout_ms);
     return (num_events >= 0) ? num_events : (errno == EINTR ? 0 : INFRA_ERROR_SYSTEM);
+}
+
+//-----------------------------------------------------------------------------
+// Condition Variable Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_platform_cond_create(void** handle) {
+    pthread_cond_t* cond = malloc(sizeof(pthread_cond_t));
+    if (pthread_cond_init(cond, NULL) != 0) {
+        free(cond);
+        return INFRA_ERROR_SYSTEM;
+    }
+    *handle = cond;
+    return INFRA_OK;
+}
+
+void infra_platform_cond_destroy(void* handle) {
+    pthread_cond_t* cond = (pthread_cond_t*)handle;
+    pthread_cond_destroy(cond);
+    free(cond);
+}
+
+infra_error_t infra_platform_cond_wait(void* handle, void* mutex) {
+    pthread_cond_t* cond = (pthread_cond_t*)handle;
+    pthread_mutex_t* mtx = (pthread_mutex_t*)mutex;
+    return (pthread_cond_wait(cond, mtx) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+}
+
+infra_error_t infra_platform_cond_timedwait(void* handle, void* mutex, uint64_t timeout_ms) {
+    pthread_cond_t* cond = (pthread_cond_t*)handle;
+    pthread_mutex_t* mtx = (pthread_mutex_t*)mutex;
+    
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += timeout_ms / 1000;
+    ts.tv_nsec += (timeout_ms % 1000) * 1000000;
+    if (ts.tv_nsec >= 1000000000) {
+        ts.tv_sec++;
+        ts.tv_nsec -= 1000000000;
+    }
+    
+    int ret = pthread_cond_timedwait(cond, mtx, &ts);
+    return (ret == 0) ? INFRA_OK : (ret == ETIMEDOUT ? INFRA_ERROR_TIMEOUT : INFRA_ERROR_SYSTEM);
+}
+
+infra_error_t infra_platform_cond_signal(void* handle) {
+    pthread_cond_t* cond = (pthread_cond_t*)handle;
+    return (pthread_cond_signal(cond) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+}
+
+infra_error_t infra_platform_cond_broadcast(void* handle) {
+    pthread_cond_t* cond = (pthread_cond_t*)handle;
+    return (pthread_cond_broadcast(cond) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+}
+
+//-----------------------------------------------------------------------------
+// Read-Write Lock Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_platform_rwlock_create(void** handle) {
+    pthread_rwlock_t* rwlock = malloc(sizeof(pthread_rwlock_t));
+    if (pthread_rwlock_init(rwlock, NULL) != 0) {
+        free(rwlock);
+        return INFRA_ERROR_SYSTEM;
+    }
+    *handle = rwlock;
+    return INFRA_OK;
+}
+
+void infra_platform_rwlock_destroy(void* handle) {
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    pthread_rwlock_destroy(rwlock);
+    free(rwlock);
+}
+
+infra_error_t infra_platform_rwlock_rdlock(void* handle) {
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    return (pthread_rwlock_rdlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+}
+
+infra_error_t infra_platform_rwlock_tryrdlock(void* handle) {
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    int ret = pthread_rwlock_tryrdlock(rwlock);
+    return (ret == 0) ? INFRA_OK : (ret == EBUSY ? INFRA_ERROR_BUSY : INFRA_ERROR_SYSTEM);
+}
+
+infra_error_t infra_platform_rwlock_wrlock(void* handle) {
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    return (pthread_rwlock_wrlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+}
+
+infra_error_t infra_platform_rwlock_trywrlock(void* handle) {
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    int ret = pthread_rwlock_trywrlock(rwlock);
+    return (ret == 0) ? INFRA_OK : (ret == EBUSY ? INFRA_ERROR_BUSY : INFRA_ERROR_SYSTEM);
+}
+
+infra_error_t infra_platform_rwlock_unlock(void* handle) {
+    pthread_rwlock_t* rwlock = (pthread_rwlock_t*)handle;
+    return (pthread_rwlock_unlock(rwlock) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 } 

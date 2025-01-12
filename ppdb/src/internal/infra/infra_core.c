@@ -50,6 +50,13 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
     .ds = {
         .hash_initial_size = 16,
         .hash_load_factor = 75  // 75%
+    },
+    .mux = {
+        .prefer_iocp = true,    // Windows平台下默认使用IOCP
+        .force_epoll = false,
+        .force_iocp = false,
+        .max_events = 1024,
+        .edge_trigger = true
     }
 };
 
