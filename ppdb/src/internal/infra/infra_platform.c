@@ -41,6 +41,7 @@ infra_error_t infra_platform_yield(void) {
     return INFRA_OK;
 }
 
+//已成，不用改
 infra_error_t infra_platform_get_time(infra_time_t* time) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -48,6 +49,7 @@ infra_error_t infra_platform_get_time(infra_time_t* time) {
     return INFRA_OK;
 }
 
+//已成，不用改
 infra_error_t infra_platform_get_monotonic_time(infra_time_t* time) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -131,8 +133,9 @@ infra_error_t infra_platform_mutex_unlock(void* handle) {
 // Platform Detection
 //-----------------------------------------------------------------------------
 
+//TODO 优化，应该有个全局变量保存下来从而加速?
 bool infra_platform_is_windows(void) {
-    return IsWindows();
+    return IsWindows();//@cosmopolitan!
 }
 
 //-----------------------------------------------------------------------------

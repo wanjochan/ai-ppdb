@@ -19,24 +19,8 @@
 
 ## 3. 核心接口
 
-```c
-// 创建多路复用上下文
-infra_error_t infra_mux_create(infra_mux_type_t type, infra_mux_ctx_t** ctx);
-
-// 销毁上下文
-infra_error_t infra_mux_destroy(infra_mux_ctx_t* ctx);
-
-// 添加文件描述符
-infra_error_t infra_mux_add(infra_mux_ctx_t* ctx, int fd, infra_event_type_t events, void* user_data);
-
-// 移除文件描述符
-infra_error_t infra_mux_remove(infra_mux_ctx_t* ctx, int fd);
-
-// 修改监听的事件
-infra_error_t infra_mux_modify(infra_mux_ctx_t* ctx, int fd, infra_event_type_t events);
-
-// 等待事件
-infra_error_t infra_mux_wait(infra_mux_ctx_t* ctx, infra_mux_event_t* events, size_t max_events, int timeout_ms);
+```
+infra_mux.h
 ```
 
 ## 4. I/O支持范围
@@ -59,49 +43,12 @@ infra_error_t infra_mux_wait(infra_mux_ctx_t* ctx, infra_mux_event_t* events, si
 
 ### 5.1 简单的时间查询服务器
 ```c
-int main() {
-    // 创建多路复用上下文
-    infra_mux_ctx_t* mux_ctx;
-    infra_mux_create(INFRA_MUX_AUTO, &mux_ctx);
-    
-    // 创建监听socket
-    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-    bind(listen_fd, ...);
-    listen(listen_fd, 128);
-    
-    // 添加到多路复用
-    infra_mux_add(mux_ctx, listen_fd, INFRA_EVENT_READ, NULL);
-    
-    // 事件循环
-    infra_mux_event_t events[32];
-    while (1) {
-        int n = infra_mux_wait(mux_ctx, events, 32, 1000);
-        for (int i = 0; i < n; i++) {
-            // 处理事件...
-        }
-    }
-    
-    infra_mux_destroy(mux_ctx);
-    return 0;
-}
+brev.
 ```
 
 ### 5.2 配合线程池使用
 ```c
-int main() {
-    thread_pool_t* pool = thread_pool_create(4);
-    infra_mux_ctx_t* mux_ctx;
-    infra_mux_create(INFRA_MUX_AUTO, &mux_ctx);
-    
-    while (1) {
-        infra_mux_event_t events[32];
-        int n = infra_mux_wait(mux_ctx, events, 32, 1000);
-        
-        for (int i = 0; i < n; i++) {
-            thread_pool_submit(pool, handle_event, &events[i]);
-        }
-    }
-}
+brev.
 ```
 
 ## 6. 最佳实践

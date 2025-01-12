@@ -113,8 +113,6 @@ typedef struct {
 
     struct {
         bool prefer_iocp;    // 是否优先使用IOCP（Windows平台下默认为true）
-        bool force_epoll;    // 强制使用epoll
-        bool force_iocp;     // 强制使用iocp
         size_t max_events;   // 单次处理的最大事件数
         bool edge_trigger;   // 是否启用边缘触发(仅epoll)
     } mux;

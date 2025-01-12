@@ -35,6 +35,15 @@ infra_error_t infra_platform_yield(void);
 
 // 时间获取
 infra_error_t infra_platform_get_time(infra_time_t* time);
+
+/** 含义：获取的是系统的单调时间（Monotonic Time），表示从系统启动以来的时间（通常不包括系统睡眠时间）。
+特点：
+不受系统时间的调整影响（即使用户更改了系统时间，单调时间不会回退或跳跃）。
+时间是单调递增的。
+用途：
+用于测量时间间隔（例如性能分析、超时检测）。
+适合对时间的连续性和准确性要求较高的场景。
+*/
 infra_error_t infra_platform_get_monotonic_time(infra_time_t* time);
 
 // 平台相关的函数

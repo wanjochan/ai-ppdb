@@ -52,9 +52,7 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
         .hash_load_factor = 75  // 75%
     },
     .mux = {
-        .prefer_iocp = true,    // Windows平台下默认使用IOCP
-        .force_epoll = false,
-        .force_iocp = false,
+        .prefer_iocp = true,//如果是 true，在windows上优先用iocp，否则默认epoll
         .max_events = 1024,
         .edge_trigger = true
     }
