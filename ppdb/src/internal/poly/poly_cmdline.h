@@ -6,7 +6,8 @@
 #ifndef PPDB_POLY_CMDLINE_H
 #define PPDB_POLY_CMDLINE_H
 
-#include "../infra/infra.h"
+#include "cosmopolitan.h"
+#include "../infra/infra_error.h"
 
 #define POLY_CMD_MAX_NAME 32
 #define POLY_CMD_MAX_DESC 256
