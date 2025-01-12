@@ -12,7 +12,7 @@
 //#define SOCKET_ERROR (-1)
 //#define INVALID_SOCKET (-1)
 
-static infra_error_t create_socket(infra_socket_t* sock, bool is_udp, const infra_config_t* config) {
+static infra_error_t create_socket(infra_socket_t* sock, bool is_udp, const infra_config_t* config, bool nonblocking) {
     if (!sock || !config) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -39,8 +39,17 @@ static infra_error_t create_socket(infra_socket_t* sock, bool is_udp, const infr
         }
         // 设置handle字段为socket句柄
         (*sock)->handle = (void*)(intptr_t)(*sock)->fd;
-        
-        // 设置socket为非阻塞模式
+    } else {
+        (*sock)->fd = socket(AF_INET, type, protocol);
+        if ((*sock)->fd == -1) {
+            infra_free(*sock);
+            *sock = NULL;
+            return INFRA_ERROR_SYSTEM;
+        }
+    }
+
+    // 根据参数设置非阻塞模式
+    if (nonblocking) {
         int flags = fcntl((*sock)->fd, F_GETFL, 0);
         if (flags == -1) {
             close((*sock)->fd);
@@ -54,16 +63,10 @@ static infra_error_t create_socket(infra_socket_t* sock, bool is_udp, const infr
             *sock = NULL;
             return INFRA_ERROR_SYSTEM;
         }
-    } else {
-        (*sock)->fd = socket(AF_INET, type, protocol);
-        if ((*sock)->fd == -1) {
-            infra_free(*sock);
-            *sock = NULL;
-            return INFRA_ERROR_SYSTEM;
-        }
     }
 
-    infra_printf("Socket created successfully, fd: %d, is_udp: %d\n", (*sock)->fd, is_udp);
+    infra_printf("Socket created successfully, fd: %d, is_udp: %d, nonblocking: %d\n", 
+                 (*sock)->fd, is_udp, nonblocking);
     return INFRA_OK;
 }
 
@@ -75,8 +78,8 @@ infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* soc
 
     infra_printf("Creating socket for listen on %s:%d\n", addr->host, addr->port);
 
-    // 创建socket
-    infra_error_t err = create_socket(sock, false, config);
+    // 创建socket - 监听socket需要非阻塞以支持多路复用
+    infra_error_t err = create_socket(sock, false, config, true);
     if (err != INFRA_OK) {
         infra_printf("Failed to create socket: %d\n", err);
         return err;
@@ -193,8 +196,8 @@ infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* so
         return INFRA_ERROR_INVALID;
     }
 
-    // 创建socket
-    infra_error_t err = create_socket(sock, false, config);
+    // 创建socket - 连接socket需要非阻塞以支持多路复用
+    infra_error_t err = create_socket(sock, false, config, true);
     if (err != INFRA_OK) {
         return err;
     }
@@ -347,7 +350,7 @@ infra_error_t infra_net_udp_socket(infra_socket_t* sock, const infra_config_t* c
     if (sock == NULL || config == NULL) {
         return INFRA_ERROR_INVALID;
     }
-    return create_socket(sock, true, config);
+    return create_socket(sock, true, config, false);
 }
 
 infra_error_t infra_net_udp_bind(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config) {
@@ -355,8 +358,8 @@ infra_error_t infra_net_udp_bind(const infra_net_addr_t* addr, infra_socket_t* s
         return INFRA_ERROR_INVALID;
     }
 
-    // 创建socket
-    infra_error_t err = create_socket(sock, true, config);
+    // 创建socket - UDP默认阻塞
+    infra_error_t err = create_socket(sock, true, config, false);
     if (err != INFRA_OK) {
         return err;
     }
