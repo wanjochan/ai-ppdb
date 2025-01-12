@@ -7,24 +7,18 @@
 2. 命令分发：解析并执行 ppdb.exe <cmd> 格式的命令
 3. 帮助系统：自动生成命令帮助信息
 
+## 特别注意，强制要求
+
+* 每轮动作前都要看 ppdb/docs/DESIGN.md 文件，里面有 ppdb 项目架构的说明和规范要求
+
 ## 背景
-
-特别注意！！ 要看 ppdb/docs/DESIGN.md 文件，里面有 ppdb 项目架构的说明。
-
-PPDB 项目重构为三层架构：
-- infra（原子层）：基础设施
-- poly（聚合物层）：功能组件
-- peer（细胞层）：产品实现
 
 需要在 poly 层实现命令行框架，支持 ppdb.exe <cmd> 模式。
 
 ## 目标命令
+
 1. help：帮助信息
-2. server：PPDB 服务器，支持 --feature 选项
-3. cli：客户端
 4. riinetd：rinetd 替代
-5. ws：WebSocket 代理
-6. fetcher：多点下载工具
 
 ## 开发步骤
 

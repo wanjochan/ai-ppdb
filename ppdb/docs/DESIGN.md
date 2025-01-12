@@ -15,16 +15,16 @@
 
 ```
 src/
-├── infra/                     # 基础设施层， 未经许可不修改 infra 层的任何代码，它是稳定的基础设施
+├── infra/                     # 基础设施层， 未经许可不修改 infra 层的任何代码，它是稳定的基础设施。如果实在不够，就讨论后新增。
 │   ├── infra_{module}.c          
 │
-├── poly/                     # 工具组件
+├── poly/                     # 工具组件 （调用 infra层，不要直接调用cosmopolitan的)
 │   ├── poly_{module}.c
 │
-├── peer/                     # 产品组件
+├── peer/                     # 产品组件 （调用 工具组件和 infra层，不要直接调用cosmopolitan的)
 │   ├── peer_{module}.c
 │
-└── ppdb/                     # 产品层
+└── ppdb/                     # 产品层 (调用 产品组件 和 工具组件 和 infra层，不要直接调用cosmopolitan的)
     ├── ppdb.c                # 服务端主程序
     └── libppdb.c             # 客户端库 （被 ppdb.c 调用）
 ```

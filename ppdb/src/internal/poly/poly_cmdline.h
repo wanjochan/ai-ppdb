@@ -6,8 +6,7 @@
 #ifndef PPDB_POLY_CMDLINE_H
 #define PPDB_POLY_CMDLINE_H
 
-#include "cosmopolitan.h"
-#include "../infra/infra_error.h"
+#include "internal/infra/infra_core.h"
 
 #define POLY_CMD_MAX_NAME 32
 #define POLY_CMD_MAX_DESC 256
@@ -22,7 +21,7 @@ typedef struct poly_cmd_option {
 typedef struct poly_cmd {
     char name[POLY_CMD_MAX_NAME];
     char desc[POLY_CMD_MAX_DESC];
-    poly_cmd_option_t *options;
+    const poly_cmd_option_t *options;
     int option_count;
     infra_error_t (*handler)(int argc, char **argv);
 } poly_cmd_t;
