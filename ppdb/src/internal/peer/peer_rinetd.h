@@ -9,6 +9,7 @@
 //-----------------------------------------------------------------------------
 
 extern const poly_cmd_option_t rinetd_options[];
+extern const int rinetd_option_count;
 
 //-----------------------------------------------------------------------------
 // Command Handler

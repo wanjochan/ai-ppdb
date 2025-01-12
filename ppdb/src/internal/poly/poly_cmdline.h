@@ -55,6 +55,13 @@ infra_error_t poly_cmdline_execute(int argc, char **argv);
 infra_error_t poly_cmdline_help(const char *cmd_name);
 
 /**
+ * @brief Get all registered commands
+ * @param count Output parameter to store command count
+ * @return Pointer to array of commands, or NULL if no commands registered
+ */
+const poly_cmd_t* poly_cmdline_get_commands(int* count);
+
+/**
  * @brief Cleanup command line framework
  * @return infra_error_t Error code
  */

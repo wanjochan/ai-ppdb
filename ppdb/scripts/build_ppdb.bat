@@ -19,10 +19,11 @@ echo Building ppdb...
     "%SRC_DIR%\internal\peer\peer_rinetd.c" ^
     "%SRC_DIR%\internal\infra\infra_core.c" ^
     "%SRC_DIR%\internal\infra\infra_memory.c" ^
-    "%SRC_DIR%\internal\infra\infra_string.c" ^
     "%SRC_DIR%\internal\infra\infra_error.c" ^
     "%SRC_DIR%\internal\infra\infra_mux.c" ^
     "%SRC_DIR%\internal\infra\infra_net.c" ^
+    "%SRC_DIR%\internal\infra\infra_platform.c" ^
+    "%SRC_DIR%\internal\infra\infra_sync.c" ^
     %LDFLAGS% %LIBS% -o "%BUILD_DIR%\ppdb.exe.dbg"
 if errorlevel 1 exit /b 1
 
@@ -31,7 +32,8 @@ if errorlevel 1 exit /b 1
 
 rem Run the program if not explicitly disabled
 if not "%1"=="norun" (
-    "%BUILD_DIR%\ppdb.exe" help
+    copy /Y "%BUILD_DIR%\ppdb.exe" "%PPDB_DIR%\ppdb_latest.exe"
+    "%PPDB_DIR%\ppdb_latest.exe" help
 )
 
 exit /b 0 
