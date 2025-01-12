@@ -9,7 +9,8 @@
 #ifndef INFRA_PLATFORM_H
 #define INFRA_PLATFORM_H
 
-#include "internal/infra/infra_core.h"
+#include "infra_core.h"
+#include "infra_net.h"
 
 //-----------------------------------------------------------------------------
 // Platform Types
@@ -164,7 +165,7 @@ bool infra_platform_is_windows(void);
 // IOCP相关函数
 void* infra_platform_create_iocp(void);
 void infra_platform_close_iocp(void* iocp);
-infra_error_t infra_platform_iocp_add(void* iocp, int fd, void* user_data);
+infra_error_t infra_platform_iocp_add(void* iocp, infra_socket_t sock, void* user_data);
 infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_events, int timeout_ms);
 
 // EPOLL相关函数

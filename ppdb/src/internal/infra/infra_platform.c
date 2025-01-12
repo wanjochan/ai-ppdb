@@ -159,12 +159,19 @@ void infra_platform_close_iocp(void* iocp) {
     }
 }
 
-infra_error_t infra_platform_iocp_add(void* iocp, int fd, void* user_data) {
-    if (!iocp || fd < 0) {
+infra_error_t infra_platform_iocp_add(void* iocp, infra_socket_t sock, void* user_data) {
+    if (!iocp || !sock) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    int64_t result = CreateIoCompletionPort((int64_t)fd, (int64_t)iocp, (uint64_t)user_data, 0);
-    return result ? INFRA_OK : INFRA_ERROR_SYSTEM;
+    
+    int64_t result = CreateIoCompletionPort((int64_t)sock->handle, (int64_t)iocp, (uint64_t)user_data, 0);
+    if (!result) {
+        int error = GetLastError();
+        infra_printf("CreateIoCompletionPort failed with error: %d\n", error);
+        return INFRA_ERROR_SYSTEM;
+    }
+    
+    return INFRA_OK;
 }
 
 infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_events, int timeout_ms) {

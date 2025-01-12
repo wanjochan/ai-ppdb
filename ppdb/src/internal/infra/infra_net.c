@@ -6,63 +6,135 @@
 #include "internal/infra/infra_net.h"
 #include "internal/infra/infra_error.h"
 #include "internal/infra/infra_memory.h"
+#include "internal/infra/infra_platform.h"
+#include "internal/infra/infra_core.h"
 
-// 创建socket
-static infra_error_t create_socket(bool is_udp, infra_socket_t* sock) {
+//#define SOCKET_ERROR (-1)
+//#define INVALID_SOCKET (-1)
+
+static infra_error_t create_socket(infra_socket_t* sock, bool is_udp, const infra_config_t* config) {
+    if (!sock || !config) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
     *sock = (infra_socket_t)infra_malloc(sizeof(struct infra_socket));
-    if (*sock == NULL) {
+    if (!*sock) {
         return INFRA_ERROR_NO_MEMORY;
     }
 
-    (*sock)->fd = socket(AF_INET, is_udp ? SOCK_DGRAM : SOCK_STREAM, 0);
-    if ((*sock)->fd == -1) {
-        infra_free(*sock);
-        *sock = NULL;
-        return INFRA_ERROR_SYSTEM;
+    (*sock)->is_udp = is_udp;
+    (*sock)->overlapped = NULL;
+    (*sock)->handle = NULL;
+
+    int type = is_udp ? SOCK_DGRAM : SOCK_STREAM;
+    int protocol = is_udp ? IPPROTO_UDP : IPPROTO_TCP;
+
+    if (infra_platform_is_windows() && config->mux.prefer_iocp) {
+        // 在Windows上使用socket创建支持IOCP的socket
+        (*sock)->fd = socket(AF_INET, type, protocol);
+        if ((*sock)->fd == -1) {
+            infra_free(*sock);
+            *sock = NULL;
+            return INFRA_ERROR_SYSTEM;
+        }
+        // 设置handle字段为socket句柄
+        (*sock)->handle = (void*)(intptr_t)(*sock)->fd;
+        
+        // 设置socket为非阻塞模式
+        int flags = fcntl((*sock)->fd, F_GETFL, 0);
+        if (flags == -1) {
+            close((*sock)->fd);
+            infra_free(*sock);
+            *sock = NULL;
+            return INFRA_ERROR_SYSTEM;
+        }
+        if (fcntl((*sock)->fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+            close((*sock)->fd);
+            infra_free(*sock);
+            *sock = NULL;
+            return INFRA_ERROR_SYSTEM;
+        }
+    } else {
+        (*sock)->fd = socket(AF_INET, type, protocol);
+        if ((*sock)->fd == -1) {
+            infra_free(*sock);
+            *sock = NULL;
+            return INFRA_ERROR_SYSTEM;
+        }
     }
 
-    (*sock)->is_udp = is_udp;
-    (*sock)->handle = (void*)(intptr_t)(*sock)->fd;
-    (*sock)->overlapped = NULL;
-
+    infra_printf("Socket created successfully, fd: %d, is_udp: %d\n", (*sock)->fd, is_udp);
     return INFRA_OK;
 }
 
 // 实现网络函数
-infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* sock) {
-    if (addr == NULL || sock == NULL) {
+infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config) {
+    if (addr == NULL || sock == NULL || config == NULL) {
         return INFRA_ERROR_INVALID;
     }
 
+    infra_printf("Creating socket for listen on %s:%d\n", addr->host, addr->port);
+
     // 创建socket
-    infra_error_t err = create_socket(false, sock);
+    infra_error_t err = create_socket(sock, false, config);
     if (err != INFRA_OK) {
+        infra_printf("Failed to create socket: %d\n", err);
         return err;
     }
+
+    // 在绑定前设置 SO_REUSEADDR
+    int optval = 1;
+    if (setsockopt((*sock)->fd, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval)) == -1) {
+        infra_printf("setsockopt SO_REUSEADDR failed with errno: %d\n", errno);
+        if (infra_platform_is_windows()) {
+            int wsa_error = WSAGetLastError();
+            infra_printf("WSA error: %d\n", wsa_error);
+        }
+        infra_net_close(*sock);
+        return INFRA_ERROR_SYSTEM;
+    }
+    infra_printf("SO_REUSEADDR set successfully\n");
 
     // 设置地址结构
     struct sockaddr_in server_addr = {0};
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(addr->port);
     
-    // 将IP地址字符串转换为网络字节序
-    if (inet_pton(AF_INET, addr->host, &server_addr.sin_addr) != 1) {
-        infra_net_close(*sock);
-        return INFRA_ERROR_INVALID;
+    // 使用 INADDR_ANY 而不是特定的 IP
+    if (infra_strcmp(addr->host, "127.0.0.1") == 0) {
+        infra_printf("Using INADDR_LOOPBACK for localhost\n");
+        server_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    } else {
+        infra_printf("Using INADDR_ANY for %s\n", addr->host);
+        server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     }
+
+    infra_printf("Binding socket (fd: %d, family: %d, port: %d, addr: 0x%x)\n", 
+                 (*sock)->fd, 
+                 server_addr.sin_family,
+                 ntohs(server_addr.sin_port),
+                 ntohl(server_addr.sin_addr.s_addr));
 
     // 绑定地址
     if (bind((*sock)->fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
+        int bind_errno = errno;
+        infra_printf("bind failed with errno: %d, fd: %d\n", bind_errno, (*sock)->fd);
+        if (infra_platform_is_windows()) {
+            int wsa_error = WSAGetLastError();
+            infra_printf("WSA error: %d\n", wsa_error);
+        }
         infra_net_close(*sock);
         return INFRA_ERROR_SYSTEM;
     }
 
     // 开始监听
     if (listen((*sock)->fd, SOMAXCONN) == -1) {
+        infra_printf("listen failed with errno: %d, fd: %d\n", errno, (*sock)->fd);
         infra_net_close(*sock);
         return INFRA_ERROR_SYSTEM;
     }
 
+    infra_printf("Successfully listening on %s:%d, fd: %d\n", addr->host, addr->port, (*sock)->fd);
     return INFRA_OK;
 }
 
@@ -116,13 +188,13 @@ infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infr
     return INFRA_OK;
 }
 
-infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* sock) {
-    if (addr == NULL || sock == NULL) {
+infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config) {
+    if (addr == NULL || sock == NULL || config == NULL) {
         return INFRA_ERROR_INVALID;
     }
 
     // 创建socket
-    infra_error_t err = create_socket(false, sock);
+    infra_error_t err = create_socket(sock, false, config);
     if (err != INFRA_OK) {
         return err;
     }
@@ -271,20 +343,20 @@ infra_error_t infra_net_recv(infra_socket_t sock, void* buf, size_t len, size_t*
     return INFRA_OK;
 }
 
-infra_error_t infra_net_udp_socket(infra_socket_t* sock) {
-    if (sock == NULL) {
+infra_error_t infra_net_udp_socket(infra_socket_t* sock, const infra_config_t* config) {
+    if (sock == NULL || config == NULL) {
         return INFRA_ERROR_INVALID;
     }
-    return create_socket(true, sock);
+    return create_socket(sock, true, config);
 }
 
-infra_error_t infra_net_udp_bind(const infra_net_addr_t* addr, infra_socket_t* sock) {
-    if (addr == NULL || sock == NULL) {
+infra_error_t infra_net_udp_bind(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config) {
+    if (addr == NULL || sock == NULL || config == NULL) {
         return INFRA_ERROR_INVALID;
     }
 
-    // 创建UDP socket
-    infra_error_t err = create_socket(true, sock);
+    // 创建socket
+    infra_error_t err = create_socket(sock, true, config);
     if (err != INFRA_OK) {
         return err;
     }
@@ -446,6 +518,12 @@ infra_error_t infra_net_addr_to_str(const infra_net_addr_t* addr, char* buf, siz
 
 // 获取文件描述符
 int infra_net_get_fd(infra_socket_t sock) {
+    if (!sock) {
+        return -1;  // 无效的套接字
+    }
+    return sock->fd;
+} 
+int infra_net_get_hdl(infra_socket_t sock) {
     if (!sock) {
         return -1;  // 无效的套接字
     }

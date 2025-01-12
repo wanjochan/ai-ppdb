@@ -7,6 +7,7 @@
 
 #include "cosmopolitan.h"
 #include "internal/infra/infra_error.h"
+#include "internal/infra/infra_core.h"
 
 // 网络地址结构
 typedef struct infra_net_addr {
@@ -26,11 +27,11 @@ struct infra_socket {
 typedef struct infra_socket* infra_socket_t;
 
 // 服务端接口
-infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* sock);
+infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config);
 infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infra_net_addr_t* client_addr);
 
 // 客户端接口
-infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* sock);
+infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config);
 
 // 通用操作
 infra_error_t infra_net_close(infra_socket_t sock);
@@ -45,8 +46,8 @@ infra_error_t infra_net_send(infra_socket_t sock, const void* buf, size_t len, s
 infra_error_t infra_net_recv(infra_socket_t sock, void* buf, size_t len, size_t* received);
 
 // UDP 操作
-infra_error_t infra_net_udp_socket(infra_socket_t* sock);
-infra_error_t infra_net_udp_bind(const infra_net_addr_t* addr, infra_socket_t* sock);
+infra_error_t infra_net_udp_socket(infra_socket_t* sock, const infra_config_t* config);
+infra_error_t infra_net_udp_bind(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config);
 infra_error_t infra_net_sendto(infra_socket_t sock, const void* buf, size_t len, const infra_net_addr_t* addr, size_t* sent);
 infra_error_t infra_net_recvfrom(infra_socket_t sock, void* buf, size_t len, infra_net_addr_t* addr, size_t* received);
 
@@ -56,5 +57,7 @@ infra_error_t infra_net_addr_to_str(const infra_net_addr_t* addr, char* buf, siz
 
 // 文件描述符操作
 int infra_net_get_fd(infra_socket_t sock);
+//
+int infra_net_get_hdl(infra_socket_t sock);
 
 #endif /* INFRA_NET_H */ 

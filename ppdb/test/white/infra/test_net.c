@@ -12,16 +12,15 @@
 
 // 基本功能测试
 static void test_net_basic(void) {
-    infra_net_addr_t addr = {0};
-    infra_socket_t server = NULL;
     infra_error_t err;
-    
-    // 设置地址
+    infra_socket_t server = NULL;
+    infra_net_addr_t addr = {0};
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
+
     addr.host = "127.0.0.1";
     addr.port = 12345;
-    
-    // 测试监听
-    err = infra_net_listen(&addr, &server);
+
+    err = infra_net_listen(&addr, &server, &config);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(server != NULL);
     
@@ -42,21 +41,21 @@ static void test_net_basic(void) {
 
 // 连接测试
 static void test_net_connect(void) {
-    infra_net_addr_t addr = {0};
+    infra_error_t err;
     infra_socket_t server = NULL;
     infra_socket_t client = NULL;
-    infra_error_t err;
-    
-    // 设置地址
+    infra_net_addr_t addr = {0};
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
+
     addr.host = "127.0.0.1";
     addr.port = 12345;
-    
-    // 创建服务器
-    err = infra_net_listen(&addr, &server);
+
+    err = infra_net_listen(&addr, &server, &config);
     TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(server != NULL);
     
     // 测试连接
-    err = infra_net_connect(&addr, &client);
+    err = infra_net_connect(&addr, &client, &config);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(client != NULL);
     
@@ -65,7 +64,7 @@ static void test_net_connect(void) {
     err = infra_net_set_nonblock(client, true);
     TEST_ASSERT(err == INFRA_OK);
     
-    err = infra_net_connect(&addr, &async_client);
+    err = infra_net_connect(&addr, &async_client, &config);
     TEST_ASSERT(err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_OK);
     
     // 清理
@@ -140,23 +139,23 @@ static void test_net_addr(void) {
 
 // UDP测试
 static void test_net_udp(void) {
-    infra_net_addr_t addr = {0};
+    infra_error_t err;
     infra_socket_t server = NULL;
     infra_socket_t client = NULL;
+    infra_net_addr_t addr = {0};
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
     char send_buf[] = "Hello, UDP!";
     char recv_buf[64] = {0};
     size_t bytes;
-    infra_error_t err;
-    
-    // 设置地址
+
     addr.host = "127.0.0.1";
     addr.port = 12345;
     
     // 创建UDP套接字
-    err = infra_net_udp_bind(&addr, &server);
+    err = infra_net_udp_bind(&addr, &server, &config);
     TEST_ASSERT(err == INFRA_OK);
     
-    err = infra_net_udp_socket(&client);
+    err = infra_net_udp_socket(&client, &config);
     TEST_ASSERT(err == INFRA_OK);
     
     // 发送数据

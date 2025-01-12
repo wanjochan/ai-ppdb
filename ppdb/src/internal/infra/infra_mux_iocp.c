@@ -37,7 +37,17 @@ static infra_error_t infra_mux_iocp_add_impl(infra_mux_t* mux, int fd, infra_eve
     }
 
     infra_mux_iocp_impl_t* impl = (infra_mux_iocp_impl_t*)mux->impl;
-    return infra_platform_iocp_add(impl->iocp, fd, user_data);
+    if (!impl->iocp) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 将文件描述符关联到完成端口
+    int64_t result = CreateIoCompletionPort(fd, impl->iocp, (int64_t)user_data, 0);
+    if (result < 0) {
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    return INFRA_OK;
 }
 
 // 从IOCP移除文件描述符（IOCP不需要显式移除）

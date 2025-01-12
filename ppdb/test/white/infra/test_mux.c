@@ -19,7 +19,8 @@ static void test_mux_basic(void) {
     
     // 创建多路复用器
     err = infra_mux_create(&config, &mux);
-    TEST_ASSERT(err == INFRA_OK);
+    //TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(mux != NULL);
     
     // 销毁
@@ -38,20 +39,23 @@ static void test_mux_events(void) {
     addr.port = 12345;
 
     err = infra_mux_create(&config, &mux);
-    TEST_ASSERT(err == INFRA_OK);
+    //TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(mux != NULL);
 
-    err = infra_net_listen(&addr, &server);
-    TEST_ASSERT(err == INFRA_OK);
+    err = infra_net_listen(&addr, &server, &config);
+    //TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(server != NULL);
 
-    err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
+    int handle = config.mux.prefer_iocp ? infra_net_get_hdl(server) : infra_net_get_fd(server);
+    err = infra_mux_add(mux, handle, INFRA_EVENT_READ, NULL);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
+
+    err = infra_mux_modify(mux, handle, INFRA_EVENT_READ | INFRA_EVENT_WRITE);
     TEST_ASSERT(err == INFRA_OK);
 
-    err = infra_mux_modify(mux, infra_net_get_fd(server), INFRA_EVENT_READ | INFRA_EVENT_WRITE);
-    TEST_ASSERT(err == INFRA_OK);
-
-    err = infra_mux_remove(mux, infra_net_get_fd(server));
+    err = infra_mux_remove(mux, handle);
     TEST_ASSERT(err == INFRA_OK);
 
     infra_net_close(server);
@@ -74,8 +78,9 @@ static void test_mux_wait(void) {
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(mux != NULL);
 
-    err = infra_net_listen(&addr, &server);
-    TEST_ASSERT(err == INFRA_OK);
+    err = infra_net_listen(&addr, &server, &config);
+    //TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(server != NULL);
 
     err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
@@ -106,8 +111,9 @@ static void test_mux_multiple(void) {
 
     for (int i = 0; i < 3; i++) {
         addr.port = 12345 + i;
-        err = infra_net_listen(&addr, &servers[i]);
-        TEST_ASSERT(err == INFRA_OK);
+        err = infra_net_listen(&addr, &servers[i], &config);
+        //TEST_ASSERT(err == INFRA_OK);
+        TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
         TEST_ASSERT(servers[i] != NULL);
 
         err = infra_mux_add(mux, infra_net_get_fd(servers[i]), INFRA_EVENT_READ, NULL);
@@ -172,7 +178,8 @@ static void test_mux_config(void) {
     config.mux.prefer_iocp = false;
     config.mux.edge_trigger = true;
     err = infra_mux_create(&config, &mux);
-    TEST_ASSERT(err == INFRA_OK);
+    //TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(mux != NULL);
     infra_mux_destroy(mux);
 
@@ -203,8 +210,9 @@ static void test_mux_stress(void) {
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(mux != NULL);
 
-    err = infra_net_listen(&addr, &server);
-    TEST_ASSERT(err == INFRA_OK);
+    err = infra_net_listen(&addr, &server, &config);
+    //TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(server != NULL);
 
     err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
@@ -235,6 +243,11 @@ static void test_mux_stress(void) {
 }
 
 int main(void) {
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
     TEST_BEGIN();
 
     RUN_TEST(test_mux_basic);
