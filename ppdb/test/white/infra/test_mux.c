@@ -11,9 +11,6 @@
 #include "internal/infra/infra_mux.h"
 #include "test/white/framework/test_framework.h"
 
-// 事件回调计数器
-static int g_event_count = 0;
-
 // 基本功能测试
 static void test_mux_basic(void) {
     infra_error_t err;

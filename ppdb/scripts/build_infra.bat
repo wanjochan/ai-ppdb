@@ -8,7 +8,7 @@ set INCLUDE_DIR=%ROOT_DIR%include
 set CROSS9_DIR=%ROOT_DIR%..\cross9
 set COSMOPOLITAN_DIR=%ROOT_DIR%..\cosmopolitan
 
-set SRC_FILES=infra_core.c infra_platform.c infra_sync.c infra_error.c infra_ds.c infra_memory.c infra_net.c infra_mux.c
+set SRC_FILES=infra_core.c infra_platform.c infra_sync.c infra_error.c infra_ds.c infra_memory.c infra_net.c infra_mux.c infra_mux_epoll.c infra_mux_iocp.c
 
 rem 记录开始时间
 set START_TIME=%time%
@@ -64,7 +64,7 @@ if !NEED_REBUILD!==1 (
     
     rem Create static library
     echo Creating library...
-    "%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_ds.o" "%BUILD_DIR%\infra\infra_memory.o" "%BUILD_DIR%\infra\infra_net.o" "%BUILD_DIR%\infra\infra_mux.o"
+    "%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_ds.o" "%BUILD_DIR%\infra\infra_memory.o" "%BUILD_DIR%\infra\infra_net.o" "%BUILD_DIR%\infra\infra_mux.o" "%BUILD_DIR%\infra\infra_mux_epoll.o" "%BUILD_DIR%\infra\infra_mux_iocp.o"
     if errorlevel 1 exit /b 1
     
     echo Build infra complete.

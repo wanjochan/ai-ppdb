@@ -143,35 +143,51 @@ bool infra_platform_is_windows(void) {
 //-----------------------------------------------------------------------------
 
 void* infra_platform_create_iocp(void) {
-    return (void*)CreateIoCompletionPort((int64_t)-1, 0, 0, 0);
+    if (!infra_platform_is_windows()) {
+        return NULL;
+    }
+    void* iocp = (void*)CreateIoCompletionPort((int64_t)-1, 0, 0, 0);
+    if (!iocp) {
+        return NULL;
+    }
+    return iocp;
 }
 
 void infra_platform_close_iocp(void* iocp) {
-    CloseHandle((int64_t)iocp);
+    if (iocp) {
+        CloseHandle((int64_t)iocp);
+    }
 }
 
 infra_error_t infra_platform_iocp_add(void* iocp, int fd, void* user_data) {
+    if (!iocp || fd < 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
     int64_t result = CreateIoCompletionPort((int64_t)fd, (int64_t)iocp, (uint64_t)user_data, 0);
     return result ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
 infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_events, int timeout_ms) {
+    if (!iocp || !events || max_events == 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
     uint32_t bytes;
     uint64_t key;
     struct NtOverlapped* overlapped = NULL;
     
     if (!GetQueuedCompletionStatus((int64_t)iocp, &bytes, &key, &overlapped, timeout_ms)) {
-        return GetLastError() == WSA_WAIT_TIMEOUT //@cosmopolitan
-		? 0 : INFRA_ERROR_SYSTEM;
+        int err = GetLastError();
+        if (err == WSA_WAIT_TIMEOUT) {
+            return 0;
+        }
+        return INFRA_ERROR_SYSTEM;
     }
     
-    if (events && max_events > 0) {
-        infra_mux_event_t* mux_events = (infra_mux_event_t*)events;
-        mux_events[0].user_data = (void*)key;
-        mux_events[0].events = INFRA_EVENT_READ | INFRA_EVENT_WRITE;
-        return 1;
-    }
-    return 0;
+    infra_mux_event_t* mux_events = (infra_mux_event_t*)events;
+    mux_events[0].user_data = (void*)key;
+    mux_events[0].events = INFRA_EVENT_READ | INFRA_EVENT_WRITE;
+    return 1;
 }
 
 //-----------------------------------------------------------------------------
@@ -179,14 +195,23 @@ infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_even
 //-----------------------------------------------------------------------------
 
 int infra_platform_create_epoll(void) {
+    if (infra_platform_is_windows()) {
+        return -1;
+    }
     return epoll_create1(0);
 }
 
 void infra_platform_close_epoll(int epoll_fd) {
-    close(epoll_fd);
+    if (epoll_fd >= 0) {
+        close(epoll_fd);
+    }
 }
 
 infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool edge_trigger, void* user_data) {
+    if (epoll_fd < 0 || fd < 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
     struct epoll_event ev = {0};
     ev.events = ((events & INFRA_EVENT_READ) ? EPOLLIN : 0) |
                 ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
@@ -198,6 +223,10 @@ infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool ed
 }
 
 infra_error_t infra_platform_epoll_modify(int epoll_fd, int fd, int events, bool edge_trigger) {
+    if (epoll_fd < 0 || fd < 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
     struct epoll_event ev = {0};
     ev.events = ((events & INFRA_EVENT_READ) ? EPOLLIN : 0) |
                 ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
@@ -208,12 +237,22 @@ infra_error_t infra_platform_epoll_modify(int epoll_fd, int fd, int events, bool
 }
 
 infra_error_t infra_platform_epoll_remove(int epoll_fd, int fd) {
+    if (epoll_fd < 0 || fd < 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
     return (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
 infra_error_t infra_platform_epoll_wait(int epoll_fd, void* events, size_t max_events, int timeout_ms) {
+    if (epoll_fd < 0 || !events || max_events == 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
     int num_events = epoll_wait(epoll_fd, (struct epoll_event*)events, max_events, timeout_ms);
-    return (num_events >= 0) ? num_events : (errno == EINTR ? 0 : INFRA_ERROR_SYSTEM);
+    if (num_events < 0) {
+        return (errno == EINTR) ? 0 : INFRA_ERROR_SYSTEM;
+    }
+    return num_events;
 }
 
 //-----------------------------------------------------------------------------

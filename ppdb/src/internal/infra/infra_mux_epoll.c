@@ -15,7 +15,7 @@ typedef struct {
 } infra_mux_epoll_impl_t;
 
 // 销毁epoll实例
-static infra_error_t epoll_destroy(infra_mux_t* mux) {
+static infra_error_t infra_mux_epoll_destroy(infra_mux_t* mux) {
     if (!mux || !mux->impl) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -37,7 +37,7 @@ static infra_error_t epoll_destroy(infra_mux_t* mux) {
 }
 
 // 添加文件描述符到epoll
-static infra_error_t epoll_add(infra_mux_t* mux, int fd, infra_event_type_t events, void* user_data) {
+static infra_error_t infra_mux_epoll_add(infra_mux_t* mux, int fd, infra_event_type_t events, void* user_data) {
     if (!mux || !mux->impl || fd < 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -47,7 +47,7 @@ static infra_error_t epoll_add(infra_mux_t* mux, int fd, infra_event_type_t even
 }
 
 // 从epoll移除文件描述符
-static infra_error_t epoll_remove(infra_mux_t* mux, int fd) {
+static infra_error_t infra_mux_epoll_remove(infra_mux_t* mux, int fd) {
     if (!mux || !mux->impl || fd < 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -57,7 +57,7 @@ static infra_error_t epoll_remove(infra_mux_t* mux, int fd) {
 }
 
 // 修改epoll中的事件
-static infra_error_t epoll_modify(infra_mux_t* mux, int fd, infra_event_type_t events) {
+static infra_error_t infra_mux_epoll_modify(infra_mux_t* mux, int fd, infra_event_type_t events) {
     if (!mux || !mux->impl || fd < 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -67,7 +67,7 @@ static infra_error_t epoll_modify(infra_mux_t* mux, int fd, infra_event_type_t e
 }
 
 // 等待epoll事件
-static infra_error_t epoll_wait(infra_mux_t* mux, infra_mux_event_t* events, size_t max_events, int timeout_ms) {
+static infra_error_t infra_mux_epoll_wait(infra_mux_t* mux, infra_mux_event_t* events, size_t max_events, int timeout_ms) {
     if (!mux || !mux->impl || !events || max_events == 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -80,11 +80,11 @@ static infra_error_t epoll_wait(infra_mux_t* mux, infra_mux_event_t* events, siz
 
 // epoll操作接口
 static const infra_mux_ops_t epoll_ops = {
-    .destroy = epoll_destroy,
-    .add = epoll_add,
-    .remove = epoll_remove,
-    .modify = epoll_modify,
-    .wait = epoll_wait
+    .destroy = infra_mux_epoll_destroy,
+    .add = infra_mux_epoll_add,
+    .remove = infra_mux_epoll_remove,
+    .modify = infra_mux_epoll_modify,
+    .wait = infra_mux_epoll_wait
 };
 
 // 创建epoll实例

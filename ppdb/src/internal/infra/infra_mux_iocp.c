@@ -13,7 +13,7 @@ typedef struct {
 } infra_mux_iocp_impl_t;
 
 // 销毁IOCP实例
-static infra_error_t iocp_destroy(infra_mux_t* mux) {
+static infra_error_t infra_mux_iocp_destroy_impl(infra_mux_t* mux) {
     if (!mux || !mux->impl) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -31,7 +31,7 @@ static infra_error_t iocp_destroy(infra_mux_t* mux) {
 }
 
 // 添加文件描述符到IOCP
-static infra_error_t iocp_add(infra_mux_t* mux, int fd, infra_event_type_t events, void* user_data) {
+static infra_error_t infra_mux_iocp_add_impl(infra_mux_t* mux, int fd, infra_event_type_t events, void* user_data) {
     if (!mux || !mux->impl || fd < 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -41,14 +41,14 @@ static infra_error_t iocp_add(infra_mux_t* mux, int fd, infra_event_type_t event
 }
 
 // 从IOCP移除文件描述符（IOCP不需要显式移除）
-static infra_error_t iocp_remove(infra_mux_t* mux, int fd) {
+static infra_error_t infra_mux_iocp_remove_impl(infra_mux_t* mux, int fd) {
     (void)mux;
     (void)fd;
     return INFRA_OK;
 }
 
 // 修改IOCP中的事件（IOCP不需要修改事件）
-static infra_error_t iocp_modify(infra_mux_t* mux, int fd, infra_event_type_t events) {
+static infra_error_t infra_mux_iocp_modify_impl(infra_mux_t* mux, int fd, infra_event_type_t events) {
     (void)mux;
     (void)fd;
     (void)events;
@@ -56,7 +56,7 @@ static infra_error_t iocp_modify(infra_mux_t* mux, int fd, infra_event_type_t ev
 }
 
 // 等待IOCP事件
-static infra_error_t iocp_wait(infra_mux_t* mux, infra_mux_event_t* events, size_t max_events, int timeout_ms) {
+static infra_error_t infra_mux_iocp_wait_impl(infra_mux_t* mux, infra_mux_event_t* events, size_t max_events, int timeout_ms) {
     if (!mux || !mux->impl || !events || max_events == 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -69,11 +69,11 @@ static infra_error_t iocp_wait(infra_mux_t* mux, infra_mux_event_t* events, size
 
 // IOCP操作接口
 static const infra_mux_ops_t iocp_ops = {
-    .destroy = iocp_destroy,
-    .add = iocp_add,
-    .remove = iocp_remove,
-    .modify = iocp_modify,
-    .wait = iocp_wait
+    .destroy = infra_mux_iocp_destroy_impl,
+    .add = infra_mux_iocp_add_impl,
+    .remove = infra_mux_iocp_remove_impl,
+    .modify = infra_mux_iocp_modify_impl,
+    .wait = infra_mux_iocp_wait_impl
 };
 
 // 创建IOCP实例

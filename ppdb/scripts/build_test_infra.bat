@@ -99,7 +99,7 @@ for %%f in (%TEST_FILES%) do (
     
     if !NEED_BUILD!==1 (
         echo Building %%f...
-        "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\infra\%%f" -c -o "%BUILD_DIR%\test\white\infra\%%~nf.o"
+        "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" -I"%PPDB_DIR%\src\internal\infra" "%PPDB_DIR%\test\white\infra\%%f" -c -o "%BUILD_DIR%\test\white\infra\%%~nf.o"
         if errorlevel 1 (
             echo Failed to build %%f
             exit /b 1
