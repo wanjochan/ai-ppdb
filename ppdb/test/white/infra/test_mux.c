@@ -72,7 +72,7 @@ static void test_mux_wait(void) {
     infra_config_t config = INFRA_DEFAULT_CONFIG;
 
     addr.host = "127.0.0.1";
-    addr.port = 12345;
+    addr.port = 12346;
 
     err = infra_mux_create(&config, &mux);
     TEST_ASSERT(err == INFRA_OK);
@@ -103,14 +103,14 @@ static void test_mux_multiple(void) {
     infra_config_t config = INFRA_DEFAULT_CONFIG;
 
     addr.host = "127.0.0.1";
-    addr.port = 12345;
+    addr.port = 12347;
 
     err = infra_mux_create(&config, &mux);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(mux != NULL);
 
     for (int i = 0; i < 3; i++) {
-        addr.port = 12345 + i;
+        addr.port = 12347 + i;
         err = infra_net_listen(&addr, &servers[i], &config);
         //TEST_ASSERT(err == INFRA_OK);
         TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
@@ -202,7 +202,7 @@ static void test_mux_stress(void) {
     int timeout_count = 0;
 
     addr.host = "127.0.0.1";
-    addr.port = 12345;
+    addr.port = 12350;
 
     err = infra_mux_create(&config, &mux);
     TEST_ASSERT(err == INFRA_OK);

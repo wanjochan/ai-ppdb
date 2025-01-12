@@ -139,69 +139,66 @@ infra_error_t infra_platform_mutex_unlock(void* handle) {
 // IOCP Functions
 //-----------------------------------------------------------------------------
 
-void* infra_platform_create_iocp(void) {
-    if (!g_infra.platform.is_windows) {
-        return NULL;
-    }
-    void* iocp = (void*)CreateIoCompletionPort((int64_t)-1, 0, 0, 0);
-    if (!iocp) {
-        return NULL;
-    }
-    return iocp;
-}
+//void* infra_platform_create_iocp(void) {
+//    if (!g_infra.platform.is_windows) {
+//        return NULL;
+//    }
+//    void* iocp = (void*)CreateIoCompletionPort((int64_t)-1, 0, 0, 0);
+//    if (!iocp) {
+//        return NULL;
+//    }
+//    return iocp;
+//}
 
-void infra_platform_close_iocp(void* iocp) {
-    if (iocp) {
-        CloseHandle((int64_t)iocp);
-    }
-}
+//void infra_platform_close_iocp(void* iocp) {
+//    if (iocp) {
+//        CloseHandle((int64_t)iocp);
+//    }
+//}
 
-infra_error_t infra_platform_iocp_add(void* iocp, infra_socket_t sock, void* user_data) {
-    if (!iocp || !sock) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    int64_t result = CreateIoCompletionPort((int64_t)sock->handle, (int64_t)iocp, (uint64_t)user_data, 0);
-    if (!result) {
-        int error = GetLastError();
-        infra_printf("CreateIoCompletionPort failed with error: %d\n", error);
-        return INFRA_ERROR_SYSTEM;
-    }
-    
-    return INFRA_OK;
-}
+//infra_error_t infra_platform_iocp_add(void* iocp, infra_socket_t sock, void* user_data) {
+//    if (!iocp || !sock) {
+//        return INFRA_ERROR_INVALID_PARAM;
+//    }
+//    
+//    int64_t result = CreateIoCompletionPort((int64_t)sock->handle, (int64_t)iocp, (uint64_t)user_data, 0);
+//    if (!result) {
+//        int error = GetLastError();
+//        infra_printf("CreateIoCompletionPort failed with error: %d\n", error);
+//        return INFRA_ERROR_SYSTEM;
+//    }
+//    
+//    return INFRA_OK;
+//}
 
-infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_events, int timeout_ms) {
-    if (!iocp || !events || max_events == 0) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    uint32_t bytes;
-    uint64_t key;
-    struct NtOverlapped* overlapped = NULL;
-    
-    if (!GetQueuedCompletionStatus((int64_t)iocp, &bytes, &key, &overlapped, timeout_ms)) {
-        int err = GetLastError();
-        if (err == WSA_WAIT_TIMEOUT) {
-            return 0;
-        }
-        return INFRA_ERROR_SYSTEM;
-    }
-    
-    infra_mux_event_t* mux_events = (infra_mux_event_t*)events;
-    mux_events[0].user_data = (void*)key;
-    mux_events[0].events = INFRA_EVENT_READ | INFRA_EVENT_WRITE;
-    return 1;
-}
+//infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_events, int timeout_ms) {
+//    if (!iocp || !events || max_events == 0) {
+//        return INFRA_ERROR_INVALID_PARAM;
+//    }
+//
+//    uint32_t bytes;
+//    uint64_t key;
+//    struct NtOverlapped* overlapped = NULL;
+//    
+//    if (!GetQueuedCompletionStatus((int64_t)iocp, &bytes, &key, &overlapped, timeout_ms)) {
+//        int err = GetLastError();
+//        if (err == WSA_WAIT_TIMEOUT) {
+//            return 0;
+//        }
+//        return INFRA_ERROR_SYSTEM;
+//    }
+//    
+//    infra_mux_event_t* mux_events = (infra_mux_event_t*)events;
+//    mux_events[0].user_data = (void*)key;
+//    mux_events[0].events = INFRA_EVENT_READ | INFRA_EVENT_WRITE;
+//    return 1;
+//}
 
 //-----------------------------------------------------------------------------
 // EPOLL Functions
 //-----------------------------------------------------------------------------
 
 int infra_platform_create_epoll(void) {
-    if (g_infra.platform.is_windows) {
-        return -1;
-    }
     return epoll_create1(0);
 }
 
@@ -254,9 +251,13 @@ infra_error_t infra_platform_epoll_wait(int epoll_fd, void* events, size_t max_e
 
     int num_events = epoll_wait(epoll_fd, (struct epoll_event*)events, max_events, timeout_ms);
     if (num_events < 0) {
-        return (errno == EINTR) ? 0 : INFRA_ERROR_SYSTEM;
+        if (errno == EINTR) {
+            return 0;  // 被信号中断，返回0表示没有事件
+        }
+        return INFRA_ERROR_SYSTEM;
     }
-    return num_events;
+    
+    return num_events;  // 返回实际的事件数量
 }
 
 //-----------------------------------------------------------------------------

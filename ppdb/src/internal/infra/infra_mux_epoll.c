@@ -75,7 +75,22 @@ static infra_error_t infra_mux_epoll_wait(infra_mux_t* mux, infra_mux_event_t* e
     infra_mux_epoll_impl_t* impl = (infra_mux_epoll_impl_t*)mux->impl;
     size_t num_events = max_events < impl->max_events ? max_events : impl->max_events;
     
-    return infra_platform_epoll_wait(impl->epoll_fd, events, num_events, timeout_ms);
+    // 使用内部的事件缓冲区
+    infra_error_t err = infra_platform_epoll_wait(impl->epoll_fd, impl->events, num_events, timeout_ms);
+    if (err < 0) {
+        return err;
+    }
+
+    // 转换事件格式
+    for (int i = 0; i < err; i++) {
+        events[i].fd = impl->events[i].data.fd;
+        events[i].events = ((impl->events[i].events & EPOLLIN) ? INFRA_EVENT_READ : 0) |
+                          ((impl->events[i].events & EPOLLOUT) ? INFRA_EVENT_WRITE : 0) |
+                          ((impl->events[i].events & EPOLLERR) ? INFRA_EVENT_ERROR : 0);
+        events[i].user_data = impl->events[i].data.ptr;
+    }
+
+    return err;
 }
 
 // epoll操作接口
