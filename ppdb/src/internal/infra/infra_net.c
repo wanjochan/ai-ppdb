@@ -21,27 +21,9 @@ static infra_error_t create_socket(infra_socket_t* sock, bool is_udp, const infr
 
     (*sock)->is_udp = is_udp;
     (*sock)->overlapped = NULL;
-    //(*sock)->handle = NULL;
 
     int type = is_udp ? SOCK_DGRAM : SOCK_STREAM;
     int protocol = is_udp ? IPPROTO_UDP : IPPROTO_TCP;
-
-    //if (infra_platform_is_windows() && config->mux.prefer_iocp) {
-    //    (*sock)->fd = socket(AF_INET, type, protocol);
-    //    if ((*sock)->fd == -1) {
-    //        infra_free(*sock);
-    //        *sock = NULL;
-    //        return INFRA_ERROR_SYSTEM;
-    //    }
-    //    //(*sock)->handle = (void*)(intptr_t)(*sock)->fd;
-    //} else {
-    //    (*sock)->fd = socket(AF_INET, type, protocol);
-    //    if ((*sock)->fd == -1) {
-    //        infra_free(*sock);
-    //        *sock = NULL;
-    //        return INFRA_ERROR_SYSTEM;
-    //    }
-    //}
 
     (*sock)->fd = socket(AF_INET, type, protocol);
     if ((*sock)->fd == -1) {
@@ -91,10 +73,6 @@ infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* soc
     int optval = 1;
     if (setsockopt((*sock)->fd, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval)) == -1) {
         infra_printf("setsockopt SO_REUSEADDR failed with errno: %d\n", errno);
-        //if (infra_platform_is_windows()) {
-        //    int wsa_error = WSAGetLastError();
-        //    infra_printf("WSA error: %d\n", wsa_error);
-        //}
         infra_net_close(*sock);
         return INFRA_ERROR_SYSTEM;
     }
@@ -124,10 +102,6 @@ infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* soc
     if (bind((*sock)->fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
         int bind_errno = errno;
         infra_printf("bind failed with errno: %d, fd: %d\n", bind_errno, (*sock)->fd);
-        //if (infra_platform_is_windows()) {
-        //    int wsa_error = WSAGetLastError();
-        //    infra_printf("WSA error: %d\n", wsa_error);
-        //}
         infra_net_close(*sock);
         return INFRA_ERROR_SYSTEM;
     }
@@ -521,16 +495,9 @@ infra_error_t infra_net_addr_to_str(const infra_net_addr_t* addr, char* buf, siz
     return INFRA_OK;
 }
 
-// 获取文件描述符 （在windows下跟 handle同一个的）
 int infra_net_get_fd(infra_socket_t sock) {
     if (!sock) {
         return -1;  // 无效的套接字
     }
     return sock->fd;
 } 
-//int infra_net_get_hdl(infra_socket_t sock) {
-//    if (!sock) {
-//        return -1;  // 无效的套接字
-//    }
-//    return (int)(intptr_t)sock->handle;  // 使用 handle 字段
-//} 

@@ -159,9 +159,6 @@ int32_t infra_atomic_inc(infra_atomic_t* atomic);
 int32_t infra_atomic_dec(infra_atomic_t* atomic);
 bool infra_atomic_cas(infra_atomic_t* atomic, int32_t expected, int32_t desired);
 
-// 平台检测函数
-bool infra_platform_is_windows(void);
-
 // IOCP相关函数
 void* infra_platform_create_iocp(void);
 void infra_platform_close_iocp(void* iocp);

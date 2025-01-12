@@ -9,31 +9,6 @@
 #include "internal/infra/infra_error.h"
 
 //-----------------------------------------------------------------------------
-// Global State
-//-----------------------------------------------------------------------------
-
-// 全局状态
-static struct {
-    bool initialized;
-    infra_init_flags_t active_flags;
-    infra_mutex_t mutex;
-
-    // 日志系统状态
-    struct {
-        int level;
-        const char* log_file;
-        infra_log_callback_t callback;
-        infra_mutex_t mutex;
-    } log;
-
-    // 数据结构状态
-    struct {
-        size_t hash_initial_size;
-        uint32_t hash_load_factor;
-    } ds;
-} g_infra = {0};
-
-//-----------------------------------------------------------------------------
 // Default Configuration
 //-----------------------------------------------------------------------------
 
@@ -57,6 +32,44 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
         .edge_trigger = true
     }
 };
+
+//-----------------------------------------------------------------------------
+// Global State
+//-----------------------------------------------------------------------------
+
+// 全局状态 （注意跟 infra_config_t 不一样，这个是超级全局）
+infra_global_t g_infra = {
+    .initialized = false,
+    .active_flags = 0,
+    .mutex = NULL,
+    .log = {
+        .level = INFRA_DEFAULT_CONFIG.log.level,
+        .log_file = INFRA_DEFAULT_CONFIG.log.log_file,
+        .callback = NULL,
+        .mutex = NULL
+    },
+    .ds = {
+        .hash_initial_size = INFRA_DEFAULT_CONFIG.ds.hash_initial_size,
+        .hash_load_factor = INFRA_DEFAULT_CONFIG.ds.hash_load_factor
+    },
+    .platform = {
+        .is_windows = false  //@infra_init_with_config()
+    }
+};
+
+// 自动初始化函数
+static void __attribute__((constructor)) infra_auto_init(void) {
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_fprintf(stderr, "Failed to initialize infra: %d\n", err);
+        abort();
+    }
+}
+
+// 自动清理函数
+static void __attribute__((destructor)) infra_auto_cleanup(void) {
+    infra_cleanup();
+}
 
 //-----------------------------------------------------------------------------
 // Configuration Management
@@ -158,12 +171,14 @@ infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_confi
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 检查是否已经初始化
     if (g_infra.initialized) {
-        return INFRA_ERROR_EXISTS;
+	infra_printf("Warning: infra already inited.\n");
+        //return INFRA_ERROR_EXISTS;
+        return INFRA_OK;
     }
 
-    // 创建全局互斥锁
+    g_infra.platform.is_windows = IsWindows();//@cosmopolitan!
+
     infra_error_t err = infra_mutex_create(&g_infra.mutex);
     if (err != INFRA_OK) {
         return err;
@@ -509,7 +524,7 @@ void infra_log(int level, const char* file, int line, const char* func,
         }
         
         infra_mutex_lock(g_infra.log.mutex);
-        fprintf(stderr, "[%s] %s:%d %s(): %s\n", level_str, file, line, func, message);
+        infra_fprintf(stderr, "[%s] %s:%d %s(): %s\n", level_str, file, line, func, message);
         fflush(stderr);
         infra_mutex_unlock(g_infra.log.mutex);
     }
@@ -688,4 +703,5 @@ uint64_t infra_time_ms(void) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
+
 

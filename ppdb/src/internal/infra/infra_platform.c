@@ -6,6 +6,7 @@
 #include "infra_platform.h"
 #include "infra_error.h"
 #include "infra_mux.h"
+#include "internal/infra/infra_core.h"
 
 // 事件类型定义
 #define INFRA_EVENT_READ  1
@@ -133,17 +134,13 @@ infra_error_t infra_platform_mutex_unlock(void* handle) {
 // Platform Detection
 //-----------------------------------------------------------------------------
 
-//TODO 优化，应该有个全局变量保存下来从而加速?
-bool infra_platform_is_windows(void) {
-    return IsWindows();//@cosmopolitan!
-}
 
 //-----------------------------------------------------------------------------
 // IOCP Functions
 //-----------------------------------------------------------------------------
 
 void* infra_platform_create_iocp(void) {
-    if (!infra_platform_is_windows()) {
+    if (!g_infra.platform.is_windows) {
         return NULL;
     }
     void* iocp = (void*)CreateIoCompletionPort((int64_t)-1, 0, 0, 0);
@@ -202,7 +199,7 @@ infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_even
 //-----------------------------------------------------------------------------
 
 int infra_platform_create_epoll(void) {
-    if (infra_platform_is_windows()) {
+    if (g_infra.platform.is_windows) {
         return -1;
     }
     return epoll_create1(0);

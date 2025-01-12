@@ -1,45 +1,6 @@
 #include "internal/poly/poly_cmdline.h"
 #include "internal/infra/infra_core.h"
-
-// rinetd command options
-static const poly_cmd_option_t rinetd_options[] = {
-    {"start", "Start rinetd service", false},
-    {"stop", "Stop rinetd service", false},
-    {"status", "Show rinetd service status", false},
-    {"config", "Specify config file path", true}
-};
-
-// rinetd command handler
-static infra_error_t poly_cmd_rinetd_handler(int argc, char** argv) {
-    if (argc < 2) {
-        INFRA_LOG_ERROR("rinetd: missing operation");
-        return poly_cmdline_help("rinetd");
-    }
-
-    const char* op = argv[1];
-    if (strcmp(op, "start") == 0) {
-        INFRA_LOG_INFO("Starting rinetd service...");
-        return INFRA_OK;
-    } else if (strcmp(op, "stop") == 0) {
-        INFRA_LOG_INFO("Stopping rinetd service...");
-        return INFRA_OK;
-    } else if (strcmp(op, "status") == 0) {
-        INFRA_LOG_INFO("Checking rinetd service status...");
-        return INFRA_OK;
-    }
-
-    INFRA_LOG_ERROR("rinetd: unknown operation: %s", op);
-    return poly_cmdline_help("rinetd");
-}
-
-// rinetd command definition
-static const poly_cmd_t rinetd_cmd = {
-    .name = "rinetd",
-    .desc = "Rinetd service management",
-    .options = rinetd_options,
-    .option_count = sizeof(rinetd_options) / sizeof(rinetd_options[0]),
-    .handler = poly_cmd_rinetd_handler
-};
+#include "internal/peer/peer_rinetd.h"
 
 #define POLY_CMD_MAX_COUNT 32
 
@@ -54,6 +15,14 @@ infra_error_t poly_cmdline_init(void) {
     memset(&g_cmdline, 0, sizeof(g_cmdline));
     
     // Register rinetd command
+    poly_cmd_t rinetd_cmd = {
+        .name = "rinetd",
+        .desc = "Rinetd service management",
+        .options = rinetd_options,
+        .option_count = rinetd_option_count,
+        .handler = rinetd_cmd_handler
+    };
+
     infra_error_t err = poly_cmdline_register(&rinetd_cmd);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to register rinetd command");

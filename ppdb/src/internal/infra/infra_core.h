@@ -324,4 +324,37 @@ infra_error_t infra_yield(void);
 // 时间操作
 uint64_t infra_time_ms(void);
 
+//-----------------------------------------------------------------------------
+// Global State
+//-----------------------------------------------------------------------------
+
+// 全局状态结构
+typedef struct {
+    bool initialized;
+    infra_init_flags_t active_flags;
+    infra_mutex_t mutex;
+
+    // 日志系统状态
+    struct {
+        int level;
+        const char* log_file;
+        infra_log_callback_t callback;
+        infra_mutex_t mutex;
+    } log;
+
+    // 数据结构状态
+    struct {
+        size_t hash_initial_size;
+        uint32_t hash_load_factor;
+    } ds;
+
+    // 平台状态
+    struct {
+        bool is_windows;
+    } platform;
+} infra_global_t;
+
+// 全局变量声明
+extern infra_global_t g_infra;
+
 #endif /* INFRA_CORE_H */

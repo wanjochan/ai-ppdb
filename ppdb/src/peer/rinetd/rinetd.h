@@ -1,7 +1,6 @@
 #ifndef RINETD_H
 #define RINETD_H
 
-#include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 
 // 转发规则配置
