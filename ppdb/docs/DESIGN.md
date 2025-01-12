@@ -18,17 +18,13 @@ src/
 ├── infra/                     # 基础设施层
 │   ├── infra_{module}.c          
 │
-├── memkv/                     # 内存KV层
-│   ├── memkv.c               # memkv主入口（被 libppdb.c 调用）
-│   ├── memkv_store.c         # 内存存储实现
-│   └── memkv_peer.c          # memcached协议服务
+├── poly/                     # 工具组件
+│   ├── poly_{module}.c
 │
-├── diskv/                     # 持久化层
-│   ├── diskv.c               # diskv主入口（被 libppdb.c 调用）
-│   ├── diskv_store.c         # 磁盘存储实现（含WAL）
-│   └── diskv_peer.c          # 存储服务协议
+├── peer/                     # 产品组件
+│   ├── peer_{module}.c
 │
-└── ppdb/                      # 产品层
+└── ppdb/                     # 产品层
     ├── ppdb.c                # 服务端主程序
     └── libppdb.c             # 客户端库 （被 ppdb.c 调用）
 ```
@@ -41,23 +37,20 @@ include/                       # 公共头文件目录
 
 src/internal/                 # 内部头文件目录
 ├── infra/                    # 基础设施头文件
-├── memkv/                    # 内存KV头文件
-├── diskv/                    # 持久化头文件
+├── poly/                    # 
+├── peer/                    # 
 └── ppdb/                     # 产品头文件
 ```
 
-## 开发阶段
-
-0. **基础设施层**
-
-特别注意：这一层不要出现 ppdb_ 字眼，这是基础设施层infra
-
-layer：infra
+## 分层
 
 所在目录：ppdb/src/internal/{layer}/
-{layer}.h: 合并头文件（等infra层完全稳定我们是要打包出ppdbinfra这个静态库和动态库，所以到时移动到ppdb.h同一个目录）
-
+{layer}.h: 合并头文件
 模块文件命名模式：{layer}_{module}.h 和 {layer}_{module}.c
+
+I 基础设施层 Infra
+
+（等infra层完全稳定我们是要打包出ppdbinfra这个静态库和动态库，所以到时移动到ppdb.h同一个目录）
 
 infra层的模块分类：
 core: 基础功能
@@ -69,36 +62,33 @@ sync: 同步（互斥、锁、条件变量、信号量、无锁lockfree、线程
 mux：多路复用
 net：网络 (with cosmopolitan, it is IOCP in windows)
 
-1. **第1阶段：Rinetd**
+II Poly 可重用组件、工具层
 
-网络转发（平替 rinetd），顺便测试infra层的多路复用和网络模块
+III 产品层 Peers
 
-2. **第2阶段：MemKV**
+. 客户端工具
+fetcher (wget+curl+fetch)
+cdper (cdp client helper)
+proxier (proxy client helper)
+
+.Rinetd
+
+网络转发服务器（平替 rinetd），顺便测试infra层的多路复用和网络模块
+
+. MemKV
    - 实现基础设施层
    - 实现内存KV存储
    - 支持Memcached协议
 
-3. **第3阶段：DiskV**
+. DiskV
    - 实现持久化存储
    - 添加WAL日志
    - 实现数据恢复
 
-4. **第4阶段：集群**
+. 集群
    - 实现分布式协议
    - 支持数据复制
    - 实现一致性保证
-
-## 同步/异步设计
-
-1. **同步操作**
-   - 内存操作
-   - 本地计算
-   - 简单查询
-
-2. **异步操作**
-   - 网络IO
-   - 磁盘IO
-   - 定时任务
 
 ## 测试结构
 
