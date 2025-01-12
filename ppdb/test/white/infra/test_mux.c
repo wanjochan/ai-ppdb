@@ -238,7 +238,26 @@ static void test_mux_stress(void) {
             num_connected++;
             retry_count = 0;
         } else if (err == INFRA_ERROR_WOULD_BLOCK) {
-            infra_printf("Client %d connection would block, retrying...\n", num_connected);
+            infra_printf("Client %d connection would block, checking...\n", num_connected);
+            // 使用select检查socket是否可写
+            fd_set write_fds;
+            struct timeval tv = {0, 100000}; // 100ms
+            FD_ZERO(&write_fds);
+            FD_SET(clients[num_connected]->fd, &write_fds);
+            
+            int ready = select(clients[num_connected]->fd + 1, NULL, &write_fds, NULL, &tv);
+            if (ready > 0) {
+                // 检查是否真的连接成功
+                int error = 0;
+                socklen_t len = sizeof(error);
+                if (getsockopt(clients[num_connected]->fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+                    infra_printf("Client %d connection completed\n", num_connected);
+                    num_connected++;
+                    retry_count = 0;
+                    continue;
+                }
+                infra_printf("Client %d connection failed with error: %d\n", num_connected, error);
+            }
             retry_count++;
             infra_sleep(100);
         } else {
