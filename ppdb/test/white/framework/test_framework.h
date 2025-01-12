@@ -3,6 +3,7 @@
 
 #include "cosmopolitan.h"
 #include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
 
 // Utility macros
 #define INFRA_UNUSED(x) ((void)(x))
@@ -36,28 +37,48 @@ extern int g_test_stats[3];  // total, passed, failed
         } \
     } while (0)
 
-#define TEST_ASSERT_MSG_VOID(condition, format, ...) \
+// For void functions
+#define TEST_ASSERT_VOID(cond, fmt, ...) \
     do { \
-        if (!(condition)) { \
+        if (!(cond)) { \
+            infra_printf("[FAILED] %s:%d: ", __FILE__, __LINE__); \
+            infra_printf(fmt, ##__VA_ARGS__); \
+            infra_printf("\n"); \
             g_test_stats[TEST_STATS_FAILED]++; \
-            printf("Assertion failed at %s:%d: " format "\n", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
             return; \
         } \
     } while (0)
 
-#define TEST_ASSERT_MSG_PTR(condition, format, ...) \
+// For int functions
+#define TEST_ASSERT_INT(cond, fmt, ...) \
     do { \
-        if (!(condition)) { \
+        if (!(cond)) { \
+            infra_printf("[FAILED] %s:%d: ", __FILE__, __LINE__); \
+            infra_printf(fmt, ##__VA_ARGS__); \
+            infra_printf("\n"); \
             g_test_stats[TEST_STATS_FAILED]++; \
-            printf("Assertion failed at %s:%d: " format "\n", \
-                   __FILE__, __LINE__, ##__VA_ARGS__); \
+            return 1; \
+        } \
+    } while (0)
+
+#define TEST_ASSERT_PTR(cond, fmt, ...) \
+    do { \
+        if (!(cond)) { \
+            infra_printf("[FAILED] %s:%d: ", __FILE__, __LINE__); \
+            infra_printf(fmt, ##__VA_ARGS__); \
+            infra_printf("\n"); \
+            g_test_stats[TEST_STATS_FAILED]++; \
             return NULL; \
         } \
     } while (0)
 
-#define TEST_ASSERT_MSG(condition, format, ...) TEST_ASSERT_MSG_VOID(condition, format, ##__VA_ARGS__)
-#define TEST_ASSERT(condition) TEST_ASSERT_MSG(condition, "%s", #condition)
+// Default to void version for test cases
+#define TEST_ASSERT_MSG(cond, fmt, ...) TEST_ASSERT_VOID(cond, fmt, ##__VA_ARGS__)
+#define TEST_ASSERT(cond) TEST_ASSERT_MSG(cond, "%s", #cond)
+
+// For main function
+#define MAIN_ASSERT_MSG(cond, fmt, ...) TEST_ASSERT_INT(cond, fmt, ##__VA_ARGS__)
+#define MAIN_ASSERT(cond) MAIN_ASSERT_MSG(cond, "%s", #cond)
 
 #define TEST_ASSERT_EQUAL(expected, actual) \
     TEST_ASSERT_MSG((expected) == (actual), \
@@ -85,6 +106,15 @@ extern int g_test_stats[3];  // total, passed, failed
 
 #define TEST_ASSERT_FALSE(x) \
     TEST_ASSERT_MSG(!(x), "%s is not false", #x)
+
+// Special assert macros for different types
+#define TEST_ASSERT_MSG_VOID(cond, fmt, ...) TEST_ASSERT_VOID(cond, fmt, ##__VA_ARGS__)
+#define TEST_ASSERT_MSG_INT(cond, fmt, ...) TEST_ASSERT_INT(cond, fmt, ##__VA_ARGS__)
+#define TEST_ASSERT_MSG_PTR(cond, fmt, ...) TEST_ASSERT_PTR(cond, fmt, ##__VA_ARGS__)
+
+// 比较宏
+#define TEST_ASSERT_MSG_INT_GT(expected, actual, fmt, ...) \
+    TEST_ASSERT_MSG((actual) > (expected), fmt ": expected > %d but got %d", ##__VA_ARGS__, (int)(expected), (int)(actual))
 
 void test_init(void);
 void test_cleanup(void);

@@ -12,8 +12,8 @@
 
 typedef enum {
     INFRA_OK = 0,
-    INFRA_ERROR_INVALID = -1,
-    INFRA_ERROR_INVALID_PARAM = -2,
+    INFRA_ERROR_INVALID = -1, // EMPTY/NULL mostly
+    INFRA_ERROR_INVALID_PARAM = -2, //@infra_init() and infra_config_init()
     INFRA_ERROR_NO_MEMORY = -3,
     INFRA_ERROR_EXISTS = -4,
     INFRA_ERROR_NOT_READY = -5,
@@ -22,7 +22,11 @@ typedef enum {
     INFRA_ERROR_BUSY = -8,
     INFRA_ERROR_DEPENDENCY = -9,
     INFRA_ERROR_NOT_FOUND = -10,
-    INFRA_ERROR_SYSTEM = -11
+    INFRA_ERROR_SYSTEM = -11,
+    INFRA_ERROR_WOULD_BLOCK = -12,
+    INFRA_ERROR_CLOSED = -13,
+    INFRA_ERROR_NOT_SUPPORTED = -8,
+    INFRA_ERROR_ALREADY_EXISTS = -9
 } infra_error_t;
 
 //-----------------------------------------------------------------------------

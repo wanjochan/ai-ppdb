@@ -9,7 +9,8 @@
 #ifndef INFRA_PLATFORM_H
 #define INFRA_PLATFORM_H
 
-#include "internal/infra/infra_core.h"
+#include "infra_core.h"
+#include "infra_net.h"
 
 //-----------------------------------------------------------------------------
 // Platform Types
@@ -35,7 +36,19 @@ infra_error_t infra_platform_yield(void);
 
 // 时间获取
 infra_error_t infra_platform_get_time(infra_time_t* time);
+
+/** 含义：获取的是系统的单调时间（Monotonic Time），表示从系统启动以来的时间（通常不包括系统睡眠时间）。
+特点：
+不受系统时间的调整影响（即使用户更改了系统时间，单调时间不会回退或跳跃）。
+时间是单调递增的。
+用途：
+用于测量时间间隔（例如性能分析、超时检测）。
+适合对时间的连续性和准确性要求较高的场景。
+*/
 infra_error_t infra_platform_get_monotonic_time(infra_time_t* time);
+
+// 平台相关的函数
+// void infra_sleep(uint32_t ms);  // 已在infra_sync.h中定义
 
 //-----------------------------------------------------------------------------
 // Thread Management
@@ -145,5 +158,22 @@ int32_t infra_atomic_sub(infra_atomic_t* atomic, int32_t value);
 int32_t infra_atomic_inc(infra_atomic_t* atomic);
 int32_t infra_atomic_dec(infra_atomic_t* atomic);
 bool infra_atomic_cas(infra_atomic_t* atomic, int32_t expected, int32_t desired);
+
+// 平台检测函数
+bool infra_platform_is_windows(void);
+
+// IOCP相关函数
+void* infra_platform_create_iocp(void);
+void infra_platform_close_iocp(void* iocp);
+infra_error_t infra_platform_iocp_add(void* iocp, infra_socket_t sock, void* user_data);
+infra_error_t infra_platform_iocp_wait(void* iocp, void* events, size_t max_events, int timeout_ms);
+
+// EPOLL相关函数
+int infra_platform_create_epoll(void);
+void infra_platform_close_epoll(int epoll_fd);
+infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool edge_trigger, void* user_data);
+infra_error_t infra_platform_epoll_modify(int epoll_fd, int fd, int events, bool edge_trigger);
+infra_error_t infra_platform_epoll_remove(int epoll_fd, int fd);
+infra_error_t infra_platform_epoll_wait(int epoll_fd, void* events, size_t max_events, int timeout_ms);
 
 #endif /* INFRA_PLATFORM_H */ 

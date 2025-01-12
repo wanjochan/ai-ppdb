@@ -8,7 +8,7 @@ rem 检查是否指定了测试模块
 set "TEST_MODULE=%~1"
 
 rem 设置测试文件列表
-set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c test_async.c
+set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c test_async.c test_net.c test_mux.c
 
 rem 如果没有指定测试模块，显示可用的测试模块
 if "%TEST_MODULE%"=="" (
@@ -99,7 +99,7 @@ for %%f in (%TEST_FILES%) do (
     
     if !NEED_BUILD!==1 (
         echo Building %%f...
-        "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\infra\%%f" -c -o "%BUILD_DIR%\test\white\infra\%%~nf.o"
+        "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" -I"%PPDB_DIR%\src\internal\infra" "%PPDB_DIR%\test\white\infra\%%f" -c -o "%BUILD_DIR%\test\white\infra\%%~nf.o"
         if errorlevel 1 (
             echo Failed to build %%f
             exit /b 1

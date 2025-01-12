@@ -67,19 +67,23 @@ error: 错误处理
 ds: 数据结构
 sync: 同步（互斥、锁、条件变量、信号量、无锁lockfree、线程池等）
 mux：多路复用
-net：网络
+net：网络 (with cosmopolitan, it is IOCP in windows)
 
-1. **第一阶段：MemKV**
+1. **第1阶段：Rinetd**
+
+网络转发（平替 rinetd），顺便测试infra层的多路复用和网络模块
+
+2. **第2阶段：MemKV**
    - 实现基础设施层
    - 实现内存KV存储
    - 支持Memcached协议
 
-2. **第二阶段：DiskV**
+3. **第3阶段：DiskV**
    - 实现持久化存储
    - 添加WAL日志
    - 实现数据恢复
 
-3. **第三阶段：集群**
+4. **第4阶段：集群**
    - 实现分布式协议
    - 支持数据复制
    - 实现一致性保证
@@ -123,11 +127,11 @@ test/white/
 
 ```
 
-测试顺序：
-.\pdpb\scripts\build_test42.bat 用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
-.\ppdb\scripts\build_test_mock.bat 用于确定 mock 机制运作正常
-.\ppdb\scripts\build_test_infra.bat [module] [norun] 用于确定 infra 层运作正常
-  - 不带参数：执行全量测试
+测试顺序（如果已经在仓库根目录就不用cd改变目录）：
+.\pdpb\scripts\build_test42.bat  //用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
+.\ppdb\scripts\build_test_mock.bat  //用于确定 mock 机制运作正常
+.\ppdb\scripts\build_test_infra.bat [module] [norun]  //用于确定 infra 层运作正常
+  - 不带参数：会触发帮助
   - module参数：指定要测试的模块（如memory、log等）
   - norun参数：只构建不运行测试
 .\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）

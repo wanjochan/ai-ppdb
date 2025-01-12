@@ -50,6 +50,11 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
     .ds = {
         .hash_initial_size = 16,
         .hash_load_factor = 75  // 75%
+    },
+    .mux = {
+        .prefer_iocp = true,//如果是 true，在windows上优先用iocp，否则默认epoll
+        .max_events = 1024,
+        .edge_trigger = true
     }
 };
 
@@ -675,5 +680,12 @@ void infra_time_sleep(uint32_t ms) {
 
 void infra_time_yield(void) {
     infra_platform_yield();
+}
+
+// 获取毫秒级时间戳
+uint64_t infra_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
