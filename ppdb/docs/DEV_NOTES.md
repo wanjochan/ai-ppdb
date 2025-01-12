@@ -67,6 +67,16 @@
 
 - 要不要补 sync_perf 和 async_perf 做并发性能测试
 - 异步框架可能未考虑中断？
-- 异步那里针对 windows做一个 IOCP优化（在ppdb_prev还有备份可以参考）
 - 等未来infra完全稳定后，可以考虑封装 libppdbinfra.a （静态库）和 ppdbinfra.lib （动态库）供应我们别的工具包
- 
+
+## 重要说明
+
+### infra 层状态
+- infra 层即将封存，已完成基本功能：
+  - 网络 IO 多路复用（Windows IOCP / Linux epoll）
+  - 基础同步原语（mutex, rwlock, cond）
+  - 内存管理
+  - 平台抽象
+- 暂不实现的功能：
+  - 文件异步 IO（需要时可以基于线程池或系统 API 实现）
+  - 其他高级特性
