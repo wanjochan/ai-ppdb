@@ -1,6 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 
+REM 设置环境变量以禁用自动初始化
+set INFRA_NO_AUTO_INIT=1
+
 rem 记录开始时间
 set START_TIME=%time%
 
@@ -203,3 +206,6 @@ if %mins% lss 0 set /a hours = %hours% - 1 & set /a mins = 60%mins%
 if %hours% lss 0 set /a hours = 24%hours%
 
 echo Total build time: %hours%:%mins%:%secs%.%ms% (HH:MM:SS.MS) 
+
+:end
+endlocal

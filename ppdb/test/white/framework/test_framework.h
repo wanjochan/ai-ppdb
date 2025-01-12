@@ -9,6 +9,7 @@
 #define INFRA_UNUSED(x) ((void)(x))
 
 typedef void (*test_func_t)(void);
+typedef void (*test_mode_func_t)(bool);
 
 extern int g_test_stats[3];  // total, passed, failed
 
@@ -31,6 +32,18 @@ extern int g_test_stats[3];  // total, passed, failed
         printf("\nRunning test: %s\n", #test_func); \
         g_test_stats[TEST_STATS_TOTAL]++; \
         test_func(); \
+        if (g_test_stats[TEST_STATS_FAILED] == failed_before) { \
+            g_test_stats[TEST_STATS_PASSED]++; \
+            printf("  PASS\n"); \
+        } \
+    } while (0)
+
+#define RUN_TEST_MODE(test_func, mode) \
+    do { \
+        int failed_before = g_test_stats[TEST_STATS_FAILED]; \
+        printf("\nRunning %s in %s mode:\n", #test_func, mode ? "non-blocking" : "blocking"); \
+        g_test_stats[TEST_STATS_TOTAL]++; \
+        test_func(mode); \
         if (g_test_stats[TEST_STATS_FAILED] == failed_before) { \
             g_test_stats[TEST_STATS_PASSED]++; \
             printf("  PASS\n"); \

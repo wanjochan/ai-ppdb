@@ -33,6 +33,10 @@ static infra_error_t create_socket(infra_socket_t* sock, bool is_udp, const infr
     }
 
     // 根据参数设置非阻塞模式
+    // 注意：
+    // 1. 监听套接字总是非阻塞，以支持多路复用
+    // 2. 客户端套接字根据config->flags决定
+    // 3. accept返回的套接字继承监听套接字的设置
     if (nonblocking) {
         int flags = fcntl((*sock)->fd, F_GETFL, 0);
         if (flags == -1) {
@@ -62,7 +66,8 @@ infra_error_t infra_net_listen(const infra_net_addr_t* addr, infra_socket_t* soc
 
     infra_printf("Creating socket for listen on %s:%d\n", addr->host, addr->port);
 
-    // 创建socket - 监听socket需要非阻塞以支持多路复用
+    // 创建socket - 监听socket总是非阻塞以支持多路复用
+    // 注意：这是为了支持 mux 模块的多路复用功能，即使在阻塞模式下也是如此
     infra_error_t err = create_socket(sock, false, config, true);
     if (err != INFRA_OK) {
         infra_printf("Failed to create socket: %d\n", err);
@@ -145,6 +150,18 @@ infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infr
 
     (*client)->is_udp = false;
 
+    // 继承服务器套接字的非阻塞设置
+    // 注意：这确保了accept返回的客户端套接字与服务器套接字有相同的阻塞行为
+    // 这对于 mux 模块的正确工作是必要的
+    int flags = fcntl(sock->fd, F_GETFL, 0);
+    if (flags != -1 && (flags & O_NONBLOCK)) {
+        if (fcntl((*client)->fd, F_SETFL, flags) == -1) {
+            infra_net_close(*client);
+            *client = NULL;
+            return INFRA_ERROR_SYSTEM;
+        }
+    }
+
     // 如果需要，填充客户端地址信息
     if (client_addr != NULL) {
         client_addr->port = ntohs(addr.sin_port);
@@ -172,8 +189,11 @@ infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* so
         return INFRA_ERROR_INVALID;
     }
 
-    // 创建socket - 连接socket需要非阻塞以支持多路复用
-    infra_error_t err = create_socket(sock, false, config, true);
+    // 创建socket - 根据配置决定是否非阻塞
+    // 注意：这里使用 config->net.flags 中的 INFRA_CONFIG_FLAG_NONBLOCK 标志来决定
+    // 这允许应用程序自由选择阻塞或非阻塞模式
+    bool nonblocking = config->net.flags & INFRA_CONFIG_FLAG_NONBLOCK;
+    infra_error_t err = create_socket(sock, false, config, nonblocking);
     if (err != INFRA_OK) {
         return err;
     }
@@ -189,11 +209,93 @@ infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* so
 
     // 连接服务器
     if (connect((*sock)->fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
-        if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
-            return INFRA_ERROR_WOULD_BLOCK;
+        int connect_errno = errno;
+        if (connect_errno == EINPROGRESS || connect_errno == EWOULDBLOCK) {
+            if (nonblocking) {
+                // 非阻塞模式：立即返回 WOULD_BLOCK，由调用者处理后续操作
+                return INFRA_ERROR_WOULD_BLOCK;
+            }
+            
+            // 阻塞模式：等待连接完成或超时
+            // 注意：即使在阻塞模式下，我们也使用select来实现超时功能
+            fd_set write_fds;
+            struct timeval tv;
+            FD_ZERO(&write_fds);
+            FD_SET((*sock)->fd, &write_fds);
+            
+            // 使用配置中的超时时间，如果未设置则使用默认值
+            uint32_t timeout_ms = config->net.connect_timeout_ms > 0 ? 
+                                config->net.connect_timeout_ms : 1000;  // 默认1秒
+            tv.tv_sec = timeout_ms / 1000;
+            tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+            int ret = select((*sock)->fd + 1, NULL, &write_fds, NULL, &tv);
+            if (ret == 0) {
+                // 超时
+                infra_net_close(*sock);
+                return INFRA_ERROR_TIMEOUT;
+            } else if (ret < 0) {
+                // select错误
+                infra_net_close(*sock);
+                return INFRA_ERROR_SYSTEM;
+            }
+
+            // 检查连接是否成功
+            int error = 0;
+            socklen_t len = sizeof(error);
+            if (getsockopt((*sock)->fd, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
+                infra_net_close(*sock);
+                return INFRA_ERROR_SYSTEM;
+            }
+
+            if (error != 0) {
+                infra_net_close(*sock);
+                return INFRA_ERROR_SYSTEM;
+            }
+        } else {
+            infra_net_close(*sock);
+            return INFRA_ERROR_SYSTEM;
         }
-        infra_net_close(*sock);
-        return INFRA_ERROR_SYSTEM;
+    }
+
+    // 根据配置设置其他选项
+    if (config->net.flags & INFRA_CONFIG_FLAG_NODELAY) {
+        err = infra_net_set_nodelay(*sock, true);
+        if (err != INFRA_OK) {
+            infra_net_close(*sock);
+            return err;
+        }
+    }
+
+    if (config->net.flags & INFRA_CONFIG_FLAG_KEEPALIVE) {
+        err = infra_net_set_keepalive(*sock, true);
+        if (err != INFRA_OK) {
+            infra_net_close(*sock);
+            return err;
+        }
+    }
+
+    // 设置读写超时
+    if (config->net.read_timeout_ms > 0 || config->net.write_timeout_ms > 0) {
+        struct timeval tv_read = {0}, tv_write = {0};
+        
+        if (config->net.read_timeout_ms > 0) {
+            tv_read.tv_sec = config->net.read_timeout_ms / 1000;
+            tv_read.tv_usec = (config->net.read_timeout_ms % 1000) * 1000;
+            if (setsockopt((*sock)->fd, SOL_SOCKET, SO_RCVTIMEO, &tv_read, sizeof(tv_read)) == -1) {
+                infra_net_close(*sock);
+                return INFRA_ERROR_SYSTEM;
+            }
+        }
+        
+        if (config->net.write_timeout_ms > 0) {
+            tv_write.tv_sec = config->net.write_timeout_ms / 1000;
+            tv_write.tv_usec = (config->net.write_timeout_ms % 1000) * 1000;
+            if (setsockopt((*sock)->fd, SOL_SOCKET, SO_SNDTIMEO, &tv_write, sizeof(tv_write)) == -1) {
+                infra_net_close(*sock);
+                return INFRA_ERROR_SYSTEM;
+            }
+        }
     }
 
     return INFRA_OK;

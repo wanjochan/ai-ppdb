@@ -167,15 +167,12 @@ static void test_mux_config(void) {
     TEST_ASSERT(mux != NULL);
     infra_mux_destroy(mux);
 
-    // 测试优先使用IOCP
-    config.mux.prefer_iocp = true;
     err = infra_mux_create(&config, &mux);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(mux != NULL);
     infra_mux_destroy(mux);
 
     // 测试边缘触发
-    config.mux.prefer_iocp = false;
     config.mux.edge_trigger = true;
     err = infra_mux_create(&config, &mux);
     //TEST_ASSERT(err == INFRA_OK);

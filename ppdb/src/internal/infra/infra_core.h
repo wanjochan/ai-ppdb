@@ -98,6 +98,11 @@ infra_error_t infra_thread_join(infra_thread_t thread);
 // Configuration
 //-----------------------------------------------------------------------------
 
+// 网络配置标志
+#define INFRA_CONFIG_FLAG_NONBLOCK (1 << 0)  // 非阻塞模式
+#define INFRA_CONFIG_FLAG_NODELAY  (1 << 1)  // 禁用Nagle算法
+#define INFRA_CONFIG_FLAG_KEEPALIVE (1 << 2) // 启用保活
+
 typedef struct {
     infra_memory_config_t memory;
     
@@ -112,10 +117,16 @@ typedef struct {
     } ds;
 
     struct {
-        bool prefer_iocp;    // 是否优先使用IOCP（Windows平台下默认为true）
         size_t max_events;   // 单次处理的最大事件数
         bool edge_trigger;   // 是否启用边缘触发(仅epoll)
     } mux;
+
+    struct {
+        infra_flags_t flags;     // 网络配置标志
+        uint32_t connect_timeout_ms;  // 连接超时时间
+        uint32_t read_timeout_ms;     // 读取超时时间
+        uint32_t write_timeout_ms;    // 写入超时时间
+    } net;
 } infra_config_t;
 
 // 默认配置
@@ -291,7 +302,9 @@ void infra_log(int level, const char* file, int line, const char* func, const ch
 //-----------------------------------------------------------------------------
 
 infra_error_t infra_printf(const char* format, ...);
+infra_error_t infra_fprintf(FILE* stream, const char* format, ...);
 int infra_vprintf(const char* format, va_list args);
+int infra_vfprintf(FILE* stream, const char* format, va_list args);
 int infra_snprintf(char* str, size_t size, const char* format, ...);
 int infra_vsnprintf(char* str, size_t size, const char* format, va_list args);
 

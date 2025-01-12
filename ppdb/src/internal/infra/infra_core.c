@@ -24,12 +24,17 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
     },
     .ds = {
         .hash_initial_size = 16,
-        .hash_load_factor = 75  // 75%
+        .hash_load_factor = 75
     },
     .mux = {
-        .prefer_iocp = true,//如果是 true，在windows上优先用iocp，否则默认epoll
         .max_events = 1024,
-        .edge_trigger = true
+        .edge_trigger = false
+    },
+    .net = {
+        .flags = 0,  // 默认使用阻塞模式
+        .connect_timeout_ms = 1000,  // 1秒连接超时
+        .read_timeout_ms = 0,        // 无读取超时
+        .write_timeout_ms = 0        // 无写入超时
     }
 };
 
@@ -59,6 +64,12 @@ infra_global_t g_infra = {
 
 // 自动初始化函数
 static void __attribute__((constructor)) infra_auto_init(void) {
+    // 如果设置了 INFRA_NO_AUTO_INIT 环境变量，则跳过自动初始化
+    const char* no_auto = getenv("INFRA_NO_AUTO_INIT");
+    if (no_auto) {
+        return;
+    }
+
     infra_error_t err = infra_init();
     if (err != INFRA_OK) {
         infra_fprintf(stderr, "Failed to initialize infra: %d\n", err);
@@ -68,6 +79,11 @@ static void __attribute__((constructor)) infra_auto_init(void) {
 
 // 自动清理函数
 static void __attribute__((destructor)) infra_auto_cleanup(void) {
+    // 如果设置了 INFRA_NO_AUTO_INIT 环境变量，则跳过自动清理
+    const char* no_auto = getenv("INFRA_NO_AUTO_INIT");
+    if (no_auto) {
+        return;
+    }
     infra_cleanup();
 }
 
@@ -541,11 +557,39 @@ infra_error_t infra_printf(const char* format, ...) {
     
     va_list args;
     va_start(args, format);
-    int result = vfprintf(stdout, format, args);
+    int result = infra_vfprintf(stdout, format, args);
     va_end(args);
     fflush(stdout);
     
     return (result >= 0) ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+infra_error_t infra_fprintf(FILE* stream, const char* format, ...) {
+    if (!stream || !format) {
+        return INFRA_ERROR_INVALID;
+    }
+    
+    va_list args;
+    va_start(args, format);
+    int result = infra_vfprintf(stream, format, args);
+    va_end(args);
+    fflush(stream);
+    
+    return (result >= 0) ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+int infra_vprintf(const char* format, va_list args) {
+    if (!format) {
+        return -1;
+    }
+    return vprintf(format, args);
+}
+
+int infra_vfprintf(FILE* stream, const char* format, va_list args) {
+    if (!stream || !format) {
+        return -1;
+    }
+    return vfprintf(stream, format, args);
 }
 
 //-----------------------------------------------------------------------------
