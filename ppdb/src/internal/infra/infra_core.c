@@ -677,3 +677,10 @@ void infra_time_yield(void) {
     infra_platform_yield();
 }
 
+// 获取毫秒级时间戳
+uint64_t infra_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+

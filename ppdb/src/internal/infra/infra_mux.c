@@ -4,6 +4,9 @@
 
 #include "infra_mux.h"
 #include "infra_core.h"
+#include "infra_error.h"
+#include "infra_memory.h"
+#include "infra_platform.h"
 
 // 内部状态
 struct infra_mux_ctx {
@@ -12,21 +15,18 @@ struct infra_mux_ctx {
     bool edge_trigger;
     
     union {
-#ifdef _WIN32
         struct {
-            HANDLE iocp;
+            void* iocp;  // IOCP句柄
         } win;
-#else
         struct {
             int epoll_fd;
-            struct epoll_event* events;
+            void* events;
         } nix;
-#endif
         struct {
+            int max_fd;
             fd_set read_fds;
             fd_set write_fds;
             fd_set error_fds;
-            int max_fd;
         } select;
     } impl;
 };
@@ -37,55 +37,66 @@ infra_error_t infra_mux_create(const infra_mux_config_t* config, infra_mux_ctx_t
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    *ctx = (infra_mux_ctx_t*)infra_malloc(sizeof(infra_mux_ctx_t));
-    if (!*ctx) {
+    infra_mux_ctx_t* mux = (infra_mux_ctx_t*)infra_malloc(sizeof(infra_mux_ctx_t));
+    if (!mux) {
         return INFRA_ERROR_NO_MEMORY;
     }
 
-    infra_mux_ctx_t* mux = *ctx;
+    memset(mux, 0, sizeof(infra_mux_ctx_t));
     mux->type = config->type;
     mux->max_events = config->max_events;
     mux->edge_trigger = config->edge_trigger;
 
-    // 根据类型初始化具体实现
-    switch (mux->type) {
-#ifdef _WIN32
+    switch (config->type) {
+        case INFRA_MUX_AUTO:
+            // 根据平台选择最优的多路复用方式
+            if (infra_platform_is_windows()) {
+                mux->type = INFRA_MUX_IOCP;
+            } else {
+                mux->type = INFRA_MUX_EPOLL;
+            }
+            // 继续执行对应类型的初始化
+            // fallthrough
+            
         case INFRA_MUX_IOCP:
-        case INFRA_MUX_AUTO:
-            mux->impl.win.iocp = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
-            if (!mux->impl.win.iocp) {
+            if (infra_platform_is_windows()) {
+                mux->impl.win.iocp = infra_platform_create_iocp();
+                if (!mux->impl.win.iocp) {
+                    infra_free(mux);
+                    return INFRA_ERROR_SYSTEM;
+                }
+            } else {
                 infra_free(mux);
-                return INFRA_ERROR_SYSTEM;
+                return INFRA_ERROR_NOT_SUPPORTED;
             }
             break;
-#else
+            
         case INFRA_MUX_EPOLL:
-        case INFRA_MUX_AUTO:
-            mux->impl.nix.epoll_fd = epoll_create1(0);
-            if (mux->impl.nix.epoll_fd < 0) {
+            if (!infra_platform_is_windows()) {
+                mux->impl.nix.epoll_fd = infra_platform_create_epoll();
+                if (mux->impl.nix.epoll_fd < 0) {
+                    infra_free(mux);
+                    return INFRA_ERROR_SYSTEM;
+                }
+            } else {
                 infra_free(mux);
-                return INFRA_ERROR_SYSTEM;
-            }
-            mux->impl.nix.events = infra_malloc(sizeof(struct epoll_event) * mux->max_events);
-            if (!mux->impl.nix.events) {
-                close(mux->impl.nix.epoll_fd);
-                infra_free(mux);
-                return INFRA_ERROR_NO_MEMORY;
+                return INFRA_ERROR_NOT_SUPPORTED;
             }
             break;
-#endif
+            
         case INFRA_MUX_SELECT:
             FD_ZERO(&mux->impl.select.read_fds);
             FD_ZERO(&mux->impl.select.write_fds);
             FD_ZERO(&mux->impl.select.error_fds);
             mux->impl.select.max_fd = -1;
             break;
-
+            
         default:
             infra_free(mux);
             return INFRA_ERROR_INVALID_PARAM;
     }
 
+    *ctx = mux;
     return INFRA_OK;
 }
 
@@ -96,21 +107,29 @@ infra_error_t infra_mux_destroy(infra_mux_ctx_t* ctx) {
     }
 
     switch (ctx->type) {
-#ifdef _WIN32
+        case INFRA_MUX_AUTO:
         case INFRA_MUX_IOCP:
-        case INFRA_MUX_AUTO:
-            CloseHandle(ctx->impl.win.iocp);
+            if (infra_platform_is_windows()) {
+                if (ctx->impl.win.iocp) {
+                    infra_platform_close_iocp(ctx->impl.win.iocp);
+                }
+            }
             break;
-#else
+            
         case INFRA_MUX_EPOLL:
-        case INFRA_MUX_AUTO:
-            close(ctx->impl.nix.epoll_fd);
-            infra_free(ctx->impl.nix.events);
+            if (!infra_platform_is_windows()) {
+                if (ctx->impl.nix.epoll_fd >= 0) {
+                    infra_platform_close_epoll(ctx->impl.nix.epoll_fd);
+                }
+            }
             break;
-#endif
+            
         case INFRA_MUX_SELECT:
             // select模式不需要特殊清理
             break;
+            
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
     }
 
     infra_free(ctx);
@@ -124,39 +143,48 @@ infra_error_t infra_mux_add(infra_mux_ctx_t* ctx, int fd, infra_event_type_t eve
     }
 
     switch (ctx->type) {
-#ifdef _WIN32
-        case INFRA_MUX_IOCP:
         case INFRA_MUX_AUTO:
-            if (!CreateIoCompletionPort((HANDLE)fd, ctx->impl.win.iocp, (ULONG_PTR)user_data, 0)) {
-                return INFRA_ERROR_SYSTEM;
+        case INFRA_MUX_IOCP:
+            if (infra_platform_is_windows()) {
+                infra_error_t err = infra_platform_iocp_add(ctx->impl.win.iocp, fd, user_data);
+                if (err == INFRA_ERROR_ALREADY_EXISTS) {
+                    // 已经关联过了，忽略错误
+                    break;
+                }
+                return err;
             }
-            break;
-#else
+            return INFRA_ERROR_NOT_SUPPORTED;
+            
         case INFRA_MUX_EPOLL:
-        case INFRA_MUX_AUTO: {
-            struct epoll_event ev = {0};
-            ev.events = ((events & INFRA_EVENT_READ) ? EPOLLIN : 0) |
-                       ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
-                       (ctx->edge_trigger ? EPOLLET : 0);
-            ev.data.ptr = user_data;
-            if (epoll_ctl(ctx->impl.nix.epoll_fd, EPOLL_CTL_ADD, fd, &ev) < 0) {
-                return INFRA_ERROR_SYSTEM;
+            if (!infra_platform_is_windows()) {
+                return infra_platform_epoll_add(ctx->impl.nix.epoll_fd, fd, events, 
+                                              ctx->edge_trigger, user_data);
             }
-            break;
-        }
-#endif
-        case INFRA_MUX_SELECT:
+            return INFRA_ERROR_NOT_SUPPORTED;
+            
+        case INFRA_MUX_SELECT: {
+            if (fd > FD_SETSIZE) {
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+
             if (events & INFRA_EVENT_READ) {
                 FD_SET(fd, &ctx->impl.select.read_fds);
             }
             if (events & INFRA_EVENT_WRITE) {
                 FD_SET(fd, &ctx->impl.select.write_fds);
             }
-            FD_SET(fd, &ctx->impl.select.error_fds);
+            if (events & INFRA_EVENT_ERROR) {
+                FD_SET(fd, &ctx->impl.select.error_fds);
+            }
+
             if (fd > ctx->impl.select.max_fd) {
                 ctx->impl.select.max_fd = fd;
             }
             break;
+        }
+            
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
     }
 
     return INFRA_OK;
@@ -169,34 +197,42 @@ infra_error_t infra_mux_remove(infra_mux_ctx_t* ctx, int fd) {
     }
 
     switch (ctx->type) {
-#ifdef _WIN32
+        case INFRA_MUX_AUTO:
         case INFRA_MUX_IOCP:
-        case INFRA_MUX_AUTO:
-            // IOCP不需要显式移除
-            break;
-#else
-        case INFRA_MUX_EPOLL:
-        case INFRA_MUX_AUTO:
-            if (epoll_ctl(ctx->impl.nix.epoll_fd, EPOLL_CTL_DEL, fd, NULL) < 0) {
-                return INFRA_ERROR_SYSTEM;
+            if (infra_platform_is_windows()) {
+                // IOCP不需要显式移除
+                return INFRA_OK;
             }
-            break;
-#endif
-        case INFRA_MUX_SELECT:
+            return INFRA_ERROR_NOT_SUPPORTED;
+            
+        case INFRA_MUX_EPOLL:
+            if (!infra_platform_is_windows()) {
+                return infra_platform_epoll_remove(ctx->impl.nix.epoll_fd, fd);
+            }
+            return INFRA_ERROR_NOT_SUPPORTED;
+            
+        case INFRA_MUX_SELECT: {
             FD_CLR(fd, &ctx->impl.select.read_fds);
             FD_CLR(fd, &ctx->impl.select.write_fds);
             FD_CLR(fd, &ctx->impl.select.error_fds);
+
+            // 如果删除的是最大fd，需要重新计算最大fd
             if (fd == ctx->impl.select.max_fd) {
-                // 重新计算max_fd
-                ctx->impl.select.max_fd = -1;
-                for (int i = 0; i < fd; i++) {
+                int max_fd = -1;
+                for (int i = 0; i <= ctx->impl.select.max_fd; i++) {
                     if (FD_ISSET(i, &ctx->impl.select.read_fds) ||
-                        FD_ISSET(i, &ctx->impl.select.write_fds)) {
-                        ctx->impl.select.max_fd = i;
+                        FD_ISSET(i, &ctx->impl.select.write_fds) ||
+                        FD_ISSET(i, &ctx->impl.select.error_fds)) {
+                        max_fd = i;
                     }
                 }
+                ctx->impl.select.max_fd = max_fd;
             }
             break;
+        }
+            
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
     }
 
     return INFRA_OK;
@@ -209,36 +245,57 @@ infra_error_t infra_mux_modify(infra_mux_ctx_t* ctx, int fd, infra_event_type_t 
     }
 
     switch (ctx->type) {
-#ifdef _WIN32
-        case INFRA_MUX_IOCP:
         case INFRA_MUX_AUTO:
+        case INFRA_MUX_IOCP:
             // IOCP不支持修改事件
             return INFRA_ERROR_NOT_SUPPORTED;
-#else
+            
         case INFRA_MUX_EPOLL:
-        case INFRA_MUX_AUTO: {
-            struct epoll_event ev = {0};
-            ev.events = ((events & INFRA_EVENT_READ) ? EPOLLIN : 0) |
-                       ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
-                       (ctx->edge_trigger ? EPOLLET : 0);
-            if (epoll_ctl(ctx->impl.nix.epoll_fd, EPOLL_CTL_MOD, fd, &ev) < 0) {
-                return INFRA_ERROR_SYSTEM;
+            if (!infra_platform_is_windows()) {
+                return infra_platform_epoll_modify(ctx->impl.nix.epoll_fd, fd, events, 
+                                                 ctx->edge_trigger);
             }
-            break;
-        }
-#endif
-        case INFRA_MUX_SELECT:
+            return INFRA_ERROR_NOT_SUPPORTED;
+            
+        case INFRA_MUX_SELECT: {
+            if (fd > FD_SETSIZE) {
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+
+            // 先清除所有事件
+            FD_CLR(fd, &ctx->impl.select.read_fds);
+            FD_CLR(fd, &ctx->impl.select.write_fds);
+            FD_CLR(fd, &ctx->impl.select.error_fds);
+
+            // 重新设置事件
             if (events & INFRA_EVENT_READ) {
                 FD_SET(fd, &ctx->impl.select.read_fds);
-            } else {
-                FD_CLR(fd, &ctx->impl.select.read_fds);
             }
             if (events & INFRA_EVENT_WRITE) {
                 FD_SET(fd, &ctx->impl.select.write_fds);
-            } else {
-                FD_CLR(fd, &ctx->impl.select.write_fds);
+            }
+            if (events & INFRA_EVENT_ERROR) {
+                FD_SET(fd, &ctx->impl.select.error_fds);
+            }
+
+            // 如果没有任何事件，且是最大fd，需要重新计算最大fd
+            if (!(events & (INFRA_EVENT_READ | INFRA_EVENT_WRITE | INFRA_EVENT_ERROR)) &&
+                fd == ctx->impl.select.max_fd) {
+                int max_fd = -1;
+                for (int i = 0; i <= ctx->impl.select.max_fd; i++) {
+                    if (FD_ISSET(i, &ctx->impl.select.read_fds) ||
+                        FD_ISSET(i, &ctx->impl.select.write_fds) ||
+                        FD_ISSET(i, &ctx->impl.select.error_fds)) {
+                        max_fd = i;
+                    }
+                }
+                ctx->impl.select.max_fd = max_fd;
             }
             break;
+        }
+            
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
     }
 
     return INFRA_OK;
@@ -253,55 +310,40 @@ infra_error_t infra_mux_wait(infra_mux_ctx_t* ctx, infra_mux_event_t* events, si
     int num_events = 0;
 
     switch (ctx->type) {
-#ifdef _WIN32
+        case INFRA_MUX_AUTO:
         case INFRA_MUX_IOCP:
-        case INFRA_MUX_AUTO: {
-            DWORD bytes;
-            ULONG_PTR key;
-            OVERLAPPED* overlapped;
-            DWORD wait_time = (timeout_ms < 0) ? INFINITE : timeout_ms;
-
-            if (GetQueuedCompletionStatus(ctx->impl.win.iocp, &bytes, &key, &overlapped, wait_time)) {
-                events[0].fd = (int)key;
-                events[0].events = INFRA_EVENT_READ | INFRA_EVENT_WRITE;
-                events[0].user_data = (void*)key;
-                num_events = 1;
+            if (infra_platform_is_windows()) {
+                return infra_platform_iocp_wait(ctx->impl.win.iocp, events, max_events, timeout_ms);
             }
-            break;
-        }
-#else
+            return INFRA_ERROR_NOT_SUPPORTED;
+            
         case INFRA_MUX_EPOLL:
-        case INFRA_MUX_AUTO: {
-            num_events = epoll_wait(ctx->impl.nix.epoll_fd, ctx->impl.nix.events, 
-                                  (int)max_events, timeout_ms);
-            if (num_events < 0) {
-                return INFRA_ERROR_SYSTEM;
+            if (!infra_platform_is_windows()) {
+                return infra_platform_epoll_wait(ctx->impl.nix.epoll_fd, events, max_events, timeout_ms);
             }
-            for (int i = 0; i < num_events; i++) {
-                events[i].fd = ctx->impl.nix.events[i].data.fd;
-                events[i].events = 
-                    ((ctx->impl.nix.events[i].events & EPOLLIN) ? INFRA_EVENT_READ : 0) |
-                    ((ctx->impl.nix.events[i].events & EPOLLOUT) ? INFRA_EVENT_WRITE : 0) |
-                    ((ctx->impl.nix.events[i].events & EPOLLERR) ? INFRA_EVENT_ERROR : 0);
-                events[i].user_data = ctx->impl.nix.events[i].data.ptr;
-            }
-            break;
-        }
-#endif
+            return INFRA_ERROR_NOT_SUPPORTED;
+            
         case INFRA_MUX_SELECT: {
-            fd_set read_fds = ctx->impl.select.read_fds;
-            fd_set write_fds = ctx->impl.select.write_fds;
-            fd_set error_fds = ctx->impl.select.error_fds;
+            // 复制 fd_set 结构体
+            fd_set read_fds, write_fds, error_fds;
+            memcpy(&read_fds, &ctx->impl.select.read_fds, sizeof(fd_set));
+            memcpy(&write_fds, &ctx->impl.select.write_fds, sizeof(fd_set));
+            memcpy(&error_fds, &ctx->impl.select.error_fds, sizeof(fd_set));
 
-            struct timeval tv = {
-                .tv_sec = timeout_ms / 1000,
-                .tv_usec = (timeout_ms % 1000) * 1000
-            };
+            struct timeval tv = {0};
+            struct timeval* ptv = NULL;
+            if (timeout_ms >= 0) {
+                tv.tv_sec = timeout_ms / 1000;
+                tv.tv_usec = (timeout_ms % 1000) * 1000;
+                ptv = &tv;
+            }
 
             num_events = select(ctx->impl.select.max_fd + 1,
-                              &read_fds, &write_fds, &error_fds,
-                              (timeout_ms < 0) ? NULL : &tv);
+                              &read_fds, &write_fds, &error_fds, ptv);
             if (num_events < 0) {
+                if (errno == EINTR) {
+                    return 0;  // 被信号中断，返回0个事件
+                }
                 return INFRA_ERROR_SYSTEM;
             }
 
@@ -322,6 +364,9 @@ infra_error_t infra_mux_wait(infra_mux_ctx_t* ctx, infra_mux_event_t* events, si
             num_events = count;
             break;
         }
+            
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
     }
 
     return num_events;

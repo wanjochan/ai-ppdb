@@ -307,4 +307,11 @@ size_t infra_ring_buffer_readable(const infra_ring_buffer_t* rb);
 size_t infra_ring_buffer_writable(const infra_ring_buffer_t* rb);
 void infra_ring_buffer_reset(infra_ring_buffer_t* rb);
 
+// 线程和进程
+infra_error_t infra_sleep(uint32_t ms);
+infra_error_t infra_yield(void);
+
+// 时间操作
+uint64_t infra_time_ms(void);
+
 #endif /* INFRA_CORE_H */

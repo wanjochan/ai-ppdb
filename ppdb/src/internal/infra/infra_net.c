@@ -22,6 +22,9 @@ static infra_error_t create_socket(bool is_udp, infra_socket_t* sock) {
     }
 
     (*sock)->is_udp = is_udp;
+    (*sock)->handle = (void*)(intptr_t)(*sock)->fd;
+    (*sock)->overlapped = NULL;
+
     return INFRA_OK;
 }
 
@@ -439,4 +442,12 @@ infra_error_t infra_net_addr_to_str(const infra_net_addr_t* addr, char* buf, siz
     }
 
     return INFRA_OK;
+}
+
+// 获取文件描述符
+int infra_net_get_fd(infra_socket_t sock) {
+    if (!sock) {
+        return -1;  // 无效的套接字
+    }
+    return (int)(intptr_t)sock->handle;  // 使用 handle 字段
 } 

@@ -18,6 +18,8 @@ typedef struct infra_net_addr {
 struct infra_socket {
     int fd;           // 文件描述符
     bool is_udp;      // 是否为UDP套接字
+    void* handle;     // 平台相关的句柄
+    void* overlapped; // 平台相关的重叠IO结构
 };
 
 // 套接字句柄类型
@@ -52,4 +54,7 @@ infra_error_t infra_net_recvfrom(infra_socket_t sock, void* buf, size_t len, inf
 infra_error_t infra_net_resolve(const char* host, infra_net_addr_t* addr);
 infra_error_t infra_net_addr_to_str(const infra_net_addr_t* addr, char* buf, size_t size);
 
-#endif // INFRA_NET_H 
+// 文件描述符操作
+int infra_net_get_fd(infra_socket_t sock);
+
+#endif /* INFRA_NET_H */ 

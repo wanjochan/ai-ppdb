@@ -1,6 +1,15 @@
 @echo off
 setlocal enabledelayedexpansion
 
+set ROOT_DIR=%~dp0..\
+set SRC_DIR=%ROOT_DIR%src\internal\infra
+set BUILD_DIR=%ROOT_DIR%build\infra
+set INCLUDE_DIR=%ROOT_DIR%include
+set CROSS9_DIR=%ROOT_DIR%..\cross9
+set COSMOPOLITAN_DIR=%ROOT_DIR%..\cosmopolitan
+
+set SRC_FILES=infra_core.c infra_platform.c infra_sync.c infra_error.c infra_struct.c infra_memory.c infra_net.c infra_mux.c
+
 rem 记录开始时间
 set START_TIME=%time%
 
@@ -12,9 +21,6 @@ rem Create build directories if they don't exist
 if not exist "%BUILD_DIR%\infra" mkdir "%BUILD_DIR%\infra"
 
 echo Checking infra layer...
-
-rem 定义源文件列表
-set SRC_FILES=infra_core.c infra_platform.c infra_sync.c infra_error.c infra_struct.c infra_memory.c infra_net.c
 
 rem 检查是否需要重新构建
 set NEED_REBUILD=0
@@ -58,7 +64,7 @@ if !NEED_REBUILD!==1 (
     
     rem Create static library
     echo Creating library...
-    "%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_struct.o" "%BUILD_DIR%\infra\infra_memory.o" "%BUILD_DIR%\infra\infra_net.o"
+    "%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_struct.o" "%BUILD_DIR%\infra\infra_memory.o" "%BUILD_DIR%\infra\infra_net.o" "%BUILD_DIR%\infra\infra_mux.o"
     if errorlevel 1 exit /b 1
     
     echo Build infra complete.
