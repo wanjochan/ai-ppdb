@@ -67,7 +67,7 @@ error: 错误处理
 ds: 数据结构
 sync: 同步（互斥、锁、条件变量、信号量、无锁lockfree、线程池等）
 mux：多路复用
-net：网络
+net：网络 (with cosmopolitan, it is IOCP in windows)
 
 1. **第1阶段：Rinetd**
 

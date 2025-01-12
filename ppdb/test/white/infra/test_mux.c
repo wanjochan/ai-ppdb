@@ -48,7 +48,7 @@ static void test_mux_events(void) {
     TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(server != NULL);
 
-    int handle = config.mux.prefer_iocp ? infra_net_get_hdl(server) : infra_net_get_fd(server);
+    int handle = infra_net_get_fd(server);
     err = infra_mux_add(mux, handle, INFRA_EVENT_READ, NULL);
     TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
 

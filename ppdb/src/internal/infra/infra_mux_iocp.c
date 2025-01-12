@@ -44,8 +44,12 @@ static infra_error_t infra_mux_iocp_add_impl(infra_mux_t* mux, int fd, infra_eve
     // 将文件描述符关联到完成端口
     int64_t result = CreateIoCompletionPort(fd, impl->iocp, (int64_t)user_data, 0);
     if (result < 0) {
+        // 添加更详细的错误信息
+        int error = GetLastError();
+        infra_printf("CreateIoCompletionPort failed with error: %d\n", error);
         return INFRA_ERROR_SYSTEM;
     }
+    infra_printf("Successfully associated socket with IOCP\n");
 
     return INFRA_OK;
 }
