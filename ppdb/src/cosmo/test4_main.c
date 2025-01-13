@@ -4,6 +4,9 @@
 #define __STDC_WANT_LIB_EXT1__ 1
 #include "cosmopolitan.h"
 
+/* APE头大小 */
+#define APE_HEADER_SIZE 4096
+
 /* 加载 DL 文件 */
 static void* load_dl(const char* path) {
     int fd = open(path, O_RDONLY);
@@ -28,6 +31,13 @@ static void* load_dl(const char* path) {
     if (base == MAP_FAILED) {
         dprintf(2, "Failed to mmap %s\n", path);
         return NULL;
+    }
+
+    /* 检查APE头 */
+    uint64_t* header = (uint64_t*)base;
+    if (header[0] == 0x13371337) {
+        dprintf(1, "APE header found, skipping %d bytes\n", APE_HEADER_SIZE);
+        return (char*)base + APE_HEADER_SIZE;
     }
 
     return base;
