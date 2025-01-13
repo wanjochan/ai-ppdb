@@ -1,5 +1,8 @@
 #include "internal/peer/peer_rinetd.h"
 #include "internal/infra/infra_core.h"
+#include "internal/infra/infra_net.h"
+#include "internal/infra/infra_sync.h"
+#include "internal/infra/infra_mux.h"
 
 //-----------------------------------------------------------------------------
 // Global Variables
@@ -41,96 +44,78 @@ const int rinetd_option_count = sizeof(rinetd_options) / sizeof(rinetd_options[0
 
 static void* forward_session_thread(void* arg) {
     rinetd_session_t* session = (rinetd_session_t*)arg;
+    infra_socket_t src = session->client_sock;
+    infra_socket_t dst = session->server_sock;
     char buffer[RINETD_BUFFER_SIZE];
-    infra_socket_t socks[2] = {session->client_sock, session->server_sock};
-    
+    size_t bytes_received = 0;
+    size_t bytes_sent = 0;
+
     while (session->active) {
-        // Wait for data on either socket
-        infra_error_t err = infra_mux_wait(g_context.mux, socks, 2, -1);
-        if (err != INFRA_OK) {
-            break;
-        }
-
-        // Forward data in both directions
-        for (int i = 0; i < 2; i++) {
-            infra_socket_t src = socks[i];
-            infra_socket_t dst = socks[1-i];
-            
-            int bytes = infra_socket_recv(src, buffer, sizeof(buffer), 0);
-            if (bytes <= 0) {
-                session->active = false;
+        // Forward data from source to destination
+        if (src) {
+            infra_error_t err = infra_net_recv(src, buffer, sizeof(buffer), &bytes_received);
+            if (err != INFRA_OK || bytes_received == 0) {
                 break;
             }
 
-            int sent = infra_socket_send(dst, buffer, bytes, 0);
-            if (sent != bytes) {
-                session->active = false;
-                break;
+            if (dst) {
+                err = infra_net_send(dst, buffer, bytes_received, &bytes_sent);
+                if (err != INFRA_OK || bytes_sent != bytes_received) {
+                    break;
+                }
             }
-
-            // TODO: Update statistics
         }
     }
 
-    cleanup_forward_session(session);
     return NULL;
 }
 
 static void* listener_thread(void* arg) {
     rinetd_rule_t* rule = (rinetd_rule_t*)arg;
-    infra_socket_t listener = infra_socket_create(INFRA_SOCKET_TCP);
+    infra_socket_t listener = NULL;
+    infra_config_t config = {0};
     
-    if (listener == 0) {
-        INFRA_LOG_ERROR("Failed to create listener socket");
-        return NULL;
-    }
-
-    // Bind to source address and port
-    infra_error_t err = infra_socket_bind(listener, rule->src_addr, rule->src_port);
+    // Create and bind listener socket
+    infra_net_addr_t addr = {0};
+    addr.host = rule->src_addr;
+    addr.port = rule->src_port;
+    infra_error_t err = infra_net_listen(&addr, &listener, &config);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to bind to %s:%d", rule->src_addr, rule->src_port);
-        infra_socket_close(listener);
+        INFRA_LOG_ERROR("Failed to start listening");
         return NULL;
     }
 
-    // Start listening
-    err = infra_socket_listen(listener, 5);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to listen on %s:%d", rule->src_addr, rule->src_port);
-        infra_socket_close(listener);
-        return NULL;
-    }
-
-    INFRA_LOG_INFO("Listening on %s:%d", rule->src_addr, rule->src_port);
-
-    while (g_context.running && rule->enabled) {
-        // Accept new connection
-        infra_socket_t client = infra_socket_accept(listener);
-        if (client == 0) {
+    // Accept loop
+    while (g_context.running) {
+        infra_socket_t client = NULL;
+        infra_net_addr_t client_addr = {0};
+        err = infra_net_accept(listener, &client, &client_addr);
+        if (err != INFRA_OK) {
             continue;
         }
 
         // Create forward session
-        err = create_forward_session(client, rule);
-        if (err != INFRA_OK) {
-            infra_socket_close(client);
+        rinetd_session_t* session = create_forward_session(client, rule);
+        if (!session) {
+            infra_net_close(client);
+            continue;
         }
     }
 
-    infra_socket_close(listener);
+    infra_net_close(listener);
     return NULL;
 }
 
 static infra_error_t create_listener(rinetd_rule_t* rule) {
-    infra_thread_t* thread = infra_thread_create(listener_thread, rule);
-    if (thread == NULL) {
-        INFRA_LOG_ERROR("Failed to create listener thread");
-        return INFRA_ERROR_NO_MEMORY;
+    infra_thread_t* thread = NULL;
+    infra_error_t err = infra_thread_create(&thread, listener_thread, rule);
+    if (err != INFRA_OK) {
+        return err;
     }
 
     // Store thread handle
     for (int i = 0; i < RINETD_MAX_RULES; i++) {
-        if (g_context.listener_threads[i] == NULL) {
+        if (!g_context.listener_threads[i]) {
             g_context.listener_threads[i] = thread;
             break;
         }
@@ -140,53 +125,65 @@ static infra_error_t create_listener(rinetd_rule_t* rule) {
 }
 
 static infra_error_t stop_listener(int rule_index) {
-    if (g_context.listener_threads[rule_index] != NULL) {
-        infra_thread_join(g_context.listener_threads[rule_index]);
-        g_context.listener_threads[rule_index] = NULL;
+    infra_thread_t* thread = NULL;
+
+    infra_mutex_lock(g_context.mutex);
+    thread = g_context.listener_threads[rule_index];
+    g_context.listener_threads[rule_index] = NULL;
+    infra_mutex_unlock(g_context.mutex);
+
+    if (thread != NULL) {
+        infra_thread_join(thread);
     }
     return INFRA_OK;
 }
 
-static infra_error_t create_forward_session(infra_socket_t client_sock, rinetd_rule_t* rule) {
+static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rinetd_rule_t* rule) {
+    if (!client_sock || !rule) {
+        return NULL;
+    }
+
     // Connect to destination
-    infra_socket_t server_sock = infra_socket_create(INFRA_SOCKET_TCP);
-    if (server_sock == 0) {
-        INFRA_LOG_ERROR("Failed to create server socket");
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    infra_error_t err = infra_socket_connect(server_sock, rule->dst_addr, rule->dst_port);
+    infra_socket_t server_sock = NULL;
+    infra_config_t config = {0};
+    infra_net_addr_t addr = {0};
+    addr.host = rule->dst_addr;
+    addr.port = rule->dst_port;
+    infra_error_t err = infra_net_connect(&addr, &server_sock, &config);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to connect to %s:%d", rule->dst_addr, rule->dst_port);
-        infra_socket_close(server_sock);
-        return err;
+        return NULL;
     }
 
-    // Create session
-    rinetd_session_t session = {0};
-    session.client_sock = client_sock;
-    session.server_sock = server_sock;
-    session.rule = rule;
-    session.active = true;
+    // Find free session slot
+    rinetd_session_t* session = NULL;
+    for (int i = 0; i < RINETD_MAX_RULES; i++) {
+        if (!g_context.active_sessions[i].active) {
+            session = &g_context.active_sessions[i];
+            break;
+        }
+    }
+
+    if (!session) {
+        infra_net_close(server_sock);
+        return NULL;
+    }
+
+    // Initialize session
+    session->client_sock = client_sock;
+    session->server_sock = server_sock;
+    session->rule = rule;
+    session->active = true;
 
     // Create forwarding thread
-    session.thread = infra_thread_create(forward_session_thread, &session);
-    if (session.thread == NULL) {
-        INFRA_LOG_ERROR("Failed to create forwarding thread");
-        infra_socket_close(server_sock);
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    // Add to active sessions list
-    err = add_session_to_list(&session);
+    err = infra_thread_create(&session->thread, forward_session_thread, session);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to add session to list");
-        infra_socket_close(server_sock);
-        infra_thread_join(session.thread);
-        return err;
+        session->active = false;
+        infra_net_close(server_sock);
+        return NULL;
     }
 
-    return INFRA_OK;
+    g_context.session_count++;
+    return session;
 }
 
 static void cleanup_forward_session(rinetd_session_t* session) {
@@ -194,15 +191,17 @@ static void cleanup_forward_session(rinetd_session_t* session) {
         return;
     }
 
+    infra_mutex_lock(g_context.mutex);
     session->active = false;
+    infra_mutex_unlock(g_context.mutex);
     
     if (session->client_sock != 0) {
-        infra_socket_close(session->client_sock);
+        infra_net_close(session->client_sock);
         session->client_sock = 0;
     }
     
     if (session->server_sock != 0) {
-        infra_socket_close(session->server_sock);
+        infra_net_close(session->server_sock);
         session->server_sock = 0;
     }
 
@@ -216,13 +215,7 @@ static void cleanup_forward_session(rinetd_session_t* session) {
 }
 
 static infra_error_t init_session_list(void) {
-    // Allocate initial session array
-    g_context.active_sessions = (rinetd_session_t*)infra_malloc(
-        RINETD_MAX_RULES * sizeof(rinetd_session_t));
-    if (g_context.active_sessions == NULL) {
-        return INFRA_ERROR_NO_MEMORY;
-    }
-    
+    // We don't need to allocate dynamically anymore since we're using a fixed array
     memset(g_context.active_sessions, 0, 
         RINETD_MAX_RULES * sizeof(rinetd_session_t));
     g_context.session_count = 0;
@@ -230,44 +223,67 @@ static infra_error_t init_session_list(void) {
 }
 
 static void cleanup_session_list(void) {
-    if (g_context.active_sessions != NULL) {
-        // Cleanup all active sessions
-        for (int i = 0; i < g_context.session_count; i++) {
-            if (g_context.active_sessions[i].active) {
-                cleanup_forward_session(&g_context.active_sessions[i]);
-            }
+    // Cleanup all active sessions
+    infra_mutex_lock(g_context.mutex);
+    int count = g_context.session_count;
+    infra_mutex_unlock(g_context.mutex);
+
+    while (count > 0) {
+        infra_mutex_lock(g_context.mutex);
+        if (g_context.session_count > 0) {
+            rinetd_session_t* session = &g_context.active_sessions[0];
+            infra_mutex_unlock(g_context.mutex);
+            cleanup_forward_session(session);
+        } else {
+            infra_mutex_unlock(g_context.mutex);
+            break;
         }
         
-        infra_free(g_context.active_sessions);
-        g_context.active_sessions = NULL;
-        g_context.session_count = 0;
+        infra_mutex_lock(g_context.mutex);
+        count = g_context.session_count;
+        infra_mutex_unlock(g_context.mutex);
     }
+    
+    // Clear all sessions
+    memset(g_context.active_sessions, 0, 
+        RINETD_MAX_RULES * sizeof(rinetd_session_t));
+    g_context.session_count = 0;
 }
 
 static infra_error_t add_session_to_list(rinetd_session_t* session) {
+    infra_mutex_lock(g_context.mutex);
     if (g_context.session_count >= RINETD_MAX_RULES) {
+        infra_mutex_unlock(g_context.mutex);
         return INFRA_ERROR_NO_MEMORY;
     }
 
     memcpy(&g_context.active_sessions[g_context.session_count], 
         session, sizeof(rinetd_session_t));
     g_context.session_count++;
+    infra_mutex_unlock(g_context.mutex);
     return INFRA_OK;
 }
 
 static void remove_session_from_list(rinetd_session_t* session) {
+    infra_mutex_lock(g_context.mutex);
     for (int i = 0; i < g_context.session_count; i++) {
-        if (&g_context.active_sessions[i] == session) {
+        // Compare session by sockets instead of pointer
+        if (g_context.active_sessions[i].client_sock == session->client_sock &&
+            g_context.active_sessions[i].server_sock == session->server_sock) {
             // Move last session to this slot if not the last one
             if (i < g_context.session_count - 1) {
                 memcpy(&g_context.active_sessions[i],
                     &g_context.active_sessions[g_context.session_count - 1],
                     sizeof(rinetd_session_t));
             }
+            // Clear the last slot
+            memset(&g_context.active_sessions[g_context.session_count - 1], 
+                0, sizeof(rinetd_session_t));
             g_context.session_count--;
             break;
         }
     }
+    infra_mutex_unlock(g_context.mutex);
 }
 
 //-----------------------------------------------------------------------------
@@ -275,40 +291,25 @@ static void remove_session_from_list(rinetd_session_t* session) {
 //-----------------------------------------------------------------------------
 
 infra_error_t rinetd_init(void) {
-    if (g_context.mutex != NULL) {
-        return INFRA_ERROR_ALREADY_INITIALIZED;
+    if (g_context.mutex) {
+        return INFRA_ERROR_ALREADY_EXISTS;
     }
 
-    // Initialize mutex for thread synchronization
-    g_context.mutex = infra_mutex_create();
-    if (g_context.mutex == NULL) {
-        INFRA_LOG_ERROR("Failed to create mutex");
-        return INFRA_ERROR_NO_MEMORY;
-    }
+    memset(&g_context, 0, sizeof(g_context));
 
-    // Initialize event multiplexer
-    g_context.mux = infra_mux_create();
-    if (g_context.mux == NULL) {
-        INFRA_LOG_ERROR("Failed to create event multiplexer");
-        infra_mutex_destroy(g_context.mutex);
-        g_context.mutex = NULL;
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    // Initialize session list
-    infra_error_t err = init_session_list();
+    // Create mutex
+    infra_error_t err = infra_mutex_create(&g_context.mutex);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to initialize session list");
-        infra_mux_destroy(g_context.mux);
-        infra_mutex_destroy(g_context.mutex);
-        g_context.mutex = NULL;
-        g_context.mux = NULL;
         return err;
     }
 
-    memset(g_context.rules, 0, sizeof(g_context.rules));
-    g_context.rule_count = 0;
-    g_context.running = false;
+    // Create multiplexer
+    err = infra_mux_create(NULL, &g_context.mux);
+    if (err != INFRA_OK) {
+        infra_mutex_destroy(g_context.mutex);
+        g_context.mutex = NULL;
+        return err;
+    }
 
     return INFRA_OK;
 }
@@ -336,54 +337,18 @@ infra_error_t rinetd_cleanup(void) {
 }
 
 infra_error_t rinetd_load_config(const char* path) {
-    if (path == NULL) {
-        INFRA_LOG_ERROR("Invalid config file path");
+    if (!path) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (g_context.running) {
-        INFRA_LOG_ERROR("Cannot load config while service is running");
-        return INFRA_ERROR_BUSY;
+    if (!g_context.mutex) {
+        return INFRA_ERROR_NOT_SUPPORTED;
     }
 
-    // Open config file
-    FILE* fp = fopen(path, "r");
-    if (fp == NULL) {
-        INFRA_LOG_ERROR("Failed to open config file: %s", path);
-        return INFRA_ERROR_IO;
-    }
+    strncpy(g_context.config_path, path, RINETD_MAX_PATH_LEN - 1);
+    g_context.config_path[RINETD_MAX_PATH_LEN - 1] = '\0';
 
-    // Clear existing rules
-    memset(g_context.rules, 0, sizeof(g_context.rules));
-    g_context.rule_count = 0;
-
-    // Read rules from file
-    char line[256];
-    while (fgets(line, sizeof(line), fp) != NULL) {
-        // Skip comments and empty lines
-        if (line[0] == '#' || line[0] == '\n') {
-            continue;
-        }
-
-        // Parse rule: src_addr src_port dst_addr dst_port
-        rinetd_rule_t rule = {0};
-        if (sscanf(line, "%s %d %s %d",
-            rule.src_addr, &rule.src_port,
-            rule.dst_addr, &rule.dst_port) != 4) {
-            INFRA_LOG_ERROR("Invalid rule format: %s", line);
-            continue;
-        }
-
-        // Add rule
-        rule.enabled = true;
-        infra_error_t err = rinetd_add_rule(&rule);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to add rule: %s", line);
-        }
-    }
-
-    fclose(fp);
-    strncpy(g_context.config_path, path, INFRA_MAX_PATH_LEN - 1);
+    // TODO: Parse config file and load rules
     return INFRA_OK;
 }
 
@@ -484,89 +449,87 @@ static infra_error_t parse_config_file(const char* path) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    infra_mutex_lock(g_context.mutex);
     if (g_context.running) {
+        infra_mutex_unlock(g_context.mutex);
         INFRA_LOG_ERROR("Cannot change configuration while service is running");
         return INFRA_ERROR_BUSY;
     }
+    infra_mutex_unlock(g_context.mutex);
 
     // Actually load the config
     return rinetd_load_config(path);
 }
 
 static infra_error_t start_service(void) {
-    infra_error_t err;
-
-    if (g_context.mutex == NULL) {
-        err = rinetd_init();
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to initialize service");
-            return err;
-        }
+    if (!g_context.mutex) {
+        return INFRA_ERROR_NOT_SUPPORTED;
     }
 
-    infra_mutex_lock(g_context.mutex);
-    
     if (g_context.running) {
-        infra_mutex_unlock(g_context.mutex);
-        INFRA_LOG_ERROR("Service is already running");
-        return INFRA_ERROR_ALREADY_STARTED;
+        return INFRA_ERROR_ALREADY_EXISTS;
     }
 
     // Check if we have any rules
     if (g_context.rule_count == 0) {
-        infra_mutex_unlock(g_context.mutex);
-        INFRA_LOG_ERROR("No forwarding rules configured");
-        return INFRA_ERROR_INVALID_STATE;
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // Start listener threads for each enabled rule
+    // Start listeners for each rule
     for (int i = 0; i < g_context.rule_count; i++) {
         if (g_context.rules[i].enabled) {
-            err = create_listener(&g_context.rules[i]);
+            infra_error_t err = create_listener(&g_context.rules[i]);
             if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to create listener for rule %d", i);
-                // Continue with other rules
+                stop_service();
+                return err;
             }
         }
     }
 
     g_context.running = true;
-    infra_mutex_unlock(g_context.mutex);
-
-    infra_printf("Starting rinetd service...\n");
     return INFRA_OK;
 }
 
 static infra_error_t stop_service(void) {
-    if (g_context.mutex == NULL) {
-        INFRA_LOG_ERROR("Service is not initialized");
-        return INFRA_ERROR_NOT_INITIALIZED;
+    if (!g_context.mutex) {
+        return INFRA_ERROR_NOT_SUPPORTED;
     }
 
-    infra_mutex_lock(g_context.mutex);
-    
     if (!g_context.running) {
-        infra_mutex_unlock(g_context.mutex);
-        INFRA_LOG_ERROR("Service is not running");
-        return INFRA_ERROR_NOT_STARTED;
+        return INFRA_ERROR_NOT_SUPPORTED;
     }
 
-    // Stop all listeners first
-    for (int i = 0; i < RINETD_MAX_RULES; i++) {
-        stop_listener(i);
-    }
-
-    // Wait for all active sessions to complete
-    infra_printf("Waiting for active sessions to complete...\n");
-    while (g_context.session_count > 0) {
-        rinetd_session_t* session = &g_context.active_sessions[0];
-        cleanup_forward_session(session);
-    }
-
+    // Stop accepting new connections
     g_context.running = false;
-    infra_mutex_unlock(g_context.mutex);
 
-    infra_printf("Stopping rinetd service...\n");
+    // Stop all listener threads
+    for (int i = 0; i < RINETD_MAX_RULES; i++) {
+        if (g_context.listener_threads[i]) {
+            infra_thread_join(g_context.listener_threads[i]);
+            g_context.listener_threads[i] = NULL;
+        }
+    }
+
+    // Stop all active sessions
+    for (int i = 0; i < RINETD_MAX_RULES; i++) {
+        if (g_context.active_sessions[i].active) {
+            g_context.active_sessions[i].active = false;
+            if (g_context.active_sessions[i].thread) {
+                infra_thread_join(g_context.active_sessions[i].thread);
+                g_context.active_sessions[i].thread = NULL;
+            }
+            if (g_context.active_sessions[i].client_sock) {
+                infra_net_close(g_context.active_sessions[i].client_sock);
+                g_context.active_sessions[i].client_sock = NULL;
+            }
+            if (g_context.active_sessions[i].server_sock) {
+                infra_net_close(g_context.active_sessions[i].server_sock);
+                g_context.active_sessions[i].server_sock = NULL;
+            }
+        }
+    }
+
+    g_context.session_count = 0;
     return INFRA_OK;
 }
 
@@ -593,11 +556,26 @@ static infra_error_t show_status(void) {
                         g_context.rules[i].dst_port);
                 }
             }
+            infra_printf("Active sessions: %d\n", g_context.session_count);
         } else {
             infra_printf("No active forwarding rules\n");
         }
     } else {
         infra_printf("Service is not running\n");
+        if (g_context.rule_count > 0) {
+            infra_printf("Configured forwarding rules:\n");
+            for (int i = 0; i < g_context.rule_count; i++) {
+                if (g_context.rules[i].enabled) {
+                    infra_printf("  %s:%d -> %s:%d\n",
+                        g_context.rules[i].src_addr,
+                        g_context.rules[i].src_port,
+                        g_context.rules[i].dst_addr,
+                        g_context.rules[i].dst_port);
+                }
+            }
+        } else {
+            infra_printf("No forwarding rules configured\n");
+        }
     }
 
     infra_mutex_unlock(g_context.mutex);
