@@ -14,11 +14,11 @@ SECTIONS {
         __executable_start = .;
         /* DOS MZ header */
         QUAD(0x00005A4D)
-        . = 0x3c;
+        . = __executable_start + 0x3c;
         LONG(0x40)            /* e_lfanew */
         
         /* PE header */
-        . = 0x40;
+        . = __executable_start + 0x40;
         LONG(0x4550)         /* PE magic */
         SHORT(0x8664)        /* AMD64 */
         SHORT(6)             /* sections */
@@ -61,8 +61,8 @@ SECTIONS {
         LONG(0)             /* loader flags */
         LONG(16)            /* number of data directories */
         
-        . = 0x80;
         /* ELF header */
+        . = __executable_start + 0x80;
         BYTE(0x7F) BYTE(0x45) BYTE(0x4C) BYTE(0x46)
         BYTE(2)             /* 64-bit */
         BYTE(1)             /* little endian */
@@ -74,8 +74,8 @@ SECTIONS {
         LONG(1)             /* version */
         QUAD(module_main)   /* entry point */
         
-        . = 0xC0;
         /* Mach-O header */
+        . = __executable_start + 0xC0;
         LONG(0xFEEDFACF)    /* MH_MAGIC_64 */
         LONG(0x1000007)     /* CPU_TYPE_X86_64 */
         LONG(0x3)           /* CPU_SUBTYPE_X86_64_ALL */

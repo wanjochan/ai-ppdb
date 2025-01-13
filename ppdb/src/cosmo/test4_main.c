@@ -5,12 +5,18 @@
 #include "cosmopolitan.h"
 #include "ape_loader.h"
 
+/* Windows错误模式常量 */
+#define APE_SEM_FAILCRITICALERRORS     0x0001
+#define APE_SEM_NOALIGNMENTFAULTEXCEPT 0x0004
+#define APE_SEM_NOGPFAULTERRORBOX      0x0002
+#define APE_SEM_NOOPENFILEERRORBOX     0x8000
+
 /* 禁用Windows错误弹窗 */
 static void disable_error_dialogs(void) {
 #if defined(__COSMOPOLITAN__)
-    SetErrorMode(SEM_FAILCRITICALERRORS | 
-                SEM_NOGPFAULTERRORBOX | 
-                SEM_NOOPENFILEERRORBOX);
+    SetErrorMode(APE_SEM_FAILCRITICALERRORS | 
+                APE_SEM_NOGPFAULTERRORBOX | 
+                APE_SEM_NOOPENFILEERRORBOX);
 #endif
 }
 

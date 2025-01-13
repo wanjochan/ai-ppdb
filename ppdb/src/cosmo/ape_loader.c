@@ -1,5 +1,11 @@
 #include "ape_loader.h"
 
+/* Windows错误模式常量 */
+#define APE_SEM_FAILCRITICALERRORS     0x0001
+#define APE_SEM_NOALIGNMENTFAULTEXCEPT 0x0004
+#define APE_SEM_NOGPFAULTERRORBOX      0x0002
+#define APE_SEM_NOOPENFILEERRORBOX     0x8000
+
 /* 平台特定的加载函数声明 */
 static void* platform_load(const char* path);
 static void* platform_get_proc(void* handle, const char* symbol);
@@ -9,9 +15,9 @@ static int platform_unload(void* handle);
 static void disable_error_dialogs(void) {
 #if defined(__COSMOPOLITAN__)
     /* 设置Windows错误模式 */
-    SetErrorMode(SEM_FAILCRITICALERRORS | 
-                SEM_NOGPFAULTERRORBOX | 
-                SEM_NOOPENFILEERRORBOX);
+    SetErrorMode(APE_SEM_FAILCRITICALERRORS | 
+                APE_SEM_NOGPFAULTERRORBOX | 
+                APE_SEM_NOOPENFILEERRORBOX);
 #endif
 }
 
