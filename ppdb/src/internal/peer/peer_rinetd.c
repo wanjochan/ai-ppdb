@@ -75,13 +75,37 @@ static void* listener_thread(void* arg) {
     infra_socket_t listener = NULL;
     infra_config_t config = {0};
     
-    // Create and bind listener socket
+    // Create listener socket
+    infra_error_t err = infra_net_create(&listener, false, &config);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create listener socket");
+        return NULL;
+    }
+
+    // Enable address reuse
+    err = infra_net_set_reuseaddr(listener, true);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set socket options");
+        infra_net_close(listener);
+        return NULL;
+    }
+
+    // Bind to source address
     infra_net_addr_t addr = {0};
     addr.host = rule->src_addr;
     addr.port = rule->src_port;
-    infra_error_t err = infra_net_listen(&addr, &listener, &config);
+    err = infra_net_bind(listener, &addr);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to bind listener socket");
+        infra_net_close(listener);
+        return NULL;
+    }
+
+    // Start listening
+    err = infra_net_listen(listener);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to start listening");
+        infra_net_close(listener);
         return NULL;
     }
 
@@ -143,14 +167,21 @@ static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rine
         return NULL;
     }
 
-    // Connect to destination
+    // Create server socket
     infra_socket_t server_sock = NULL;
     infra_config_t config = {0};
+    infra_error_t err = infra_net_create(&server_sock, false, &config);
+    if (err != INFRA_OK) {
+        return NULL;
+    }
+
+    // Connect to destination
     infra_net_addr_t addr = {0};
     addr.host = rule->dst_addr;
     addr.port = rule->dst_port;
-    infra_error_t err = infra_net_connect(&addr, &server_sock, &config);
+    err = infra_net_connect(&addr, &server_sock, &config);
     if (err != INFRA_OK) {
+        infra_net_close(server_sock);
         return NULL;
     }
 
