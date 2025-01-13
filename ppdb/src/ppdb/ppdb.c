@@ -57,29 +57,38 @@ int main(int argc, char** argv) {
     infra_error_t err;
 
     // Parse global options first (must be before command)
-    char* log_level_str = NULL;
+    const char* log_level_str = NULL;
     int i;
-    fprintf(stderr, "DEBUG: Parsing command line arguments, argc=%d\n", argc);
     for (i = 1; i < argc; i++) {
-        fprintf(stderr, "DEBUG: Processing argument %d: %s\n", i, argv[i]);
         if (argv[i][0] != '-' || argv[i][1] != '-') {
             // Found command, stop parsing global options
-            fprintf(stderr, "DEBUG: Found command: %s\n", argv[i]);
             break;
         }
 
-        if (strncmp(argv[i], "--log-level=", 11) == 0) {
-            log_level_str = argv[i] + 11;  // Skip "--log-level="
-            if (*log_level_str == '\0') {  // Empty value
-                fprintf(stderr, "ERROR: --log-level requires a value\n");
-                fprintf(stderr, "Example: ppdb --log-level=4 help\n");
+        const char* option = argv[i] + 2;  // Skip "--"
+        const char* value = strchr(option, '=');
+        if (value) {
+            size_t name_len = value - option;
+            value++;  // Skip '='
+            
+            if (strncmp(option, "log-level", name_len) == 0) {
+                if (*value == '\0') {  // Empty value
+                    fprintf(stderr, "ERROR: --log-level requires a numeric value (0-5)\n");
+                    fprintf(stderr, "Example: ppdb --log-level=4 help\n");
+                    help_cmd_handler(0, NULL);
+                    return 1;
+                }
+                log_level_str = value;
+            } else {
+                fprintf(stderr, "ERROR: Unknown global option: %s\n", argv[i]);
+                fprintf(stderr, "ERROR: Global options must come before command\n");
+                fprintf(stderr, "ERROR: Example: ppdb --log-level=4 help\n");
                 help_cmd_handler(0, NULL);
                 return 1;
             }
-            fprintf(stderr, "DEBUG: Found log level option: %s\n", log_level_str);
         } else {
-            fprintf(stderr, "ERROR: Unknown global option: %s\n", argv[i]);
-            fprintf(stderr, "ERROR: Global options must come before command\n");
+            fprintf(stderr, "ERROR: Invalid option format: %s\n", argv[i]);
+            fprintf(stderr, "ERROR: Global options must have a value\n");
             fprintf(stderr, "ERROR: Example: ppdb --log-level=4 help\n");
             help_cmd_handler(0, NULL);
             return 1;
@@ -96,11 +105,6 @@ int main(int argc, char** argv) {
 
     // Set log level if specified
     if (log_level_str) {
-        // Skip leading '=' if present
-        if (*log_level_str == '=') {
-            log_level_str++;
-        }
-        
         // Parse the numeric value
         char* endptr;
         long level = strtol(log_level_str, &endptr, 10);
@@ -114,36 +118,32 @@ int main(int argc, char** argv) {
         // Check value range
         if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
             config.log.level = (int)level;
-            fprintf(stderr, "DEBUG: Setting log level to %d\n", (int)level);
         } else {
             fprintf(stderr, "ERROR: Invalid log level: %ld (valid range: 0-5)\n", level);
             return 1;
         }
     } else {
         config.log.level = INFRA_LOG_LEVEL_NONE;  // Default to NONE
-        fprintf(stderr, "DEBUG: Using default log level: NONE\n");
     }
 
     // Initialize infrastructure layer
-    fprintf(stderr, "DEBUG: Initializing infrastructure layer\n");
     err = infra_init_with_config(INFRA_INIT_ALL, &config);
     if (err != INFRA_OK) {
         fprintf(stderr, "Failed to initialize infrastructure layer\n");
         return 1;
     }
-    fprintf(stderr, "DEBUG: Infrastructure layer initialized\n");
+
+    INFRA_LOG_DEBUG("Infrastructure layer initialized with log level %d", config.log.level);
 
     // Initialize command line framework
-    fprintf(stderr, "DEBUG: Initializing command line framework\n");
     err = poly_cmdline_init();
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to initialize command line framework");
         return 1;
     }
-    fprintf(stderr, "DEBUG: Command line framework initialized\n");
+    INFRA_LOG_DEBUG("Command line framework initialized");
 
     // Register commands
-    fprintf(stderr, "DEBUG: Registering help command\n");
     const poly_cmd_t help_cmd = {
         .name = "help",
         .desc = "Show help information",
@@ -155,7 +155,7 @@ int main(int argc, char** argv) {
         INFRA_LOG_ERROR("Failed to register help command");
         return 1;
     }
-    fprintf(stderr, "DEBUG: Help command registered\n");
+    INFRA_LOG_DEBUG("Help command registered");
 
     // If no command specified, show help
     if (i >= argc) {
@@ -165,13 +165,13 @@ int main(int argc, char** argv) {
     }
 
     // Execute command (pass remaining arguments)
-    fprintf(stderr, "DEBUG: Executing command: %s\n", argv[i]);
+    INFRA_LOG_DEBUG("Executing command: %s", argv[i]);
     err = poly_cmdline_execute(argc - i, argv + i);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Command execution failed: %s", infra_error_string(err));
         return 1;
     }
-    fprintf(stderr, "DEBUG: Command executed successfully\n");
+    INFRA_LOG_DEBUG("Command executed successfully");
 
     return 0;
 } 

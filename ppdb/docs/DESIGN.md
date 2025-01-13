@@ -108,9 +108,15 @@ test/white/
     └── mock_platform.c
 ```
 
-- 测试顺序：
-.\pdpb\scripts\build_test42.bat  #用于确认 cross9/cosmopolitan 工具链运作正常（如果不正常就停下讨论）
-.\ppdb\scripts\build_test_mock.bat  #用于确定 mock 机制运作正常
+- 测试流程
+
+# 【热身】主要用于确认 cross9/cosmopolitan 工具链运作正常，运行后不管是否正常都算热身完毕，停下来等待下一步安排。
+.\pdpb\scripts\build_test42.bat
+
+# 用于确定 mock 机制运作正常
+.\ppdb\scripts\build_test_mock.bat  
+
+# 用于确定 infra 层运作正常
 .\ppdb\scripts\build_test_infra.bat [module] [norun]  //用于确定 infra 层运作正常
   - 不带参数：会触发帮助
   - module参数：指定要测试的模块，当前支持的测试模块包括：
@@ -121,5 +127,7 @@ test/white/
       - struct：数据结构测试
       - memory_pool：内存池测试
   - norun参数：只构建不运行测试
+
+# 构建 ppdb 产品
 .\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）
 
