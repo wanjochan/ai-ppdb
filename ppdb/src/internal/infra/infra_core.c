@@ -155,6 +155,12 @@ infra_error_t infra_config_apply(const infra_config_t* config) {
 // Initialization and Cleanup
 //-----------------------------------------------------------------------------
 
+/*
+ * 保留此函数用于未来模块化初始化的扩展
+ * 目前基础设施层的初始化是整体进行的，但未来可能需要支持按模块初始化
+ * 比如：只初始化内存管理、日志系统等特定模块
+ * 因此保留此函数作为扩展点
+ */
 static infra_error_t init_module(infra_init_flags_t flag, const infra_config_t* config) {
     infra_error_t err = INFRA_OK;
 

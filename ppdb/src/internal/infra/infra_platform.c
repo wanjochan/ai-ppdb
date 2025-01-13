@@ -207,7 +207,18 @@ void infra_platform_close_epoll(int epoll_fd) {
         close(epoll_fd);
     }
 }
-
+/*
+关于 infra_platform_epoll_add 中未使用的 user_data 参数：
+这不是设计问题，而是一个有意为之的设计。从代码中可以看到：
+在 Linux epoll 中，epoll_event 结构体有一个 data 字段，可以用来存储用户数据
+目前的实现只使用了 data.fd 来存储文件描述符
+user_data 参数的存在是为了保持与 Windows IOCP 的接口一致性（可以看到注释掉的 IOCP 相关函数也有 user_data 参数）
+这个参数在将来可能会用于存储更多的上下文信息，比如回调函数、连接状态等
+所以这个未使用的参数是一个预留的扩展点，用于：
+保持与 Windows IOCP 的接口一致性
+为将来可能的功能扩展预留空间
+允许用户在事件触发时能够获取到相关的上下文信息
+*/
 infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool edge_trigger, void* user_data) {
     if (epoll_fd < 0 || fd < 0) {
         return INFRA_ERROR_INVALID_PARAM;
