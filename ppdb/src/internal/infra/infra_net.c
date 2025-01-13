@@ -235,8 +235,8 @@ infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* so
             // 注意：即使在阻塞模式下，我们也使用select来实现超时功能
             fd_set write_fds;
             struct timeval tv;
-            memset(&write_fds, 0, sizeof(write_fds));  // 使用 memset 替代 FD_ZERO
-            write_fds.fds_bits[(*sock)->fd / NFDBITS] |= (1UL << ((*sock)->fd % NFDBITS));  // 手动设置 fd
+            memset(&write_fds, 0, sizeof(write_fds));  // 清零整个结构
+            write_fds.fds_bits[0] |= (1UL << ((*sock)->fd));  // 设置对应的位
             
             // 使用配置中的超时时间，如果未设置则使用默认值
             uint32_t timeout_ms = config->net.connect_timeout_ms > 0 ? 

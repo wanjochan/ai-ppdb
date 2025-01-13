@@ -218,8 +218,9 @@ infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool ed
                 ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
                 ((events & INFRA_EVENT_ERROR) ? EPOLLERR : 0) |
                 (edge_trigger ? EPOLLET : 0);
-    ev.data.ptr = user_data;
+    ev.data.fd = fd;
     
+    infra_printf("Adding fd %d to epoll with events 0x%x\n", fd, ev.events);
     return (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
@@ -233,7 +234,9 @@ infra_error_t infra_platform_epoll_modify(int epoll_fd, int fd, int events, bool
                 ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
                 ((events & INFRA_EVENT_ERROR) ? EPOLLERR : 0) |
                 (edge_trigger ? EPOLLET : 0);
+    ev.data.fd = fd;
     
+    infra_printf("Modifying fd %d in epoll with events 0x%x\n", fd, ev.events);
     return (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &ev) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
@@ -241,6 +244,8 @@ infra_error_t infra_platform_epoll_remove(int epoll_fd, int fd) {
     if (epoll_fd < 0 || fd < 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
+    
+    infra_printf("Removing fd %d from epoll\n", fd);
     return (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
 
@@ -249,15 +254,23 @@ infra_error_t infra_platform_epoll_wait(int epoll_fd, void* events, size_t max_e
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    int num_events = epoll_wait(epoll_fd, (struct epoll_event*)events, max_events, timeout_ms);
-    if (num_events < 0) {
-        if (errno == EINTR) {
-            return 0;  // 被信号中断，返回0表示没有事件
+    int ret;
+    do {
+        ret = epoll_wait(epoll_fd, (struct epoll_event*)events, max_events, timeout_ms);
+        if (ret > 0) {
+            struct epoll_event* ev = (struct epoll_event*)events;
+            for (int i = 0; i < ret; i++) {
+                infra_printf("epoll_wait: fd %d has events 0x%x\n", ev[i].data.fd, ev[i].events);
+            }
         }
+    } while (ret < 0 && errno == EINTR);  // 如果被信号中断，则重试
+
+    if (ret < 0) {
+        infra_printf("epoll_wait failed with errno %d\n", errno);
         return INFRA_ERROR_SYSTEM;
     }
-    
-    return num_events;  // 返回实际的事件数量
+
+    return ret;  // 返回事件数量
 }
 
 //-----------------------------------------------------------------------------

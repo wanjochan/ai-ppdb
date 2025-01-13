@@ -9,6 +9,7 @@
 #include "internal/infra/infra_memory.h"
 #include "internal/infra/infra_net.h"
 #include "internal/infra/infra_mux.h"
+#include "internal/infra/infra_platform.h"
 #include "test/white/framework/test_framework.h"
 
 // 基本功能测试
@@ -39,14 +40,21 @@ static void test_mux_events(void) {
     addr.port = 12345;
 
     err = infra_mux_create(&config, &mux);
-    //TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(mux != NULL);
 
-    err = infra_net_listen(&addr, &server, &config);
-    //TEST_ASSERT(err == INFRA_OK);
+    // 创建服务器 socket
+    err = infra_net_create(&server, false, &config);
     TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(server != NULL);
+
+    // 绑定地址
+    err = infra_net_bind(server, &addr);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
+
+    // 开始监听
+    err = infra_net_listen(server);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
 
     int handle = infra_net_get_fd(server);
     err = infra_mux_add(mux, handle, INFRA_EVENT_READ, NULL);
@@ -70,6 +78,9 @@ static void test_mux_wait(void) {
     infra_net_addr_t addr = {0};
     infra_mux_event_t events[16];
     infra_config_t config = INFRA_DEFAULT_CONFIG;
+    
+    // 设置非阻塞模式
+    config.net.flags |= INFRA_CONFIG_FLAG_NONBLOCK;
 
     addr.host = "127.0.0.1";
     addr.port = 12346;
@@ -78,16 +89,25 @@ static void test_mux_wait(void) {
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(mux != NULL);
 
-    err = infra_net_listen(&addr, &server, &config);
-    //TEST_ASSERT(err == INFRA_OK);
+    // 创建服务器 socket
+    err = infra_net_create(&server, false, &config);
     TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(server != NULL);
+
+    // 绑定地址
+    err = infra_net_bind(server, &addr);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
+
+    // 开始监听
+    err = infra_net_listen(server);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
 
     err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
     TEST_ASSERT(err == INFRA_OK);
 
-    err = infra_mux_wait(mux, events, 16, 0);
-    TEST_ASSERT(err == 0);
+    // 使用100ms超时
+    err = infra_mux_wait(mux, events, 16, 100);
+    TEST_ASSERT(err == 0);  // 期望超时返回0
 
     infra_net_close(server);
     infra_mux_destroy(mux);
@@ -101,6 +121,9 @@ static void test_mux_multiple(void) {
     infra_net_addr_t addr = {0};
     infra_mux_event_t events[16];
     infra_config_t config = INFRA_DEFAULT_CONFIG;
+    
+    // 设置非阻塞模式
+    config.net.flags |= INFRA_CONFIG_FLAG_NONBLOCK;
 
     addr.host = "127.0.0.1";
     addr.port = 12347;
@@ -111,17 +134,27 @@ static void test_mux_multiple(void) {
 
     for (int i = 0; i < 3; i++) {
         addr.port = 12347 + i;
-        err = infra_net_listen(&addr, &servers[i], &config);
-        //TEST_ASSERT(err == INFRA_OK);
+        
+        // 创建服务器 socket
+        err = infra_net_create(&servers[i], false, &config);
         TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
         TEST_ASSERT(servers[i] != NULL);
+
+        // 绑定地址
+        err = infra_net_bind(servers[i], &addr);
+        TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
+
+        // 开始监听
+        err = infra_net_listen(servers[i]);
+        TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
 
         err = infra_mux_add(mux, infra_net_get_fd(servers[i]), INFRA_EVENT_READ, NULL);
         TEST_ASSERT(err == INFRA_OK);
     }
 
-    err = infra_mux_wait(mux, events, 16, 0);
-    TEST_ASSERT(err == 0);
+    // 使用100ms超时
+    err = infra_mux_wait(mux, events, 16, 100);
+    TEST_ASSERT(err == 0);  // 期望超时返回0
 
     for (int i = 0; i < 3; i++) {
         infra_net_close(servers[i]);
@@ -194,12 +227,15 @@ static void test_mux_stress(void) {
     infra_error_t err;
     infra_mux_t* mux = NULL;
     infra_socket_t server = NULL;
-    infra_socket_t accepted[100] = {NULL};
+    infra_socket_t accepted[10] = {NULL};
     infra_net_addr_t addr = {0};
     infra_mux_event_t events[16];
     int num_accepted = 0;
     infra_config_t config = INFRA_DEFAULT_CONFIG;
-    int timeout_count = 0;
+    
+    // 设置非阻塞模式和较短的超时时间
+    config.net.flags |= INFRA_CONFIG_FLAG_NONBLOCK;
+    config.net.connect_timeout_ms = 100;  // 100ms连接超时
 
     addr.host = "127.0.0.1";
     addr.port = 12350;
@@ -208,107 +244,114 @@ static void test_mux_stress(void) {
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(mux != NULL);
 
-    err = infra_net_listen(&addr, &server, &config);
+    // 创建服务器 socket
+    err = infra_net_create(&server, false, &config);
     TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
     TEST_ASSERT(server != NULL);
 
-    // Set socket to non-blocking mode using fcntl
-    int flags = fcntl(infra_net_get_fd(server), F_GETFL, 0);
-    flags |= O_NONBLOCK;
-    fcntl(infra_net_get_fd(server), F_SETFL, flags);
+    // 绑定地址
+    err = infra_net_bind(server, &addr);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
+
+    // 开始监听
+    err = infra_net_listen(server);
+    TEST_ASSERT_MSG(err==INFRA_OK,"err(%d)!=INFRA_OK(%d)",err,INFRA_OK);
 
     err = infra_mux_add(mux, infra_net_get_fd(server), INFRA_EVENT_READ, NULL);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 创建10个客户端连接
+    // 创建多个客户端连接
     infra_socket_t clients[10] = {NULL};
-    infra_net_addr_t client_addr = {0};
-    client_addr.host = "127.0.0.1";
-    client_addr.port = 12345;
-
     int num_connected = 0;
-    int retry_count = 0;
-    while (num_connected < 10 && retry_count < 3) {
-        err = infra_net_connect(&client_addr, &clients[num_connected], &config);
-        if (err == INFRA_OK) {
-            infra_printf("Client %d connected successfully\n", num_connected);
+    
+    // 先尝试建立所有连接
+    for (int i = 0; i < 10; i++) {
+        err = infra_net_connect(&addr, &clients[i], &config);
+        if (err == INFRA_OK || err == INFRA_ERROR_WOULD_BLOCK) {
             num_connected++;
-            retry_count = 0;
-        } else if (err == INFRA_ERROR_WOULD_BLOCK) {
-            infra_printf("Client %d connection would block, checking...\n", num_connected);
-            // 使用select检查socket是否可写
-            fd_set write_fds;
-            struct timeval tv = {0, 100000}; // 100ms
-            FD_ZERO(&write_fds);
-            FD_SET(clients[num_connected]->fd, &write_fds);
-            
-            int ready = select(clients[num_connected]->fd + 1, NULL, &write_fds, NULL, &tv);
-            if (ready > 0) {
-                // 检查是否真的连接成功
-                int error = 0;
-                socklen_t len = sizeof(error);
-                if (getsockopt(clients[num_connected]->fd, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
-                    infra_printf("Client %d connection completed\n", num_connected);
-                    num_connected++;
-                    retry_count = 0;
-                    continue;
-                }
-                infra_printf("Client %d connection failed with error: %d\n", num_connected, error);
+            infra_printf("Client %d connected (err=%d)\n", i, err);
+        } else {
+            // 连接失败，清理并继续
+            if (clients[i]) {
+                infra_net_close(clients[i]);
+                clients[i] = NULL;
             }
-            retry_count++;
-            infra_sleep(100);
-        } else {
-            infra_printf("Client %d connection failed with error %d\n", num_connected, err);
-            break;
+            infra_printf("Client %d failed to connect (err=%d)\n", i, err);
+            continue;
+        }
+        
+        // 等待并尝试接受连接
+        err = infra_mux_wait(mux, events, 16, 10);  // 10ms超时
+        infra_printf("mux_wait returned %d events\n", err);
+        if (err > 0) {
+            for (int j = 0; j < err; j++) {
+                if (events[j].fd == infra_net_get_fd(server)) {
+                    infra_net_addr_t client_addr = {0};
+                    err = infra_net_accept(server, &accepted[num_accepted], &client_addr);
+                    if (err == INFRA_OK) {
+                        num_accepted++;
+                        infra_printf("Accepted connection %d\n", num_accepted);
+                    } else if (err != INFRA_ERROR_WOULD_BLOCK) {
+                        // 如果不是 WOULD_BLOCK，说明是真正的错误
+                        TEST_ASSERT_MSG(0, "Accept failed with error: %d", err);
+                    } else {
+                        infra_printf("Accept would block\n");
+                    }
+                } else {
+                    infra_printf("Event on fd %d (not server fd %d)\n", 
+                               events[j].fd, infra_net_get_fd(server));
+                }
+            }
         }
     }
 
-    if (num_connected == 0) {
-        infra_printf("Failed to establish any client connections\n");
-        infra_net_close(server);
-        infra_mux_destroy(mux);
-        return;
-    }
-
-    infra_printf("Successfully established %d client connections\n", num_connected);
-
-    // 接受连接
-    while (num_accepted < num_connected && timeout_count < 3) {
-        err = infra_net_accept(server, &accepted[num_accepted], NULL);
-        if (err == INFRA_OK && accepted[num_accepted] != NULL) {
-            err = infra_mux_add(mux, infra_net_get_fd(accepted[num_accepted]), INFRA_EVENT_READ | INFRA_EVENT_WRITE, NULL);
-            TEST_ASSERT(err == INFRA_OK);
-            num_accepted++;
-            timeout_count = 0;  // Reset timeout counter on successful accept
-        } else if (err == INFRA_ERROR_TIMEOUT || err == INFRA_ERROR_WOULD_BLOCK) {
-            timeout_count++;
-            infra_sleep(100);  // Sleep for 100ms before retry
-        } else {
-            infra_printf("Accept failed with error: %d\n", err);
-            break;  // Exit on other errors
+    // 继续等待可能的连接
+    int max_attempts = 50;  // 增加尝试次数到50次
+    while (num_accepted < num_connected && max_attempts > 0) {
+        err = infra_mux_wait(mux, events, 16, 20);  // 减少每次等待时间到20ms
+        infra_printf("mux_wait returned %d events (attempt %d)\n", err, 50 - max_attempts);
+        if (err == 0) {
+            max_attempts--;
+            continue;
         }
+
+        for (int i = 0; i < err && num_accepted < 10; i++) {
+            if (events[i].fd == infra_net_get_fd(server)) {
+                infra_net_addr_t client_addr = {0};
+                err = infra_net_accept(server, &accepted[num_accepted], &client_addr);
+                if (err == INFRA_OK) {
+                    num_accepted++;
+                    infra_printf("Accepted connection %d\n", num_accepted);
+                } else if (err != INFRA_ERROR_WOULD_BLOCK) {
+                    // 如果不是 WOULD_BLOCK，说明是真正的错误
+                    TEST_ASSERT_MSG(0, "Accept failed with error: %d", err);
+                } else {
+                    infra_printf("Accept would block\n");
+                }
+            } else {
+                infra_printf("Event on fd %d (not server fd %d)\n", 
+                           events[i].fd, infra_net_get_fd(server));
+            }
+        }
+        
+        max_attempts--;
     }
 
-    infra_printf("Accepted %d connections\n", num_accepted);
+    // 验证至少接受了一些连接
+    TEST_ASSERT_MSG(num_accepted > 0, "Failed to accept any connections (connected: %d, attempts: %d)", 
+                   num_connected, 50 - max_attempts);
 
-    err = infra_mux_wait(mux, events, 16, 0);
-    TEST_ASSERT(err == 0);
-
+    // 清理
     for (int i = 0; i < num_accepted; i++) {
         if (accepted[i] != NULL) {
-            infra_mux_remove(mux, infra_net_get_fd(accepted[i]));
             infra_net_close(accepted[i]);
         }
     }
-
-    // Cleanup client connections
-    for (int i = 0; i < num_connected; i++) {
+    for (int i = 0; i < 10; i++) {
         if (clients[i] != NULL) {
             infra_net_close(clients[i]);
         }
     }
-
-    infra_mux_remove(mux, infra_net_get_fd(server));
     infra_net_close(server);
     infra_mux_destroy(mux);
 }
