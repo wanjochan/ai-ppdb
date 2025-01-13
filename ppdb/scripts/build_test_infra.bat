@@ -77,6 +77,26 @@ if !NEED_BUILD_MOCK!==1 (
     echo Mock framework is up to date.
 )
 
+rem 检查mock core是否需要重新构建
+set NEED_BUILD_MOCK_CORE=0
+if not exist "%BUILD_DIR%\test\white\infra\mock\core" mkdir "%BUILD_DIR%\test\white\infra\mock\core"
+if not exist "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" (
+    set NEED_BUILD_MOCK_CORE=1
+) else (
+    for %%i in ("%PPDB_DIR%\test\white\infra\mock\core\mock_core.c") do set SRC_TIME=%%~ti
+    for %%i in ("%BUILD_DIR%\test\white\infra\mock\core\mock_core.o") do set OBJ_TIME=%%~ti
+    if "!SRC_TIME!" gtr "!OBJ_TIME!" set NEED_BUILD_MOCK_CORE=1
+)
+
+if !NEED_BUILD_MOCK_CORE!==1 (
+    echo Building mock core...
+    if not exist "%BUILD_DIR%\test\white\infra\mock\core" mkdir "%BUILD_DIR%\test\white\infra\mock\core"
+    "%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\infra\mock\core\mock_core.c" -c -o "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o"
+    if errorlevel 1 exit /b 1
+) else (
+    echo Mock core is up to date.
+)
+
 echo Building test cases...
 set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c test_async.c
 
@@ -135,7 +155,7 @@ for %%f in (%TEST_FILES%) do (
         
         if !NEED_LINK!==1 (
             echo Linking test_memory_pool...
-            "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\test_memory_pool.o" "%BUILD_DIR%\test\white\infra\test_memory_pool_main.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\test_memory_pool.exe.dbg"
+            "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" "%BUILD_DIR%\test\white\infra\test_memory_pool.o" "%BUILD_DIR%\test\white\infra\test_memory_pool_main.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\test_memory_pool.exe.dbg"
             if errorlevel 1 (
                 echo Failed to link test_memory_pool
                 exit /b 1
@@ -164,7 +184,7 @@ for %%f in (%TEST_FILES%) do (
         
         if !NEED_LINK!==1 (
             echo Linking %%~nf...
-            "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\%%~nf.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg"
+            "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" "%BUILD_DIR%\test\white\infra\%%~nf.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg"
             if errorlevel 1 (
                 echo Failed to link %%~nf
                 exit /b 1

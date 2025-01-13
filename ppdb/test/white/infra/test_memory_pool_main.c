@@ -3,11 +3,12 @@
  */
 
 #include "test/white/infra/test_memory_pool.h"
-#include "cosmopolitan.h"
+#include "internal/infra/infra_core.h"
 
 int main(void) {
     // 初始化随机数生成器，用于随机测试
-    srand((unsigned int)time(NULL));
+    infra_time_t seed = infra_time_now();
+    infra_random_seed((uint32_t)seed);
     
     // 运行测试套件
     return test_memory_pool_run();

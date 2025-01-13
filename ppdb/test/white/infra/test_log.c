@@ -93,11 +93,11 @@ static void test_log_concurrent(void) {
 
 int main(void) {
     // 初始化infra系统
-    // infra_error_t err = infra_init();
-    // if (err != INFRA_OK) {
-    //     infra_printf("Failed to initialize infra system: %d\n", err);
-    //     return 1;
-    // }
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        infra_printf("Failed to initialize infra system: %d\n", err);
+        return 1;
+    }
 
     TEST_BEGIN();
     
@@ -109,6 +109,6 @@ int main(void) {
     TEST_END();
     
     // 清理infra系统
-    //infra_cleanup();
+    infra_cleanup();
     return 0;
 } 

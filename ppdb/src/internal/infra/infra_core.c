@@ -592,6 +592,32 @@ int infra_vfprintf(FILE* stream, const char* format, va_list args) {
     return vfprintf(stream, format, args);
 }
 
+int infra_vsnprintf(char* str, size_t size, const char* format, va_list args) {
+    if (!str || !format || size == 0) {
+        return -1;
+    }
+    
+#ifdef _WIN32
+    int ret = _vsnprintf_s(str, size, _TRUNCATE, format, args);
+    if (ret < 0) {
+        str[size - 1] = '\0';
+        return (int)size - 1;
+    }
+    return ret;
+#else
+    int ret = vsnprintf(str, size, format, args);
+    if (ret < 0) {
+        str[size - 1] = '\0';
+        return (int)size - 1;
+    }
+    if ((size_t)ret >= size) {
+        str[size - 1] = '\0';
+        return (int)size - 1;
+    }
+    return ret;
+#endif
+}
+
 //-----------------------------------------------------------------------------
 // File Operations
 //-----------------------------------------------------------------------------

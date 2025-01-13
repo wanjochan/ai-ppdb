@@ -39,7 +39,8 @@ typedef struct {
     infra_socket_t* client_sock;         // Client socket
     infra_socket_t* server_sock;         // Server socket
     rinetd_rule_t* rule;                // Associated rule
-    infra_thread_t* thread;             // Forwarding thread
+    infra_thread_t* forward_thread;     // Client to server forwarding thread
+    infra_thread_t* backward_thread;    // Server to client forwarding thread
     bool active;                        // Whether session is active
     // TODO: Add session statistics
 } rinetd_session_t;

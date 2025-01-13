@@ -1,4 +1,5 @@
-#include <cosmopolitan.h>
+#include "infra/infra_core.h"
+#include "infra/infra_log.h"
 #include "test_framework.h"
 #include "ppdb/ppdb.h"
 

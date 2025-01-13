@@ -1,4 +1,6 @@
-#include <cosmopolitan.h>
+#include "infra/infra_core.h"
+#include "infra/infra_string.h"
+#include "infra/infra_printf.h"
 #include "test_framework.h"
 #include <ppdb/kvstore.h>
 #include <ppdb/error.h>

@@ -1,28 +1,24 @@
-#include "cosmopolitan.h"
+#include "infra/infra_core.h"
+#include "infra/infra_printf.h"
 
 static int test_return_42(void) {
     int value = 42;
-    printf("Testing return 42...\n");
-    printf("Value to return: %d\n", value);
-    fflush(stdout);
+    infra_printf("Testing return 42...\n");
+    infra_printf("Value to return: %d\n", value);
     return value;
 }
 
 static int test_main(void) {
-    printf("Running 42 test...\n");
-    fflush(stdout);
+    infra_printf("Running 42 test...\n");
     
     int result = test_return_42();
-    printf("Test completed with result: %d\n", result);
-    printf("Test %s\n", result == 42 ? "PASSED" : "FAILED");
-    fflush(stdout);
+    infra_printf("Test completed with result: %d\n", result);
+    infra_printf("Test %s\n", result == 42 ? "PASSED" : "FAILED");
     return result == 42 ? 0 : 1;
 }
 
-COSMOPOLITAN_C_START_
 int main(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
     return test_main();
 }
-COSMOPOLITAN_C_END_ 

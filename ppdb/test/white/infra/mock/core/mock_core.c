@@ -1,65 +1,74 @@
 #include "test/white/framework/test_framework.h"
 #include "test/white/framework/mock_framework.h"
 #include "internal/infra/infra_core.h"
-#include "cosmopolitan.h"
+#include "internal/infra/infra_memory.h"
 
-void* mock_malloc(size_t size) {
-    mock_function_call("mock_malloc");
+// 只保留需要 mock 的日志相关函数
+static infra_log_callback_t g_log_callback = NULL;
+static int g_log_level = INFRA_LOG_LEVEL_INFO;
+
+__attribute__((weak)) void infra_log_set_callback(infra_log_callback_t callback) {
+    mock_function_call("infra_log_set_callback");
+    mock_param_ptr("callback", callback);
+    g_log_callback = callback;
+}
+
+__attribute__((weak)) void infra_log_set_level(int level) {
+    mock_function_call("infra_log_set_level");
+    mock_param_value("level", level);
+    if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
+        g_log_level = level;
+    }
+}
+
+// 只 mock 需要特殊控制的内存分配函数
+__attribute__((weak)) void* infra_malloc(size_t size) {
+    mock_function_call("infra_malloc");
     mock_param_value("size", size);
-    return mock_return_ptr("mock_malloc");
+    void* ptr = mock_return_ptr("infra_malloc");
+    if (!ptr) {
+        errno = ENOMEM;
+    }
+    return ptr;
 }
 
-void mock_free(void* ptr) {
-    mock_function_call("mock_free");
-    mock_param_ptr("ptr", ptr);
+// 文件操作需要 mock 以模拟错误情况
+__attribute__((weak)) infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle) {
+    mock_function_call("infra_file_open");
+    mock_param_str("path", path);
+    mock_param_value("flags", flags);
+    mock_param_value("mode", mode);
+    mock_param_ptr("handle", handle);
+    
+    infra_error_t err = mock_return_value("infra_file_open");
+    if (err == INFRA_OK && handle) {
+        *handle = 1;
+    }
+    return err;
 }
 
-int mock_strcmp(const char* s1, const char* s2) {
-    mock_function_call("mock_strcmp");
-    mock_param_str("s1", s1);
-    mock_param_str("s2", s2);
-    return mock_return_value("mock_strcmp");
-}
-
-void* mock_memset(void* s, int c, size_t n) {
-    mock_function_call("mock_memset");
-    mock_param_ptr("s", s);
-    mock_param_value("c", c);
-    mock_param_value("n", n);
-    return mock_return_ptr("mock_memset");
-}
-
-void* mock_memcpy(void* dest, const void* src, size_t n) {
-    mock_function_call("mock_memcpy");
-    mock_param_ptr("dest", dest);
-    mock_param_ptr("src", src);
-    mock_param_value("n", n);
-    return mock_return_ptr("mock_memcpy");
-}
-
-void* mock_memmove(void* dest, const void* src, size_t n) {
-    mock_function_call("mock_memmove");
-    mock_param_ptr("dest", dest);
-    mock_param_ptr("src", src);
-    mock_param_value("n", n);
-    return mock_return_ptr("mock_memmove");
-}
-
-infra_time_t mock_time_monotonic(void) {
-    mock_function_call("mock_time_monotonic");
-    return mock_return_value("mock_time_monotonic");
-}
-
-void mock_log(infra_log_level_t level, const char* format, ...) {
+// 日志记录需要 mock 以验证日志行为
+void mock_log(int level, const char* file, int line, const char* func, const char* format, ...) {
     mock_function_call("mock_log");
     mock_param_value("level", level);
+    mock_param_str("file", file);
+    mock_param_value("line", line);
+    mock_param_str("func", func);
     mock_param_str("format", format);
-}
+    
+    if (level > g_log_level) {
+        return;
+    }
+    
+    va_list args;
+    va_start(args, format);
+    char message[1024];
+    vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+    
+    mock_param_str("message", message);
 
-int mock_vsnprintf(char* str, size_t size, const char* format, va_list args) {
-    mock_function_call("mock_vsnprintf");
-    mock_param_ptr("str", str);
-    mock_param_value("size", size);
-    mock_param_str("format", format);
-    return mock_return_value("mock_vsnprintf");
+    if (g_log_callback) {
+        g_log_callback(level, file, line, func, message);
+    }
 } 

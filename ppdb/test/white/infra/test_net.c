@@ -2,7 +2,6 @@
  * test_net.c - Network Test Suite
  */
 
-#include "cosmopolitan.h"
 #include "internal/infra/infra.h"
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_error.h"

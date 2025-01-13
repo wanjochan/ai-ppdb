@@ -1,9 +1,7 @@
-#include "cosmopolitan.h"
-#include <stdlib.h>
-#include <string.h>
-#include <assert.h>
-#include <signal.h>
-#include <unistd.h>
+#include "infra/infra_core.h"
+#include "infra/infra_string.h"
+#include "infra/infra_log.h"
+#include "infra/infra_platform.h"
 #include "test_framework.h"
 #include "test_plan.h"
 
@@ -23,8 +21,8 @@ typedef struct {
 // 生成测试数据
 static void prepare_test_data(test_entry_t* entries, int count) {
     for (int i = 0; i < count; i++) {
-        snprintf(entries[i].key, MAX_KEY_SIZE, "recovery_key_%d", i);
-        snprintf(entries[i].value, MAX_VALUE_SIZE, "recovery_value_%d", i);
+        infra_snprintf(entries[i].key, MAX_KEY_SIZE, "recovery_key_%d", i);
+        infra_snprintf(entries[i].value, MAX_VALUE_SIZE, "recovery_value_%d", i);
         entries[i].written = 0;
         entries[i].verified = 0;
     }
@@ -35,13 +33,13 @@ static void write_and_crash(const char* dir, test_entry_t* entries,
                           int total, int write_count) {
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_open(dir, &store);
-    assert(err == PPDB_OK);
+    TEST_ASSERT(err == PPDB_OK);
     
     // 写入指定数量的数据
     for (int i = 0; i < write_count && i < total; i++) {
         err = ppdb_kvstore_put(store, 
-            (uint8_t*)entries[i].key, strlen(entries[i].key),
-            (uint8_t*)entries[i].value, strlen(entries[i].value));
+            (uint8_t*)entries[i].key, infra_strlen(entries[i].key),
+            (uint8_t*)entries[i].value, infra_strlen(entries[i].value));
         
         if (err == PPDB_OK) {
             entries[i].written = 1;
@@ -49,14 +47,14 @@ static void write_and_crash(const char* dir, test_entry_t* entries,
     }
     
     // 模拟崩溃（不调用close）
-    raise(SIGKILL);
+    infra_process_abort();
 }
 
 // 验证恢复后的数据
 static void verify_recovery(const char* dir, test_entry_t* entries, int count) {
     ppdb_kvstore_t* store = NULL;
     ppdb_error_t err = ppdb_kvstore_open(dir, &store);
-    assert(err == PPDB_OK);
+    TEST_ASSERT(err == PPDB_OK);
     
     char read_value[MAX_VALUE_SIZE];
     size_t read_size;
@@ -67,13 +65,13 @@ static void verify_recovery(const char* dir, test_entry_t* entries, int count) {
         if (!entries[i].written) continue;
         
         err = ppdb_kvstore_get(store,
-            (uint8_t*)entries[i].key, strlen(entries[i].key),
+            (uint8_t*)entries[i].key, infra_strlen(entries[i].key),
             (uint8_t*)read_value, sizeof(read_value),
             &read_size);
             
         if (err == PPDB_OK) {
-            assert(read_size == strlen(entries[i].value));
-            assert(memcmp(entries[i].value, read_value, read_size) == 0);
+            TEST_ASSERT(read_size == infra_strlen(entries[i].value));
+            TEST_ASSERT(infra_memcmp(entries[i].value, read_value, read_size) == 0);
             entries[i].verified = 1;
             recovered_count++;
         }
@@ -136,8 +134,8 @@ void test_partial_write_recovery(void) {
     
     for (int i = write_count; i < NUM_ENTRIES; i++) {
         err = ppdb_kvstore_put(store, 
-            (uint8_t*)entries[i].key, strlen(entries[i].key),
-            (uint8_t*)entries[i].value, strlen(entries[i].value));
+            (uint8_t*)entries[i].key, infra_strlen(entries[i].key),
+            (uint8_t*)entries[i].value, infra_strlen(entries[i].value));
         
         if (err == PPDB_OK) {
             entries[i].written = 1;

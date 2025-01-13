@@ -2,7 +2,6 @@
  * test_struct.c - Test Infrastructure Data Structures
  */
 
-#include "cosmopolitan.h"
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_ds.h"
 #include "test/white/framework/test_framework.h"

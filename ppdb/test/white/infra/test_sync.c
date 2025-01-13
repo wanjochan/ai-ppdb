@@ -1,4 +1,3 @@
-#include "cosmopolitan.h"
 #define TEST_MAIN
 #include "test/white/framework/test_framework.h"
 #include "internal/infra/infra_core.h"

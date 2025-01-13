@@ -1,7 +1,6 @@
 #include "test/white/framework/mock_framework.h"
 #include "test/white/framework/test_framework.h"
 #include "internal/infra/infra_core.h"
-#include "cosmopolitan.h"
 
 // Mock function implementations for memory operations
 void* mock_malloc(size_t size) {

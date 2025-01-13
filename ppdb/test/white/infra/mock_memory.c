@@ -1,6 +1,6 @@
 #include "test/white/framework/mock_framework.h"
 #include "test/white/infra/mock_memory.h"
-#include "cosmopolitan.h"
+#include "infra/core.h"
 
 void* mock_malloc(size_t size) {
     mock_function_call("mock_malloc");
@@ -35,4 +35,4 @@ void* mock_memmove(void* dest, const void* src, size_t n) {
     mock_param_ptr("src", src);
     mock_param_value("n", n);
     return mock_return_ptr("mock_memmove");
-} 
+}

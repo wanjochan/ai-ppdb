@@ -1,7 +1,6 @@
 #ifndef MOCK_PLATFORM_H
 #define MOCK_PLATFORM_H
 
-#include "cosmopolitan.h"
 #include "internal/infra/infra_core.h"
 
 // Time functions
@@ -26,4 +25,4 @@ int mock_cond_signal(infra_cond_t* cond);
 int mock_cond_broadcast(infra_cond_t* cond);
 int mock_cond_destroy(infra_cond_t* cond);
 
-#endif /* MOCK_PLATFORM_H */ 
+#endif /* MOCK_PLATFORM_H */

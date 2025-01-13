@@ -1,4 +1,3 @@
-#include <cosmopolitan.h>
 #include <ppdb/ppdb.h>
 #include "white/framework/test_framework.h"
 #include "internal/infra/infra.h"

@@ -1,7 +1,7 @@
 #ifndef MOCK_MEMORY_H
 #define MOCK_MEMORY_H
 
-#include "cosmopolitan.h"
+#include "infra/infra_core.h"
 
 // Memory allocation functions
 void* mock_malloc(size_t size);
@@ -14,4 +14,4 @@ void* mock_memset(void* s, int c, size_t n);
 void* mock_memcpy(void* dest, const void* src, size_t n);
 void* mock_memmove(void* dest, const void* src, size_t n);
 
-#endif /* MOCK_MEMORY_H */ 
+#endif /* MOCK_MEMORY_H */
