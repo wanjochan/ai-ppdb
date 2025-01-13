@@ -14,7 +14,7 @@ if not exist "%OBJCOPY%" (
 )
 
 REM 设置编译器和选项
-set CFLAGS=%CFLAGS% -fPIC -fvisibility=hidden
+set CFLAGS=%CFLAGS% -fPIC
 set LDFLAGS_DL=-nostdlib -nostartfiles -shared -Wl,-T,dll.lds -Wl,--version-script=exports.txt -Wl,--no-undefined -Wl,-Bsymbolic
 
 REM 编译动态库
