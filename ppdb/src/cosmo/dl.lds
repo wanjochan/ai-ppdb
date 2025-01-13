@@ -3,43 +3,93 @@ ENTRY(test4_func)
 OUTPUT_FORMAT(elf64-x86-64)
 
 PHDRS {
-    all PT_LOAD FLAGS(7);    /* rwx */
+    text PT_LOAD FLAGS(5);    /* r-x */
+    data PT_LOAD FLAGS(6);    /* rw- */
+    dynamic PT_DYNAMIC FLAGS(6);  /* rw- */
 }
 
 SECTIONS {
-    . = 0x220000000;
+    . = SIZEOF_HEADERS;
 
-    .text : ALIGN(4096) {
+    .text : {
         __text_start = .;
         *(.text.startup)
         *(.text)
         *(.text.*)
         __text_end = .;
-    } :all
+    } :text
 
-    .rodata : ALIGN(4096) {
+    .rodata : {
         __rodata_start = .;
         *(.rodata)
         *(.rodata.*)
         __rodata_end = .;
-    } :all
+    } :text
 
-    .data : ALIGN(4096) {
+    .dynamic : {
+        __dynamic_start = .;
+        *(.dynamic)
+        __dynamic_end = .;
+    } :data :dynamic
+
+    .data.rel.ro : {
+        __data_rel_ro_start = .;
+        *(.data.rel.ro)
+        *(.data.rel.ro.*)
+        __data_rel_ro_end = .;
+    } :data
+
+    .got : {
+        __got_start = .;
+        *(.got)
+        *(.got.plt)
+        __got_end = .;
+    } :data
+
+    .data : {
         __data_start = .;
         *(.data)
         *(.data.*)
-        *(.got)
-        *(.got.plt)
         __data_end = .;
-    } :all
+    } :data
 
-    .bss : ALIGN(4096) {
+    .bss : {
         __bss_start = .;
         *(.bss)
         *(.bss.*)
         *(COMMON)
         __bss_end = .;
-    } :all
+    } :data
+
+    .gnu.hash : {
+        __gnu_hash_start = .;
+        *(.gnu.hash)
+        __gnu_hash_end = .;
+    } :data
+
+    .hash : {
+        __hash_start = .;
+        *(.hash)
+        __hash_end = .;
+    } :data
+
+    .dynsym : {
+        __dynsym_start = .;
+        *(.dynsym)
+        __dynsym_end = .;
+    } :data
+
+    .dynstr : {
+        __dynstr_start = .;
+        *(.dynstr)
+        __dynstr_end = .;
+    } :data
+
+    .rela.dyn : {
+        __rela_dyn_start = .;
+        *(.rela.dyn)
+        __rela_dyn_end = .;
+    } :data
 
     /DISCARD/ : {
         *(.note.*)
@@ -50,7 +100,6 @@ SECTIONS {
         *(.gcc_except_table)
         *(.init)
         *(.fini)
-        *(.rela.*)
         *(.plt)
         *(.plt.got)
     }
@@ -58,17 +107,14 @@ SECTIONS {
 
 /* 提供必要的符号 */
 PROVIDE_HIDDEN(_GLOBAL_OFFSET_TABLE_ = .);
-PROVIDE_HIDDEN(__executable_start = 0x220000000);
-PROVIDE_HIDDEN(__ehdr_start = __executable_start);
-PROVIDE_HIDDEN(ape_stack_vaddr = 0x700000000000);
-PROVIDE_HIDDEN(ape_stack_memsz = 0x100000);
-PROVIDE_HIDDEN(ape_stack_round = 0x1000);
+PROVIDE_HIDDEN(__executable_start = SIZEOF_HEADERS);
+PROVIDE_HIDDEN(__ehdr_start = 0);
 
 /* PE 相关符号 */
 PROVIDE_HIDDEN(ape_pe_shnum = 0);
 PROVIDE_HIDDEN(ape_pe_optsz = 0);
 PROVIDE_HIDDEN(ape_pe_entry = __text_start);
-PROVIDE_HIDDEN(ape_pe_base = 0x140000000);
+PROVIDE_HIDDEN(ape_pe_base = 0);
 PROVIDE_HIDDEN(ape_pe_sectionalignment = 4096);
 PROVIDE_HIDDEN(ape_pe_filealignment = 512);
 PROVIDE_HIDDEN(ape_pe_sizeofheaders = SIZEOF(.text));

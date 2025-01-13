@@ -36,36 +36,74 @@ static void* load_dl(const char* path) {
 /* 查找符号 */
 static void* find_symbol(void* base, const char* name) {
     const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)base;
-    const Elf64_Shdr* shdr = (const Elf64_Shdr*)((char*)base + ehdr->e_shoff);
-
-    /* 查找符号表和字符串表 */
-    const Elf64_Shdr* symtab = NULL;
-    const char* strtab = NULL;
-
-    for (int i = 0; i < ehdr->e_shnum; i++) {
-        if (shdr[i].sh_type == SHT_SYMTAB) {
-            symtab = &shdr[i];
-            strtab = (char*)base + shdr[shdr[i].sh_link].sh_offset;
+    
+    /* 查找动态段 */
+    const Elf64_Phdr* phdr = (const Elf64_Phdr*)((char*)base + ehdr->e_phoff);
+    const Elf64_Dyn* dyn = NULL;
+    
+    dprintf(1, "ELF header at %p, program headers at %p\n", ehdr, phdr);
+    dprintf(1, "Number of program headers: %d\n", ehdr->e_phnum);
+    
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        dprintf(1, "Program header %d: type=%x, offset=%lx, vaddr=%lx, paddr=%lx, filesz=%lx, memsz=%lx, flags=%x, align=%lx\n",
+                i, phdr[i].p_type, phdr[i].p_offset, phdr[i].p_vaddr, phdr[i].p_paddr,
+                phdr[i].p_filesz, phdr[i].p_memsz, phdr[i].p_flags, phdr[i].p_align);
+        if (phdr[i].p_type == PT_DYNAMIC) {
+            dyn = (const Elf64_Dyn*)((char*)base + phdr[i].p_offset);
             break;
         }
     }
-
-    if (!symtab || !strtab) {
-        dprintf(2, "Symbol table not found\n");
+    
+    if (!dyn) {
+        dprintf(2, "Dynamic section not found\n");
         return NULL;
     }
-
-    /* 在符号表中查找 */
-    const Elf64_Sym* syms = (const Elf64_Sym*)((char*)base + symtab->sh_offset);
-    int num_syms = symtab->sh_size / sizeof(Elf64_Sym);
-
-    for (int i = 0; i < num_syms; i++) {
-        const char* sym_name = strtab + syms[i].st_name;
-        if (strcmp(sym_name, name) == 0) {
-            return (char*)base + syms[i].st_value;
+    
+    dprintf(1, "Dynamic section found at %p\n", dyn);
+    
+    /* 从动态段获取必要信息 */
+    const Elf64_Sym* dynsym = NULL;
+    const char* dynstr = NULL;
+    const Elf64_Word* hash = NULL;
+    Elf64_Addr symtab_size = 0;
+    
+    for (; dyn->d_tag != DT_NULL; dyn++) {
+        dprintf(1, "Dynamic entry: tag=%lx, val=%lx\n", dyn->d_tag, dyn->d_un.d_val);
+        switch (dyn->d_tag) {
+            case DT_SYMTAB:
+                dynsym = (const Elf64_Sym*)((char*)base + dyn->d_un.d_ptr);
+                dprintf(1, "Symbol table found at %p\n", dynsym);
+                break;
+            case DT_STRTAB:
+                dynstr = (const char*)base + dyn->d_un.d_ptr;
+                dprintf(1, "String table found at %p\n", dynstr);
+                break;
+            case DT_HASH:
+                hash = (const Elf64_Word*)((char*)base + dyn->d_un.d_ptr);
+                symtab_size = hash[1]; /* nchain */
+                dprintf(1, "Hash table found at %p, symbol count: %d\n", hash, symtab_size);
+                break;
         }
     }
-
+    
+    if (!dynsym || !dynstr) {
+        dprintf(2, "Symbol information not found\n");
+        return NULL;
+    }
+    
+    /* 在动态符号表中查找 */
+    for (Elf64_Word i = 0; i < symtab_size; i++) {
+        const char* sym_name = dynstr + dynsym[i].st_name;
+        dprintf(1, "Symbol %d: name=%s, value=%lx, size=%lx, info=%x, other=%x, shndx=%d\n",
+                i, sym_name, dynsym[i].st_value, dynsym[i].st_size,
+                dynsym[i].st_info, dynsym[i].st_other, dynsym[i].st_shndx);
+        if (strcmp(sym_name, name) == 0) {
+            dprintf(1, "Found symbol %s at offset %lx\n", name, dynsym[i].st_value);
+            return (char*)base + dynsym[i].st_value;
+        }
+    }
+    
+    dprintf(2, "Symbol %s not found\n", name);
     return NULL;
 }
 
@@ -104,6 +142,7 @@ int main(void) {
     /* 获取并调用导出函数 */
     int (*test4_func)(void) = find_symbol(base, "test4_func");
     if (test4_func) {
+        dprintf(1, "Found test4_func at %p\n", test4_func);
         int result = test4_func();
         dprintf(1, "test4_func() returned: %d\n", result);
     } else {
