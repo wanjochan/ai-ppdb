@@ -19,12 +19,16 @@ static void* backward_thread(void* arg);
 static void* listener_thread(void* arg);
 static infra_error_t create_listener(rinetd_rule_t* rule);
 static infra_error_t stop_listener(int rule_index);
-static infra_error_t create_forward_session(infra_socket_t client_sock, rinetd_rule_t* rule);
+static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rinetd_rule_t* rule);
 static void cleanup_forward_session(rinetd_session_t* session);
 static infra_error_t init_session_list(void);
 static void cleanup_session_list(void);
 static infra_error_t add_session_to_list(rinetd_session_t* session);
 static void remove_session_from_list(rinetd_session_t* session);
+static infra_error_t start_service(void);
+static infra_error_t stop_service(void);
+static infra_error_t show_status(void);
+static infra_error_t parse_config_file(const char* path);
 
 //-----------------------------------------------------------------------------
 // Command Line Options
@@ -162,20 +166,16 @@ static void* listener_thread(void* arg) {
 }
 
 static infra_error_t create_listener(rinetd_rule_t* rule) {
-    infra_thread_t* thread = NULL;
-    infra_error_t err = infra_thread_create(&thread, listener_thread, rule);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
     // Store thread handle
     for (int i = 0; i < RINETD_MAX_RULES; i++) {
         if (!g_context.listener_threads[i]) {
-            g_context.listener_threads[i] = thread;
+            infra_error_t err = infra_thread_create(&g_context.listener_threads[i], listener_thread, rule);
+            if (err != INFRA_OK) {
+                return err;
+            }
             break;
         }
     }
-
     return INFRA_OK;
 }
 
@@ -248,7 +248,7 @@ static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rine
     err = infra_thread_create(&session->backward_thread, backward_thread, session);
     if (err != INFRA_OK) {
         session->active = false;
-        infra_thread_join(session->forward_thread);
+        infra_thread_join(&session->forward_thread);
         infra_net_close(server_sock);
         return NULL;
     }
@@ -262,7 +262,7 @@ static void cleanup_forward_session(rinetd_session_t* session) {
         return;
     }
 
-    infra_mutex_lock(g_context.mutex);
+    infra_mutex_lock(&g_context.mutex);
     session->active = false;
     
     if (session->client_sock != 0) {
@@ -276,17 +276,15 @@ static void cleanup_forward_session(rinetd_session_t* session) {
     }
 
     if (session->forward_thread != NULL) {
-        infra_thread_join(session->forward_thread);
-        session->forward_thread = NULL;
+        infra_thread_join(&session->forward_thread);
     }
 
     if (session->backward_thread != NULL) {
-        infra_thread_join(session->backward_thread);
-        session->backward_thread = NULL;
+        infra_thread_join(&session->backward_thread);
     }
 
     remove_session_from_list(session);
-    infra_mutex_unlock(g_context.mutex);
+    infra_mutex_unlock(&g_context.mutex);
 }
 
 static infra_error_t init_session_list(void) {
@@ -381,7 +379,7 @@ infra_error_t rinetd_init(void) {
     // Create multiplexer
     err = infra_mux_create(NULL, &g_context.mux);
     if (err != INFRA_OK) {
-        infra_mutex_destroy(g_context.mutex);
+        infra_mutex_destroy(&g_context.mutex);
         g_context.mutex = NULL;
         return err;
     }

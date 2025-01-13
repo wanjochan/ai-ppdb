@@ -220,6 +220,9 @@ user_data 参数的存在是为了保持与 Windows IOCP 的接口一致性（�
 允许用户在事件触发时能够获取到相关的上下文信息
 */
 infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool edge_trigger, void* user_data) {
+    /* user_data 参数预留给将来扩展使用，比如存储回调函数或上下文信息 */
+    (void)user_data;  // 显式忽略未使用的参数
+
     if (epoll_fd < 0 || fd < 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }

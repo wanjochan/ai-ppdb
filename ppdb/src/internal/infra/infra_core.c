@@ -161,7 +161,7 @@ infra_error_t infra_config_apply(const infra_config_t* config) {
  * 比如：只初始化内存管理、日志系统等特定模块
  * 因此保留此函数作为扩展点
  */
-static infra_error_t init_module(infra_init_flags_t flag, const infra_config_t* config) {
+static infra_error_t __attribute__((unused)) init_module(infra_init_flags_t flag, const infra_config_t* config) {
     infra_error_t err = INFRA_OK;
 
     switch (flag) {

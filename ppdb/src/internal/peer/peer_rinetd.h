@@ -36,11 +36,11 @@ typedef struct {
 
 // Forward session structure
 typedef struct {
-    infra_socket_t* client_sock;         // Client socket
-    infra_socket_t* server_sock;         // Server socket
+    infra_socket_t client_sock;         // Client socket
+    infra_socket_t server_sock;         // Server socket
     rinetd_rule_t* rule;                // Associated rule
-    infra_thread_t* forward_thread;     // Client to server forwarding thread
-    infra_thread_t* backward_thread;    // Server to client forwarding thread
+    infra_thread_t forward_thread;      // Client to server forwarding thread
+    infra_thread_t backward_thread;     // Server to client forwarding thread
     bool active;                        // Whether session is active
     // TODO: Add session statistics
 } rinetd_session_t;
@@ -52,8 +52,8 @@ typedef struct {
     rinetd_rule_t rules[RINETD_MAX_RULES]; // Forwarding rules
     int rule_count;                      // Number of rules
     infra_mux_t* mux;                   // Event multiplexer
-    infra_mutex_t* mutex;               // Thread synchronization
-    infra_thread_t* listener_threads[RINETD_MAX_RULES]; // Listener threads
+    infra_mutex_t mutex;                // Thread synchronization
+    infra_thread_t listener_threads[RINETD_MAX_RULES]; // Listener threads
     rinetd_session_t active_sessions[RINETD_MAX_RULES]; // Active forwarding sessions
     int session_count;                   // Number of active sessions
     // TODO: Add service statistics

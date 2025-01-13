@@ -21,6 +21,7 @@ echo Building ppdb...
     "%SRC_DIR%\internal\infra\infra_memory.c" ^
     "%SRC_DIR%\internal\infra\infra_error.c" ^
     "%SRC_DIR%\internal\infra\infra_mux.c" ^
+    "%SRC_DIR%\internal\infra\infra_mux_epoll.c" ^
     "%SRC_DIR%\internal\infra\infra_net.c" ^
     "%SRC_DIR%\internal\infra\infra_platform.c" ^
     "%SRC_DIR%\internal\infra\infra_sync.c" ^
