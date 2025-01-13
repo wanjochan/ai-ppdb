@@ -370,4 +370,14 @@ typedef struct {
 // 全局变量声明
 extern infra_global_t g_infra;
 
+//-----------------------------------------------------------------------------
+// Random Number Operations
+//-----------------------------------------------------------------------------
+
+/**
+ * @brief 设置随机数生成器的种子
+ * @param seed 随机数种子
+ */
+void infra_random_seed(uint32_t seed);
+
 #endif /* INFRA_CORE_H */

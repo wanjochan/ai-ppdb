@@ -774,4 +774,12 @@ uint64_t infra_time_ms(void) {
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
+//-----------------------------------------------------------------------------
+// Random Number Operations
+//-----------------------------------------------------------------------------
+
+void infra_random_seed(uint32_t seed) {
+    srand(seed);  // 使用标准库的 srand 函数
+}
+
 
