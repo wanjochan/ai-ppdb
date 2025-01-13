@@ -7,9 +7,7 @@
 最新思路
 
 ```
-像编译 APE 可执行文件一样编译，但使用我们的 dl.lds 编译出来的 xxxx.dl
-修改 ape_loader 来加载这个特殊格式的文件来运行
-本质上是个 APE 文件
+类似编译 ape 的 exe，只是保留符号表然后能被加载调用就行了
 ```
 
 ## 当前进展
@@ -20,16 +18,16 @@
 
 ## 核心思路
 
-1. **构建目标**
+1. **构建目标** (失败)
    - 使用 Cosmopolitan 工具链构建动态库
    - 确保生成的文件同时符合：
      * Windows DLL 格式
      * Linux SO 格式
      * macOS DYLD 格式
 
-2. **加载方式**
-   - 通过 cosmo_dlopen/cosmo_dlsym 等函数加载（首选）
-   - 也可通过各平台原生的 dlopen/LoadLibrary 加载
+2. **加载方式** 
+   - 通过 cosmo_dlopen/cosmo_dlsym 等函数加载（首选）(失败)
+   - 也可通过各平台原生的 dlopen/LoadLibrary 加载(失败)
    - 保证 ABI 兼容性
 
 3. **内存布局**

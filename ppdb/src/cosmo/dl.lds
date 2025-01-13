@@ -3,8 +3,7 @@ ENTRY(test4_func)
 OUTPUT_FORMAT(elf64-x86-64)
 
 PHDRS {
-    text PT_LOAD FLAGS(5);    /* r-x */
-    data PT_LOAD FLAGS(6);    /* rw- */
+    all PT_LOAD FLAGS(7);    /* rwx */
 }
 
 SECTIONS {
@@ -16,21 +15,23 @@ SECTIONS {
         *(.text)
         *(.text.*)
         __text_end = .;
-    } :text
+    } :all
 
     .rodata : ALIGN(4096) {
         __rodata_start = .;
         *(.rodata)
         *(.rodata.*)
         __rodata_end = .;
-    } :text
+    } :all
 
     .data : ALIGN(4096) {
         __data_start = .;
         *(.data)
         *(.data.*)
+        *(.got)
+        *(.got.plt)
         __data_end = .;
-    } :data
+    } :all
 
     .bss : ALIGN(4096) {
         __bss_start = .;
@@ -38,13 +39,7 @@ SECTIONS {
         *(.bss.*)
         *(COMMON)
         __bss_end = .;
-    } :data
-
-    .symtab : {
-        *(.symtab)
-        *(.strtab)
-        *(.shstrtab)
-    }
+    } :all
 
     /DISCARD/ : {
         *(.note.*)
@@ -56,8 +51,6 @@ SECTIONS {
         *(.init)
         *(.fini)
         *(.rela.*)
-        *(.got)
-        *(.got.plt)
         *(.plt)
         *(.plt.got)
     }
@@ -96,8 +89,4 @@ PROVIDE_HIDDEN(ape_rom_rva = __rodata_start);
 PROVIDE_HIDDEN(ape_ram_rva = __data_start);
 PROVIDE_HIDDEN(v_ape_realdwords = 0);
 PROVIDE_HIDDEN(v_ape_allbytes = 0);
-PROVIDE_HIDDEN(_edata = __data_end);
-
-/* 初始化相关符号 */
-PROVIDE_HIDDEN(__init_rodata_start = __rodata_start);
-PROVIDE_HIDDEN(__init_bss_start = __bss_start); 
+PROVIDE_HIDDEN(_edata = __data_end); 

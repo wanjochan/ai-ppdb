@@ -22,7 +22,7 @@ if not exist "%OBJCOPY%" (
 
 REM ========== 编译选项设置 ==========
 REM 通用选项
-set COMMON_FLAGS=-g -O2 -fno-pie -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt
+set COMMON_FLAGS=-g -O2 -fno-pie -mcmodel=large -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt
 set COMMON_WARNS=-Wall -Wextra -Wno-unused-parameter
 set INCLUDE_FLAGS=-nostdinc -I%COSMO% -I%COSMO%\libc -I%COSMO%\libc\calls -I%COSMO%\libc\sock -I%COSMO%\libc\thread
 
@@ -42,12 +42,7 @@ if errorlevel 1 goto error
 
 REM 链接 DL
 echo Linking test4.dl...
-"%GCC%" -nostdlib -Wl,-T,dl.lds -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,max-page-size=4096 -Wl,--no-relax -Wl,-z,notext -Wl,--no-dynamic-linker -o test4.dl.dbg test4.o
-if errorlevel 1 goto error
-
-REM 生成最终的 DL
-echo Creating binary test4.dl...
-"%OBJCOPY%" -O binary test4.dl.dbg test4.dl
+"%GCC%" -nostdlib -Wl,-T,dl.lds -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,max-page-size=4096 -Wl,--no-relax -Wl,-z,notext -Wl,--no-dynamic-linker -o test4.dl test4.o
 if errorlevel 1 goto error
 
 REM 显示 DL 大小
