@@ -3,6 +3,13 @@
 
 #include "cosmopolitan.h"
 
+/* 基本类型定义 */
+#ifndef bool
+typedef int bool;
+#define true 1
+#define false 0
+#endif
+
 /* APE 头部结构 */
 struct ApeHeader {
     uint64_t mz_magic;      /* DOS MZ 魔数 */

@@ -1,51 +1,84 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-del /q *.exe *.dll *.bin *.o *.dbg *.map
+REM 清理旧文件
+del /q *.exe *.dll *.bin *.o *.dbg *.map *.dl 2>nul
 
 REM 加载环境变量和通用函数
 call "..\..\..\ppdb\scripts\build_env.bat"
 if errorlevel 1 exit /b 1
 
-REM 验证 objcopy 是否可用
+REM 设置工具链路径
+set CROSS9=..\..\..\repos\cross9\bin
+set GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe
+set AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe
+set OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe
+
+REM 验证工具链
 if not exist "%OBJCOPY%" (
     echo Error: OBJCOPY not found at %OBJCOPY%
     exit /b 1
 )
 
-REM ========== DLL 编译部分 ==========
-echo Building DLL...
+REM ========== 编译选项设置 ==========
+REM 通用选项
+set COMMON_FLAGS=-g -O2 -fno-pie -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt
+set COMMON_WARNS=-Wall -Wextra -Wno-unused-parameter
+set INCLUDE_FLAGS=-nostdinc -I%COSMO% -I%COSMO%\libc -I%COSMO%\libc\calls -I%COSMO%\libc\sock -I%COSMO%\libc\thread
 
-REM DLL专用编译选项
-set CFLAGS_DLL=%CFLAGS% -fPIC -fno-common -fno-plt -fno-semantic-interposition -D__COSMOPOLITAN__
-set LDFLAGS_DLL=-nostdlib -nostartfiles -shared -Wl,-T,dll.lds -Wl,--version-script=exports.txt -Wl,--no-undefined -Wl,-Bsymbolic -fuse-ld=bfd -Wl,-z,notext -Wl,--build-id=none
+REM DL 特定选项
+set CFLAGS_DL=%COMMON_FLAGS% %COMMON_WARNS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h -fPIC -shared
 
-REM 编译DLL
-"%GCC%" %CFLAGS_DLL% -c test4.c -o test4.o
-"%GCC%" %LDFLAGS_DLL% test4.o -o test4.dll.dbg
-"%OBJCOPY%" -S -O binary test4.dll.dbg test4.dll
+REM EXE 特定选项
+set CFLAGS_EXE=%COMMON_FLAGS% %COMMON_WARNS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h
 
-REM ========== EXE 编译部分 ==========
+REM ========== 构建 DL ==========
+echo Building DL...
+
+REM 编译 DL 源文件
+echo Compiling test4.c...
+"%GCC%" %CFLAGS_DL% -c test4.c -o test4.o
+if errorlevel 1 goto error
+
+REM 链接 DL
+echo Linking test4.dl...
+"%GCC%" -nostdlib -Wl,-T,dl.lds -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,max-page-size=4096 -Wl,--no-relax -Wl,-z,notext -Wl,--no-dynamic-linker -o test4.dl.dbg test4.o
+if errorlevel 1 goto error
+
+REM 生成最终的 DL
+echo Creating binary test4.dl...
+"%OBJCOPY%" -O binary test4.dl.dbg test4.dl
+if errorlevel 1 goto error
+
+REM 显示 DL 大小
+echo DL size:
+dir test4.dl | findstr "test4.dl"
+
+REM ========== 构建 EXE ==========
 echo Building test program...
 
-REM EXE专用编译选项
-set CFLAGS_EXE=%CFLAGS% -D__COSMOPOLITAN__
-
-REM 编译APE加载器
-"%GCC%" %CFLAGS_EXE% -c ape_loader.c -o ape_loader.o
-
-REM 编译测试程序
+REM 编译主程序
+echo Compiling test4_main.c...
 "%GCC%" %CFLAGS_EXE% -c test4_main.c -o test4_main.o
-"%GCC%" %LDFLAGS% test4_main.o ape_loader.o %LIBS% -o test4_main.exe.dbg
+if errorlevel 1 goto error
+
+REM 链接可执行文件
+echo Linking test4_main.exe...
+"%GCC%" -static -nostdlib -Wl,-T,%BUILD_DIR%\ape.lds -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,max-page-size=4096 -Wl,--defsym=ape_stack_vaddr=0x700000000000 -Wl,--defsym=ape_stack_memsz=0x100000 -Wl,--defsym=ape_stack_round=0x1000 -o test4_main.exe.dbg test4_main.o %BUILD_DIR%\crt.o %BUILD_DIR%\ape.o %BUILD_DIR%\cosmopolitan.a
+if errorlevel 1 goto error
 
 REM 生成最终可执行文件
-echo Creating binary test4_main...
-echo Using OBJCOPY: %OBJCOPY%
+echo Creating binary test4_main.exe...
 "%OBJCOPY%" -S -O binary test4_main.exe.dbg test4_main.exe
-if errorlevel 1 (
-    echo Error: objcopy failed
-    exit /b 1
-)
+if errorlevel 1 goto error
+
+REM 显示 EXE 大小
+echo EXE size:
+dir test4_main.exe | findstr "test4_main.exe"
 
 echo Build complete.
-endlocal 
+exit /b 0
+
+:error
+echo Build failed with error %errorlevel%
+exit /b 1 

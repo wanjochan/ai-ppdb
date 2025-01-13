@@ -4,6 +4,14 @@
 
 利用 Cosmopolitan 工具链，实现能同时被 Windows/Linux/macOS 原生加载器和 cosmo_dlxxxx 系列函数加载的动态库。
 
+最新思路
+
+```
+像编译 APE 可执行文件一样编译，但使用我们的 dl.lds 编译出来的 xxxx.dl
+修改 ape_loader 来加载这个特殊格式的文件来运行
+本质上是个 APE 文件
+```
+
 ## 当前进展
 
 - 已有初步的链接脚本（dll.lds）

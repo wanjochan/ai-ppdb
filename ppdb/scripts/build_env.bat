@@ -1,76 +1,78 @@
 @echo off
-rem @cursor:protected
-rem This file is considered semi-read-only by Cursor AI.
-rem Any modifications should be discussed and confirmed before applying.
+setlocal EnableDelayedExpansion
 
-rem ===== Environment Variables and Common Functions =====
-
-rem Set paths (using absolute paths)
-set "SCRIPT_DIR=%~dp0"
-set "ROOT_DIR=%SCRIPT_DIR%\.."
+REM 设置目录路径
+set SCRIPT_DIR=%~dp0
+set ROOT_DIR=%SCRIPT_DIR%\..\..
 pushd "%ROOT_DIR%"
 set "ROOT_DIR=%CD%"
 popd
-set "PPDB_DIR=%ROOT_DIR%"
-set "BUILD_DIR=%PPDB_DIR%\build"
-set "BIN_DIR=%PPDB_DIR%\bin"
-set "SRC_DIR=%PPDB_DIR%\src"
-set "INCLUDE_DIR=%PPDB_DIR%\include"
-set "INTERNAL_DIR=%PPDB_DIR%\src\internal"
-set "TEST_DIR=%PPDB_DIR%\test"
+set PPDB_DIR=%ROOT_DIR%\ppdb
+set BUILD_DIR=%PPDB_DIR%\build
+set BIN_DIR=%PPDB_DIR%\bin
+set SRC_DIR=%PPDB_DIR%\src
+set INCLUDE_DIR=%PPDB_DIR%\include
+set INTERNAL_DIR=%PPDB_DIR%\internal
+set TEST_DIR=%PPDB_DIR%\test
+set COSMO=%ROOT_DIR%\repos\cosmopolitan
 
-rem Set tool paths
-set "COSMO=%ROOT_DIR%\..\repos\cosmopolitan"
-set "CROSS9=%ROOT_DIR%\..\repos\cross9\bin"
-set "GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe"
-set "AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe"
-set "OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe"
+REM 设置工具链路径
+set CROSS9=%ROOT_DIR%\repos\cross9\bin
+set GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe
+set AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe
+set OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe
 
-rem Verify tool paths
+REM 验证工具链
 if not exist "%GCC%" (
     echo Error: GCC not found at %GCC%
     exit /b 1
 )
+
 if not exist "%AR%" (
     echo Error: AR not found at %AR%
     exit /b 1
 )
+
 if not exist "%OBJCOPY%" (
     echo Error: OBJCOPY not found at %OBJCOPY%
     exit /b 1
 )
 
-rem Set build flags
-set "COMMON_FLAGS=-g -O2 -Wall -Wextra -fno-pie -fno-stack-protector -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fno-asynchronous-unwind-tables -ftls-model=initial-exec"
-set "DEBUG_FLAGS=-DDEBUG"
-set "BUILD_FLAGS=%COMMON_FLAGS% %DEBUG_FLAGS%"
+REM 设置构建标志
+set CFLAGS=-g -O2 -fno-pie -fno-pic -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -mcmodel=large
+set LDFLAGS=-static -nostdlib -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,max-page-size=4096
 
-rem Set include paths
-set "INCLUDE_FLAGS=-nostdinc -I%PPDB_DIR% -I%PPDB_DIR%\include -I%PPDB_DIR%\src -I%PPDB_DIR%\src\internal -I%COSMO% -I%COSMO%\libc -I%COSMO%\libc\calls -I%COSMO%\libc\sock -I%COSMO%\libc\thread -I%TEST_DIR%\white -I%CROSS9%\..\x86_64-pc-linux-gnu\include"
-
-rem Set final CFLAGS
-set "CFLAGS=%BUILD_FLAGS% %INCLUDE_FLAGS% -include %COSMO%\cosmopolitan.h"
-
-rem Set linker flags
-set "LDFLAGS=-static -nostdlib -Wl,-T,%BUILD_DIR%\ape.lds -Wl,--gc-sections -B%CROSS9% -Wl,-z,max-page-size=0x1000 -no-pie"
-set "LIBS=%BUILD_DIR%\crt.o %BUILD_DIR%\ape.o %BUILD_DIR%\cosmopolitan.a"
-
-rem Check runtime files
+REM 验证运行时文件
 if not exist "%BUILD_DIR%\crt.o" (
-    echo Error: Missing runtime files crt.o
-    exit /b 1
-)
-if not exist "%BUILD_DIR%\ape.o" (
-    echo Error: Missing runtime files ape.o
-    exit /b 1
-)
-if not exist "%BUILD_DIR%\cosmopolitan.a" (
-    echo Error: Missing runtime files cosmopolitan.a
-    exit /b 1
-)
-if not exist "%BUILD_DIR%\ape.lds" (
-    echo Error: Missing runtime files ape.lds
+    echo Error: crt.o not found at %BUILD_DIR%\crt.o
     exit /b 1
 )
 
-exit /b 0
+if not exist "%BUILD_DIR%\ape.o" (
+    echo Error: ape.o not found at %BUILD_DIR%\ape.o
+    exit /b 1
+)
+
+if not exist "%BUILD_DIR%\cosmopolitan.a" (
+    echo Error: cosmopolitan.a not found at %BUILD_DIR%\cosmopolitan.a
+    exit /b 1
+)
+
+if not exist "%BUILD_DIR%\ape.lds" (
+    echo Error: ape.lds not found at %BUILD_DIR%\ape.lds
+    exit /b 1
+)
+
+REM 导出环境变量
+endlocal & (
+    set "ROOT_DIR=%ROOT_DIR%"
+    set "PPDB_DIR=%PPDB_DIR%"
+    set "BUILD_DIR=%BUILD_DIR%"
+    set "CROSS9=%CROSS9%"
+    set "GCC=%GCC%"
+    set "AR=%AR%"
+    set "OBJCOPY=%OBJCOPY%"
+    set "COSMO=%COSMO%"
+    set "CFLAGS=%CFLAGS%"
+    set "LDFLAGS=%LDFLAGS%"
+)

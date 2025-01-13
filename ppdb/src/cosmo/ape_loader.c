@@ -21,18 +21,52 @@ static void disable_error_dialogs(void) {
 #endif
 }
 
+/* 平台检测函数 */
+static bool IsMacho(void) {
+#if defined(__COSMOPOLITAN__)
+    return IsXnu();
+#else
+    return false;
+#endif
+}
+
 /* 平台特定的实现 */
 #if defined(__COSMOPOLITAN__)
-/* Cosmopolitan 环境下使用 cosmo_dlxxx 函数 */
 static void* platform_load(const char* path) {
     disable_error_dialogs();
-    return cosmo_dlopen(path, RTLD_NOW);
+    if (IsWindows()) {
+        return (void*)(intptr_t)LoadLibraryA(path);
+    } else if (IsLinux()) {
+        return dlopen(path, RTLD_NOW);
+    } else if (IsMacho()) {
+        /* TODO: 实现 macOS 支持 */
+        return NULL;
+    }
+    return NULL;
 }
+
 static void* platform_get_proc(void* handle, const char* symbol) {
-    return cosmo_dlsym(handle, symbol);
+    if (IsWindows()) {
+        return (void*)(intptr_t)GetProcAddress((int64_t)(intptr_t)handle, symbol);
+    } else if (IsLinux()) {
+        return dlsym(handle, symbol);
+    } else if (IsMacho()) {
+        /* TODO: 实现 macOS 支持 */
+        return NULL;
+    }
+    return NULL;
 }
+
 static int platform_unload(void* handle) {
-    return cosmo_dlclose(handle);
+    if (IsWindows()) {
+        return FreeLibrary((int64_t)(intptr_t)handle) ? 0 : -1;
+    } else if (IsLinux()) {
+        return dlclose(handle);
+    } else if (IsMacho()) {
+        /* TODO: 实现 macOS 支持 */
+        return -1;
+    }
+    return -1;
 }
 #else
 #error "Unsupported platform - must be built with Cosmopolitan"

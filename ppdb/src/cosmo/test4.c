@@ -1,18 +1,20 @@
+#define _CRT_SECURE_NO_WARNINGS 1
+#define WIN32_LEAN_AND_MEAN
+#define _NO_CRT_STDIO_INLINE
+#define __STDC_WANT_LIB_EXT1__ 1
 #include "cosmopolitan.h"
 
-// DLL 入口点
-int module_main(void) {
-    #if defined(_WIN32)
-    // Windows specific initialization
-    return 1;  // TRUE for Windows DLL_PROCESS_ATTACH
-    #else
-    // Unix-like systems initialization
-    return 0;  // Success
-    #endif
+/* 全局数据 */
+static int counter = 0;
+
+/* 内部函数 */
+static int increment_counter(void) {
+    return ++counter;
 }
 
-// 导出函数
+/* 导出函数 */
 __attribute__((visibility("default")))
 int test4_func(void) {
-    return 42;
+    counter = increment_counter();
+    return counter;
 } 
