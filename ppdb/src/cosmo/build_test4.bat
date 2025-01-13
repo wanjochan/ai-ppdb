@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-del /q *.exe *.dll *.bin *.o *.dbg
+del /q *.exe *.dll *.bin *.o *.dbg *.map
 
 REM 加载环境变量和通用函数
 call "..\..\..\ppdb\scripts\build_env.bat"
