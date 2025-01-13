@@ -1,20 +1,31 @@
 #include "cosmopolitan.h"
 
-int main(int argc, char *argv[]) {
+int main(void) {
     void* handle;
+    const char* error;
+    const char* libname = "./test4.dll";
+    
+    // 打印当前工作目录
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        dprintf(1, "Current working directory: %s\n", cwd);
+    }
+    
+    dprintf(1, "Attempting to load: %s\n", libname);
     
     // 加载动态库
-    handle = cosmo_dlopen("./test4.dl", RTLD_NOW);
+    handle = cosmo_dlopen(libname, RTLD_NOW | RTLD_GLOBAL);
     if (!handle) {
-        write(2, "Failed to load test4.dl\n", 23);
+        error = cosmo_dlerror();
+        dprintf(2, "Failed to load %s: %s\n", libname, error ? error : "Unknown error");
         return 1;
     }
     
-    write(1, "Successfully loaded test4.dl\n", 28);
+    dprintf(1, "Successfully loaded %s\n", libname);
     
     // 卸载动态库
     cosmo_dlclose(handle);
-    write(1, "test4.dl unloaded\n", 18);
+    dprintf(1, "%s unloaded\n", libname);
     
     return 0;
 } 

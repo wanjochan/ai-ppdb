@@ -1,4 +1,4 @@
 VERS_1.0 { 
-  global: module_main; test4_add; test4_version;
+  global: module_main; test4_func;
   local: *; 
 }; 

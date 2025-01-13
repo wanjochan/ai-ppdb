@@ -1,6 +1,8 @@
 @echo off
 setlocal EnableDelayedExpansion
 
+del /q *.exe
+
 REM 加载环境变量和通用函数
 call "..\..\..\ppdb\scripts\build_env.bat"
 if errorlevel 1 exit /b 1
@@ -13,12 +15,13 @@ if not exist "%OBJCOPY%" (
 
 REM 设置编译器和选项
 set CFLAGS=%CFLAGS% -fPIC -fvisibility=hidden
-set LDFLAGS_DL=-nostdlib -nostartfiles -shared -Wl,--version-script=exports.txt -Wl,-z,noexecstack -Wl,-z,now -Wl,-z,relro -Wl,--no-undefined -Wl,-Bsymbolic
+set LDFLAGS_DL=-nostdlib -nostartfiles -shared -Wl,-T,dll.lds -Wl,--version-script=exports.txt -Wl,--no-undefined -Wl,-Bsymbolic
 
 REM 编译动态库
-echo Building test4.dl...
+echo Building test4.dll...
 "%GCC%" %CFLAGS% -c test4.c -o test4.o
-"%GCC%" %LDFLAGS_DL% test4.o -o test4.dl
+"%GCC%" %LDFLAGS_DL% test4.o -o test4.dll.dbg
+"%OBJCOPY%" -S -O binary test4.dll.dbg test4.dll
 
 REM 编译测试程序
 echo Building test4_main...
