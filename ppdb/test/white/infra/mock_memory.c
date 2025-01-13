@@ -1,6 +1,6 @@
 #include "test/white/framework/mock_framework.h"
 #include "test/white/infra/mock_memory.h"
-#include "infra/core.h"
+#include "src/internal/infra/infra_core.h"
 
 void* mock_malloc(size_t size) {
     mock_function_call("mock_malloc");

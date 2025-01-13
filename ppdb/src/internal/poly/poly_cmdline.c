@@ -12,9 +12,11 @@ typedef struct {
 static poly_cmdline_t g_cmdline;
 
 infra_error_t poly_cmdline_init(void) {
+    INFRA_LOG_DEBUG("Initializing command line framework");
     memset(&g_cmdline, 0, sizeof(g_cmdline));
     
     // Register rinetd command
+    INFRA_LOG_DEBUG("Creating rinetd command structure");
     poly_cmd_t rinetd_cmd = {
         .name = "rinetd",
         .desc = "Rinetd service management",
@@ -23,12 +25,13 @@ infra_error_t poly_cmdline_init(void) {
         .handler = rinetd_cmd_handler
     };
 
+    INFRA_LOG_DEBUG("Registering rinetd command");
     infra_error_t err = poly_cmdline_register(&rinetd_cmd);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to register rinetd command");
         return err;
     }
-    
+    INFRA_LOG_DEBUG("Command line framework initialized successfully");
     return INFRA_OK;
 }
 
@@ -38,6 +41,7 @@ infra_error_t poly_cmdline_cleanup(void) {
 }
 
 infra_error_t poly_cmdline_register(const poly_cmd_t* cmd) {
+    INFRA_LOG_DEBUG("Registering command: %s", cmd ? cmd->name : "NULL");
     if (cmd == NULL) {
         INFRA_LOG_ERROR("Invalid command");
         return INFRA_ERROR_INVALID_PARAM;
@@ -59,19 +63,23 @@ infra_error_t poly_cmdline_register(const poly_cmd_t* cmd) {
     g_cmdline.command_count++;
 
     INFRA_LOG_INFO("Command %s registered", cmd->name);
+    INFRA_LOG_DEBUG("Command count: %d", g_cmdline.command_count);
     return INFRA_OK;
 }
 
 infra_error_t poly_cmdline_execute(int argc, char** argv) {
+    INFRA_LOG_DEBUG("Executing command with argc=%d", argc);
     if (argc < 1 || argv == NULL) {
         INFRA_LOG_ERROR("Invalid arguments");
         return INFRA_ERROR_INVALID_PARAM;
     }
 
     const char* cmd_name = argv[0];
+    INFRA_LOG_DEBUG("Looking for command: %s", cmd_name);
     for (int i = 0; i < g_cmdline.command_count; i++) {
         if (strcmp(g_cmdline.commands[i].name, cmd_name) == 0) {
             INFRA_LOG_INFO("Executing command %s", cmd_name);
+            INFRA_LOG_DEBUG("Calling command handler");
             return g_cmdline.commands[i].handler(argc, argv);
         }
     }

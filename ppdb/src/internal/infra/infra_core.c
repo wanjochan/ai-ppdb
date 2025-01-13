@@ -64,24 +64,24 @@ infra_global_t g_infra = {
 
 // 自动初始化函数
 static void __attribute__((constructor)) infra_auto_init(void) {
-    // 如果设置了 INFRA_NO_AUTO_INIT 环境变量，则跳过自动初始化
-    const char* no_auto = getenv("INFRA_NO_AUTO_INIT");
-    if (no_auto) {
+    // 如果没有设置 INFRA_AUTO_INIT 环境变量，则跳过自动初始化
+    const char* auto_init = getenv("INFRA_AUTO_INIT");
+    if (!auto_init) {
         return;
     }
 
     infra_error_t err = infra_init();
     if (err != INFRA_OK) {
-        infra_fprintf(stderr, "Failed to initialize infra: %d\n", err);
+        fprintf(stderr, "Failed to initialize infra: %d\n", err);
         abort();
     }
 }
 
 // 自动清理函数
 static void __attribute__((destructor)) infra_auto_cleanup(void) {
-    // 如果设置了 INFRA_NO_AUTO_INIT 环境变量，则跳过自动清理
-    const char* no_auto = getenv("INFRA_NO_AUTO_INIT");
-    if (no_auto) {
+    // 如果没有设置 INFRA_AUTO_INIT 环境变量，则跳过自动清理
+    const char* auto_init = getenv("INFRA_AUTO_INIT");
+    if (!auto_init) {
         return;
     }
     infra_cleanup();
@@ -166,130 +166,80 @@ static infra_error_t __attribute__((unused)) init_module(infra_init_flags_t flag
 
     switch (flag) {
         case INFRA_INIT_MEMORY:
+            // Initialize memory module
             err = infra_memory_init(&config->memory);
             break;
 
         case INFRA_INIT_LOG:
-            // 初始化日志系统
+            // Initialize log module
             g_infra.log.level = config->log.level;
             g_infra.log.log_file = config->log.log_file;
-            break;
+            g_infra.log.callback = NULL;
 
-        case INFRA_INIT_DS:
-            // 初始化数据结构
-            g_infra.ds.hash_initial_size = config->ds.hash_initial_size;
-            g_infra.ds.hash_load_factor = config->ds.hash_load_factor;
+            // Create log mutex
+            err = infra_mutex_create(&g_infra.log.mutex);
+            if (err != INFRA_OK) {
+                fprintf(stderr, "Failed to create log mutex\n");
+                return err;
+            }
+
+            // Test log output
+            INFRA_LOG_DEBUG("Log module initialized, level=%d", g_infra.log.level);
             break;
 
         default:
-            return INFRA_ERROR_INVALID_PARAM;
+            err = INFRA_ERROR_INVALID_PARAM;
+            break;
     }
 
     return err;
 }
 
 infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_config_t* config) {
-    if (!config) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
+    // Check if already initialized
     if (g_infra.initialized) {
-	infra_printf("Warning: infra already inited.\n");
-        //return INFRA_ERROR_EXISTS;
         return INFRA_OK;
     }
 
-    g_infra.platform.is_windows = IsWindows();//@cosmopolitan!
-
+    // Create global mutex
     infra_error_t err = infra_mutex_create(&g_infra.mutex);
     if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to create global mutex\n");
         return err;
     }
 
-    // 如果需要日志系统，必须先初始化内存系统
-    if ((flags & INFRA_INIT_LOG) && !(flags & INFRA_INIT_MEMORY)) {
-        flags |= INFRA_INIT_MEMORY;
+    // Initialize log module first
+    err = init_module(INFRA_INIT_LOG, config);
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to initialize log module\n");
+        return err;
     }
 
-    // 初始化内存管理
+    // Initialize other modules
     if (flags & INFRA_INIT_MEMORY) {
-        err = infra_memory_init(&config->memory);
+        err = init_module(INFRA_INIT_MEMORY, config);
         if (err != INFRA_OK) {
-            infra_mutex_destroy(g_infra.mutex);
+            INFRA_LOG_ERROR("Failed to initialize memory module");
             return err;
         }
-        g_infra.active_flags |= INFRA_INIT_MEMORY;
     }
 
-    // 初始化日志系统
-    if (flags & INFRA_INIT_LOG) {
-        err = infra_mutex_create(&g_infra.log.mutex);
-        if (err != INFRA_OK) {
-            if (g_infra.active_flags & INFRA_INIT_MEMORY) {
-                infra_memory_cleanup();
-            }
-            infra_mutex_destroy(g_infra.mutex);
-            return err;
-        }
-        
-        g_infra.log.level = config->log.level;
-        g_infra.log.log_file = config->log.log_file;
-        g_infra.log.callback = NULL;
-        
-        g_infra.active_flags |= INFRA_INIT_LOG;
-    }
-
-    // 初始化数据结构
-    if (flags & INFRA_INIT_DS) {
-        if (!(g_infra.active_flags & INFRA_INIT_MEMORY)) {
-            if (g_infra.active_flags & INFRA_INIT_LOG) {
-                infra_mutex_destroy(g_infra.log.mutex);
-            }
-            infra_mutex_destroy(g_infra.mutex);
-            return INFRA_ERROR_DEPENDENCY;
-        }
-        
-        g_infra.ds.hash_initial_size = config->ds.hash_initial_size;
-        g_infra.ds.hash_load_factor = config->ds.hash_load_factor;
-        g_infra.active_flags |= INFRA_INIT_DS;
-    }
-
+    // Set initialized flag
     g_infra.initialized = true;
+    g_infra.active_flags = flags;
+
+    INFRA_LOG_DEBUG("Infrastructure layer initialized successfully");
     return INFRA_OK;
 }
 
 infra_error_t infra_init(void) {
-    // 使用默认配置初始化
-    infra_config_t config;
-    infra_error_t err = infra_config_init(&config);
-    if (err != INFRA_OK) {
-        infra_printf("Failed to initialize config: %d\n", err);
-        return err;
+    // Check if already initialized
+    if (g_infra.initialized) {
+        return INFRA_OK;  // Already initialized, just return success
     }
 
-    // 验证配置
-    err = infra_config_validate(&config);
-    if (err != INFRA_OK) {
-        infra_printf("Failed to validate config: %d\n", err);
-        infra_printf("Memory config: use_pool=%d, size=%zu, align=%zu\n",
-                    config.memory.use_memory_pool,
-                    config.memory.pool_initial_size,
-                    config.memory.pool_alignment);
-        infra_printf("Log config: level=%d, file=%s\n",
-                    config.log.level,
-                    config.log.log_file ? config.log.log_file : "NULL");
-        infra_printf("DS config: hash_size=%zu, load_factor=%u\n",
-                    config.ds.hash_initial_size,
-                    config.ds.hash_load_factor);
-        return err;
-    }
-
-    // 初始化所有模块
-    err = infra_init_with_config(INFRA_INIT_ALL, &config);
-    if (err != INFRA_OK) {
-        infra_printf("Failed to initialize with config: %d\n", err);
-    }
-    return err;
+    // Initialize with default config
+    return infra_init_with_config(INFRA_INIT_ALL, &INFRA_DEFAULT_CONFIG);
 }
 
 void infra_cleanup(void) {
@@ -523,31 +473,44 @@ void infra_log_set_callback(infra_log_callback_t callback) {
 
 void infra_log(int level, const char* file, int line, const char* func,
                const char* format, ...) {
+    // Check if logging is enabled for this level
     if (!g_infra.initialized || level > g_infra.log.level || !format) {
         return;
     }
 
-    char message[4096];
+    // Lock the log mutex if available
+    if (g_infra.log.mutex) {
+        infra_mutex_lock(g_infra.log.mutex);
+    }
+
+    // Format the message
+    char message[1024];
     va_list args;
     va_start(args, format);
     vsnprintf(message, sizeof(message), format, args);
     va_end(args);
 
+    // Get log level string
+    const char* level_str = "UNKNOWN";
+    switch (level) {
+        case INFRA_LOG_LEVEL_ERROR: level_str = "ERROR"; break;
+        case INFRA_LOG_LEVEL_WARN:  level_str = "WARN"; break;
+        case INFRA_LOG_LEVEL_INFO:  level_str = "INFO"; break;
+        case INFRA_LOG_LEVEL_DEBUG: level_str = "DEBUG"; break;
+        case INFRA_LOG_LEVEL_TRACE: level_str = "TRACE"; break;
+    }
+
+    // Output to stderr (we'll add file output support later)
+    fprintf(stderr, "[%s] %s:%d %s(): %s\n", level_str, file, line, func, message);
+    fflush(stderr);  // Ensure output is visible immediately
+
+    // Call the callback if registered
     if (g_infra.log.callback) {
         g_infra.log.callback(level, file, line, func, message);
-    } else {
-        const char* level_str = "UNKNOWN";
-        switch (level) {
-            case INFRA_LOG_LEVEL_ERROR: level_str = "ERROR"; break;
-            case INFRA_LOG_LEVEL_WARN:  level_str = "WARN"; break;
-            case INFRA_LOG_LEVEL_INFO:  level_str = "INFO"; break;
-            case INFRA_LOG_LEVEL_DEBUG: level_str = "DEBUG"; break;
-            case INFRA_LOG_LEVEL_TRACE: level_str = "TRACE"; break;
-        }
-        
-        infra_mutex_lock(g_infra.log.mutex);
-        infra_fprintf(stderr, "[%s] %s:%d %s(): %s\n", level_str, file, line, func, message);
-        fflush(stderr);
+    }
+
+    // Unlock the log mutex if available
+    if (g_infra.log.mutex) {
         infra_mutex_unlock(g_infra.log.mutex);
     }
 }

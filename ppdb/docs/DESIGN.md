@@ -12,34 +12,25 @@
 ```
 
 以下指【项目根目录/ppdb】：
+* 命名模式：src/internal/{layer}/{layer}_{module}.[ch]
 
 src/
-├── infra/                 # 基础设施层（基于cosmopolitan底层），未经许可不可修改 infra 层任何代码！！！
-│   ├── infra_{module}.c          
-│
-├── poly/                  # 工具组件 （调用 infra层，不允许调用cosmopolitan或libc）
-│   ├── poly_{module}.c
-│
-├── peer/                  # 产品组件 （调用 工具组件 和 infra 层，不允许调用cosmopolitan或libc）
-│   ├── peer_{module}.c
-│
+│  ├──/internal/
+│     ├── infra/                 # 基础设施层（基于cosmopolitan底层），未经许可不可修改 infra 层任何代码！！！
+│     │   ├── infra_{module}.[ch]         
+│     │
+│     ├── poly/                  # 工具组件 （调用 infra层，不允许调用cosmopolitan或libc）
+│     │   ├── poly_{module}.[ch]
+│     │
+│     ├── peer/                  # 产品组件 （调用 工具组件 和 infra 层，不允许调用cosmopolitan或libc）
+│     │   ├── peer_{module}.[ch]
+│      
 └── ppdb/                  # 产品层（调用 产品组件 和 工具组件 和 infra层，不允许调用cosmopolitan或libc）
     ├── ppdb.c             # 服务端主程序 ppdb.exe 能跨平台运作
     └── libppdb.c          # libppdb.a（静态库） and libppdb.lib（动态库）
 
-* 命名模式：src/{layer}/{layer}_{module}.c
-
-
 include/                   # 公共头文件目录
 └── ppdb.h                    # 唯一对外头文件
-
-src/internal/       # 内部头文件目录
-├── infra/          # 基础设施头文件 （以后 infra 层完全稳定后会升级到 ppdb.h 同一个目录并提供libinfra.a/lib）
-├── poly/           # 工具组件 
-├── peer/           # 产品组件
-└── ppdb/           # 产品
-
-* 命名模式：src/internal/{layer}/{layer}_{module}.h
 
 ```
 
