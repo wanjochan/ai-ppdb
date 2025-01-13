@@ -16,6 +16,30 @@
 
 3. **必要时上网寻求解决方案**
    - 遇到解决不了的问题，可使用curl工具（使用代理http://127.0.0.1:8888）寻找解决方案
+```
+"C:\Program Files\Git\mingw64\bin\curl.exe" --help
+Usage: curl [options...] <url>
+ -d, --data <data>           HTTP POST data
+ -f, --fail                  Fail fast with no output on HTTP errors
+ -h, --help <subject>        Get help for commands
+ -o, --output <file>         Write to file instead of stdout
+ -O, --remote-name           Write output to file named as remote file
+ -i, --show-headers          Show response headers in output
+ -s, --silent                Silent mode
+ -T, --upload-file <file>    Transfer local FILE to destination
+ -u, --user <user:password>  Server user and password
+ -A, --user-agent <name>     Send User-Agent <name> to server
+ -v, --verbose               Make the operation more talkative
+ -V, --version               Show version number and quit
+
+This is not the full help; this menu is split into categories.
+Use "--help category" to get an overview of all categories, which are:
+auth, connection, curl, deprecated, dns, file, ftp, global, http, imap, ldap, output, pop3, post, proxy, scp, sftp,
+smtp, ssh, telnet, tftp, timeout, tls, upload, verbose.
+Use "--help all" to list all options
+Use "--help [option]" to view documentation for a given option
+
+```
 
 ## ppdb/
 
