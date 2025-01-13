@@ -22,7 +22,7 @@ static void disable_error_dialogs(void) {
 int main(void) {
     void* handle;
     const char* error;
-    const char* libname = "./test4.dll";
+    const char* libname = "test4.dll";
     
     /* 禁用错误弹窗 */
     disable_error_dialogs();
