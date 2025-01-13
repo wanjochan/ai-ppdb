@@ -1,31 +1,38 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
-REM 设置工具链路径（使用相对路径）
-set CROSS9=..\..\..\repos\cross9
-set COSMO=..\..\..\repos\cosmopolitan
-set PATH=%CROSS9%\bin;%PATH%
+REM 加载环境变量和通用函数
+call "..\..\..\ppdb\scripts\build_env.bat"
+if errorlevel 1 exit /b 1
 
-REM 验证文件存在
-if not exist "%COSMO%\cosmopolitan.h" (
-    echo Error: cosmopolitan.h not found in %COSMO%
+REM 验证 objcopy 是否可用
+if not exist "%OBJCOPY%" (
+    echo Error: OBJCOPY not found at %OBJCOPY%
     exit /b 1
 )
 
 REM 设置编译器和选项
-set CC=x86_64-pc-linux-gnu-gcc
-set CFLAGS=-g -fPIC -fvisibility=hidden -fno-pie -fno-stack-protector -O2 -nostdinc -I%COSMO% -mcmodel=large -fno-common
-set LDFLAGS=-nostdlib -nostartfiles -shared -Wl,--version-script=exports.txt -Wl,-z,noexecstack -Wl,-z,now -Wl,-z,relro -Wl,--no-undefined -Wl,-Bsymbolic
+set CFLAGS=%CFLAGS% -fPIC -fvisibility=hidden
+set LDFLAGS_DL=-nostdlib -nostartfiles -shared -Wl,--version-script=exports.txt -Wl,-z,noexecstack -Wl,-z,now -Wl,-z,relro -Wl,--no-undefined -Wl,-Bsymbolic
 
 REM 编译动态库
 echo Building test4.dl...
-%CC% %CFLAGS% -c test4.c -o test4.o
-%CC% %LDFLAGS% test4.o -o test4.dl
+"%GCC%" %CFLAGS% -c test4.c -o test4.o
+"%GCC%" %LDFLAGS_DL% test4.o -o test4.dl
 
 REM 编译测试程序
 echo Building test4_main...
-%CC% %CFLAGS% -c test4_main.c -o test4_main.o
-%CC% -nostdlib -nostartfiles -static test4_main.o %COSMO%\cosmopolitan.a -o test4_main.exe -e _start
+"%GCC%" %CFLAGS% -c test4_main.c -o test4_main.o
+"%GCC%" %LDFLAGS% test4_main.o %LIBS% -o test4_main.exe.dbg
+
+REM 使用 objcopy 处理可执行文件
+echo Creating binary test4_main...
+echo Using OBJCOPY: %OBJCOPY%
+"%OBJCOPY%" -S -O binary test4_main.exe.dbg test4_main.exe
+if errorlevel 1 (
+    echo Error: objcopy failed
+    exit /b 1
+)
 
 echo Build complete.
 endlocal 
