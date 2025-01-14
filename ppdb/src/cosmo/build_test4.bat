@@ -42,7 +42,7 @@ if errorlevel 1 goto error
 
 REM 链接 DL
 echo Linking test4.dl...
-"%GCC%" -shared -fPIC -nostdlib -Wl,-T,dl.lds -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,max-page-size=4096 -Wl,--no-relax -Wl,--no-dynamic-linker -Wl,--export-dynamic -Wl,-E -Wl,--emit-relocs -Wl,-z,text -Wl,-z,now -Wl,--no-undefined -Wl,-soname,test4.dl.1 -o test4.dl test4.o
+"%GCC%" -static -nostdlib -Wl,-T,dl.lds -Wl,--gc-sections -Wl,--build-id=none -Wl,-z,max-page-size=4096 -Wl,--no-relax -Wl,--export-dynamic -Wl,-E -Wl,--emit-relocs -Wl,--defsym=ape_stack_vaddr=0x700000000000 -Wl,--defsym=ape_stack_memsz=0x100000 -Wl,--defsym=ape_stack_round=0x1000 -o test4.dl test4.o %BUILD_DIR%\crt.o %BUILD_DIR%\ape.o %BUILD_DIR%\cosmopolitan.a
 if errorlevel 1 goto error
 
 REM 显示 DL 大小
