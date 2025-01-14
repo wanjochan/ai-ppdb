@@ -1,65 +1,56 @@
 /* 链接脚本 */
 OUTPUT_FORMAT("elf64-x86-64")
-ENTRY(_start)
-
-PHDRS {
-    text PT_LOAD FLAGS(5);    /* R-X */
-    rodata PT_LOAD FLAGS(4);  /* R-- */
-    data PT_LOAD FLAGS(6);    /* RW- */
-    dynamic PT_DYNAMIC FLAGS(6);  /* RW- */
-}
 
 SECTIONS
 {
-    . = SIZEOF_HEADERS;
-    . = ALIGN(4096);
-
-    .text : {
-        *(.text.startup)
-        *(.text.hot)
+    /* 代码段 */
+    .text : ALIGN(16) {
         *(.text)
         *(.text.*)
-    } :text
+    }
 
-    . = ALIGN(4096);
-    .rodata : {
+    /* 只读数据段 */
+    .rodata : ALIGN(16) {
         *(.rodata)
         *(.rodata.*)
-        *(.gnu.hash)
-        *(.dynsym)
-        *(.dynstr)
-        *(.rela.dyn)
-        *(.rela.plt)
-        *(.eh_frame)
-        *(.eh_frame_hdr)
-    } :rodata
+    }
 
-    . = ALIGN(4096);
-    .data : {
-        *(.data)
-        *(.data.*)
-        *(.data.rel.ro)
-        *(.data.rel.ro.*)
+    /* 全局偏移表 */
+    .got : ALIGN(16) {
         *(.got)
         *(.got.plt)
-    } :data
+    }
 
-    . = ALIGN(4096);
-    .dynamic : {
-        *(.dynamic)
-    } :dynamic :data
+    /* 数据段 */
+    .data : ALIGN(16) {
+        *(.data)
+        *(.data.*)
+    }
 
-    . = ALIGN(4096);
-    .bss : {
+    /* BSS段 */
+    .bss : ALIGN(16) {
         *(.bss)
         *(.bss.*)
         *(COMMON)
-    } :data
+    }
 
+    /* 符号表 */
+    .symtab 0 : { *(.symtab) }
+    .strtab 0 : { *(.strtab) }
+    .shstrtab 0 : { *(.shstrtab) }
+
+    /* 删除不需要的节 */
     /DISCARD/ : {
-        *(.note*)
-        *(.comment*)
-        *(.debug*)
-        *(.gcc_except_table*)
+        *(.note.*)
+        *(.comment)
+        *(.eh_frame)
+        *(.eh_frame_hdr)
+        *(.gnu.*)
+        *(.interp)
+        *(.dynamic)
+        *(.dynsym)
+        *(.dynstr)
+        *(.hash)
+        *(.rela.*)
     }
 } 

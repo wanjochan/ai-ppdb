@@ -24,14 +24,10 @@ REM 清理旧文件
 del /q %OUTPUT% %~n1.o 2>nul
 
 REM 编译选项
-set CFLAGS=-g -O2 -mcmodel=small -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -fPIC
+set CFLAGS=-g -O2 -mcmodel=small -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt
 set CFLAGS=%CFLAGS% -Wall -Wextra -Wno-unused-parameter -nostdinc
 set INCLUDES=-I..\..\..\repos\cosmopolitan -I..\..\..\repos\cosmopolitan\libc -I..\..\..\repos\cosmopolitan\libc\calls
 set INCLUDES=%INCLUDES% -I..\..\..\repos\cosmopolitan\libc\sock -I..\..\..\repos\cosmopolitan\libc\thread -I.. -I..\..\
-
-REM 链接选项
-set LDFLAGS=-nostdlib -shared -Wl,-T,tpl_dl.lds -Wl,-z,max-page-size=4096 -Wl,--build-id=none
-set LDFLAGS=%LDFLAGS% -Wl,-z,defs -Wl,--emit-relocs -Wl,--no-undefined -Wl,--gc-sections
 
 REM 编译
 echo Compiling %SOURCE%...
@@ -43,7 +39,7 @@ if errorlevel 1 (
 
 REM 链接
 echo Linking %OUTPUT%...
-..\..\..\repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe %LDFLAGS% -o %OUTPUT% %~n1.o
+..\..\..\repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe -nostdlib -r -Wl,-T,dl.lds -o %OUTPUT% %~n1.o
 if errorlevel 1 (
     echo Error: Linking failed
     exit /b 1

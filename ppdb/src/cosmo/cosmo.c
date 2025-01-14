@@ -4,23 +4,74 @@
 #define __STDC_WANT_LIB_EXT1__ 1
 #include "cosmopolitan.h"
 
-/* APE头大小 */
-#define APE_HEADER_SIZE 4096
+/* GOT表项结构 */
+struct got_entry {
+    const char* name;    /* 符号名 */
+    void* addr;         /* 符号地址 */
+};
 
 /* 加载信息 */
 struct load_info {
-    void* base;
-    size_t size;
+    void* base;        /* 映射基址 */
+    void* obj_base;    /* 目标文件基址 */
+    size_t size;       /* 总大小 */
+    size_t obj_size;   /* 目标文件大小 */
     int has_ape;
+    
+    /* GOT表 */
+    struct got_entry* got_table;  /* GOT表 */
+    size_t got_size;             /* GOT表大小 */
+    size_t got_count;            /* GOT表项数量 */
 };
 
 /* 函数声明 */
-static int process_relocs(void* base);
-static void* find_symbol(void* base, const char* name);
+static void* find_symbol(const struct load_info* info, const char* name);
 static void show_usage(const char* prog_name);
 
-/* 加载 DL 文件 */
-static struct load_info load_dl(const char* path) {
+/* 初始化GOT表 */
+static int init_got_table(struct load_info* info) {
+    /* 分配初始GOT表空间 */
+    info->got_size = 1024;  /* 初始大小 */
+    info->got_count = 0;
+    info->got_table = calloc(info->got_size, sizeof(struct got_entry));
+    if (!info->got_table) {
+        dprintf(2, "Failed to allocate GOT table\n");
+        return -1;
+    }
+    return 0;
+}
+
+/* 在GOT表中查找或添加符号 */
+static struct got_entry* get_got_entry(struct load_info* info, const char* name) {
+    /* 查找已存在的表项 */
+    for (size_t i = 0; i < info->got_count; i++) {
+        if (strcmp(info->got_table[i].name, name) == 0) {
+            return &info->got_table[i];
+        }
+    }
+    
+    /* 检查是否需要扩展表 */
+    if (info->got_count >= info->got_size) {
+        size_t new_size = info->got_size * 2;
+        struct got_entry* new_table = realloc(info->got_table, 
+                                            new_size * sizeof(struct got_entry));
+        if (!new_table) {
+            dprintf(2, "Failed to expand GOT table\n");
+            return NULL;
+        }
+        info->got_table = new_table;
+        info->got_size = new_size;
+    }
+    
+    /* 添加新表项 */
+    struct got_entry* entry = &info->got_table[info->got_count++];
+    entry->name = strdup(name);  /* 复制符号名 */
+    entry->addr = NULL;          /* 初始化为NULL */
+    return entry;
+}
+
+/* 加载静态库 */
+static struct load_info load_lib(const char* path) {
     struct load_info info = {0};
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
@@ -41,7 +92,7 @@ static struct load_info load_dl(const char* path) {
     dprintf(1, "File size: %ld, aligned size: %ld\n", st.st_size, aligned_size);
 
     /* 映射文件 */
-    void* base = mmap(NULL, aligned_size, PROT_READ | PROT_WRITE,
+    void* base = mmap(NULL, aligned_size, PROT_READ | PROT_WRITE | PROT_EXEC,
                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (base == MAP_FAILED) {
         dprintf(2, "Failed to allocate memory: %s\n", strerror(errno));
@@ -61,165 +112,274 @@ static struct load_info load_dl(const char* path) {
     }
     dprintf(1, "Read %ld bytes from file\n", bytes_read);
 
+    /* 初始化GOT表 */
     info.base = base;
     info.size = aligned_size;
+    if (init_got_table(&info) != 0) {
+        munmap(base, aligned_size);
+        return (struct load_info){0};
+    }
+
+    /* 检查归档头 */
+    const char* ar_magic = "!<arch>\n";
+    if (memcmp(base, ar_magic, 8) != 0) {
+        dprintf(2, "Invalid archive magic in %s\n", path);
+        munmap(base, aligned_size);
+        free(info.got_table);
+        return (struct load_info){0};
+    }
+
+    /* 处理归档成员 */
+    char* p = (char*)base + 8;
+    struct ar_hdr* hdr = (struct ar_hdr*)p;
+    
+    /* 检查是否是符号表 */
+    if (strncmp(hdr->ar_name, "/               ", 16) == 0) {
+        /* 跳过符号表 */
+        char size_str[11] = {0};
+        memcpy(size_str, hdr->ar_size, 10);
+        size_t size = atoi(size_str);
+        p += sizeof(struct ar_hdr) + ((size + 1) & ~1);
+        hdr = (struct ar_hdr*)p;
+    }
+    
+    /* 检查是否是长文件名表 */
+    if (strncmp(hdr->ar_name, "//              ", 16) == 0) {
+        /* 跳过长文件名表 */
+        char size_str[11] = {0};
+        memcpy(size_str, hdr->ar_size, 10);
+        size_t size = atoi(size_str);
+        p += sizeof(struct ar_hdr) + ((size + 1) & ~1);
+        hdr = (struct ar_hdr*)p;
+    }
+    
+    /* 检查ELF文件 */
+    p += sizeof(struct ar_hdr);
+    if (memcmp(p, ELFMAG, SELFMAG) != 0) {
+        dprintf(2, "Member is not an ELF file\n");
+        munmap(base, aligned_size);
+        free(info.got_table);
+        return (struct load_info){0};
+    }
+
+    /* 设置加载信息 */
+    info.obj_base = p;
+    info.obj_size = st.st_size - (p - (char*)base);
     info.has_ape = 0;
-    dprintf(1, "Base address: %p\n", info.base);
-
-    /* 检查 ELF 头 */
-    const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)info.base;
-    dprintf(1, "ELF header magic: %02x %02x %02x %02x\n",
-            ehdr->e_ident[0], ehdr->e_ident[1], ehdr->e_ident[2], ehdr->e_ident[3]);
-    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
-        dprintf(2, "Invalid ELF header in %s\n", path);
-        munmap(base, aligned_size);
-        info.base = NULL;
-        info.size = 0;
-        info.has_ape = 0;
-        return info;
-    }
-
-    /* 处理重定位 */
-    if (process_relocs(info.base) != 0) {
-        dprintf(2, "Failed to process relocations\n");
-        munmap(base, aligned_size);
-        info.base = NULL;
-        info.size = 0;
-        info.has_ape = 0;
-        return info;
-    }
-
-    /* 设置执行权限 */
-    if (mprotect(info.base, aligned_size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-        dprintf(2, "Failed to set execute permission: %s\n", strerror(errno));
-        munmap(base, aligned_size);
-        info.base = NULL;
-        info.size = 0;
-        info.has_ape = 0;
-        return info;
-    }
-    dprintf(1, "Execute permission set\n");
+    dprintf(1, "Base address: %p, object base: %p\n", info.base, info.obj_base);
 
     return info;
 }
 
-/* 处理重定位 */
-static int process_relocs(void* base) {
-    const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)base;
-    
-    /* 验证 ELF 头 */
-    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
-        dprintf(2, "Invalid ELF header\n");
-        return -1;
+/* 查找符号 */
+static void* find_symbol(const struct load_info* info, const char* name) {
+    if (!info || !info->obj_base) {
+        return NULL;
     }
-    
+
+    /* 解析ELF头 */
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)info->obj_base;
+    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
+        dprintf(2, "Invalid ELF magic\n");
+        return NULL;
+    }
+
     /* 查找节头表 */
-    const Elf64_Shdr* shdr = (const Elf64_Shdr*)((char*)base + ehdr->e_shoff);
-    dprintf(1, "Section header table at offset %lx\n", ehdr->e_shoff);
+    Elf64_Shdr* shdr = (Elf64_Shdr*)((char*)info->obj_base + ehdr->e_shoff);
     
     /* 查找符号表和字符串表 */
-    const Elf64_Sym* symtab = NULL;
-    const char* strtab = NULL;
+    Elf64_Sym* symtab = NULL;
+    char* strtab = NULL;
     size_t symcount = 0;
+    Elf64_Shdr* sym_shdr = NULL;
     
     for (int i = 0; i < ehdr->e_shnum; i++) {
-        dprintf(1, "Section %d: type=%x, offset=%lx, size=%lx\n",
-                i, shdr[i].sh_type, shdr[i].sh_offset, shdr[i].sh_size);
-        
         if (shdr[i].sh_type == SHT_SYMTAB) {
-            symtab = (const Elf64_Sym*)((char*)base + shdr[i].sh_offset);
+            symtab = (Elf64_Sym*)((char*)info->obj_base + shdr[i].sh_offset);
             symcount = shdr[i].sh_size / sizeof(Elf64_Sym);
+            sym_shdr = &shdr[i];
             dprintf(1, "Found symbol table at section %d: %ld symbols\n", i, symcount);
             
-            /* 字符串表在符号表之后的节中 */
+            /* 字符串表在符号表之后 */
             if (i + 1 < ehdr->e_shnum) {
-                strtab = (const char*)base + shdr[i + 1].sh_offset;
-                dprintf(1, "Found string table at section %d\n", i + 1);
+                strtab = (char*)info->obj_base + shdr[i + 1].sh_offset;
             }
             break;
         }
     }
     
     if (!symtab || !strtab) {
-        dprintf(2, "Symbol or string table not found\n");
-        return -1;
+        dprintf(2, "Symbol table or string table not found\n");
+        return NULL;
     }
     
-    /* 查找重定位节 */
+    /* 在符号表中查找 */
+    for (size_t i = 0; i < symcount; i++) {
+        const char* sym_name = strtab + symtab[i].st_name;
+        if (strcmp(sym_name, name) == 0) {
+            /* 检查符号类型和绑定 */
+            unsigned char type = ELF64_ST_TYPE(symtab[i].st_info);
+            unsigned char bind = ELF64_ST_BIND(symtab[i].st_info);
+            
+            dprintf(1, "Found symbol %s: type=%d, bind=%d, shndx=%d\n", 
+                   name, type, bind, symtab[i].st_shndx);
+            
+            /* 检查符号是否在有效的节中 */
+            if (symtab[i].st_shndx == SHN_UNDEF) {
+                dprintf(2, "Symbol %s is undefined\n", name);
+                return NULL;
+            }
+            
+            if (symtab[i].st_shndx >= ehdr->e_shnum) {
+                dprintf(2, "Symbol %s has invalid section index %d\n", 
+                       name, symtab[i].st_shndx);
+                return NULL;
+            }
+            
+            /* 获取符号所在的节 */
+            Elf64_Shdr* sym_section = &shdr[symtab[i].st_shndx];
+            dprintf(1, "Symbol section: type=%d, offset=%ld, size=%ld, flags=%ld\n",
+                   sym_section->sh_type, sym_section->sh_offset,
+                   sym_section->sh_size, sym_section->sh_flags);
+            
+            /* 计算符号的实际地址 */
+            void* sym_addr = (char*)info->obj_base + symtab[i].st_value;
+            dprintf(1, "Symbol address: %p\n", sym_addr);
+            return sym_addr;
+        }
+    }
+    
+    dprintf(2, "Symbol %s not found\n", name);
+    return NULL;
+}
+
+/* 处理重定位 */
+static int process_relocs(const struct load_info* info) {
+    if (!info || !info->obj_base) {
+        return -1;
+    }
+
+    /* 解析ELF头 */
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)info->obj_base;
+    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
+        dprintf(2, "Invalid ELF magic\n");
+        return -1;
+    }
+
+    /* 查找节头表 */
+    Elf64_Shdr* shdr = (Elf64_Shdr*)((char*)info->obj_base + ehdr->e_shoff);
+    
+    /* 遍历所有节,查找重定位节 */
     for (int i = 0; i < ehdr->e_shnum; i++) {
         if (shdr[i].sh_type == SHT_RELA) {
-            const Elf64_Rela* rela = (const Elf64_Rela*)((char*)base + shdr[i].sh_offset);
-            size_t num_relocs = shdr[i].sh_size / sizeof(Elf64_Rela);
-            dprintf(1, "Found relocation section %d: %ld entries\n", i, num_relocs);
+            dprintf(1, "Found relocation section %d: %ld entries\n", 
+                   i, shdr[i].sh_size / sizeof(Elf64_Rela));
+            
+            /* 获取重定位表 */
+            Elf64_Rela* rela = (Elf64_Rela*)((char*)info->obj_base + shdr[i].sh_offset);
+            size_t relcount = shdr[i].sh_size / sizeof(Elf64_Rela);
+            
+            /* 获取符号表 */
+            Elf64_Shdr* symtab_shdr = &shdr[shdr[i].sh_link];
+            Elf64_Sym* symtab = (Elf64_Sym*)((char*)info->obj_base + symtab_shdr->sh_offset);
+            
+            /* 获取字符串表 */
+            char* strtab = (char*)info->obj_base + shdr[symtab_shdr->sh_link].sh_offset;
             
             /* 处理每个重定位项 */
-            for (size_t j = 0; j < num_relocs; j++) {
-                Elf64_Addr* target = (Elf64_Addr*)((char*)base + rela[j].r_offset);
-                uint64_t sym_value = 0;
-                uint32_t sym_index = ELF64_R_SYM(rela[j].r_info);
-                uint32_t type = ELF64_R_TYPE(rela[j].r_info);
+            for (size_t j = 0; j < relcount; j++) {
+                Elf64_Rela* rel = &rela[j];
+                Elf64_Sym* sym = &symtab[ELF64_R_SYM(rel->r_info)];
+                const char* sym_name = strtab + sym->st_name;
+                unsigned long r_type = ELF64_R_TYPE(rel->r_info);
                 
-                dprintf(1, "Relocation %ld: offset=%lx, type=%d, sym=%d, addend=%lx\n",
-                        j, rela[j].r_offset, type, sym_index, rela[j].r_addend);
+                dprintf(1, "Relocation %ld: offset=%ld, type=%ld, sym=%ld, addend=%ld\n",
+                       j, rel->r_offset, r_type, ELF64_R_SYM(rel->r_info), rel->r_addend);
                 
-                /* 获取符号值 */
-                if (sym_index > 0 && sym_index < symcount) {
-                    const Elf64_Sym* sym = &symtab[sym_index];
-                    if (sym->st_shndx != SHN_UNDEF) {
-                        sym_value = (uint64_t)base + sym->st_value;
-                        dprintf(1, "Symbol %s at offset %lx\n", strtab + sym->st_name, sym_value);
-                    }
+                /* 获取符号的值 */
+                uint64_t sym_value;
+                if (sym->st_shndx == SHN_UNDEF) {
+                    /* 对于未定义的符号,使用0作为目标地址 */
+                    dprintf(1, "Warning: GOT relocation for undefined symbol at 0x%lx\n", 
+                           (unsigned long)((char*)info->obj_base + rel->r_offset));
+                    sym_value = 0;
+                } else {
+                    /* 计算符号的实际地址 */
+                    sym_value = (uint64_t)info->obj_base + sym->st_value;
                 }
                 
-                switch (type) {
-                    case R_X86_64_NONE:
+                /* 获取重定位的目标地址 */
+                void* target = (char*)info->obj_base + rel->r_offset;
+                dprintf(1, "Symbol %s at offset %p\n", sym_name, target);
+                
+                /* 根据重定位类型进行处理 */
+                switch (r_type) {
+                    case R_X86_64_64:   /* 直接64位 */
+                        *(uint64_t*)target = sym_value + rel->r_addend;
+                        dprintf(1, "R_X86_64_64: target=%p, value=%lx\n", 
+                               target, sym_value + rel->r_addend);
                         break;
                         
-                    case R_X86_64_64:    /* 类型1: 直接64位 */
-                        *target = sym_value + rela[j].r_addend;
-                        dprintf(1, "R_X86_64_64: target=%p, value=%lx\n", target, *target);
+                    case R_X86_64_32:   /* 32位绝对 */
+                        *(uint32_t*)target = (uint32_t)(sym_value + rel->r_addend);
+                        dprintf(1, "R_X86_64_32: target=%p, value=%lx\n",
+                               target, (uint32_t)(sym_value + rel->r_addend));
                         break;
                         
-                    case R_X86_64_PC32:  /* 类型2: 32位PC相对 */
-                        *(uint32_t*)target = (uint32_t)(sym_value + rela[j].r_addend - (uint64_t)target);
-                        dprintf(1, "R_X86_64_PC32: target=%p, value=%x\n", target, *(uint32_t*)target);
+                    case R_X86_64_PC32: /* 32位相对 */
+                        *(uint32_t*)target = (uint32_t)(sym_value + rel->r_addend - 
+                                                      (uint64_t)target);
+                        dprintf(1, "R_X86_64_PC32: target=%p, value=%lx\n",
+                               target, (uint32_t)(sym_value + rel->r_addend - (uint64_t)target));
                         break;
                         
-                    case R_X86_64_32:    /* 类型10: 32位绝对 */
-                        *(uint32_t*)target = (uint32_t)(sym_value + rela[j].r_addend);
-                        dprintf(1, "R_X86_64_32: target=%p, value=%x\n", target, *(uint32_t*)target);
+                    case R_X86_64_PLT32:/* 同PC32 */
+                        *(uint32_t*)target = (uint32_t)(sym_value + rel->r_addend - 
+                                                      (uint64_t)target);
+                        dprintf(1, "R_X86_64_PLT32: target=%p, value=%lx\n",
+                               target, (uint32_t)(sym_value + rel->r_addend - (uint64_t)target));
                         break;
                         
-                    case R_X86_64_32S:   /* 类型11: 有符号32位 */
-                        *(int32_t*)target = (int32_t)(sym_value + rela[j].r_addend);
-                        dprintf(1, "R_X86_64_32S: target=%p, value=%x\n", target, *(uint32_t*)target);
-                        break;
-                        
-                    case R_X86_64_PLT32: /* 类型4: PLT项32位PC相对 */
-                        *(uint32_t*)target = (uint32_t)(sym_value + rela[j].r_addend - (uint64_t)target);
-                        dprintf(1, "R_X86_64_PLT32: target=%p, value=%x\n", target, *(uint32_t*)target);
-                        break;
-                        
-                    case R_X86_64_RELATIVE:  /* 类型8: 基址相对 */
-                        *target = (Elf64_Addr)base + rela[j].r_addend;
-                        dprintf(1, "R_X86_64_RELATIVE: target=%p, value=%lx\n", target, *target);
-                        break;
-                        
-                    case R_X86_64_GOTPCREL:    /* 类型37: GOT项PC相对 */
-                    case R_X86_64_GOTPCRELX:   /* 类型41: 优化的GOT加载 */
-                    case R_X86_64_REX_GOTPCRELX: /* 类型42: 带REX前缀的优化GOT加载 */
-                        /* 直接使用符号地址，不使用GOT */
-                        if (sym_value) {
-                            *(uint32_t*)target = (uint32_t)(sym_value + rela[j].r_addend - (uint64_t)target);
-                            dprintf(1, "GOT relocation at %p: target=%p, value=%lx\n", target, (void*)(sym_value + rela[j].r_addend), sym_value);
+                    case R_X86_64_GOTPCREL:
+                    case R_X86_64_GOTPCRELX:
+                    case R_X86_64_REX_GOTPCRELX:
+                        if (sym->st_shndx == SHN_UNDEF) {
+                            /* 对于未定义的符号，我们需要创建一个GOT表项 */
+                            static void* got_entries[1024] = {0};  /* 简单的GOT表实现 */
+                            static int got_count = 0;
+                            
+                            /* 检查是否已经有这个符号的GOT表项 */
+                            int found = 0;
+                            for (int i = 0; i < got_count; i++) {
+                                if (got_entries[i] == (void*)sym_value) {
+                                    sym_value = (uint64_t)&got_entries[i];
+                                    found = 1;
+                                    break;
+                                }
+                            }
+                            
+                            /* 如果没有找到，创建新的GOT表项 */
+                            if (!found && got_count < 1024) {
+                                got_entries[got_count] = (void*)sym_value;
+                                sym_value = (uint64_t)&got_entries[got_count];
+                                got_count++;
+                            }
+                            
+                            /* 计算相对偏移 */
+                            *(uint32_t*)target = (uint32_t)(sym_value + rel->r_addend - (uint64_t)target);
+                            dprintf(1, "R_X86_64_GOTPCREL: target=0x%lx, value=%x (undefined)\n", 
+                                   (uint64_t)target, *(uint32_t*)target);
                         } else {
-                            dprintf(2, "Warning: GOT relocation for undefined symbol at %p\n", target);
+                            /* 对于已定义的符号，直接使用符号地址 */
+                            *(uint32_t*)target = (uint32_t)(sym_value + rel->r_addend - (uint64_t)target);
+                            dprintf(1, "R_X86_64_GOTPCREL: target=0x%lx, value=%x\n",
+                                   (uint64_t)target, *(uint32_t*)target);
                         }
                         break;
                         
                     default:
-                        dprintf(2, "Unsupported relocation type: %d\n", type);
-                        break;
+                        dprintf(2, "Unknown relocation type: %ld\n", r_type);
+                        return -1;
                 }
             }
         }
@@ -228,96 +388,10 @@ static int process_relocs(void* base) {
     return 0;
 }
 
-/* 查找符号 */
-static void* find_symbol(void* base, const char* name) {
-    const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)base;
-    
-    /* 验证 ELF 头 */
-    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
-        dprintf(2, "Invalid ELF header\n");
-        return NULL;
-    }
-    
-    /* 查找节头表 */
-    const Elf64_Shdr* shdr = (const Elf64_Shdr*)((char*)base + ehdr->e_shoff);
-    
-    /* 查找符号表和字符串表 */
-    const Elf64_Sym* symtab = NULL;
-    const char* strtab = NULL;
-    size_t symcount = 0;
-    
-    /* 先尝试使用动态符号表 */
-    for (int i = 0; i < ehdr->e_shnum; i++) {
-        dprintf(1, "Section %d: type=%x, offset=%lx, size=%lx\n",
-                i, shdr[i].sh_type, shdr[i].sh_offset, shdr[i].sh_size);
-        
-        if (shdr[i].sh_type == SHT_DYNSYM) {
-            symtab = (const Elf64_Sym*)((char*)base + shdr[i].sh_offset);
-            symcount = shdr[i].sh_size / sizeof(Elf64_Sym);
-            dprintf(1, "Found dynamic symbol table at section %d: %ld symbols\n", i, symcount);
-            
-            /* 字符串表在符号表之后的节中 */
-            if (i + 1 < ehdr->e_shnum) {
-                strtab = (const char*)base + shdr[i + 1].sh_offset;
-                dprintf(1, "Found dynamic string table at section %d\n", i + 1);
-            }
-            break;
-        }
-    }
-    
-    /* 如果没有动态符号表，使用普通符号表 */
-    if (!symtab || !strtab) {
-        for (int i = 0; i < ehdr->e_shnum; i++) {
-            if (shdr[i].sh_type == SHT_SYMTAB) {
-                symtab = (const Elf64_Sym*)((char*)base + shdr[i].sh_offset);
-                symcount = shdr[i].sh_size / sizeof(Elf64_Sym);
-                dprintf(1, "Found symbol table at section %d: %ld symbols\n", i, symcount);
-                
-                /* 字符串表在符号表之后的节中 */
-                if (i + 1 < ehdr->e_shnum) {
-                    strtab = (const char*)base + shdr[i + 1].sh_offset;
-                    dprintf(1, "Found string table at section %d\n", i + 1);
-                }
-                break;
-            }
-        }
-    }
-    
-    if (!symtab || !strtab) {
-        dprintf(2, "Symbol or string table not found\n");
-        return NULL;
-    }
-    
-    /* 在符号表中查找 */
-    for (size_t i = 0; i < symcount; i++) {
-        const char* sym_name = strtab + symtab[i].st_name;
-        dprintf(1, "Symbol %ld: name=%s, value=%lx, size=%ld, info=%x, other=%x, shndx=%d\n",
-                i, sym_name, symtab[i].st_value, symtab[i].st_size,
-                symtab[i].st_info, symtab[i].st_other, symtab[i].st_shndx);
-        
-        if (strcmp(sym_name, name) == 0) {
-            /* 检查符号类型和绑定 */
-            unsigned char type = ELF64_ST_TYPE(symtab[i].st_info);
-            unsigned char bind = ELF64_ST_BIND(symtab[i].st_info);
-            
-            /* 只返回函数或对象符号，且必须是全局或弱绑定 */
-            if ((type == STT_FUNC || type == STT_OBJECT) &&
-                (bind == STB_GLOBAL || bind == STB_WEAK)) {
-                dprintf(1, "Found symbol %s at offset %lx (type=%d, bind=%d)\n", 
-                       name, symtab[i].st_value, type, bind);
-                return (char*)base + symtab[i].st_value;
-            }
-        }
-    }
-    
-    dprintf(2, "Symbol %s not found\n", name);
-    return NULL;
-}
-
 /* 显示用法信息 */
 static void show_usage(const char* prog_name) {
-    dprintf(2, "Usage: %s <dl_path> [func_name]\n", prog_name);
-    dprintf(2, "  dl_path    Path to the DL file to load\n");
+    dprintf(2, "Usage: %s <lib_path> [func_name]\n", prog_name);
+    dprintf(2, "  lib_path   Path to the static library file to load\n");
     dprintf(2, "  func_name  Name of the function to call (default: dl_main)\n");
     dprintf(2, "\nLife cycle functions:\n");
     dprintf(2, "  dl_init    Called before main function (if exists)\n");
@@ -331,24 +405,41 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const char* dl_path = argv[1];
+    const char* lib_path = argv[1];
     const char* func_name = argc >= 3 ? argv[2] : "dl_main";  /* 默认调用dl_main */
     
     /* 检查文件是否存在 */
-    if (access(dl_path, F_OK) != 0) {
-        dprintf(2, "Error: %s does not exist\n", dl_path);
+    if (access(lib_path, F_OK) != 0) {
+        dprintf(2, "Error: %s does not exist\n", lib_path);
         return 1;
     }
     
-    /* 加载 DL */
-    struct load_info info = load_dl(dl_path);
-    if (!info.base) {
-        dprintf(2, "Failed to load %s\n", dl_path);
+    /* 加载静态库 */
+    struct load_info info = load_lib(lib_path);
+    if (!info.base || !info.obj_base) {
+        return 1;  /* load_lib已经输出了错误信息 */
+    }
+
+    /* 检查ELF头 */
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)info.obj_base;
+    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
+        dprintf(2, "Invalid ELF header in %s\n", lib_path);
+        munmap(info.base, info.size);
+        return 1;
+    }
+    dprintf(1, "ELF header magic: %02x %02x %02x %02x\n",
+           ehdr->e_ident[0], ehdr->e_ident[1], ehdr->e_ident[2], ehdr->e_ident[3]);
+    dprintf(1, "Section header table at offset %ld\n", ehdr->e_shoff);
+
+    /* 处理重定位 */
+    if (process_relocs(&info) != 0) {
+        dprintf(2, "Failed to process relocations\n");
+        munmap(info.base, info.size);
         return 1;
     }
 
     /* 调用dl_init初始化 */
-    void* init_func = find_symbol(info.base, "dl_init");
+    void* init_func = find_symbol(&info, "dl_init");
     if (init_func) {
         int (*dl_init_func)(void) = (int (*)(void))init_func;
         int init_result = dl_init_func();
@@ -361,11 +452,10 @@ int main(int argc, char* argv[]) {
     }
     
     /* 查找并调用主函数 */
-    void* func = find_symbol(info.base, func_name);
+    void* func = find_symbol(&info, func_name);
     if (!func) {
-        dprintf(2, "Function %s not found\n", func_name);
         munmap(info.base, info.size);
-        return 1;
+        return 1;  /* find_symbol已经输出了错误信息 */
     }
     
     /* 调用函数并获取返回值 */
@@ -375,7 +465,7 @@ int main(int argc, char* argv[]) {
     dprintf(1, "%s() returned %d\n", func_name, result);
 
     /* 调用dl_fini清理 */
-    void* fini_func = find_symbol(info.base, "dl_fini");
+    void* fini_func = find_symbol(&info, "dl_fini");
     if (fini_func) {
         int (*dl_fini_func)(void) = (int (*)(void))fini_func;
         int fini_result = dl_fini_func();
@@ -386,8 +476,8 @@ int main(int argc, char* argv[]) {
         }
     }
     
-    /* 卸载DL */
-    dprintf(1, "%s has been unloaded\n", dl_path);
+    /* 卸载库 */
+    dprintf(1, "%s has been unloaded\n", lib_path);
     munmap(info.base, info.size);
     return result;
 } 
