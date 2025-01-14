@@ -1,7 +1,3 @@
-#define _CRT_SECURE_NO_WARNINGS 1
-#define WIN32_LEAN_AND_MEAN
-#define _NO_CRT_STDIO_INLINE
-#define __STDC_WANT_LIB_EXT1__ 1
 #include "cosmopolitan.h"
 
 /* 插件版本和魔数 */
@@ -14,12 +10,6 @@
 #define ERR_OUT_OF_MEMORY -2
 #define ERR_NETWORK_ERROR -3
 
-/* 基础数据类型 */
-typedef struct {
-    uint32_t size;
-    uint8_t* data;
-} buffer_t;
-
 /* 插件函数表结构 */
 #pragma pack(push, 1)
 struct plugin_interface {
@@ -27,52 +17,68 @@ struct plugin_interface {
     uint32_t version;  /* 版本号 */
     
     /* Core模块函数 */
-    unsigned char core_init[16];    /* 初始化core模块 */
-    unsigned char core_alloc[16];   /* 内存分配函数 */
+    int (*core_init)(void);         /* 初始化core模块 */
+    void* (*core_alloc)(size_t);    /* 内存分配函数 */
     
     /* Net模块函数 */
-    unsigned char net_connect[16];  /* 网络连接函数 */
-    unsigned char net_send[16];     /* 数据发送函数 */
+    int (*net_connect)(void);       /* 网络连接函数 */
+    int (*net_send)(void*);         /* 数据发送函数 */
 };
 #pragma pack(pop)
 
+/* 内存管理 */
+static char memory_pool[4096] __attribute__((aligned(4096)));
+static size_t memory_used = 0;
+
+/* Core模块实现 */
+static int core_init(void) {
+    memory_used = 0;
+    memset(memory_pool, 0, sizeof(memory_pool));
+    return ERR_SUCCESS;
+}
+
+static void* core_alloc(size_t size) {
+    if (size == 0) {
+        return NULL;
+    }
+    
+    if (memory_used + size > sizeof(memory_pool)) {
+        return NULL;
+    }
+    
+    void* ptr = &memory_pool[memory_used];
+    memory_used += size;
+    return ptr;
+}
+
+/* Net模块实现 */
+static int net_connect(void) {
+    // 模拟网络连接
+    return 42;  // 返回一个固定值表示成功
+}
+
+static int net_send(void* data) {
+    if (!data) {
+        return ERR_INVALID_PARAM;
+    }
+    
+    // 计算数据在内存池中的偏移
+    size_t offset = (char*)data - memory_pool;
+    if (offset >= sizeof(memory_pool)) {
+        return ERR_INVALID_PARAM;
+    }
+    
+    // 返回偏移值作为发送结果
+    return offset;
+}
+
 /* 导出插件接口 */
-__attribute__((section(".plugin")))
-__attribute__((used))
+__attribute__((section(".plugin"), used))
 struct plugin_interface plugin_api = {
     .magic = PLUGIN_MAGIC,
     .version = PLUGIN_VERSION,
-    
-    /* Core模块函数 */
-    .core_init = {
-        0x55,                   /* push   %rbp */
-        0x48, 0x89, 0xe5,      /* mov    %rsp,%rbp */
-        0x31, 0xc0,            /* xor    %eax,%eax */
-        0x5d,                   /* pop    %rbp */
-        0xc3                    /* ret */
-    },
-    .core_alloc = {
-        0x55,                   /* push   %rbp */
-        0x48, 0x89, 0xe5,      /* mov    %rsp,%rbp */
-        0x48, 0x89, 0xf8,      /* mov    %rdi,%rax */
-        0x48, 0x83, 0xc0, 0x10, /* add    $0x10,%rax */
-        0x5d,                   /* pop    %rbp */
-        0xc3                    /* ret */
-    },
-    
-    /* Net模块函数 */
-    .net_connect = {
-        0x55,                   /* push   %rbp */
-        0x48, 0x89, 0xe5,      /* mov    %rsp,%rbp */
-        0xb8, 0x2a, 0x00, 0x00, 0x00,  /* mov    $0x2a,%eax */
-        0x5d,                   /* pop    %rbp */
-        0xc3                    /* ret */
-    },
-    .net_send = {
-        0x55,                   /* push   %rbp */
-        0x48, 0x89, 0xe5,      /* mov    %rsp,%rbp */
-        0x48, 0x89, 0xf8,      /* mov    %rdi,%rax */
-        0x5d,                   /* pop    %rbp */
-        0xc3                    /* ret */
-    }
+    .core_init = core_init,
+    .core_alloc = core_alloc,
+    .net_connect = net_connect,
+    .net_send = net_send
 }; 

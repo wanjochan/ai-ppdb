@@ -4,6 +4,12 @@
 #define PLUGIN_VERSION 1
 #define PLUGIN_MAGIC 0x50504442 /* "PPDB" */
 
+/* 错误码定义 */
+#define ERR_SUCCESS 0
+#define ERR_INVALID_PARAM -1
+#define ERR_OUT_OF_MEMORY -2
+#define ERR_NETWORK_ERROR -3
+
 /* 插件函数表结构 */
 #pragma pack(push, 1)
 struct plugin_interface {
@@ -11,20 +17,14 @@ struct plugin_interface {
     uint32_t version;  /* 版本号 */
     
     /* Core模块函数 */
-    unsigned char core_init[16];    /* 初始化core模块 */
-    unsigned char core_alloc[16];   /* 内存分配函数 */
+    int (*core_init)(void);         /* 初始化core模块 */
+    void* (*core_alloc)(size_t);    /* 内存分配函数 */
     
     /* Net模块函数 */
-    unsigned char net_connect[16];  /* 网络连接函数 */
-    unsigned char net_send[16];     /* 数据发送函数 */
+    int (*net_connect)(void);       /* 网络连接函数 */
+    int (*net_send)(void*);         /* 数据发送函数 */
 };
 #pragma pack(pop)
-
-/* 函数指针类型定义 */
-typedef int (*core_init_t)(void);
-typedef void* (*core_alloc_t)(size_t size);
-typedef int (*net_connect_t)(void);
-typedef int (*net_send_t)(void* data);
 
 /* 查找插件段 */
 static struct plugin_interface* find_plugin_section(void* base) {
@@ -116,27 +116,43 @@ int main(void) {
 
     // 测试 core_init 函数
     dprintf(1, "Testing core_init...\n");
-    core_init_t core_init = (core_init_t)api->core_init;
-    int ret = core_init();
-    dprintf(1, "core_init returned: %d\n", ret);
+    int ret = api->core_init();
+    if (ret != ERR_SUCCESS) {
+        dprintf(2, "core_init failed with error %d\n", ret);
+        munmap(base, st.st_size);
+        return 1;
+    }
+    dprintf(1, "core_init succeeded\n");
 
     // 测试 core_alloc 函数
     dprintf(1, "Testing core_alloc...\n");
-    core_alloc_t core_alloc = (core_alloc_t)api->core_alloc;
-    void* ptr = core_alloc(100);
+    void* ptr = api->core_alloc(100);
+    if (!ptr) {
+        dprintf(2, "core_alloc failed\n");
+        munmap(base, st.st_size);
+        return 1;
+    }
     dprintf(1, "core_alloc returned: 0x%p\n", ptr);
 
     // 测试 net_connect 函数
     dprintf(1, "Testing net_connect...\n");
-    net_connect_t net_connect = (net_connect_t)api->net_connect;
-    ret = net_connect();
-    dprintf(1, "net_connect returned: %d\n", ret);
+    ret = api->net_connect();
+    if (ret != 42) {
+        dprintf(2, "net_connect failed with error %d\n", ret);
+        munmap(base, st.st_size);
+        return 1;
+    }
+    dprintf(1, "net_connect succeeded\n");
 
     // 测试 net_send 函数
     dprintf(1, "Testing net_send...\n");
-    net_send_t net_send = (net_send_t)api->net_send;
-    ret = net_send(ptr);
-    dprintf(1, "net_send returned: %d\n", ret);
+    ret = api->net_send(ptr);
+    if (ret < 0) {
+        dprintf(2, "net_send failed with error %d\n", ret);
+        munmap(base, st.st_size);
+        return 1;
+    }
+    dprintf(1, "net_send succeeded, offset: %d\n", ret);
 
     // 卸载插件
     dprintf(1, "Unloading plugin...\n");
