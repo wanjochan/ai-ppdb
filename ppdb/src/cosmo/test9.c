@@ -49,4 +49,44 @@ int net_send(void* data) {
     /* 计算数据在内存池中的偏移 */
     size_t offset = (char*)data - memory_pool;
     return offset;
+}
+
+/* 动态库基本接口实现 */
+
+__attribute__((section(".text"), visibility("default"), used, noinline, externally_visible))
+int dl_init(void) {
+    /* 初始化工作 */
+    return 0;
+}
+
+__attribute__((section(".text"), visibility("default"), used, noinline, externally_visible))
+int dl_main(void) {
+    /* 主要业务逻辑 */
+    return 0;
+}
+
+__attribute__((section(".text"), visibility("default"), used, noinline, externally_visible))
+int dl_fini(void) {
+    /* 清理工作 */
+    return 0;
+}
+
+/* 内存管理接口 */
+__attribute__((section(".text"), visibility("default"), used, noinline, externally_visible))
+void* dl_alloc(size_t size) {
+    /* 内存分配实现 */
+    return (void*)size;
+}
+
+/* 网络接口 */
+__attribute__((section(".text"), visibility("default"), used, noinline, externally_visible))
+int dl_connect(void) {
+    /* 网络连接实现 */
+    return 0;
+}
+
+__attribute__((section(".text"), visibility("default"), used, noinline, externally_visible))
+int dl_send(void* data) {
+    /* 发送数据实现 */
+    return data != 0;
 } 

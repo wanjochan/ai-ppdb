@@ -316,20 +316,23 @@ static void* find_symbol(void* base, const char* name) {
 
 /* 显示用法信息 */
 static void show_usage(const char* prog_name) {
-    dprintf(2, "Usage: %s <dl_path> <func_name> [args...]\n", prog_name);
+    dprintf(2, "Usage: %s <dl_path> [func_name]\n", prog_name);
     dprintf(2, "  dl_path    Path to the DL file to load\n");
-    dprintf(2, "  func_name  Name of the function to call\n");
-    dprintf(2, "  args       Optional arguments to pass to the function\n");
+    dprintf(2, "  func_name  Name of the function to call (default: dl_main)\n");
+    dprintf(2, "\nLife cycle functions:\n");
+    dprintf(2, "  dl_init    Called before main function (if exists)\n");
+    dprintf(2, "  dl_main    Default main function\n");
+    dprintf(2, "  dl_fini    Called after main function (if exists)\n");
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
+    if (argc < 2) {
         show_usage(argv[0]);
         return 1;
     }
 
     const char* dl_path = argv[1];
-    const char* func_name = argv[2];
+    const char* func_name = argc >= 3 ? argv[2] : "dl_main";  /* 默认调用dl_main */
     
     /* 检查文件是否存在 */
     if (access(dl_path, F_OK) != 0) {
@@ -343,39 +346,48 @@ int main(int argc, char* argv[]) {
         dprintf(2, "Failed to load %s\n", dl_path);
         return 1;
     }
+
+    /* 调用dl_init初始化 */
+    void* init_func = find_symbol(info.base, "dl_init");
+    if (init_func) {
+        int (*dl_init_func)(void) = (int (*)(void))init_func;
+        int init_result = dl_init_func();
+        if (init_result != 0) {
+            dprintf(2, "dl_init() failed with code %d\n", init_result);
+            munmap(info.base, info.size);
+            return 1;
+        }
+        dprintf(1, "dl_init() succeeded\n");
+    }
     
-    /* 查找并调用函数 */
+    /* 查找并调用主函数 */
     void* func = find_symbol(info.base, func_name);
     if (!func) {
         dprintf(2, "Function %s not found\n", func_name);
-        munmap(info.has_ape ? info.base - APE_HEADER_SIZE : info.base, info.size);
+        munmap(info.base, info.size);
         return 1;
     }
     
-    /* 根据函数名判断返回类型 */
-    if (strstr(func_name, "_str")) {
-        /* 字符串返回值 */
-        const char* (*str_func)(void) = (const char* (*)(void))func;
-        dprintf(1, "Found %s at %p\n", func_name, func);
-        const char* result = str_func();
-        dprintf(1, "%s\n", result);
-    } else if (strstr(func_name, "_print") || strstr(func_name, "_set_msg") || strstr(func_name, "_free")) {
-        /* void返回值 */
-        void (*void_func)(void) = (void (*)(void))func;
-        dprintf(1, "Found %s at %p\n", func_name, func);
-        dprintf(1, "Calling void function %s\n", func_name);
-        void_func();
-        dprintf(1, "Completed void function %s\n", func_name);
-    } else {
-        /* 整数返回值 */
-        int (*int_func)(void) = (int (*)(void))func;
-        dprintf(1, "Found %s at %p\n", func_name, func);
-        int result = int_func();
-        dprintf(1, "%s() returned %d\n", func_name, result);
+    /* 调用函数并获取返回值 */
+    int (*main_func)(void) = (int (*)(void))func;
+    dprintf(1, "Calling %s at %p\n", func_name, func);
+    int result = main_func();
+    dprintf(1, "%s() returned %d\n", func_name, result);
+
+    /* 调用dl_fini清理 */
+    void* fini_func = find_symbol(info.base, "dl_fini");
+    if (fini_func) {
+        int (*dl_fini_func)(void) = (int (*)(void))fini_func;
+        int fini_result = dl_fini_func();
+        if (fini_result != 0) {
+            dprintf(2, "dl_fini() failed with code %d\n", fini_result);
+        } else {
+            dprintf(1, "dl_fini() succeeded\n");
+        }
     }
     
     /* 卸载DL */
     dprintf(1, "%s has been unloaded\n", dl_path);
-    munmap(info.has_ape ? info.base - APE_HEADER_SIZE : info.base, info.size);
-    return 0;
+    munmap(info.base, info.size);
+    return result;
 } 
