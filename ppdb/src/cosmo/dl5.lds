@@ -1,5 +1,5 @@
 /* DL 链接脚本 */
-ENTRY(test4_func)
+ENTRY(test5_func_print)
 OUTPUT_FORMAT(elf64-x86-64)
 
 /* 设置基地址 - 降低到32位可寻址范围内 */
@@ -99,15 +99,12 @@ SECTIONS {
         *(.dynamic)
         *(.dynsym)
         *(.dynstr)
-        *(.hash)
-        *(.gnu.hash)
-        *(.plt)
-        *(.plt.got)
-        *(.gnu.version*)
+        *(.gnu.*)
         *(.interp)
+        *(.hash)
+        *(.plt)
+        *(.plt.*)
+        *(.rel.*)
+        *(.rela.plt)
     }
-}
-
-/* 提供必要的符号 */
-PROVIDE_HIDDEN(__executable_start = _BASE_ADDRESS + SIZEOF_HEADERS);
-PROVIDE_HIDDEN(__ehdr_start = _BASE_ADDRESS); 
+} 
