@@ -4,10 +4,34 @@
 #define __STDC_WANT_LIB_EXT1__ 1
 #include "cosmopolitan.h"
 
-/* GOT表项结构 */
+/* PLT存根代码 */
+static unsigned char plt_stub[] = {
+    0x68, 0x00, 0x00, 0x00, 0x00,  /* push $index */
+    0xff, 0x25, 0x00, 0x00, 0x00, 0x00  /* jmp *0(%rip) */
+};
+
+/* PLT解析器代码 */
+static unsigned char plt_resolver[] = {
+    0x53,                       /* push %rbx */
+    0x48, 0x89, 0xe3,          /* mov %rsp, %rbx */
+    0x48, 0x83, 0xec, 0x20,    /* sub $0x20, %rsp */
+    0x48, 0x8b, 0x7b, 0x08,    /* mov 0x8(%rbx), %rdi */
+    0x48, 0x8b, 0x73, 0x10,    /* mov 0x10(%rbx), %rsi */
+    0xe8, 0x00, 0x00, 0x00, 0x00, /* call resolve_plt */
+    0x48, 0x83, 0xc4, 0x20,    /* add $0x20, %rsp */
+    0x5b,                       /* pop %rbx */
+    0x48, 0x83, 0xc4, 0x08,    /* add $0x8, %rsp */
+    0xff, 0xe0                  /* jmp *%rax */
+};
+
+/* GOT/PLT表项结构 */
 struct got_entry {
     const char* name;    /* 符号名 */
-    void* addr;         /* 符号地址 */
+    void* got_addr;     /* GOT表项地址 */
+    void* plt_entry;    /* PLT入口点 */
+    void* sym_addr;     /* 符号地址 */
+    int is_external;    /* 是否是外部符号 */
+    int index;          /* PLT表项索引 */
 };
 
 /* 加载信息 */
@@ -18,17 +42,22 @@ struct load_info {
     size_t obj_size;   /* 目标文件大小 */
     int has_ape;
     
-    /* GOT表 */
+    /* GOT/PLT表 */
     struct got_entry* got_table;  /* GOT表 */
     size_t got_size;             /* GOT表大小 */
     size_t got_count;            /* GOT表项数量 */
+    void* got_base;              /* GOT段基址 */
+    void* plt_base;              /* PLT段基址 */
 };
+
+/* 全局加载信息 */
+static struct load_info g_info = {0};
 
 /* 函数声明 */
 static void* find_symbol(const struct load_info* info, const char* name);
 static void show_usage(const char* prog_name);
 
-/* 初始化GOT表 */
+/* 初始化GOT/PLT表 */
 static int init_got_table(struct load_info* info) {
     /* 分配初始GOT表空间 */
     info->got_size = 1024;  /* 初始大小 */
@@ -38,11 +67,56 @@ static int init_got_table(struct load_info* info) {
         dprintf(2, "Failed to allocate GOT table\n");
         return -1;
     }
+    
+    /* 分配GOT段空间 */
+    info->got_base = mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (info->got_base == MAP_FAILED) {
+        dprintf(2, "Failed to allocate GOT segment\n");
+        free(info->got_table);
+        return -1;
+    }
+    
+    /* 分配PLT段空间 */
+    info->plt_base = mmap(NULL, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (info->plt_base == MAP_FAILED) {
+        dprintf(2, "Failed to allocate PLT segment\n");
+        munmap(info->got_base, 4096);
+        free(info->got_table);
+        return -1;
+    }
+    
+    /* 复制PLT解析器代码 */
+    memcpy(info->plt_base, plt_resolver, sizeof(plt_resolver));
+    
     return 0;
 }
 
+/* 创建PLT存根 */
+static void* create_plt_stub(struct load_info* info, struct got_entry* entry) {
+    static size_t plt_offset = sizeof(plt_resolver);  /* 跳过解析器代码 */
+    
+    /* 检查PLT段空间 */
+    if (plt_offset + sizeof(plt_stub) > 4096) {
+        dprintf(2, "PLT segment full\n");
+        return NULL;
+    }
+    
+    /* 复制PLT存根代码 */
+    void* stub = (char*)info->plt_base + plt_offset;
+    memcpy(stub, plt_stub, sizeof(plt_stub));
+    
+    /* 设置PLT索引和跳转目标 */
+    *(uint32_t*)(stub + 1) = entry->index;
+    *(uint32_t*)(stub + 7) = (uint32_t)((uint64_t)info->plt_base - ((uint64_t)stub + 11));
+    
+    plt_offset += sizeof(plt_stub);
+    return stub;
+}
+
 /* 在GOT表中查找或添加符号 */
-static struct got_entry* get_got_entry(struct load_info* info, const char* name) {
+static struct got_entry* get_got_entry(struct load_info* info, const char* name, int is_external) {
     /* 查找已存在的表项 */
     for (size_t i = 0; i < info->got_count; i++) {
         if (strcmp(info->got_table[i].name, name) == 0) {
@@ -64,19 +138,48 @@ static struct got_entry* get_got_entry(struct load_info* info, const char* name)
     }
     
     /* 添加新表项 */
-    struct got_entry* entry = &info->got_table[info->got_count++];
+    struct got_entry* entry = &info->got_table[info->got_count];
     entry->name = strdup(name);  /* 复制符号名 */
-    entry->addr = NULL;          /* 初始化为NULL */
+    entry->is_external = is_external;
+    entry->sym_addr = NULL;      /* 初始化符号地址为NULL */
+    entry->index = info->got_count++;
+    
+    /* 分配GOT表项 */
+    size_t offset = entry->index * 8;
+    if (offset < 4096) {  /* 确保不超过GOT段大小 */
+        entry->got_addr = (char*)info->got_base + offset;
+        
+        /* 为外部符号创建PLT存根 */
+        if (is_external) {
+            entry->plt_entry = create_plt_stub(info, entry);
+            if (!entry->plt_entry) {
+                dprintf(2, "Failed to create PLT stub for %s\n", name);
+                return NULL;
+            }
+            /* 设置GOT表项指向PLT存根 */
+            *(void**)entry->got_addr = entry->plt_entry;
+        } else {
+            entry->plt_entry = NULL;
+            /* 初始化GOT表项为NULL，等待重定位时设置 */
+            *(void**)entry->got_addr = NULL;
+        }
+    } else {
+        dprintf(2, "GOT segment full\n");
+        return NULL;
+    }
+    
     return entry;
 }
 
 /* 加载静态库 */
-static struct load_info load_lib(const char* path) {
-    struct load_info info = {0};
+static struct load_info* load_lib(const char* path) {
+    /* 初始化全局信息 */
+    memset(&g_info, 0, sizeof(g_info));
+    
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
         dprintf(2, "Failed to open %s: %s\n", path, strerror(errno));
-        return info;
+        return NULL;
     }
 
     /* 获取文件大小 */
@@ -84,7 +187,7 @@ static struct load_info load_lib(const char* path) {
     if (fstat(fd, &st) < 0) {
         dprintf(2, "Failed to stat %s: %s\n", path, strerror(errno));
         close(fd);
-        return info;
+        return NULL;
     }
 
     /* 计算对齐后的大小 */
@@ -97,7 +200,7 @@ static struct load_info load_lib(const char* path) {
     if (base == MAP_FAILED) {
         dprintf(2, "Failed to allocate memory: %s\n", strerror(errno));
         close(fd);
-        return info;
+        return NULL;
     }
     dprintf(1, "Memory mapped at %p\n", base);
 
@@ -108,16 +211,16 @@ static struct load_info load_lib(const char* path) {
     if (bytes_read != st.st_size) {
         dprintf(2, "Failed to read file: %s\n", strerror(errno));
         munmap(base, aligned_size);
-        return info;
+        return NULL;
     }
     dprintf(1, "Read %ld bytes from file\n", bytes_read);
 
     /* 初始化GOT表 */
-    info.base = base;
-    info.size = aligned_size;
-    if (init_got_table(&info) != 0) {
+    g_info.base = base;
+    g_info.size = aligned_size;
+    if (init_got_table(&g_info) != 0) {
         munmap(base, aligned_size);
-        return (struct load_info){0};
+        return NULL;
     }
 
     /* 检查归档头 */
@@ -125,8 +228,8 @@ static struct load_info load_lib(const char* path) {
     if (memcmp(base, ar_magic, 8) != 0) {
         dprintf(2, "Invalid archive magic in %s\n", path);
         munmap(base, aligned_size);
-        free(info.got_table);
-        return (struct load_info){0};
+        free(g_info.got_table);
+        return NULL;
     }
 
     /* 处理归档成员 */
@@ -158,17 +261,17 @@ static struct load_info load_lib(const char* path) {
     if (memcmp(p, ELFMAG, SELFMAG) != 0) {
         dprintf(2, "Member is not an ELF file\n");
         munmap(base, aligned_size);
-        free(info.got_table);
-        return (struct load_info){0};
+        free(g_info.got_table);
+        return NULL;
     }
 
     /* 设置加载信息 */
-    info.obj_base = p;
-    info.obj_size = st.st_size - (p - (char*)base);
-    info.has_ape = 0;
-    dprintf(1, "Base address: %p, object base: %p\n", info.base, info.obj_base);
+    g_info.obj_base = p;
+    g_info.obj_size = st.st_size - (p - (char*)base);
+    g_info.has_ape = 0;
+    dprintf(1, "Base address: %p, object base: %p\n", g_info.base, g_info.obj_base);
 
-    return info;
+    return &g_info;
 }
 
 /* 查找符号 */
@@ -251,6 +354,34 @@ static void* find_symbol(const struct load_info* info, const char* name) {
     
     dprintf(2, "Symbol %s not found\n", name);
     return NULL;
+}
+
+/* PLT解析器函数 */
+static void* resolve_plt(int index, void* caller) {
+    if (index < 0 || index >= g_info.got_count) {
+        dprintf(2, "Invalid PLT index: %d\n", index);
+        return NULL;
+    }
+    
+    /* 获取GOT表项 */
+    struct got_entry* entry = &g_info.got_table[index];
+    if (!entry->name) {
+        dprintf(2, "Invalid GOT entry at index %d\n", index);
+        return NULL;
+    }
+    
+    /* 查找符号 */
+    if (!entry->sym_addr) {
+        entry->sym_addr = find_symbol(&g_info, entry->name);
+        if (!entry->sym_addr) {
+            dprintf(2, "Failed to resolve symbol %s\n", entry->name);
+            return NULL;
+        }
+        /* 更新GOT表项 */
+        *(void**)entry->got_addr = entry->sym_addr;
+    }
+    
+    return entry->sym_addr;
 }
 
 /* 处理重定位 */
@@ -343,37 +474,35 @@ static int process_relocs(const struct load_info* info) {
                     case R_X86_64_GOTPCREL:
                     case R_X86_64_GOTPCRELX:
                     case R_X86_64_REX_GOTPCRELX:
-                        if (sym->st_shndx == SHN_UNDEF) {
-                            /* 对于未定义的符号，我们需要创建一个GOT表项 */
-                            static void* got_entries[1024] = {0};  /* 简单的GOT表实现 */
-                            static int got_count = 0;
+                        {
+                            /* 获取符号名 */
+                            const char* sym_name = strtab + sym->st_name;
                             
-                            /* 检查是否已经有这个符号的GOT表项 */
-                            int found = 0;
-                            for (int i = 0; i < got_count; i++) {
-                                if (got_entries[i] == (void*)sym_value) {
-                                    sym_value = (uint64_t)&got_entries[i];
-                                    found = 1;
-                                    break;
-                                }
+                            /* 获取或创建GOT表项 */
+                            struct got_entry* entry = get_got_entry(info, sym_name, 
+                                                                  sym->st_shndx == SHN_UNDEF);
+                            if (!entry) {
+                                dprintf(2, "Failed to get GOT entry for symbol %s\n", sym_name);
+                                return -1;
                             }
                             
-                            /* 如果没有找到，创建新的GOT表项 */
-                            if (!found && got_count < 1024) {
-                                got_entries[got_count] = (void*)sym_value;
-                                sym_value = (uint64_t)&got_entries[got_count];
-                                got_count++;
+                            if (sym->st_shndx == SHN_UNDEF) {
+                                /* 对于未定义的符号，GOT表项已经在get_got_entry中设置为PLT存根 */
+                                dprintf(1, "GOT entry for undefined symbol %s at %p (PLT at %p)\n", 
+                                       sym_name, entry->got_addr, entry->plt_entry);
+                            } else {
+                                /* 对于已定义的符号，将符号地址写入GOT表项 */
+                                entry->sym_addr = (void*)sym_value;
+                                *(void**)entry->got_addr = entry->sym_addr;
+                                dprintf(1, "GOT entry for defined symbol %s at %p points to %p\n",
+                                       sym_name, entry->got_addr, entry->sym_addr);
                             }
                             
-                            /* 计算相对偏移 */
-                            *(uint32_t*)target = (uint32_t)(sym_value + rel->r_addend - (uint64_t)target);
-                            dprintf(1, "R_X86_64_GOTPCREL: target=0x%lx, value=%x (undefined)\n", 
-                                   (uint64_t)target, *(uint32_t*)target);
-                        } else {
-                            /* 对于已定义的符号，直接使用符号地址 */
-                            *(uint32_t*)target = (uint32_t)(sym_value + rel->r_addend - (uint64_t)target);
-                            dprintf(1, "R_X86_64_GOTPCREL: target=0x%lx, value=%x\n",
-                                   (uint64_t)target, *(uint32_t*)target);
+                            /* 计算GOT表项的相对偏移 */
+                            *(uint32_t*)target = (uint32_t)((uint64_t)entry->got_addr + rel->r_addend - 
+                                                          (uint64_t)target);
+                            dprintf(1, "R_X86_64_GOTPCREL: target=0x%lx, got_addr=%p, offset=%x\n",
+                                   (uint64_t)target, entry->got_addr, *(uint32_t*)target);
                         }
                         break;
                         
@@ -415,16 +544,16 @@ int main(int argc, char* argv[]) {
     }
     
     /* 加载静态库 */
-    struct load_info info = load_lib(lib_path);
-    if (!info.base || !info.obj_base) {
+    struct load_info* info = load_lib(lib_path);
+    if (!info || !info->obj_base) {
         return 1;  /* load_lib已经输出了错误信息 */
     }
 
     /* 检查ELF头 */
-    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)info.obj_base;
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)info->obj_base;
     if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
         dprintf(2, "Invalid ELF header in %s\n", lib_path);
-        munmap(info.base, info.size);
+        munmap(info->base, info->size);
         return 1;
     }
     dprintf(1, "ELF header magic: %02x %02x %02x %02x\n",
@@ -432,29 +561,29 @@ int main(int argc, char* argv[]) {
     dprintf(1, "Section header table at offset %ld\n", ehdr->e_shoff);
 
     /* 处理重定位 */
-    if (process_relocs(&info) != 0) {
+    if (process_relocs(info) != 0) {
         dprintf(2, "Failed to process relocations\n");
-        munmap(info.base, info.size);
+        munmap(info->base, info->size);
         return 1;
     }
 
     /* 调用dl_init初始化 */
-    void* init_func = find_symbol(&info, "dl_init");
+    void* init_func = find_symbol(info, "dl_init");
     if (init_func) {
         int (*dl_init_func)(void) = (int (*)(void))init_func;
         int init_result = dl_init_func();
         if (init_result != 0) {
             dprintf(2, "dl_init() failed with code %d\n", init_result);
-            munmap(info.base, info.size);
+            munmap(info->base, info->size);
             return 1;
         }
         dprintf(1, "dl_init() succeeded\n");
     }
     
     /* 查找并调用主函数 */
-    void* func = find_symbol(&info, func_name);
+    void* func = find_symbol(info, func_name);
     if (!func) {
-        munmap(info.base, info.size);
+        munmap(info->base, info->size);
         return 1;  /* find_symbol已经输出了错误信息 */
     }
     
@@ -465,7 +594,7 @@ int main(int argc, char* argv[]) {
     dprintf(1, "%s() returned %d\n", func_name, result);
 
     /* 调用dl_fini清理 */
-    void* fini_func = find_symbol(&info, "dl_fini");
+    void* fini_func = find_symbol(info, "dl_fini");
     if (fini_func) {
         int (*dl_fini_func)(void) = (int (*)(void))fini_func;
         int fini_result = dl_fini_func();
@@ -478,6 +607,7 @@ int main(int argc, char* argv[]) {
     
     /* 卸载库 */
     dprintf(1, "%s has been unloaded\n", lib_path);
-    munmap(info.base, info.size);
+    munmap(info->base, info->size);
+    free(info->got_table);
     return result;
 } 
