@@ -1,5 +1,10 @@
 #include "cosmopolitan.h"
 
+/* 包装函数 */
+void* ape_stack_round(void* p) {
+    return p;
+}
+
 /* 插件头部魔数和版本 */
 #define PLUGIN_MAGIC 0x50504442
 #define PLUGIN_VERSION 1

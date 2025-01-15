@@ -1,12 +1,10 @@
 /* 简单的链接脚本 */
-
-/* 定义段的属性 */
-PHDRS
-{
-    Head PT_LOAD FLAGS(5);    /* r-x */
-    Code PT_LOAD FLAGS(5);    /* r-x */
-    Data PT_LOAD FLAGS(6);    /* rw- */
-    BSS  PT_LOAD FLAGS(6);    /* rw- */
+ENTRY(_start)
+PHDRS {
+    header PT_LOAD FLAGS(4);  /* r-- */
+    text   PT_LOAD FLAGS(5);  /* r-x */
+    data   PT_LOAD FLAGS(6);  /* rw- */
+    priv   PT_LOAD FLAGS(7);  /* rwx */
 }
 
 SECTIONS
@@ -33,52 +31,76 @@ SECTIONS
         LONG(_dl_fini_offset)
         . = ALIGN(8);
         _header_end = .;
-    } :Head
+    } :header
 
     /* 代码段 */
-    .text : {
+    .text ALIGN(8) : {
         _text_start = .;
 
         /* 插件函数 */
+        . = ALIGN(8);
         _dl_init = .;
-        *(.text.dl_init)
+        KEEP(*(.text.dl_init))
+        . = ALIGN(8);
         _dl_main = .;
-        *(.text.dl_main)
+        KEEP(*(.text.dl_main))
+        . = ALIGN(8);
         _dl_fini = .;
-        *(.text.dl_fini)
+        KEEP(*(.text.dl_fini))
 
         /* 其他代码 */
+        . = ALIGN(8);
         *(.text*)
+        *(.rodata*)
         . = ALIGN(8);
         _text_end = .;
-    } :Code
+    } :text
 
     /* 数据段 */
-    .data : {
+    .data ALIGN(8) : {
         _data_start = .;
-        *(.data)
-        *(.data.*)
+        *(.data*)
         . = ALIGN(8);
         _data_end = .;
-    } :Data
+    } :data
 
     /* BSS段 */
-    .bss (NOLOAD) : {
+    .bss ALIGN(8) : {
         _bss_start = .;
-        *(.bss)
-        *(.bss.*)
+        *(.bss*)
+        *(COMMON)
         . = ALIGN(8);
         _bss_end = .;
-    } :BSS
+    } :data
+
+    /* 初始化段 */
+    .init : {
+        KEEP(*(.init))
+        KEEP(*(.initprologue))
+        KEEP(*(.init.*))
+    } :text
+
+    /* 特权段 */
+    .privileged ALIGN(8) : {
+        __privileged_start = .;
+        *(.privileged)
+        *(.privileged.*)
+        . = ALIGN(8);
+        __privileged_end = .;
+    } :priv
 
     /* 丢弃不需要的段 */
     /DISCARD/ : {
         *(.comment)
         *(.note*)
-        *(.eh_frame)
+        *(.eh_frame*)
         *(.rela*)
         *(.gnu*)
         *(.debug*)
+        *(.ape*)
+        *(.pe*)
+        *(.macho*)
+        *(.fini*)
     }
 
     /* 文件结束 */
