@@ -1,28 +1,20 @@
-#include "cosmopolitan.h"
+/* 简单的插件示例 */
 
-/* 导出函数 */
-__attribute__((visibility("default")))
-int dl_main(void) {
-    dprintf(1, "Hello from test11!\n");
-    return 0;
-}
-
-/* 初始化函数 */
-__attribute__((visibility("default")))
+/* 插件函数 */
+__attribute__((section(".text.dl_init")))
+__attribute__((used))
 int dl_init(void) {
-    dprintf(1, "Initializing test11...\n");
     return 0;
 }
 
-/* 清理函数 */
-__attribute__((visibility("default")))
+__attribute__((section(".text.dl_main")))
+__attribute__((used))
+int dl_main(void) {
+    return 42;
+}
+
+__attribute__((section(".text.dl_fini")))
+__attribute__((used))
 int dl_fini(void) {
-    dprintf(1, "Cleaning up test11...\n");
     return 0;
-}
-
-/* 测试函数 */
-__attribute__((visibility("default")))
-int test_func(int x, int y) {
-    return x + y;
 } 

@@ -20,14 +20,14 @@ static void* load_plugin(const char* path, size_t* size) {
     /* 打开插件文件 */
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
-        dprintf(2, "Failed to open plugin: %s (errno=%d)\n", path, errno);
+        dprintf(2, "Failed to open plugin: %s\n", path);
         return NULL;
     }
 
     /* 获取文件大小 */
     struct stat st;
     if (fstat(fd, &st) < 0) {
-        dprintf(2, "Failed to stat plugin (errno=%d)\n", errno);
+        dprintf(2, "Failed to stat plugin\n");
         close(fd);
         return NULL;
     }
@@ -41,7 +41,7 @@ static void* load_plugin(const char* path, size_t* size) {
     close(fd);
 
     if (base == MAP_FAILED) {
-        dprintf(2, "Failed to mmap plugin (errno=%d)\n", errno);
+        dprintf(2, "Failed to mmap plugin\n");
         return NULL;
     }
     dprintf(1, "Plugin mapped at: %p\n", base);
@@ -60,33 +60,23 @@ static bool verify_plugin(void* base) {
     dprintf(1, "  Fini offset: 0x%x\n", header->fini_offset);
     
     if (header->magic != PLUGIN_MAGIC) {
-        dprintf(2, "Invalid plugin magic: expected 0x%x, got 0x%x\n", 
-                PLUGIN_MAGIC, header->magic);
+        dprintf(2, "Invalid plugin magic: expected 0x%x, got 0x%x\n",
+               PLUGIN_MAGIC, header->magic);
         return false;
     }
 
     if (header->version != PLUGIN_VERSION) {
         dprintf(2, "Invalid plugin version: expected %d, got %d\n",
-                PLUGIN_VERSION, header->version);
+               PLUGIN_VERSION, header->version);
         return false;
     }
 
     return true;
 }
 
-/* 显示用法信息 */
-static void show_usage(const char* prog_name) {
-    dprintf(2, "Usage: %s <plugin.dl>\n", prog_name);
-}
-
-int main(int argc, char* argv[]) {
-    if (argc != 2) {
-        show_usage(argv[0]);
-        return 1;
-    }
-
+int main(void) {
     size_t size;
-    void* base = load_plugin(argv[1], &size);
+    void* base = load_plugin("test11.dl", &size);
     if (!base) {
         return 1;
     }
@@ -104,9 +94,9 @@ int main(int argc, char* argv[]) {
     int (*fini)(void) = (int (*)(void))((char*)base + header->fini_offset);
 
     dprintf(1, "Function addresses:\n");
-    dprintf(1, "  init: %p\n", init);
-    dprintf(1, "  main: %p\n", main_func);
-    dprintf(1, "  fini: %p\n", fini);
+    dprintf(1, "  init: %p (offset: 0x%x)\n", init, header->init_offset);
+    dprintf(1, "  main: %p (offset: 0x%x)\n", main_func, header->main_offset);
+    dprintf(1, "  fini: %p (offset: 0x%x)\n", fini, header->fini_offset);
 
     /* 执行插件 */
     int ret = 0;
@@ -117,24 +107,22 @@ int main(int argc, char* argv[]) {
             dprintf(2, "Plugin init failed: %d\n", ret);
             goto cleanup;
         }
+        dprintf(1, "Init returned: %d\n", ret);
     }
 
     if (main_func) {
         dprintf(1, "Calling main...\n");
         ret = main_func();
-        dprintf(1, "Plugin main returned: %d\n", ret);
+        dprintf(1, "Main returned: %d\n", ret);
     }
 
     if (fini) {
         dprintf(1, "Calling fini...\n");
         ret = fini();
-        if (ret != 0) {
-            dprintf(2, "Plugin cleanup failed: %d\n", ret);
-        }
+        dprintf(1, "Fini returned: %d\n", ret);
     }
 
 cleanup:
-    dprintf(1, "Unloading plugin...\n");
     munmap(base, size);
     return ret;
 } 
