@@ -34,6 +34,13 @@ static void* load_plugin(const char* path, size_t* size) {
     *size = st.st_size;
     dprintf(1, "Plugin file size: %zu bytes\n", *size);
 
+    /* 检查文件大小 */
+    if (*size < sizeof(struct plugin_header)) {
+        dprintf(2, "Plugin file too small: %zu bytes\n", *size);
+        close(fd);
+        return NULL;
+    }
+
     /* 映射文件到内存 */
     void* base = mmap(NULL, st.st_size, 
                      PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -50,7 +57,7 @@ static void* load_plugin(const char* path, size_t* size) {
 }
 
 /* 验证插件 */
-static bool verify_plugin(void* base) {
+static bool verify_plugin(void* base, size_t size) {
     struct plugin_header* header = (struct plugin_header*)base;
     dprintf(1, "Verifying plugin header:\n");
     dprintf(1, "  Magic: 0x%x\n", header->magic);
@@ -59,6 +66,7 @@ static bool verify_plugin(void* base) {
     dprintf(1, "  Main offset: 0x%x\n", header->main_offset);
     dprintf(1, "  Fini offset: 0x%x\n", header->fini_offset);
     
+    /* 检查魔数和版本 */
     if (header->magic != PLUGIN_MAGIC) {
         dprintf(2, "Invalid plugin magic: expected 0x%x, got 0x%x\n", 
                 PLUGIN_MAGIC, header->magic);
@@ -71,12 +79,41 @@ static bool verify_plugin(void* base) {
         return false;
     }
 
+    /* 检查偏移量 */
+    if (header->init_offset >= size ||
+        header->main_offset >= size ||
+        header->fini_offset >= size) {
+        dprintf(2, "Invalid function offset(s)\n");
+        return false;
+    }
+
+    /* 检查对齐 */
+    if (header->init_offset & 7 ||
+        header->main_offset & 7 ||
+        header->fini_offset & 7) {
+        dprintf(2, "Function offsets not aligned\n");
+        return false;
+    }
+
     return true;
 }
 
 /* 显示用法信息 */
 static void show_usage(const char* prog_name) {
     dprintf(2, "Usage: %s <plugin.dl>\n", prog_name);
+}
+
+/* 执行插件函数 */
+static int call_plugin_func(const char* name, int (*func)(void)) {
+    if (!func) {
+        dprintf(1, "Skipping %s (not defined)\n", name);
+        return 0;
+    }
+
+    dprintf(1, "Calling %s at %p...\n", name, func);
+    int ret = func();
+    dprintf(1, "%s returned: %d\n", name, ret);
+    return ret;
 }
 
 int main(int argc, char* argv[]) {
@@ -91,7 +128,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (!verify_plugin(base)) {
+    if (!verify_plugin(base, size)) {
         munmap(base, size);
         return 1;
     }
@@ -104,33 +141,28 @@ int main(int argc, char* argv[]) {
     int (*fini)(void) = (int (*)(void))((char*)base + header->fini_offset);
 
     dprintf(1, "Function addresses:\n");
-    dprintf(1, "  init: %p\n", init);
-    dprintf(1, "  main: %p\n", main_func);
-    dprintf(1, "  fini: %p\n", fini);
+    dprintf(1, "  init: %p (offset: 0x%x)\n", init, header->init_offset);
+    dprintf(1, "  main: %p (offset: 0x%x)\n", main_func, header->main_offset);
+    dprintf(1, "  fini: %p (offset: 0x%x)\n", fini, header->fini_offset);
 
     /* 执行插件 */
     int ret = 0;
-    if (init) {
-        dprintf(1, "Calling init...\n");
-        ret = init();
-        if (ret != 0) {
-            dprintf(2, "Plugin init failed: %d\n", ret);
-            goto cleanup;
-        }
+    
+    /* 调用init */
+    ret = call_plugin_func("init", init);
+    if (ret != 0) {
+        dprintf(2, "Plugin init failed: %d\n", ret);
+        goto cleanup;
     }
 
-    if (main_func) {
-        dprintf(1, "Calling main...\n");
-        ret = main_func();
-        dprintf(1, "Plugin main returned: %d\n", ret);
-    }
+    /* 调用main */
+    ret = call_plugin_func("main", main_func);
 
-    if (fini) {
-        dprintf(1, "Calling fini...\n");
-        ret = fini();
-        if (ret != 0) {
-            dprintf(2, "Plugin cleanup failed: %d\n", ret);
-        }
+    /* 调用fini */
+    int fini_ret = call_plugin_func("fini", fini);
+    if (fini_ret != 0) {
+        dprintf(2, "Plugin cleanup failed: %d\n", fini_ret);
+        if (ret == 0) ret = fini_ret;
     }
 
 cleanup:

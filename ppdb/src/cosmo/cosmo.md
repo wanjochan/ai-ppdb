@@ -172,3 +172,93 @@ struct plugin_header {
    - 使用mmap加载插件
    - 验证头部信息
    - 计算函数地址 
+
+## 插件格式优化
+
+### 文件布局优化
+1. 头部段（0x00-0x18）
+   - Magic: "PPDB" (4字节)
+   - Version: 1 (4字节)
+   - 函数偏移量 (12字节)
+   - 8字节对齐
+
+2. 代码段（0x18-0x40）
+   - dl_init、dl_main、dl_fini函数
+   - 紧凑布局，无填充
+   - 8字节对齐
+
+3. 数据段和BSS段（0x40-）
+   - 按需分配
+   - 8字节对齐
+
+### 编译优化
+1. 编译选项
+   ```bat
+   -fno-pic -fno-pie -nostdinc
+   -ffunction-sections -fdata-sections
+   -O0 -fno-inline
+   -fno-optimize-sibling-calls
+   -fkeep-static-functions
+   ```
+
+2. 链接选项
+   ```bat
+   -static -nostdlib
+   --strip-debug
+   --section-start=.header=0
+   ```
+
+3. 二进制生成
+   ```bat
+   -O binary
+   -R .comment -R .note -R .eh_frame
+   -R .rela* -R .gnu* -R .debug*
+   ```
+
+## 插件加载测试计划
+
+### 基本功能测试
+1. 头部验证
+   - Magic和Version检查
+   - 偏移量范围检查
+   - 段边界检查
+
+2. 内存映射
+   - 使用mmap加载
+   - 设置rwx权限
+   - 验证地址对齐
+
+3. 函数调用
+   - 计算函数地址
+   - 调用dl_init
+   - 调用dl_main
+   - 调用dl_fini
+
+### 错误处理
+1. 文件错误
+   - 文件不存在
+   - 文件格式错误
+   - 文件权限错误
+
+2. 内存错误
+   - 映射失败
+   - 权限设置失败
+   - 地址越界
+
+3. 执行错误
+   - 函数调用失败
+   - 返回值检查
+   - 异常处理
+
+### 测试用例
+1. test11.dl
+   - 基本功能测试
+   - 返回固定值
+   - 验证生命周期
+
+2. 后续测试
+   - 添加数据段测试
+   - 添加BSS段测试
+   - 添加异常测试
+
+// ... existing code ... 

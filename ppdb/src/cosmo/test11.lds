@@ -1,8 +1,5 @@
 /* 简单的链接脚本 */
 
-/* 定义入口点 */
-ENTRY(_start)
-
 /* 定义段的属性 */
 PHDRS
 {
@@ -34,51 +31,43 @@ SECTIONS
         LONG(_dl_init_offset)
         LONG(_dl_main_offset)
         LONG(_dl_fini_offset)
-        . = ALIGN(16);
+        . = ALIGN(8);
         _header_end = .;
     } :Head
 
     /* 代码段 */
-    .text ALIGN(16) : {
+    .text : {
         _text_start = .;
 
-        /* dl_init函数 */
-        . = ALIGN(16);
+        /* 插件函数 */
         _dl_init = .;
         *(.text.dl_init)
-        . = ALIGN(16);
-
-        /* dl_main函数 */
         _dl_main = .;
         *(.text.dl_main)
-        . = ALIGN(16);
-
-        /* dl_fini函数 */
         _dl_fini = .;
         *(.text.dl_fini)
-        . = ALIGN(16);
 
         /* 其他代码 */
         *(.text*)
-        . = ALIGN(16);
+        . = ALIGN(8);
         _text_end = .;
     } :Code
 
     /* 数据段 */
-    .data ALIGN(16) : {
+    .data : {
         _data_start = .;
         *(.data)
         *(.data.*)
-        . = ALIGN(16);
+        . = ALIGN(8);
         _data_end = .;
     } :Data
 
     /* BSS段 */
-    .bss ALIGN(16) (NOLOAD) : {
+    .bss (NOLOAD) : {
         _bss_start = .;
         *(.bss)
         *(.bss.*)
-        . = ALIGN(16);
+        . = ALIGN(8);
         _bss_end = .;
     } :BSS
 
@@ -89,6 +78,7 @@ SECTIONS
         *(.eh_frame)
         *(.rela*)
         *(.gnu*)
+        *(.debug*)
     }
 
     /* 文件结束 */
