@@ -79,3 +79,5 @@ ppdb/src/base/backup/
 ppdb/test.txt
 ppdb/scripts/test.txt
 ppdb/src/cosmo/test4.map
+*.msi
+*.appx

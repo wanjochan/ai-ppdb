@@ -259,3 +259,10 @@ execute_command：执行 CLI 命令。 这些工具进一步扩展了 Cline 插�
    - 定期清理历史对话
 
 启动命令：【PM】{任务描述}
+
+$env:HTTPS_PROXY='http://127.0.0.1:8888'; Invoke-WebRequest -Uri "https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi" -OutFile "wsl_update_x64.msi" -UseBasicParsing
+
+curl.exe --proxy http://127.0.0.1:8888 -L -o wsl_update_x64.msi https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi
+
+ -L -o Ubuntu.appx https://aka.ms/wslubuntu2204
+ 
