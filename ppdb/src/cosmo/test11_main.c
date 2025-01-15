@@ -20,24 +20,24 @@ struct plugin_header {
 
 /* 加载插件 */
 static void* load_plugin(const char* path, size_t* size) {
-    dprintf(1, "Loading plugin: %s\n", path);
+    printf("Loading plugin: %s\n", path);
     
     /* 打开插件文件 */
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
-        dprintf(2, "Failed to open plugin: %s\n", path);
+        printf("Failed to open plugin: %s\n", path);
         return NULL;
     }
 
     /* 获取文件大小 */
     struct stat st;
     if (fstat(fd, &st) < 0) {
-        dprintf(2, "Failed to stat plugin\n");
+        printf("Failed to stat plugin\n");
         close(fd);
         return NULL;
     }
     *size = st.st_size;
-    dprintf(1, "Plugin file size: %zu bytes\n", *size);
+    printf("Plugin file size: %zu bytes\n", *size);
 
     /* 映射文件到内存 */
     void* base = mmap(NULL, st.st_size, 
@@ -46,10 +46,10 @@ static void* load_plugin(const char* path, size_t* size) {
     close(fd);
 
     if (base == MAP_FAILED) {
-        dprintf(2, "Failed to mmap plugin\n");
+        printf("Failed to mmap plugin\n");
         return NULL;
     }
-    dprintf(1, "Plugin mapped at: %p\n", base);
+    printf("Plugin mapped at: %p\n", base);
 
     return base;
 }
@@ -57,21 +57,21 @@ static void* load_plugin(const char* path, size_t* size) {
 /* 验证插件 */
 static bool verify_plugin(void* base) {
     struct plugin_header* header = (struct plugin_header*)base;
-    dprintf(1, "Verifying plugin header:\n");
-    dprintf(1, "  Magic: 0x%x\n", header->magic);
-    dprintf(1, "  Version: %d\n", header->version);
-    dprintf(1, "  Init offset: 0x%x\n", header->init_offset);
-    dprintf(1, "  Main offset: 0x%x\n", header->main_offset);
-    dprintf(1, "  Fini offset: 0x%x\n", header->fini_offset);
+    printf("Verifying plugin header:\n");
+    printf("  Magic: 0x%x\n", header->magic);
+    printf("  Version: %d\n", header->version);
+    printf("  Init offset: 0x%x\n", header->init_offset);
+    printf("  Main offset: 0x%x\n", header->main_offset);
+    printf("  Fini offset: 0x%x\n", header->fini_offset);
     
     if (header->magic != PLUGIN_MAGIC) {
-        dprintf(2, "Invalid plugin magic: expected 0x%x, got 0x%x\n",
+        printf("Invalid plugin magic: expected 0x%x, got 0x%x\n",
                PLUGIN_MAGIC, header->magic);
         return false;
     }
 
     if (header->version != PLUGIN_VERSION) {
-        dprintf(2, "Invalid plugin version: expected %d, got %d\n",
+        printf("Invalid plugin version: expected %d, got %d\n",
                PLUGIN_VERSION, header->version);
         return false;
     }
@@ -80,6 +80,9 @@ static bool verify_plugin(void* base) {
 }
 
 int main(void) {
+    /* 初始化stdio */
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     size_t size;
     void* base = load_plugin("test11.dl", &size);
     if (!base) {
@@ -98,33 +101,33 @@ int main(void) {
     int (*main_func)(void) = (int (*)(void))((char*)base + header->main_offset);
     int (*fini)(void) = (int (*)(void))((char*)base + header->fini_offset);
 
-    dprintf(1, "Function addresses:\n");
-    dprintf(1, "  init: %p (offset: 0x%x)\n", init, header->init_offset);
-    dprintf(1, "  main: %p (offset: 0x%x)\n", main_func, header->main_offset);
-    dprintf(1, "  fini: %p (offset: 0x%x)\n", fini, header->fini_offset);
+    printf("Function addresses:\n");
+    printf("  init: %p (offset: 0x%x)\n", init, header->init_offset);
+    printf("  main: %p (offset: 0x%x)\n", main_func, header->main_offset);
+    printf("  fini: %p (offset: 0x%x)\n", fini, header->fini_offset);
 
     /* 执行插件 */
     int ret = 0;
     if (init) {
-        dprintf(1, "Calling init...\n");
+        printf("Calling init...\n");
         ret = init();
         if (ret != 0) {
-            dprintf(2, "Plugin init failed: %d\n", ret);
+            printf("Plugin init failed: %d\n", ret);
             goto cleanup;
         }
-        dprintf(1, "Init returned: %d\n", ret);
+        printf("Init returned: %d\n", ret);
     }
 
     if (main_func) {
-        dprintf(1, "Calling main...\n");
+        printf("Calling main...\n");
         ret = main_func();
-        dprintf(1, "Main returned: %d\n", ret);
+        printf("Main returned: %d\n", ret);
     }
 
     if (fini) {
-        dprintf(1, "Calling fini...\n");
+        printf("Calling fini...\n");
         ret = fini();
-        dprintf(1, "Fini returned: %d\n", ret);
+        printf("Fini returned: %d\n", ret);
     }
 
 cleanup:

@@ -13,24 +13,31 @@ void* __wrap_ape_stack_round(void* p) {
     return p;
 }
 
+int __wrap___cxa_atexit(void (*func)(void*), void* arg, void* dso) {
+    return 0;
+}
+
 /* 插件函数 */
 __attribute__((section(".text.dl_init")))
 __attribute__((used))
 int dl_init(void) {
-    write(1, "[Plugin] Init called\n", 20);
+    const char msg[] = "[Plugin] Init called\n";
+    write(1, msg, sizeof(msg) - 1);
     return 0;
 }
 
 __attribute__((section(".text.dl_main")))
 __attribute__((used))
 int dl_main(void) {
-    write(1, "[Plugin] Main called\n", 20);
+    const char msg[] = "[Plugin] Main called\n";
+    write(1, msg, sizeof(msg) - 1);
     return 42;
 }
 
 __attribute__((section(".text.dl_fini")))
 __attribute__((used))
 int dl_fini(void) {
-    write(1, "[Plugin] Fini called\n", 20);
+    const char msg[] = "[Plugin] Fini called\n";
+    write(1, msg, sizeof(msg) - 1);
     return 0;
 } 

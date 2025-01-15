@@ -97,7 +97,6 @@ SECTIONS
         *(.rela*)
         *(.gnu*)
         *(.debug*)
-        *(.ape*)
         *(.pe*)
         *(.macho*)
         *(.fini*)
