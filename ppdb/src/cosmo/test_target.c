@@ -1,12 +1,13 @@
-#include "cosmopolitan.h"
+#include "plugin.h"
 
-/* 包装函数 */
-void* __wrap_ape_stack_round(void* p) {
-    return p;
+/* 导出函数 */
+__attribute__((used))
+int _dl_main(void) {
+    /* 返回一个固定值 */
+    return 42;
 }
 
-/* 入口函数 */
+/* 主函数 - 用于独立运行 */
 int main(void) {
-    write(1, "Hello from target APE!\n", 22);
-    return 42;
+    return _dl_main();
 } 

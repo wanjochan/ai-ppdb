@@ -1,26 +1,30 @@
 #include "cosmopolitan.h"
-
-/* 包装函数 */
-void* __wrap_ape_stack_round(void* p) {
-    return p;
-}
+#include "plugin.h"
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        printf("Usage: %s <ape_file>\n", argv[0]);
+        printf("Usage: %s <plugin>\n", argv[0]);
         return 1;
     }
 
-    printf("Executing APE file: %s\n", argv[1]);
+    // 加载插件
+    plugin_t* p = load_plugin(argv[1]);
+    if (!p) {
+        printf("Failed to load plugin\n");
+        return 1;
+    }
+
+    // 执行插件主函数
+    printf("Executing plugin main function...\n");
+    printf("Main function pointer: %p\n", p->main);
+    printf("Base address: %p\n", p->base);
+    printf("Size: %ld\n", p->size);
     
-    /* 准备参数 */
-    char* const args[] = {argv[1], NULL};
-    char* const envp[] = {NULL};
-    
-    /* 直接执行目标程序 */
-    execve(argv[1], args, envp);
-    
-    /* 如果execve返回，说明出错了 */
-    printf("Failed to execute %s\n", argv[1]);
-    return 1;
+    int ret = p->main();
+    printf("Plugin main returned: %d\n", ret);
+
+    // 卸载插件
+    unload_plugin(p);
+
+    return 0;
 } 
