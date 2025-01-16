@@ -9,11 +9,8 @@ void* ape_stack_round(void* p) {
 #define PLUGIN_MAGIC 0x50504442
 #define PLUGIN_VERSION 1
 
-/* APE头部魔数 */
-#define APE_MZ_MAGIC 0x5A4D
-#define APE_PE_MAGIC 0x4550
-#define APE_ELF_MAGIC 0x464C457F
-#define APE_MACHO_MAGIC 0xFEEDFACF
+/* APE头部大小 */
+#define APE_HEADER_SIZE 4096
 
 /* 插件头部结构 */
 struct plugin_header {
@@ -23,57 +20,6 @@ struct plugin_header {
     uint32_t main_offset;
     uint32_t fini_offset;
 };
-
-/* APE头部结构 */
-struct ape_header {
-    uint64_t mz_magic;      /* DOS MZ 魔数 */
-    uint8_t  pad1[0x3c];
-    uint32_t pe_magic;      /* PE 魔数 */
-    uint16_t machine;       /* AMD64 */
-    uint16_t num_sections;
-    uint32_t timestamp;
-    uint8_t  pad2[0x40];
-    uint32_t elf_magic;     /* ELF 魔数 */
-    uint8_t  elf_class;     /* 64位 */
-    uint8_t  elf_data;      /* 小端 */
-    uint8_t  elf_version;   /* 版本1 */
-    uint8_t  elf_abi;       /* System V */
-    uint64_t elf_pad;
-    uint16_t elf_type;      /* ET_DYN */
-    uint16_t elf_machine;   /* x86-64 */
-    uint32_t elf_version2;  /* 版本1 */
-    uint64_t elf_entry;     /* 入口点 */
-    uint8_t  pad3[0x40];
-    uint32_t macho_magic;   /* Mach-O 魔数 */
-    uint32_t macho_cputype;
-    uint32_t macho_cpusubtype;
-    uint32_t macho_filetype;
-    uint32_t macho_ncmds;
-    uint32_t macho_sizeofcmds;
-    uint32_t macho_flags;
-    uint32_t macho_reserved;
-};
-
-/* 验证APE头部 */
-static bool verify_ape(void* base) {
-    struct ape_header* header = (struct ape_header*)base;
-    printf("Verifying APE header:\n");
-    printf("  MZ magic: 0x%llx\n", header->mz_magic);
-    printf("  PE magic: 0x%x\n", header->pe_magic);
-    printf("  ELF magic: 0x%x\n", header->elf_magic);
-    printf("  Mach-O magic: 0x%x\n", header->macho_magic);
-    printf("  Entry point: 0x%llx\n", header->elf_entry);
-
-    if (header->mz_magic != APE_MZ_MAGIC || 
-        header->pe_magic != APE_PE_MAGIC ||
-        header->elf_magic != APE_ELF_MAGIC ||
-        header->macho_magic != APE_MACHO_MAGIC) {
-        printf("Not an APE file\n");
-        return false;
-    }
-
-    return true;
-}
 
 /* 加载插件 */
 static void* load_plugin(const char* path, size_t* size) {
@@ -136,6 +82,18 @@ static bool verify_plugin(void* base) {
     return true;
 }
 
+/* 验证APE头部 */
+static bool verify_ape(void* base) {
+    /* 检查APE头部魔数 */
+    uint64_t* header = (uint64_t*)base;
+    if (header[0] != 0x13371337) {
+        printf("Not an APE file (magic: 0x%llx)\n", header[0]);
+        return false;
+    }
+    printf("APE header found\n");
+    return true;
+}
+
 int main(int argc, char* argv[]) {
     /* 初始化stdio */
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -195,14 +153,13 @@ int main(int argc, char* argv[]) {
 
     /* 尝试作为APE程序加载 */
     if (verify_ape(base)) {
-        struct ape_header* header = (struct ape_header*)base;
-        
-        /* 获取入口点 */
-        int (*entry)(void) = (int (*)(void))((char*)base + header->elf_entry);
-        printf("APE entry point: %p (offset: 0x%llx)\n", entry, header->elf_entry);
+        /* 跳过APE头部 */
+        void* entry = (char*)base + APE_HEADER_SIZE;
+        printf("APE entry point: %p\n", entry);
 
         /* 执行程序 */
-        int ret = entry();
+        int (*main_func)(int, char**) = (int (*)(int, char**))entry;
+        int ret = main_func(argc, argv);
         printf("Program returned: %d\n", ret);
         goto cleanup;
     }
