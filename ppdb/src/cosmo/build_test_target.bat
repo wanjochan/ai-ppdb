@@ -37,7 +37,7 @@ if errorlevel 1 (
 rem 链接目标程序
 echo Linking plugin...
 %GCC% ^
-    -static -nostdlib ^
+    -nostdlib ^
     -Wl,-T,plugin.lds ^
     -Wl,--gc-sections ^
     -Wl,--build-id=none ^
