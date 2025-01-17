@@ -67,9 +67,9 @@ ape_module_t* load_ape_module(const char* path) {
         return NULL;
     }
     
-    // 验证ELF头
-    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)mod->base;
-    if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
+    // 验证APE头
+    unsigned char elf_magic[] = {0x7f, 'E', 'L', 'F'};
+    if (memcmp(mod->base, elf_magic, 4) != 0) {
         unload_ape_module(mod);
         return NULL;
     }
@@ -86,6 +86,7 @@ ape_module_t* load_ape_module(const char* path) {
     mod->rela_count = rela_size / sizeof(Elf64_Rela);
     
     // 设置入口点
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)mod->base;
     mod->entry = (char*)mod->base + ehdr->e_entry;
     
     // 处理重定位
@@ -134,13 +135,12 @@ plugin_t* load_plugin(const char* path) {
     
     /* 确保代码段是可执行的 */
     Elf64_Ehdr* ehdr = (Elf64_Ehdr*)mod->base;
-    Elf64_Shdr* shdr = (Elf64_Shdr*)((char*)mod->base + ehdr->e_shoff);
-    char* shstrtab = (char*)mod->base + shdr[ehdr->e_shstrndx].sh_offset;
+    Elf64_Phdr* phdr = (Elf64_Phdr*)((char*)mod->base + ehdr->e_phoff);
     
-    for (int i = 0; i < ehdr->e_shnum; i++) {
-        if (shdr[i].sh_flags & SHF_EXECINSTR) {
-            void* start = (char*)mod->base + shdr[i].sh_offset;
-            size_t len = shdr[i].sh_size;
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        if (phdr[i].p_type == PT_LOAD && (phdr[i].p_flags & PF_X)) {
+            void* start = (char*)mod->base + phdr[i].p_offset;
+            size_t len = phdr[i].p_filesz;
             /* 确保代码段对齐到页边界 */
             void* aligned_start = (void*)((uintptr_t)start & ~0xFFF);
             size_t aligned_len = (len + ((uintptr_t)start & 0xFFF) + 0xFFF) & ~0xFFF;

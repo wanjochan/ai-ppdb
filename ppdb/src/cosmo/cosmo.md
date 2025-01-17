@@ -2,38 +2,17 @@
 
 ## 项目目标
 
-利用Cosmopolitan工具链，实现一个轻量级的动态加载器，用于加载和执行特定格式的插件文件。该项目是PPDB（跨平台动态库模块）的一个组成部分。
+利用Cosmopolitan工具链，aper_loader()，
+实现加载其他用cosmopolitan编译的ape格式的可执行文件并调用。
+该计划是是PPDB（跨平台动态库模块）的一个组成部分。
+参考 https://github.com/jart/cosmopolitan/blob/master/ape/loader.c
+请注意你的开发环境是在 windows，正在 cursor 编辑器中的composer所以用的是 powershell
 
 ### 核心目标
-1. 实现简单的插件格式和加载机制
-2. 插件文件包含完整的静态编译代码（包含cosmopolitan库）
-3. 支持标准的生命周期管理（init/main/fini）
-4. 确保与Cosmopolitan工具链的兼容性
+brev.
 
 ## 插件格式
 
-### 头部结构（20字节）
-```c
-struct plugin_header {
-    uint32_t magic;    // 0x50504442 ("PPDB")
-    uint32_t version;  // 当前为1
-    uint32_t init_offset;   // dl_init函数偏移
-    uint32_t main_offset;   // dl_main函数偏移
-    uint32_t fini_offset;   // dl_fini函数偏移
-};
-```
-
-### 文件布局
-1. 头部段（.header）
-   - 包含plugin_header结构
-   - 位于文件开始处
-2. 代码段（.text）
-   - 包含插件函数
-   - 包含静态链接的库代码
-3. 数据段（.data）
-   - 包含只读数据
-4. BSS段（.bss）
-   - 包含未初始化数据
 
 ## 开发规范
 
@@ -45,11 +24,6 @@ struct plugin_header {
    - 变量和函数使用小写字母和下划线命名
 
 2. 函数导出规范
-   ```c
-   /* 必须使用这两个属性 */
-   __attribute__((section(".text.dl_name")))
-   __attribute__((used))
-   ```
    - 必须导出的函数：
      * `dl_init`：初始化函数，返回0表示成功
      * `dl_main`：主函数，返回值由插件定义
@@ -57,9 +31,6 @@ struct plugin_header {
 
 3. 内存使用规范
    - 避免使用全局变量，优先使用函数参数传递数据
-   - 必要的全局变量放在`.data`或`.bss`段
-   - 字符串常量放在`.rodata`段
-   - 遵循8字节对齐原则
 
 4. 错误处理规范
    - 使用返回值传递错误状态，0表示成功
@@ -97,21 +68,6 @@ struct plugin_header {
 
 ## 开发经验总结
 
-### 链接脚本设计
-1. 段的保留和丢弃
-   - 不能丢弃`.ape*`段，这些段包含了Cosmopolitan运行时所需的代码
-   - 可以安全丢弃的段：`.comment`、`.note*`、`.debug*`等
-   - 需要保留的关键段：`.text*`、`.data*`、`.bss*`、`.init*`
-
-2. 函数导出
-   - 使用`__attribute__((section(".text.NAME")))`指定函数段
-   - 使用`__attribute__((used))`防止函数被优化掉
-   - 使用`KEEP()`指令在链接时保留指定段
-
-3. 内存布局
-   - 从地址0开始布局，便于计算偏移量
-   - 使用`ALIGN(8)`确保段对齐
-   - 使用`PHDRS`定义段的权限（r/w/x）
 
 ### 运行时支持
 1. 包装函数
@@ -151,46 +107,6 @@ struct plugin_header {
    - 逐步添加复杂特性
    - 保留测试用例作为参考 
 
-## 架构设计
-
-### 整体架构
-1. 基础设施层（libinfra）
-   - 内存管理
-   - 网络操作（TCP/UDP基础功能）
-   - 日志系统
-   - 其他基础设施
-
-2. 核心功能层（libppdb）
-   - 数据库操作
-   - 插件系统管理
-   - 其他核心功能
-
-3. 网络层（规划中）
-   - 基于IPFS协议的P2P网络
-   - DHT网络（Peer发现和路由）
-   - 内容寻址和验证
-   - 数据传输和同步
-
-4. 插件生态
-   - rinetd.dl（双向代理测试模块）
-   - ipfs_node.dl（计划中的P2P节点）
-   - upgrade.dl（计划中的升级模块）
-
-### 插件系统优化
-1. 插件依赖管理
-   - 主程序静态链接libppdb和libinfra
-   - 插件通过API调用主程序功能
-   - 最小化插件体积
-
-2. API设计
-   - 统一的API接口
-   - 版本控制和兼容性管理
-   - 资源和权限管理
-
-3. 安全性考虑
-   - API访问控制
-   - 资源使用限制
-   - 插件验证机制
 
 ### 未来规划
 1. P2P网络实现
@@ -207,3 +123,46 @@ struct plugin_header {
    - 标准化插件开发流程
    - 插件市场和分发机制
    - 插件安全审计系统 
+
+## APE Loader 实现记录
+
+### 相关文件
+```
+ppdb/src/cosmo/
+├── ape_loader.c     # APE加载器实现
+├── ape_loader.h     # 加载器头文件
+├── test_loader.c    # 测试主程序
+├── test_target.c    # 被加载的目标程序
+└── build_test_loader.bat  # 构建脚本
+```
+
+### 构建命令
+```bat
+@echo off
+set GCC=..\..\..\repos\cross9\bin\x86_64-pc-linux-gnu-gcc.exe
+set LD=..\..\..\repos\cross9\bin\x86_64-pc-linux-gnu-ld.exe
+set OBJCOPY=..\..\..\repos\cross9\bin\x86_64-pc-linux-gnu-objcopy.exe
+
+%GCC% -g -Os -fno-pie -no-pie -static test_loader.c ape_loader.c -o test_loader.exe
+```
+
+### 当前问题
+1. ELF头部定位问题:
+   - 需要在PE头部之后正确定位ELF头部
+   - 当前使用多个固定偏移量(0x1000-0xf000)搜索
+   - 需要理解APE文件格式的具体布局
+
+2. 函数地址解析:
+   - 目前使用固定偏移量(0x7afe)
+   - 需要实现通过符号表查找函数
+   - 需要正确处理重定位
+
+### 下一步计划
+1. 分析APE文件格式,确定ELF头部的准确位置
+2. 实现符号表解析
+3. 完善内存映射和权限设置
+4. 添加错误处理和调试信息
+
+### 参考资料
+1. APE Loader实现: https://github.com/jart/cosmopolitan/blob/master/ape/loader.c
+2. APE文件格式: https://justine.lol/ape.html 

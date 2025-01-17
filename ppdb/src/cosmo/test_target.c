@@ -1,19 +1,21 @@
-#include "plugin.h"
+#include "cosmopolitan.h"
 
-/* 导出函数 */
-__attribute__((used))
-int _dl_main(const host_api_t* api) {
-    /* 使用主程序提供的接口 */
-    char* msg = api->malloc(100);
-    api->memset(msg, 0, 100);
-    api->memcpy(msg, "Hello from plugin!\n", 18);
-    api->printf(msg);
-    api->printf("The answer is %d\n", 42);
-    api->free(msg);
+//__attribute__((visibility("default")))
+//__attribute__((section(".text.hot.test_func")))
+int test_func(int x, int y) {
+    //printf("Test function called with: x=%d, y=%d\n", x, y);
+    //return x + y;
     return 42;
 }
 
-/* 主函数 - 用于独立运行 */
-int main(void) {
-    return _dl_main(0);
+int main(int argc, char *argv[]) {
+    //printf("Target program loaded!\n");
+    return 0;
+}
+
+/* APE入口点 */
+__attribute__((force_align_arg_pointer))
+void _start(void) {
+    static char* argv[] = {"test_target.com", NULL};
+    exit(main(1, argv));
 } 

@@ -43,6 +43,6 @@ struct ApeHeader {
 /* APE 加载器函数 */
 void* ape_load(const char* path);
 void* ape_get_proc(void* handle, const char* symbol);
-int ape_unload(void* handle);
+void ape_unload(void* handle);
 
 #endif /* APE_LOADER_H */ 
