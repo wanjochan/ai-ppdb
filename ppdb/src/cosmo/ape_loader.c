@@ -20,6 +20,11 @@ typedef struct {
 
 static void* find_elf_header(void* base, size_t size) {
     unsigned char* p = (unsigned char*)base;
+    static union ElfEhdrBuf ebuf;  // 改为静态变量
+    static struct ApeLoader M;     // 改为静态变量
+    long sp[2] = {0, 0};  // 模拟栈指针
+    long auxv[2] = {0, 0};  // 模拟辅助向量
+    char exe[] = "test_target.exe";
     
     // 验证 MZ 签名 (0x4d5a)
     if (p[0] != 0x4d || p[1] != 0x5a) {
@@ -41,44 +46,29 @@ static void* find_elf_header(void* base, size_t size) {
         return NULL;
     }
     printf("PE signature verified at 0x%x\n", pe_offset);
+
+    // 获取 PE 文件头信息
+    uint16_t machine = *(uint16_t*)(p + pe_offset + 0x4);
+    uint16_t num_sections = *(uint16_t*)(p + pe_offset + 0x6);
+    uint16_t optional_header_size = *(uint16_t*)(p + pe_offset + 0x14);
     
-    // 从 PE 头部开始搜索 ELF 魔数
-    unsigned char* search_start = p + pe_offset;
-    unsigned char* search_end = p + size - 16;
-    unsigned char* ptr = search_start;
-    
-    printf("Searching for ELF header from 0x%zx to 0x%zx\n", 
-           search_start - p, search_end - p);
-    
-    while (ptr < search_end) {
-        // 检查 ELF 魔数
-        if (READ32(ptr) == 0x464C457F) { // "\x7FELF"
-            // 验证其他 ELF 头部字段
-            Elf64_Ehdr* ehdr = (Elf64_Ehdr*)ptr;
-            if (ehdr->e_ident[EI_CLASS] == ELFCLASS64 &&
-                ehdr->e_ident[EI_DATA] == ELFDATA2LSB &&
-                ehdr->e_ident[EI_VERSION] == EV_CURRENT &&
-                ehdr->e_type <= ET_DYN &&
-                ehdr->e_machine == EM_X86_64) {
-                printf("Found valid ELF header at offset 0x%zx\n", ptr - p);
-                printf("  Class: %d (ELFCLASS64)\n", ehdr->e_ident[EI_CLASS]);
-                printf("  Data: %d (ELFDATA2LSB)\n", ehdr->e_ident[EI_DATA]);
-                printf("  Version: %d\n", ehdr->e_ident[EI_VERSION]);
-                printf("  Type: 0x%x\n", ehdr->e_type);
-                printf("  Machine: 0x%x (EM_X86_64)\n", ehdr->e_machine);
-                printf("  Entry point: 0x%lx\n", ehdr->e_entry);
-                printf("  Program header offset: 0x%lx\n", ehdr->e_phoff);
-                printf("  Section header offset: 0x%lx\n", ehdr->e_shoff);
-                return ehdr;
-            }
-        }
-        // 按页面大小对齐增加搜索指针
-        ptr += 0x1000;
+    printf("PE Header Info:\n");
+    printf("  Machine: 0x%04x\n", machine);
+    printf("  Number of sections: %d\n", num_sections);
+    printf("  Optional header size: 0x%x\n", optional_header_size);
+
+    // 在 PE 头部后的固定偏移处查找 ELF 头部
+    unsigned char* elf_start = p + pe_offset + 0x40;  // PE 头部 + 0x40
+    memcpy(ebuf.buf, elf_start, sizeof(ebuf.buf));
+
+    // 使用 TryElf 验证和处理 ELF 头部
+    const char* error = TryElf(&M, &ebuf, exe, -1, sp, auxv, 4096, 1);
+    if (error) {
+        printf("TryElf failed: %s\n", error);
+        return NULL;
     }
-    
-    printf("ELF header not found in range 0x%zx - 0x%zx\n", 
-           search_start - p, search_end - p);
-    return NULL;
+
+    return (void*)elf_start;  // 返回实际的 ELF 头部地址
 }
 
 static bool load_symbols(loaded_module_t* module) {
@@ -258,4 +248,117 @@ void ape_unload(void* handle) {
         munmap(module->base, module->size);
     }
     free(module);
+}
+
+/* TryElf 函数实现 */
+const char* TryElf(struct ApeLoader* M, union ElfEhdrBuf* ebuf,
+                  char* exe, int fd, long* sp, long* auxv,
+                  unsigned long pagesz, int os) {
+    struct ElfEhdr* e = &ebuf->ehdr;
+    struct ElfPhdr* p;
+    unsigned size;
+
+    /* 验证 ELF 魔数 */
+    if (READ32(ebuf->buf) != READ32("\177ELF")) {
+        return "didn't embed ELF magic";
+    }
+
+    /* 验证 ELF 头部 */
+    if (e->e_ident[EI_CLASS] != ELFCLASS64) {
+        return "32-bit ELF isn't supported";
+    }
+    if (e->e_type != ET_EXEC && e->e_type != ET_DYN) {
+        return "ELF not ET_EXEC or ET_DYN";
+    }
+    if (e->e_machine != EM_X86_64) {
+        return "couldn't find ELF header with x86-64 machine type";
+    }
+    if (e->e_phentsize != sizeof(struct ElfPhdr)) {
+        return "e_phentsize is wrong";
+    }
+
+    /* 验证程序头部大小 */
+    size = e->e_phnum;
+    if ((size *= sizeof(struct ElfPhdr)) > sizeof(M->phdr.buf)) {
+        return "too many ELF program headers";
+    }
+
+    /* 读取程序头部 */
+    memcpy(M->phdr.buf, (char*)e + e->e_phoff, size);
+    p = &M->phdr.phdr;
+
+    /* 检查程序头部 */
+    for (int i = 0; i < e->e_phnum; i++) {
+        if (p[i].p_type == PT_INTERP) {
+            return "ELF has PT_INTERP which isn't supported";
+        }
+        if (p[i].p_type == PT_DYNAMIC) {
+            return "ELF has PT_DYNAMIC which isn't supported";
+        }
+    }
+
+    /* 移除空的程序头部 */
+    for (int i = 0; i < e->e_phnum;) {
+        if (p[i].p_type == PT_LOAD && !p[i].p_memsz) {
+            if (i + 1 < e->e_phnum) {
+                memmove(p + i, p + i + 1,
+                       (e->e_phnum - (i + 1)) * sizeof(struct ElfPhdr));
+            }
+            --e->e_phnum;
+        } else {
+            ++i;
+        }
+    }
+
+    /* 合并相邻的 LOAD 段 */
+    for (int i = 0; i + 1 < e->e_phnum;) {
+        if (p[i].p_type == PT_LOAD && p[i + 1].p_type == PT_LOAD &&
+            ((p[i].p_flags & (PF_R | PF_W | PF_X)) ==
+             (p[i + 1].p_flags & (PF_R | PF_W | PF_X))) &&
+            ((p[i].p_offset + p[i].p_filesz + (pagesz - 1)) & -pagesz) -
+                    (p[i + 1].p_offset & -pagesz) <=
+                pagesz &&
+            ((p[i].p_vaddr + p[i].p_memsz + (pagesz - 1)) & -pagesz) -
+                    (p[i + 1].p_vaddr & -pagesz) <=
+                pagesz) {
+            p[i].p_memsz = (p[i + 1].p_vaddr + p[i + 1].p_memsz) - p[i].p_vaddr;
+            p[i].p_filesz = (p[i + 1].p_offset + p[i + 1].p_filesz) - p[i].p_offset;
+            if (i + 2 < e->e_phnum) {
+                memmove(p + i + 1, p + i + 2,
+                       (e->e_phnum - (i + 2)) * sizeof(struct ElfPhdr));
+            }
+            --e->e_phnum;
+        } else {
+            ++i;
+        }
+    }
+
+    /* 更新辅助向量 */
+    for (; *auxv; auxv += 2) {
+        switch (*auxv) {
+            case AT_PHDR:
+                auxv[1] = (unsigned long)&M->phdr;
+                break;
+            case AT_PHENT:
+                auxv[1] = e->e_phentsize;
+                break;
+            case AT_PHNUM:
+                auxv[1] = e->e_phnum;
+                break;
+            default:
+                break;
+        }
+    }
+
+    return NULL;  // 成功
+}
+
+/* Spawn 函数实现 */
+void Spawn(int os, char* exe, int fd, long* sp,
+          unsigned long pagesz, struct ElfEhdr* e,
+          struct ElfPhdr* p) {
+    /* 这里应该实现进程的创建和加载
+     * 但由于我们只是测试 APE 加载器，
+     * 所以暂时不需要实现这个函数
+     */
 } 

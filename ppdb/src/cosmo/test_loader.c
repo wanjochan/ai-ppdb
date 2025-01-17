@@ -1,43 +1,40 @@
 #include "cosmopolitan.h"
-#include "ape_loader.h"
+#include "ape_defs.h"
+#include "ape/ape.h"
+#include "libc/elf/elf.h"
+#include "libc/runtime/runtime.h"
 
-/* 定义正确的函数类型 */
-typedef int (*target_func_t)(int, int);
-
-int main(int argc, char *argv[]) {
-    printf("APE Loader starting...\n");
+int main(int argc, char* argv[]) {
+    char target[] = "test_target.exe";
+    union ElfEhdrBuf ebuf;
+    struct ApeLoader M;
+    long sp[2] = {0, 0};
+    long auxv[2] = {0, 0};
     
-    /* 加载目标文件 */
-    void* handle = ape_load("test_target.exe");
-    if (!handle) {
-        printf("Failed to load target\n");
+    // 打开目标文件
+    int fd = open(target, O_RDONLY);
+    if (fd < 0) {
+        printf("Failed to open file: %s\n", target);
         return 1;
     }
     
-    /* 获取函数地址 */
-    //void* func_addr = ape_get_proc(handle, "test_func");
-    void* func_addr = ape_get_proc(handle, "main");
-    if (!func_addr) {
-        printf("Failed to get function address\n");
-        ape_unload(handle);
+    // 读取 ELF 头部
+    if (read(fd, ebuf.buf, sizeof(ebuf.buf)) != sizeof(ebuf.buf)) {
+        printf("Failed to read ELF header\n");
+        close(fd);
         return 1;
     }
     
-    /* 转换为正确的函数类型 */
-    target_func_t func = (target_func_t)func_addr;
+    // 使用 TryElf 验证和处理 ELF 头部
+    const char* error = TryElf(&M, &ebuf, target, fd, sp, auxv, 4096, 1);
+    if (error) {
+        printf("TryElf failed: %s\n", error);
+        close(fd);
+        return 1;
+    }
     
-    /* 尝试调用函数 */
-    printf("Attempting to call function at %p\n", func);
-    
-    int arg1 = 42;
-    int arg2 = 21;
-    printf("Calling with args: %d, %d\n", arg1, arg2);
-    
-    int result = func(arg1, arg2);
-    printf("Function call succeeded with result: %d\n", result);
-    
-    /* 卸载模块 */
-    ape_unload(handle);
+    printf("ELF header verified successfully\n");
+    close(fd);
     return 0;
 }
 

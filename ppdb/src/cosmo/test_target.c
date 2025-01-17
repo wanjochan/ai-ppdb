@@ -1,20 +1,15 @@
 #include "cosmopolitan.h"
 
-//__attribute__((visibility("default")))
-//__attribute__((section(".text.hot.test_func")))
-int test_func(int x, int y) {
-    //printf("Test function called with: x=%d, y=%d\n", x, y);
-    //return x + y;
-    return 42;
+int test_func(int a, int b) {
+    return a + b;
 }
 
-int main(int argc, char *argv[]) {
-    //printf("Target program loaded!\n");
+int main(int argc, char* argv[]) {
+    printf("Hello from test_target!\n");
+    printf("1 + 2 = %d\n", test_func(1, 2));
     return 0;
 }
 
-/* APE入口点 */
-__attribute__((force_align_arg_pointer))
 void _start(void) {
     static char* argv[] = {"test_target.com", NULL};
     exit(main(1, argv));
