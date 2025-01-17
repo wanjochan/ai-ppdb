@@ -131,6 +131,26 @@ plugin_t* load_plugin(const char* path) {
     /* 初始化插件结构 */
     p->base = mod->base;
     p->size = mod->size;
+    
+    /* 确保代码段是可执行的 */
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)mod->base;
+    Elf64_Shdr* shdr = (Elf64_Shdr*)((char*)mod->base + ehdr->e_shoff);
+    char* shstrtab = (char*)mod->base + shdr[ehdr->e_shstrndx].sh_offset;
+    
+    for (int i = 0; i < ehdr->e_shnum; i++) {
+        if (shdr[i].sh_flags & SHF_EXECINSTR) {
+            void* start = (char*)mod->base + shdr[i].sh_offset;
+            size_t len = shdr[i].sh_size;
+            /* 确保代码段对齐到页边界 */
+            void* aligned_start = (void*)((uintptr_t)start & ~0xFFF);
+            size_t aligned_len = (len + ((uintptr_t)start & 0xFFF) + 0xFFF) & ~0xFFF;
+            if (mprotect(aligned_start, aligned_len, PROT_READ | PROT_EXEC) != 0) {
+                printf("Warning: Failed to set execute permission\n");
+            }
+        }
+    }
+
+    /* 查找主函数 */
     p->main = (plugin_main_fn)find_symbol(mod, "_dl_main");
 
     /* 如果找不到主函数,释放资源并返回NULL */
