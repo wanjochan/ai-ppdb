@@ -35,9 +35,9 @@ echo Compiling test_loader.c...
 %GCC% %CFLAGS% %INCLUDES% -c test_loader.c -o test_loader.o
 if errorlevel 1 goto error
 
-rem 编译APE加载器
+rem "编译APE加载器 (1 + 8 + 16 + 32 + 64 = 121)"
 echo Compiling APE loader...
-%GCC% %CFLAGS% %INCLUDES% -DSUPPORT_VECTOR=1 -c %COSMO%\ape\loader.c -o ape_loader.o
+%GCC% %CFLAGS% %INCLUDES% -DSUPPORT_VECTOR=121 -c %COSMO%\ape\loader.c -o ape_loader.o
 if errorlevel 1 goto error
 
 rem 编译系统调用
