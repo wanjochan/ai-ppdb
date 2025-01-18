@@ -1,10 +1,6 @@
 #include "cosmopolitan.h"
-#include "ape/ape.h"
-#include "libc/elf/elf.h"
-#include "libc/runtime/runtime.h"
 #include "libc/sysv/consts/o.h"
-#include "libc/sysv/consts/map.h"
-#include "libc/sysv/consts/prot.h"
+#include "libc/sysv/consts/auxv.h"
 
 // auxv常量定义
 #define AT_NULL   0
@@ -25,58 +21,45 @@
 
 // APE文件格式常量
 #define APE_MAGIC "MZqFpD"
-#define APE_HEADER_SIZE 4096
 
 // ApeLoader的声明
-extern __attribute__((__noreturn__)) void ApeLoader(long di, long *sp, char dl);
+extern void* ApeLoader(const char* path, long* sp, long* auxv, long pagesz, int os);
 
 // 将八进制字符串转换为字节
-static int oct_to_byte(const char* str) {
-    int result = 0;
+static unsigned char oct_to_byte(const char* str) {
+    unsigned char value = 0;
     for (int i = 0; i < 3 && str[i] >= '0' && str[i] <= '7'; i++) {
-        result = result * 8 + (str[i] - '0');
+        value = value * 8 + (str[i] - '0');
     }
-    return result;
+    return value;
 }
 
-// 将字符串形式的ELF头转换为二进制
-static void* convert_elf_str_to_bin(const char* str, void* dest) {
-    unsigned char* out = (unsigned char*)dest;
-    const char* p = str;
-    int pos = 0;
-
-    while (*p) {
-        if (*p == '\\') {
-            p++;
-            if (*p >= '0' && *p <= '7') {
+// 将ELF头字符串转换为二进制
+static void* convert_elf_str_to_bin(const char* str, size_t len) {
+    unsigned char* bin = malloc(64);  // ELF头大小
+    if (!bin) return NULL;
+    
+    memset(bin, 0, 64);
+    int bin_pos = 0;
+    
+    for (int i = 0; i < len; i++) {
+        if (str[i] == '\\') {
+            i++;  // 跳过反斜杠
+            if (str[i] >= '0' && str[i] <= '7') {
                 // 八进制数字
-                out[pos++] = oct_to_byte(p);
-                while (*p >= '0' && *p <= '7') p++;
-            } else {
-                // 转义字符
-                switch (*p) {
-                    case 'n': out[pos++] = '\n'; break;
-                    case 'r': out[pos++] = '\r'; break;
-                    case 't': out[pos++] = '\t'; break;
-                    default: out[pos++] = *p; break;
-                }
-                p++;
+                bin[bin_pos++] = oct_to_byte(str + i);
+                while (i + 1 < len && str[i + 1] >= '0' && str[i + 1] <= '7') i++;
             }
         } else {
-            out[pos++] = *p++;
+            bin[bin_pos++] = str[i];
         }
     }
-    return dest;
+    
+    return bin;
 }
 
 // 查找ELF头部
 static void* find_elf_header(void* base, size_t size) {
-    // 检查APE魔数
-    if (memcmp(base, APE_MAGIC, 6) != 0) {
-        printf("Invalid APE magic\n");
-        return NULL;
-    }
-
     // 打印前64字节的内容
     printf("First 64 bytes:\n");
     unsigned char* p = (unsigned char*)base;
@@ -85,90 +68,84 @@ static void* find_elf_header(void* base, size_t size) {
         if ((i + 1) % 16 == 0) printf("\n");
     }
 
-    // 搜索字符串形式的ELF头
-    const char* elf_str = "\\177ELF\\2\\1\\1";
-    char* ptr = base;
-    for (size_t i = 0; i < size - 8; i++) {
-        if (strstr(ptr + i, elf_str) != NULL) {
-            printf("Found ELF header string at offset 0x%zx\n", i);
-            
-            // 分配临时缓冲区
-            unsigned char temp[sizeof(Elf64_Ehdr)];
-            memset(temp, 0, sizeof(temp));
-            
-            // 获取完整的字符串
-            char str_buf[1024];
-            size_t str_len = 0;
-            const char* src = ptr + i;
-            while (str_len < sizeof(str_buf) - 1 && *src && *src != '\'') {
-                str_buf[str_len++] = *src++;
-            }
-            str_buf[str_len] = '\0';
-            
-            printf("ELF header string: %s\n", str_buf);
-            
-            // 转换为二进制
-            convert_elf_str_to_bin(str_buf, temp);
-            
-            // 验证转换后的ELF头
-            Elf64_Ehdr* ehdr = (Elf64_Ehdr*)temp;
-            printf("  Converted ELF header details:\n");
-            printf("    Magic: %02x %02x %02x %02x\n", 
-                   ehdr->e_ident[0], ehdr->e_ident[1], 
-                   ehdr->e_ident[2], ehdr->e_ident[3]);
-            printf("    Class: %d (expected 2)\n", ehdr->e_ident[EI_CLASS]);
-            printf("    Data: %d (expected 1)\n", ehdr->e_ident[EI_DATA]);
-            printf("    Version: %d (expected 1)\n", ehdr->e_ident[EI_VERSION]);
-            printf("    Type: %d (expected 3)\n", ehdr->e_type);
-            printf("    Machine: %d (expected 62)\n", ehdr->e_machine);
-
-            if (ehdr->e_ident[0] == 0x7f && 
-                memcmp(ehdr->e_ident + 1, "ELF", 3) == 0 &&
-                ehdr->e_ident[EI_CLASS] == ELFCLASS64 &&
-                ehdr->e_ident[EI_DATA] == ELFDATA2LSB &&
-                ehdr->e_ident[EI_VERSION] == EV_CURRENT) {
-                printf("Found valid ELF header in string form\n");
-                // 复制到新的内存区域
-                void* new_base = malloc(size);
-                if (!new_base) {
-                    printf("Failed to allocate memory\n");
-                    return NULL;
-                }
-                memcpy(new_base, temp, sizeof(Elf64_Ehdr));
-                return new_base;
-            }
-            printf("Invalid ELF header in string form\n");
+    // 搜索ELF头字符串
+    const char* elf_str = "\\177ELF\\2\\1\\1\\011\\0\\0\\0\\0\\0\\0\\0\\0\\2\\0\\076\\0\\1\\0\\0\\0";
+    size_t elf_str_len = strlen(elf_str);
+    char* str_pos = NULL;
+    
+    for (int i = 0; i < size - elf_str_len; i++) {
+        if (memcmp((char*)base + i, elf_str, elf_str_len) == 0) {
+            str_pos = (char*)base + i;
+            printf("Found ELF header string at offset 0x%x\n", i);
+            break;
         }
     }
 
-    // 搜索二进制形式的ELF头
-    const unsigned char elf_magic[] = {0x7f, 'E', 'L', 'F'};
-    for (size_t i = 0; i < size - 4; i++) {
-        if (memcmp(p + i, elf_magic, 4) == 0) {
-            printf("Found potential ELF header at offset 0x%zx\n", i);
-            Elf64_Ehdr* ehdr = (Elf64_Ehdr*)(p + i);
-            printf("  ELF header details:\n");
-            printf("    Class: %d (expected 2)\n", ehdr->e_ident[EI_CLASS]);
-            printf("    Data: %d (expected 1)\n", ehdr->e_ident[EI_DATA]);
-            printf("    Version: %d (expected 1)\n", ehdr->e_ident[EI_VERSION]);
-            printf("    Type: %d (expected 3)\n", ehdr->e_type);
-            printf("    Machine: %d (expected 62)\n", ehdr->e_machine);
+    if (!str_pos) {
+        printf("No ELF header found\n");
+        return NULL;
+    }
 
-            if (ehdr->e_ident[EI_CLASS] == ELFCLASS64 &&
-                ehdr->e_ident[EI_DATA] == ELFDATA2LSB &&
-                ehdr->e_ident[EI_VERSION] == EV_CURRENT &&
-                ehdr->e_type == ET_DYN &&
-                ehdr->e_machine == EM_X86_64) {
-                printf("Found valid ELF header at offset 0x%zx\n", i);
-                return ehdr;
-            } else {
-                printf("Found invalid ELF header at offset 0x%zx\n", i);
-            }
+    // 转换ELF头字符串为二进制
+    void* elf_header = convert_elf_str_to_bin(str_pos, elf_str_len);
+    if (!elf_header) {
+        printf("Failed to convert ELF header string\n");
+        return NULL;
+    }
+
+    // 设置内存保护
+    size_t page_size = 65536;
+    void* aligned_addr = (void*)((uintptr_t)elf_header & ~(page_size - 1));
+    size_t aligned_size = ((size + page_size - 1) & ~(page_size - 1));
+    
+    printf("Setting protection for ELF header region:\n");
+    printf("  Base address: %p\n", elf_header);
+    printf("  Aligned address: %p\n", aligned_addr);
+    printf("  Aligned size: %zu\n", aligned_size);
+    
+    if (mprotect(aligned_addr, aligned_size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        printf("Failed to set protection: %s\n", strerror(errno));
+        free(elf_header);
+        return NULL;
+    }
+
+    // 验证ELF头
+    Elf64_Ehdr* ehdr = (Elf64_Ehdr*)elf_header;
+    printf("ELF header info:\n");
+    printf("  Type: %d\n", ehdr->e_type);
+    printf("  Machine: %d\n", ehdr->e_machine);
+    printf("  Version: %d\n", ehdr->e_version);
+    printf("  Entry: 0x%lx\n", ehdr->e_entry);
+    printf("  PHoff: 0x%lx\n", ehdr->e_phoff);
+    printf("  SHoff: 0x%lx\n", ehdr->e_shoff);
+    printf("  Flags: 0x%x\n", ehdr->e_flags);
+    printf("  EHsize: %d\n", ehdr->e_ehsize);
+    printf("  PHentsize: %d\n", ehdr->e_phentsize);
+    printf("  PHnum: %d\n", ehdr->e_phnum);
+    printf("  SHentsize: %d\n", ehdr->e_shentsize);
+    printf("  SHnum: %d\n", ehdr->e_shnum);
+    printf("  SHstrndx: %d\n", ehdr->e_shstrndx);
+
+    // 设置程序头表的保护
+    if (ehdr->e_phoff > 0 && ehdr->e_phnum > 0) {
+        void* phdr = (void*)((char*)elf_header + ehdr->e_phoff);
+        size_t phdr_size = ehdr->e_phnum * ehdr->e_phentsize;
+        void* phdr_aligned = (void*)((uintptr_t)phdr & ~(page_size - 1));
+        size_t phdr_aligned_size = ((phdr_size + page_size - 1) & ~(page_size - 1));
+        
+        printf("Setting protection for program header table:\n");
+        printf("  Base address: %p\n", phdr);
+        printf("  Aligned address: %p\n", phdr_aligned);
+        printf("  Aligned size: %zu\n", phdr_aligned_size);
+        
+        if (mprotect(phdr_aligned, phdr_aligned_size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+            printf("Failed to set protection for program header table: %s\n", strerror(errno));
+            free(elf_header);
+            return NULL;
         }
     }
 
-    printf("No ELF header found\n");
-    return NULL;
+    return elf_header;
 }
 
 int main(int argc, char* argv[]) {
@@ -236,8 +213,52 @@ int main(int argc, char* argv[]) {
     printf("  SHnum: %d\n", ehdr->e_shnum);
     printf("  SHstrndx: %d\n", ehdr->e_shstrndx);
     
-    // 获取程序头部信息
+    // 打印节头数量和字符串表索引
+    printf("  SHnum: %d\n", ehdr->e_shnum);
+    printf("  SHstrndx: %d\n", ehdr->e_shstrndx);
+    
+    // 获取页大小
+    long page_size = sysconf(_SC_PAGESIZE);
+    printf("Page size: %d\n", page_size);
+    
+    // 设置ELF头部区域的保护
+    printf("Setting protection for ELF header region:\n");
+    printf("  Base address: %p\n", elf_base);
+    void* aligned_addr = (void*)((uintptr_t)elf_base & ~(page_size - 1));
+    size_t aligned_size = ((sizeof(Elf64_Ehdr) + page_size - 1) & ~(page_size - 1));
+    printf("  Aligned address: %p\n", aligned_addr);
+    printf("  Aligned size: %zu\n", aligned_size);
+    
+    if (mprotect(aligned_addr, aligned_size, PROT_READ | PROT_WRITE) != 0) {
+        printf("Failed to set protection for ELF header: %s\n", strerror(errno));
+        return 1;
+    }
+    
+    // 设置程序头表的保护
     Elf64_Phdr* phdr = (Elf64_Phdr*)((char*)elf_base + ehdr->e_phoff);
+    for (int i = 0; i < ehdr->e_phnum; i++) {
+        if (phdr[i].p_type == PT_LOAD) {
+            void* seg_addr = (void*)((uintptr_t)elf_base + phdr[i].p_offset);
+            void* aligned_seg_addr = (void*)((uintptr_t)seg_addr & ~(page_size - 1));
+            size_t aligned_seg_size = ((phdr[i].p_memsz + page_size - 1) & ~(page_size - 1));
+            
+            int prot = 0;
+            if (phdr[i].p_flags & PF_R) prot |= PROT_READ;
+            if (phdr[i].p_flags & PF_W) prot |= PROT_WRITE;
+            if (phdr[i].p_flags & PF_X) prot |= PROT_EXEC;
+            
+            printf("Setting protection for segment %d:\n", i);
+            printf("  Address: %p\n", seg_addr);
+            printf("  Aligned address: %p\n", aligned_seg_addr);
+            printf("  Size: %zu\n", aligned_seg_size);
+            printf("  Flags: %x\n", prot);
+            
+            if (mprotect(aligned_seg_addr, aligned_seg_size, prot) != 0) {
+                printf("Failed to set protection for segment %d: %s\n", i, strerror(errno));
+                return 1;
+            }
+        }
+    }
     
     // 分配栈空间（16字节对齐）
     size_t stack_size = 32768;  // 32KB栈
@@ -268,7 +289,7 @@ int main(int argc, char* argv[]) {
     sp[8] = AT_PHNUM;  // auxv[2].a_type
     sp[9] = ehdr->e_phnum;  // auxv[2].a_val
     sp[10] = AT_PAGESZ;  // auxv[3].a_type
-    sp[11] = 4096;  // auxv[3].a_val
+    sp[11] = 65536;  // auxv[3].a_val
     sp[12] = AT_ENTRY;  // auxv[4].a_type
     sp[13] = ehdr->e_entry;  // auxv[4].a_val
     sp[14] = AT_NULL;  // auxv结束标记
@@ -296,14 +317,20 @@ int main(int argc, char* argv[]) {
     printf("  sp[15] = %ld\n", sp[15]);
     
     printf("\nCalling ApeLoader with:\n");
-    printf("  di = %d\n", new_argc);
-    printf("  sp = %p\n", (void*)sp);
-    printf("  dl = %d\n", 0);
+    printf("  path = %s\n", argv[1]);
+    printf("  sp = %p\n", sp);
+    printf("  auxv = %p\n", sp + 4);
+    printf("  pagesz = %ld\n", 65536L);
+    printf("  os = %d\n", 0);
+    printf("\n");
     
     // 调用ApeLoader
-    ApeLoader(new_argc, sp, 0);
+    void* result = ApeLoader(argv[1], sp, sp + 4, 65536, 0);
     
-    // 不会执行到这里，因为ApeLoader是noreturn的
+    // 这里不会执行,因为ApeLoader是noreturn函数
+    printf("ApeLoader returned: %p\n", result);
+    
+    // 清理资源
     munmap(base, st.st_size);
     free(stack_mem);
     return 0;
