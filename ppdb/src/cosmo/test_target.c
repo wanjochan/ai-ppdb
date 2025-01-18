@@ -9,6 +9,3 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-//void _start(void) {
-//    exit(main(__argc, __argv));
-//} 

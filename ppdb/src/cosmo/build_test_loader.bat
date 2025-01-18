@@ -1,36 +1,51 @@
 @echo off
+set WORK_DIR=%cd%
+echo WORK_DIR=%WORK_DIR%
+
+set SCRIPT_DIR=%~dp0
+echo SCRIPT_DIR=%SCRIPT_DIR%
+
+set REPO_DIR=%SCRIPT_DIR%..\..\..\
+pushd %REPO_DIR%
+set REPO_DIR=%CD%
+popd
+echo REPO_DIR=%REPO_DIR%
+
 setlocal EnableDelayedExpansion
 
-rem 设置工具链路径
-set TOOLCHAIN=D:\dev\ai-ppdb\repos\cross9\bin
+set TOOLCHAIN=%REPO_DIR%\repos\cross9\bin
 set GCC=%TOOLCHAIN%\x86_64-pc-linux-gnu-gcc.exe
 set LD=%TOOLCHAIN%\x86_64-pc-linux-gnu-ld.exe
 set OBJCOPY=%TOOLCHAIN%\x86_64-pc-linux-gnu-objcopy.exe
 
-rem 设置编译选项
-set COSMO=D:\dev\ai-ppdb\repos\cosmopolitan
-set CFLAGS=-g -O0 -fno-pie -fno-pic -mno-red-zone -nostdlib -nostdinc -fno-omit-frame-pointer -DSUPPORT_VECTOR=1
-set INCLUDES=-I%COSMO% -I%COSMO%\libc\elf -I%COSMO%\libc\runtime -I%COSMO%\libc\intrin -I%COSMO%\libc\nexgen32e -I%COSMO%\libc\str -I%COSMO%\libc\fmt -I%COSMO%\libc\log -I%COSMO%\libc\mem -I%COSMO%\libc\calls -I%COSMO%\libc\sysv -I%COSMO%\libc\proc -I%COSMO%\libc\stdio -I%COSMO%\libc\bits -I%COSMO%\libc\debug -I%COSMO%\libc\dce -I%COSMO%\libc\nt -I%COSMO%\libc\linux -I%COSMO%\libc\mac -I%COSMO%\libc\freebsd -I%COSMO%\libc\netbsd -I%COSMO%\libc\openbsd -I%COSMO%\libc\bsd -I%COSMO%\libc\sysv -I%COSMO%\libc\posix -I%COSMO%\libc\ansi -I%COSMO%\libc\c -I%COSMO%\libc\std
+set COSMOPUB=%REPO_DIR%\repos\cosmopolitan_pub
+set COSMO=%REPO_DIR%\repos\cosmopolitan
+set CFLAGS=-g -O0 -fno-pie -fno-pic -mno-red-zone -nostdlib -nostdinc -fno-omit-frame-pointer
+set INCLUDES=-I%COSMOPUB% -I%COSMO%
 
-echo Building APE loader...
+echo Building test loader...
 echo Using GCC: %GCC%
 echo Using LD: %LD%
 echo Using OBJCOPY: %OBJCOPY%
+echo Using COSMOPUB: %COSMOPUB%
 echo Using COSMO: %COSMO%
 
-rem 编译和链接
-echo Compiling loader.c...
-%GCC% %CFLAGS% %INCLUDES% -c %COSMO%\ape\loader.c -o loader.o
+rem 编译test_loader
+echo Compiling test_loader.c...
+%GCC% %CFLAGS% %INCLUDES% -c test_loader.c -o test_loader.o
 if errorlevel 1 goto error
 
-echo Compiling start.S...
-%GCC% %CFLAGS% %INCLUDES% -c start.S -o start.o
+rem 编译APE加载器
+echo Compiling APE loader...
+%GCC% %CFLAGS% %INCLUDES% -DSUPPORT_VECTOR=1 -c %COSMO%\ape\loader.c -o ape_loader.o
 if errorlevel 1 goto error
 
+rem 编译系统调用
 echo Compiling systemcall.S...
 %GCC% %CFLAGS% %INCLUDES% -c %COSMO%\ape\systemcall.S -o systemcall.o
 if errorlevel 1 goto error
 
+rem 编译启动代码
 echo Compiling launch.S...
 %GCC% %CFLAGS% %INCLUDES% -c %COSMO%\ape\launch.S -o launch.o
 if errorlevel 1 goto error
@@ -39,16 +54,20 @@ echo Compiling host.S...
 %GCC% %CFLAGS% %INCLUDES% -c host.S -o host.o
 if errorlevel 1 goto error
 
-echo Linking loader.com...
-%LD% -T %COSMO%\ape\loader.lds --gc-sections --build-id=none -z max-page-size=4096 --omagic start.o systemcall.o launch.o host.o loader.o -o loader.com
+echo Linking test_loader.exe.dbg...
+%LD% -T %COSMOPUB%\ape.lds --gc-sections --build-id=none -z max-page-size=4096 --omagic ^
+    %COSMOPUB%\crt.o ^
+    test_loader.o ape_loader.o systemcall.o launch.o ^
+    %COSMOPUB%\ape.o %COSMOPUB%\cosmopolitan.a ^
+    -o test_loader.exe.dbg
 if errorlevel 1 goto error
 
-echo Creating binary loader.exe...
-%OBJCOPY% -S -O binary loader.com loader.exe
+echo Creating binary test_loader.exe...
+%OBJCOPY% -S -O binary test_loader.exe.dbg test_loader.exe
 if errorlevel 1 goto error
 
 echo Checking file sizes...
-dir loader.o loader.com loader.exe
+dir test_loader.o test_loader.exe.dbg test_loader.exe
 
 echo Build successful!
 goto end
