@@ -21,234 +21,276 @@ struct ApeHeader {
 };
 #pragma pack(pop)
 
-// auxv常量定义（如果头文件中没有）
-#ifndef AT_NULL
-#define AT_NULL         0
-#define AT_IGNORE      1
-#define AT_EXECFD      2
-#define AT_PHDR        3
-#define AT_PHENT       4
-#define AT_PHNUM       5
-#define AT_PAGESZ      6
-#define AT_BASE        7
-#define AT_FLAGS       8
-#define AT_ENTRY       9
-#endif
+//-----------------------------------------------------------------------------
+// 辅助函数
+//-----------------------------------------------------------------------------
 
-// 辅助函数：从字节数组中读取64位整数（小端序）
-static uint64_t READ64(const unsigned char* p) {
-    return ((uint64_t)p[0]) |
-           ((uint64_t)p[1] << 8) |
-           ((uint64_t)p[2] << 16) |
-           ((uint64_t)p[3] << 24) |
-           ((uint64_t)p[4] << 32) |
-           ((uint64_t)p[5] << 40) |
-           ((uint64_t)p[6] << 48) |
-           ((uint64_t)p[7] << 56);
+// 以十六进制格式打印内存区域的内容
+static inline void hex_dump(const char* prefix, const void* data, size_t size) {
+    const unsigned char* p = data;
+    for (size_t i = 0; i < size; i += 16) {
+        printf("%s%04zx:", prefix, i);
+        for (size_t j = 0; j < 16; j++) {
+            if (i + j < size) {
+                printf(" %02x", p[i + j]);
+            } else {
+                printf("   ");
+            }
+        }
+        printf("\n");
+    }
 }
 
-// 辅助函数：从字节数组中读取32位整数（小端序）
-static uint32_t READ32(const unsigned char* p) {
+// 以小端序读取32位整数，并打印调试信息
+static inline uint32_t READ32(const unsigned char* p) {
+    printf("Reading 32-bit value at offset %p: %02x %02x %02x %02x = ", 
+           p, p[0], p[1], p[2], p[3]);
     uint32_t val = ((uint32_t)p[0]) |
                    ((uint32_t)p[1] << 8) |
                    ((uint32_t)p[2] << 16) |
                    ((uint32_t)p[3] << 24);
-    printf("Reading 32-bit value at offset %p: %02x %02x %02x %02x = %u (0x%x)\n",
-           p, p[0], p[1], p[2], p[3], val, val);
+    printf("%u (0x%x)\n", val, val);
     return val;
 }
 
-// 辅助函数：打印内存区域的十六进制转储
-static void hex_dump(const char* prefix, const unsigned char* data, size_t size) {
-    for(size_t i = 0; i < size; i++) {
-        if(i % 16 == 0) printf("%s%04zx:", prefix, i);
-        printf(" %02x", data[i]);
-        if(i % 16 == 15) printf("\n");
+// 解析printf语句中的八进制转义序列
+static inline int parse_octal(const unsigned char *data, int i, int *pc) {
+    int c;
+    if ('0' <= data[i] && data[i] <= '7') {
+        c = data[i++] - '0';
+        if ('0' <= data[i] && data[i] <= '7') {
+            c *= 8;
+            c += data[i++] - '0';
+            if ('0' <= data[i] && data[i] <= '7') {
+                c *= 8;
+                c += data[i++] - '0';
+            }
+        }
+        *pc = c;
     }
-    if(size % 16 != 0) printf("\n");
+    return i;
 }
 
-// 辅助函数：验证ELF头
-static int validate_elf_header(const Elf64_Ehdr* ehdr, const char* path) {
-    if (memcmp(ehdr->e_ident, "\x7f""ELF", 4) != 0) {
+//-----------------------------------------------------------------------------
+// ELF头验证
+//-----------------------------------------------------------------------------
+
+// 验证ELF头的各个字段是否有效
+static inline int validate_elf_header(const unsigned char *elf_buf, size_t elf_len) {
+    if (elf_len < sizeof(Elf64_Ehdr)) {
+        printf("ELF header too small\n");
+        return 0;
+    }
+    
+    const Elf64_Ehdr *ehdr = (const Elf64_Ehdr*)elf_buf;
+    
+    // 验证魔数
+    if (ehdr->e_ident[EI_MAG0] != ELFMAG0 ||
+        ehdr->e_ident[EI_MAG1] != ELFMAG1 ||
+        ehdr->e_ident[EI_MAG2] != ELFMAG2 ||
+        ehdr->e_ident[EI_MAG3] != ELFMAG3) {
         printf("Invalid ELF magic\n");
         return 0;
     }
     
+    // 验证是否为64位ELF
     if (ehdr->e_ident[EI_CLASS] != ELFCLASS64) {
         printf("Not a 64-bit ELF\n");
         return 0;
     }
     
+    // 验证字节序
     if (ehdr->e_ident[EI_DATA] != ELFDATA2LSB) {
-        printf("Not a little-endian ELF\n");
+        printf("Not little-endian\n");
         return 0;
     }
     
+    // 验证版本
+    if (ehdr->e_ident[EI_VERSION] != EV_CURRENT) {
+        printf("Invalid ELF version\n");
+        return 0;
+    }
+    
+    // 验证文件类型
     if (ehdr->e_type != ET_EXEC && ehdr->e_type != ET_DYN) {
         printf("Not an executable or shared object\n");
         return 0;
     }
     
+    // 验证目标架构
     if (ehdr->e_machine != EM_X86_64) {
-        printf("Not an x86_64 ELF\n");
+        printf("Not x86_64 architecture\n");
         return 0;
     }
     
-    if (ehdr->e_phoff == 0 || ehdr->e_phnum == 0) {
-        printf("No program headers\n");
-        return 0;
-    }
+    // 打印ELF头的详细信息
+    printf("\nELF header details:\n");
+    printf("  Entry point: 0x%lx\n", ehdr->e_entry);
+    printf("  Program header offset: 0x%lx\n", ehdr->e_phoff);
+    printf("  Section header offset: 0x%lx\n", ehdr->e_shoff);
+    printf("  Flags: 0x%x\n", ehdr->e_flags);
+    printf("  Header size: %d\n", ehdr->e_ehsize);
+    printf("  Program header size: %d\n", ehdr->e_phentsize);
+    printf("  Program header count: %d\n", ehdr->e_phnum);
+    printf("  Section header size: %d\n", ehdr->e_shentsize);
+    printf("  Section header count: %d\n", ehdr->e_shnum);
+    printf("  Section name string table index: %d\n", ehdr->e_shstrndx);
     
     return 1;
 }
 
-// 辅助函数：验证APE头
-static int validate_ape_header(const struct ApeHeader* ape, size_t file_size) {
-    // 验证魔数
-    if (memcmp(ape->magic, APE_MAGIC, strlen(APE_MAGIC)) != 0) {
-        printf("Invalid APE magic\n");
-        return 0;
-    }
-    
-    // 读取并验证大小和偏移
-    const unsigned char* raw = (const unsigned char*)ape;
-    
-    // 使用READ32读取size和elf_off
-    uint32_t size = READ32(raw + 8);
-    uint32_t elf_off = READ32(raw + 12);
-    
-    printf("APE header validation:\n");
-    printf("  File size: 0x%zx\n", file_size);
-    printf("  APE size: 0x%x\n", size);
-    printf("  ELF offset: 0x%x\n", elf_off);
-    
-    // 打印原始字节以进行调试
-    printf("Raw bytes for size: %02x %02x %02x %02x\n", 
-           raw[8], raw[9], raw[10], raw[11]);
-    printf("Raw bytes for elf_off: %02x %02x %02x %02x\n", 
-           raw[12], raw[13], raw[14], raw[15]);
-    
-    // 验证ELF偏移
-    if (elf_off > file_size - sizeof(Elf64_Ehdr)) {
-        printf("Invalid ELF offset (outside file bounds)\n");
-        return 0;
-    }
-    
-    return 1;
-}
+//-----------------------------------------------------------------------------
+// ELF头搜索
+//-----------------------------------------------------------------------------
 
-// 辅助函数：读取程序头表
-static int read_program_headers(Elf64_Phdr* phdr, const unsigned char* base,
-                              const Elf64_Ehdr* ehdr, uint32_t elf_off,
-                              size_t file_size) {
-    // 计算程序头表的位置
-    const unsigned char* phdr_ptr = base + elf_off + ehdr->e_phoff;
-    size_t total_size = ehdr->e_phnum * sizeof(Elf64_Phdr);
+// 在printf语句中搜索ELF头
+static inline int search_elf_header(const unsigned char *data, size_t size) {
+    printf("\nSearching for ELF header in printf statements...\n");
     
-    // 验证程序头表的范围
-    if (phdr_ptr + total_size > base + file_size) {
-        printf("Program header table extends beyond file end\n");
-        return 0;
-    }
+    // 只搜索前8192字节
+    size_t search_size = size < 8192 ? size : 8192;
     
-    // 读取每个程序头
-    for (int i = 0; i < ehdr->e_phnum; i++) {
-        Elf64_Phdr* curr = &phdr[i];
-        const unsigned char* curr_ptr = phdr_ptr + i * sizeof(Elf64_Phdr);
-        
-        curr->p_type = READ32(curr_ptr);
-        curr->p_flags = READ32(curr_ptr + 4);
-        curr->p_offset = READ64(curr_ptr + 8);
-        curr->p_vaddr = READ64(curr_ptr + 16);
-        curr->p_paddr = READ64(curr_ptr + 24);
-        curr->p_filesz = READ64(curr_ptr + 32);
-        curr->p_memsz = READ64(curr_ptr + 40);
-        curr->p_align = READ64(curr_ptr + 48);
-        
-        // 验证段的范围
-        if (curr->p_offset + curr->p_filesz > file_size) {
-            printf("Segment %d extends beyond file end\n", i);
-            return 0;
+    // 查找包含八进制转义序列的printf语句
+    for (size_t i = 0; i < search_size - 16; i++) {
+        // 检查printf语句的开始（支持单引号和双引号）
+        if ((data[i] == 'p' && data[i+1] == 'r' && data[i+2] == 'i' && 
+             data[i+3] == 'n' && data[i+4] == 't' && data[i+5] == 'f' &&
+             (data[i+6] == ' ' || data[i+6] == '\t') &&
+             (data[i+7] == '\'' || data[i+7] == '"')) ||
+            (data[i] == 'p' && data[i+1] == 'r' && data[i+2] == 'i' && 
+             data[i+3] == 'n' && data[i+4] == 't' && data[i+5] == 'f' &&
+             data[i+6] == '\\' && data[i+7] == '\'')) {
+            
+            printf("Found printf at offset 0x%zx\n", i);
+            
+            // 跳过到引号
+            i += 7;
+            while (i < search_size && data[i] != '\'' && data[i] != '"') i++;
+            if (i >= search_size) continue;
+            i++;
+            
+            // 解析八进制转义序列
+            unsigned char elf_buf[64];
+            int elf_len = 0;
+            
+            while (i < search_size && elf_len < sizeof(elf_buf)) {
+                if (data[i] == '\\') {
+                    i++;
+                    if (i >= search_size) break;
+                    
+                    // 解析八进制转义序列
+                    int c;
+                    i = parse_octal(data, i, &c);
+                    if (c >= 0) {
+                        elf_buf[elf_len++] = c;
+                    }
+                }
+                else if (data[i] == '\'' || data[i] == '"') {
+                    break;
+                }
+                else if (data[i] >= 32 && data[i] <= 126) {
+                    // 直接复制可打印ASCII字符
+                    elf_buf[elf_len++] = data[i++];
+                }
+                else {
+                    i++;
+                }
+            }
+            
+            // 检查是否找到ELF头
+            if (elf_len >= 16 &&
+                elf_buf[0] == 0x7f && elf_buf[1] == 'E' && 
+                elf_buf[2] == 'L' && elf_buf[3] == 'F') {
+                
+                printf("Found ELF header in printf statement:\n");
+                printf("  Magic: %02x %02x %02x %02x\n", 
+                       elf_buf[0], elf_buf[1], elf_buf[2], elf_buf[3]);
+                printf("  Class: %d\n", elf_buf[4]);
+                printf("  Data: %d\n", elf_buf[5]); 
+                printf("  Type: %d\n", elf_buf[16]);
+                printf("  Machine: %d\n", elf_buf[18]);
+                
+                // 验证完整的ELF头
+                if (validate_elf_header(elf_buf, elf_len)) {
+                    printf("ELF header validation passed\n");
+                    return 1;
+                }
+                printf("ELF header validation failed\n");
+            }
         }
-        
-        printf("Program header %d:\n", i);
-        printf("  Type: 0x%x\n", curr->p_type);
-        printf("  Flags: 0x%x\n", curr->p_flags);
-        printf("  Offset: 0x%lx\n", curr->p_offset);
-        printf("  VAddr: 0x%lx\n", curr->p_vaddr);
-        printf("  PAddr: 0x%lx\n", curr->p_paddr);
-        printf("  FileSize: 0x%lx\n", curr->p_filesz);
-        printf("  MemSize: 0x%lx\n", curr->p_memsz);
-        printf("  Align: 0x%lx\n", curr->p_align);
-        printf("  Raw data:\n");
-        hex_dump("    ", curr_ptr, sizeof(Elf64_Phdr));
     }
     
-    return 1;
+    // 如果在printf语句中没有找到ELF头
+    printf("No ELF header found in printf statements\n");
+    return 0;
 }
 
-int main(int argc, char* argv[]) {
-    printf("test_loader starting...\n");
-    
+int main(int argc, char *argv[]) {
     if (argc != 2) {
         printf("Usage: %s <target>\n", argv[0]);
         return 1;
     }
     
-    const char* target = argv[1];
-    printf("Loading target: %s\n", target);
+    printf("test_loader starting...\n");
+    printf("Loading target: %s\n", argv[1]);
     
-    // 打开目标文件
-    int fd = open(target, O_RDONLY);
+    // Open target file
+    int fd = open(argv[1], O_RDONLY);
     if (fd < 0) {
         printf("Failed to open target file\n");
         return 1;
     }
     
-    // 获取文件大小
+    // Get file size
     struct stat st;
     if (fstat(fd, &st) < 0) {
         printf("Failed to get file size\n");
         close(fd);
         return 1;
     }
-    size_t file_size = st.st_size;
-    printf("File size: %zu bytes\n", file_size);
+    printf("File size: %zu bytes\n", st.st_size);
     
-    // 映射文件到内存
-    void* mapped = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-    if (mapped == MAP_FAILED) {
+    // Map file into memory
+    void *mapped_data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (mapped_data == MAP_FAILED) {
         printf("Failed to map file\n");
         close(fd);
         return 1;
     }
-    printf("Mapped at address: %p\n\n", mapped);
+    printf("Mapped at address: %p\n\n", mapped_data);
     
-    // 分析APE头
+    // Analyze APE header
+    const unsigned char *raw = mapped_data;
     printf("Analyzing APE header...\n");
-    const struct ApeHeader* ape = (const struct ApeHeader*)mapped;
+    hex_dump("  ", raw, 64);
     
-    // 打印APE头的前64字节
-    const unsigned char* raw = (const unsigned char*)ape;
-    for (int i = 0; i < 64; i += 16) {
-        printf("  %04x:", i);
-        for (int j = 0; j < 16; j++) {
-            printf(" %02x", raw[i + j]);
-        }
-        printf("\n");
-    }
+    // Read and validate APE header
+    uint32_t size = READ32(raw + 8);
+    uint32_t elf_off = READ32(raw + 12);
     
-    // 验证APE头
-    if (!validate_ape_header(ape, file_size)) {
-        munmap(mapped, file_size);
+    printf("APE header validation:\n");
+    printf("  File size: 0x%x\n", (uint32_t)st.st_size);
+    printf("  APE size: 0x%x\n", size);
+    printf("  ELF offset: 0x%x\n", elf_off);
+    
+    // Print raw bytes for debugging
+    printf("Raw bytes for size: %02x %02x %02x %02x\n",
+           raw[8], raw[9], raw[10], raw[11]);
+    printf("Raw bytes for elf_off: %02x %02x %02x %02x\n",
+           raw[12], raw[13], raw[14], raw[15]);
+    
+    // Search for ELF header
+    if (!search_elf_header(raw, st.st_size)) {
+        printf("Failed to locate valid ELF header\n");
+        munmap(mapped_data, st.st_size);
         close(fd);
         return 1;
     }
     
-    // 继续处理...
-    
-    munmap(mapped, file_size);
+    // Cleanup
+    munmap(mapped_data, st.st_size);
     close(fd);
+    
     return 0;
 }
+
