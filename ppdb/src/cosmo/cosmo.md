@@ -7,6 +7,13 @@
 该计划是是PPDB（跨平台动态库模块）的一个组成部分。
 参考 https://github.com/jart/cosmopolitan/blob/master/ape/loader.c
 请注意你的开发环境是在 windows，正在 cursor 编辑器中的composer所以用的是 powershell
+只使用cosmopolitan，不要用标准c、不要自己适配操作系统！
+```
+malloc分配内存
+拷贝代码
+设置权限
+运行
+```
 
 ### 核心目标
 brev.
