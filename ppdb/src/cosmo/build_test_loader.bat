@@ -20,8 +20,8 @@ set OBJCOPY=%TOOLCHAIN%\x86_64-pc-linux-gnu-objcopy.exe
 
 set COSMOPUB=%REPO_DIR%\repos\cosmopolitan_pub
 set COSMO=%REPO_DIR%\repos\cosmopolitan
-set CFLAGS=-g -O0 -fno-pie -fno-pic -mno-red-zone -nostdlib -nostdinc -fno-omit-frame-pointer
-set INCLUDES=-I%COSMOPUB% -I%COSMO%
+set CFLAGS=-g -O0 -fno-pie -fno-pic -mno-red-zone -nostdlib -nostdinc -fno-omit-frame-pointer -D_COSMO_SOURCE -DSUPPORT_VECTOR=255 -D_HOSTLINUX=1 -D_HOSTMETAL=2 -D_HOSTWINDOWS=4 -D_HOSTXNU=8 -D_HOSTOPENBSD=16 -D_HOSTFREEBSD=32 -D_HOSTNETBSD=64 -DLINUX=1 -DXNU=8 -DOPENBSD=16 -DFREEBSD=32 -DNETBSD=64 -DWINDOWS=128 -DMETAL=256
+set INCLUDES=-I%COSMOPUB% -I%COSMO% -I%COSMO%\libc\elf -I%COSMO%\libc\runtime -I%COSMO%\libc\intrin -I%COSMO%\libc\nexgen32e -I%COSMO%\libc\str -I%COSMO%\libc\fmt -I%COSMO%\libc\log -I%COSMO%\libc\mem -I%COSMO%\libc\calls -I%COSMO%\libc\sysv -I%COSMO%\libc\proc -I%COSMO%\libc\stdio -I%COSMO%\libc\bits -I%COSMO%\libc\debug -I%COSMO%\libc\dce -I%COSMO%\libc\nt -I%COSMO%\libc\linux -I%COSMO%\libc\mac -I%COSMO%\libc\freebsd -I%COSMO%\libc\netbsd -I%COSMO%\libc\openbsd -I%COSMO%\libc\bsd -I%COSMO%\libc\sysv -I%COSMO%\libc\posix -I%COSMO%\libc\ansi -I%COSMO%\libc\c -I%COSMO%\libc\std
 
 echo Building test loader...
 echo Using GCC: %GCC%
@@ -35,9 +35,9 @@ echo Compiling test_loader.c...
 %GCC% %CFLAGS% %INCLUDES% -c test_loader.c -o test_loader.o
 if errorlevel 1 goto error
 
-rem "编译APE加载器 (1 + 8 + 16 + 32 + 64 = 121)"
+rem 编译APE加载器
 echo Compiling APE loader...
-%GCC% %CFLAGS% %INCLUDES% -DSUPPORT_VECTOR=121 -c %COSMO%\ape\loader.c -o ape_loader.o
+%GCC% %CFLAGS% %INCLUDES% -c %COSMO%\ape\loader.c -o ape_loader.o
 if errorlevel 1 goto error
 
 rem 编译系统调用
@@ -48,10 +48,6 @@ if errorlevel 1 goto error
 rem 编译启动代码
 echo Compiling launch.S...
 %GCC% %CFLAGS% %INCLUDES% -c %COSMO%\ape\launch.S -o launch.o
-if errorlevel 1 goto error
-
-echo Compiling host.S...
-%GCC% %CFLAGS% %INCLUDES% -c host.S -o host.o
 if errorlevel 1 goto error
 
 echo Linking test_loader.exe.dbg...

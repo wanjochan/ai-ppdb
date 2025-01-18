@@ -3,6 +3,9 @@
 #include "libc/elf/elf.h"
 #include "libc/runtime/runtime.h"
 
+// ApeLoader function declaration
+int ApeLoader(int argc, char** argv, int flags);
+
 int main(int argc, char* argv[]) {
     printf("test_loader starting...\n");
     printf("Arguments: %d\n", argc);
