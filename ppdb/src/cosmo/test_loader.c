@@ -216,17 +216,46 @@ int process_imports(void* imageBase, IMAGE_NT_HEADERS64* ntHeaders) {
         return 0;
     }
 
-    printf("Processing imports...\n");
+    printf("Processing imports at VA: 0x%x, Size: 0x%x\n", 
+           importDir->VirtualAddress, importDir->Size);
+
+    // 验证导入目录地址
+    if (importDir->VirtualAddress >= ntHeaders->OptionalHeader.SizeOfImage) {
+        printf("Import directory VA is out of bounds\n");
+        return 1;
+    }
+
     IMAGE_IMPORT_DESCRIPTOR* importDesc = (IMAGE_IMPORT_DESCRIPTOR*)((char*)imageBase + importDir->VirtualAddress);
+    if (!importDesc) {
+        printf("Invalid import descriptor\n");
+        return 1;
+    }
 
     // 遍历所有导入 DLL
+    int dllCount = 0;
     while (importDesc->Name) {
+        // 验证DLL名称地址
+        if (importDesc->Name >= ntHeaders->OptionalHeader.SizeOfImage) {
+            printf("DLL name address is out of bounds\n");
+            return 1;
+        }
+
         char* dllName = (char*)imageBase + importDesc->Name;
         printf("  Loading DLL: %s\n", dllName);
+        printf("    OriginalFirstThunk: 0x%x\n", importDesc->OriginalFirstThunk);
+        printf("    FirstThunk: 0x%x\n", importDesc->FirstThunk);
+
+        // 验证FirstThunk和OriginalFirstThunk
+        if (importDesc->FirstThunk >= ntHeaders->OptionalHeader.SizeOfImage ||
+            (importDesc->OriginalFirstThunk && 
+             importDesc->OriginalFirstThunk >= ntHeaders->OptionalHeader.SizeOfImage)) {
+            printf("    Invalid thunk addresses\n");
+            return 1;
+        }
 
         int64_t dllBase = (int64_t)LoadLibraryA(dllName);
         if (!dllBase) {
-            printf("    Failed to load DLL: %s\n", dllName);
+            printf("    Failed to load DLL: %s (Error: %d)\n", dllName, GetLastError());
             return 1;
         }
 
@@ -235,6 +264,7 @@ int process_imports(void* imageBase, IMAGE_NT_HEADERS64* ntHeaders) {
         IMAGE_THUNK_DATA64* origThunk = importDesc->OriginalFirstThunk ?
             (IMAGE_THUNK_DATA64*)((char*)imageBase + importDesc->OriginalFirstThunk) : firstThunk;
 
+        int funcCount = 0;
         while (origThunk->u1.AddressOfData) {
             void* funcAddr = NULL;
             char* funcName = NULL;
@@ -243,29 +273,45 @@ int process_imports(void* imageBase, IMAGE_NT_HEADERS64* ntHeaders) {
                 // 按序号导入
                 WORD ordinal = IMAGE_ORDINAL64(origThunk->u1.Ordinal);
                 funcAddr = GetProcAddress(dllBase, (const char*)(uintptr_t)ordinal);
-                printf("    Import by ordinal: %d\n", ordinal);
+                printf("    Import by ordinal: %d -> %p\n", ordinal, funcAddr);
             } else {
+                // 验证函数名称地址
+                if (origThunk->u1.AddressOfData >= ntHeaders->OptionalHeader.SizeOfImage) {
+                    printf("    Function name address is out of bounds\n");
+                    return 1;
+                }
+
                 // 按名称导入
                 IMAGE_IMPORT_BY_NAME* importByName = (IMAGE_IMPORT_BY_NAME*)((char*)imageBase + 
                     origThunk->u1.AddressOfData);
                 funcName = (char*)importByName->Name;
                 funcAddr = GetProcAddress(dllBase, funcName);
-                printf("    Import by name: %s\n", funcName);
+                printf("    Import by name: %s -> %p\n", funcName, funcAddr);
             }
 
             if (!funcAddr) {
-                printf("    Failed to get function address%s%s\n", 
+                printf("    Failed to get function address%s%s (Error: %d)\n", 
                     funcName ? ": " : "", 
-                    funcName ? funcName : "");
+                    funcName ? funcName : "",
+                    GetLastError());
                 return 1;
             }
 
             firstThunk->u1.Function = (ULONGLONG)(uintptr_t)funcAddr;
             origThunk++;
             firstThunk++;
+
+            if (++funcCount > 1000) {  // 防止无限循环
+                printf("    Too many functions in one DLL\n");
+                return 1;
+            }
         }
 
         importDesc++;
+        if (++dllCount > 100) {  // 防止无限循环
+            printf("Too many DLLs\n");
+            return 1;
+        }
     }
 
     return 0;
@@ -418,10 +464,12 @@ PE_CONTEXT* load_pe_file(const char* path) {
     PE_CONTEXT* ctx = init_pe_context();
     if (!ctx) return NULL;
 
+    printf("\nLoading PE file: %s\n", path);
+
     // 打开文件
     int fd = open(path, O_RDONLY);
     if (fd < 0) {
-        print_error("Failed to open file");
+        printf("Failed to open file: %s (errno: %d)\n", path, errno);
         cleanup_pe_context(ctx);
         return NULL;
     }
@@ -429,7 +477,17 @@ PE_CONTEXT* load_pe_file(const char* path) {
     // 获取文件大小
     struct stat st;
     if (fstat(fd, &st) < 0) {
-        print_error("Failed to get file size");
+        printf("Failed to get file size (errno: %d)\n", errno);
+        close(fd);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    printf("File size: %lld bytes\n", (long long)st.st_size);
+
+    // 验证文件大小
+    if (st.st_size < sizeof(IMAGE_DOS_HEADER)) {
+        print_error("File too small");
         close(fd);
         cleanup_pe_context(ctx);
         return NULL;
@@ -444,8 +502,10 @@ PE_CONTEXT* load_pe_file(const char* path) {
         return NULL;
     }
 
-    if (read(fd, file_data, st.st_size) != st.st_size) {
-        print_error("Failed to read file");
+    ssize_t bytes_read = read(fd, file_data, st.st_size);
+    if (bytes_read != st.st_size) {
+        printf("Failed to read file: expected %lld bytes, got %lld (errno: %d)\n",
+               (long long)st.st_size, (long long)bytes_read, errno);
         free(file_data);
         close(fd);
         cleanup_pe_context(ctx);
@@ -457,7 +517,21 @@ PE_CONTEXT* load_pe_file(const char* path) {
     // 解析DOS头
     IMAGE_DOS_HEADER* dos_header = (IMAGE_DOS_HEADER*)file_data;
     if (dos_header->e_magic != 0x5A4D) {
-        print_error("Invalid DOS signature");
+        printf("Invalid DOS signature: 0x%x\n", dos_header->e_magic);
+        free(file_data);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    printf("DOS Header:\n");
+    printf("  Magic: 0x%x\n", dos_header->e_magic);
+    printf("  NT Headers offset: 0x%x\n", dos_header->e_lfanew);
+
+    // 验证NT头偏移
+    if (dos_header->e_lfanew < sizeof(IMAGE_DOS_HEADER) || 
+        dos_header->e_lfanew >= st.st_size - sizeof(IMAGE_NT_HEADERS64)) {
+        printf("Invalid NT headers offset: 0x%x (file size: 0x%llx)\n",
+               dos_header->e_lfanew, (unsigned long long)st.st_size);
         free(file_data);
         cleanup_pe_context(ctx);
         return NULL;
@@ -472,10 +546,36 @@ PE_CONTEXT* load_pe_file(const char* path) {
         return NULL;
     }
 
-    printf("PE file info:\n");
+    printf("\nPE File Analysis:\n");
+    printf("  Machine: 0x%x\n", nt_headers->FileHeader.Machine);
+    printf("  Characteristics: 0x%x\n", nt_headers->FileHeader.Characteristics);
+    printf("  Subsystem: 0x%x\n", nt_headers->OptionalHeader.Subsystem);
+    printf("  DllCharacteristics: 0x%x\n", nt_headers->OptionalHeader.DllCharacteristics);
+    
+    // Print Data Directories
+    printf("\nData Directories:\n");
+    for (int i = 0; i < 16; i++) {
+        if (nt_headers->OptionalHeader.DataDirectory[i].VirtualAddress) {
+            printf("  [%2d] VA: 0x%x, Size: 0x%x\n", i,
+                   nt_headers->OptionalHeader.DataDirectory[i].VirtualAddress,
+                   nt_headers->OptionalHeader.DataDirectory[i].Size);
+        }
+    }
+
+    printf("\nPE file info:\n");
     printf("  ImageBase: 0x%llx\n", nt_headers->OptionalHeader.ImageBase);
     printf("  SizeOfImage: 0x%x\n", nt_headers->OptionalHeader.SizeOfImage);
     printf("  NumberOfSections: %d\n", nt_headers->FileHeader.NumberOfSections);
+
+    // 验证节表
+    size_t sectionTableOffset = dos_header->e_lfanew + sizeof(IMAGE_NT_HEADERS64);
+    if (sectionTableOffset >= st.st_size || 
+        sectionTableOffset + nt_headers->FileHeader.NumberOfSections * sizeof(IMAGE_SECTION_HEADER) > st.st_size) {
+        print_error("Invalid section table");
+        free(file_data);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
 
     // 分配内存
     size_t image_size = nt_headers->OptionalHeader.SizeOfImage;
@@ -496,11 +596,26 @@ PE_CONTEXT* load_pe_file(const char* path) {
 
     // 复制PE头
     size_t headers_size = nt_headers->OptionalHeader.SizeOfHeaders;
+    if (headers_size > st.st_size) {
+        print_error("Invalid headers size");
+        free(file_data);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
     memcpy(ctx->base, file_data, headers_size);
 
     // 复制节
     IMAGE_SECTION_HEADER* sections = (IMAGE_SECTION_HEADER*)((char*)nt_headers + sizeof(IMAGE_NT_HEADERS64));
     for (int i = 0; i < nt_headers->FileHeader.NumberOfSections; i++) {
+        // 验证节的地址和大小
+        if (sections[i].VirtualAddress >= ctx->size ||
+            sections[i].VirtualAddress + sections[i].VirtualSize > ctx->size ||
+            sections[i].PointerToRawData >= st.st_size ||
+            sections[i].PointerToRawData + sections[i].SizeOfRawData > st.st_size) {
+            printf("Invalid section %d\n", i);
+            continue;
+        }
+
         void* dest = (char*)ctx->base + sections[i].VirtualAddress;
         void* src = (char*)file_data + sections[i].PointerToRawData;
         
