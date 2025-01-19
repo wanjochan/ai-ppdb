@@ -56,7 +56,7 @@ if errorlevel 1 goto error
 echo Linking test_loader.exe.dbg...
 %LD% -T %COSMOPUB%\ape.lds --gc-sections --build-id=none -z max-page-size=4096 --omagic ^
     %COSMOPUB%\crt.o ^
-    test_loader.o systemcall.o launch.o ^
+    ape_loader.o test_loader.o systemcall.o launch.o ^
     %COSMOPUB%\ape.o %COSMOPUB%\cosmopolitan.a ^
     -o test_loader.exe.dbg
 if errorlevel 1 goto error
