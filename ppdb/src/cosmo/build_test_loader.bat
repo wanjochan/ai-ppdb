@@ -30,15 +30,18 @@ echo Using OBJCOPY: %OBJCOPY%
 echo Using COSMOPUB: %COSMOPUB%
 echo Using COSMO: %COSMO%
 
-rem 编译test_loader
-echo Compiling test_loader.c...
-%GCC% %CFLAGS% %INCLUDES% -c test_loader.c -o test_loader.o
-if errorlevel 1 goto error
+del /Q test_loader.exe
 
 rem 编译APE加载器
 echo Compiling APE loader...
 %GCC% %CFLAGS% %INCLUDES% -c %COSMO%\ape\loader.c -o ape_loader.o
 if errorlevel 1 goto error
+
+rem 编译test_loader
+echo Compiling test_loader.c...
+%GCC% %CFLAGS% %INCLUDES% -c test_loader.c -o test_loader.o
+if errorlevel 1 goto error
+
 
 rem 编译系统调用
 echo Compiling systemcall.S...
@@ -53,7 +56,7 @@ if errorlevel 1 goto error
 echo Linking test_loader.exe.dbg...
 %LD% -T %COSMOPUB%\ape.lds --gc-sections --build-id=none -z max-page-size=4096 --omagic ^
     %COSMOPUB%\crt.o ^
-    test_loader.o ape_loader.o systemcall.o launch.o ^
+    test_loader.o systemcall.o launch.o ^
     %COSMOPUB%\ape.o %COSMOPUB%\cosmopolitan.a ^
     -o test_loader.exe.dbg
 if errorlevel 1 goto error
