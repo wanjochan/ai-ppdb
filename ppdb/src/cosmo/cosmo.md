@@ -171,5 +171,5 @@ set OBJCOPY=..\..\..\repos\cross9\bin\x86_64-pc-linux-gnu-objcopy.exe
 4. 添加错误处理和调试信息
 
 ### 参考资料
-1. APE Loader实现: https://github.com/jart/cosmopolitan/blob/master/ape/loader.c
+1. APE Loader实现: repos/cosmpolitan/ape/*.*
 2. APE文件格式: https://justine.lol/ape.html 
