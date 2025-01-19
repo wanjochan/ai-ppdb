@@ -102,22 +102,24 @@ static inline uint32_t READ32(const unsigned char* p) {
     return val;
 }
 
-// 解析printf语句中的八进制转义序列
-static inline int parse_octal(const unsigned char *data, int i, int *pc) {
-    int c;
-    if ('0' <= data[i] && data[i] <= '7') {
-        c = data[i++] - '0';
-        if ('0' <= data[i] && data[i] <= '7') {
-            c *= 8;
-            c += data[i++] - '0';
-            if ('0' <= data[i] && data[i] <= '7') {
-                c *= 8;
-                c += data[i++] - '0';
-            }
-        }
-        *pc = c;
+// Parse octal escape sequence according to APE specification
+static int parse_octal(const unsigned char* page, int i, int* pc) {
+    int orig_i = i;
+    int c = 0;
+    
+    // Parse up to three octal digits
+    int digits = 0;
+    while (digits < 3 && page[i] >= '0' && page[i] <= '7') {
+        c = (c << 3) + (page[i] - '0');
+        i++;
+        digits++;
     }
-    return i;
+    
+    if (digits > 0) {
+        *pc = c;
+        return i - orig_i;  // 返回实际处理的字符数
+    }
+    return 0;  // 不是八进制序列
 }
 
 //-----------------------------------------------------------------------------
@@ -236,119 +238,234 @@ static int validate_elf_header(const unsigned char* elf_data, size_t elf_size,
 //-----------------------------------------------------------------------------
 
 // Find embedded ELF header in printf statement
-static const unsigned char* find_elf_header(const void* data, size_t size) {
+static const unsigned char* find_elf_header(const void* data, size_t size, size_t* out_size) {
     const unsigned char* p = data;
     const unsigned char* end = p + MIN(size, 8192);  // Only search first 8192 bytes
+    static unsigned char elf_buffer[8192];  // Buffer for decoded ELF header and program headers
+    int elf_pos = 0;
+    const Elf64_Ehdr* ehdr = NULL;
     
-    printf("\nSearching for ELF header in first 8192 bytes:\n");
+    // First verify APE header
+    const struct ApeHeader* ape = data;
+    if (memcmp(ape->magic, APE_MAGIC_MZ, 7) != 0 &&
+        memcmp(ape->magic, APE_MAGIC_UNIX, 7) != 0 &&
+        memcmp(ape->magic, APE_MAGIC_DBG, 7) != 0) {
+        printf("Invalid APE magic: %.7s\n", ape->magic);
+        return NULL;
+    }
     
-    // Look for printf statement with ELF magic
-    while (p < end - 16) {
-        // Skip to printf
+    printf("APE header:\n");
+    printf("  Magic: %.7s\n", ape->magic);
+    printf("  Size: %u (0x%x)\n", ape->size, ape->size);
+    printf("  ELF offset: %u (0x%x)\n", ape->elf_off, ape->elf_off);
+    
+    // Dump first 128 bytes for debugging
+    printf("\nFirst 128 bytes of file:\n");
+    for (int i = 0; i < 128; i += 16) {
+        printf("  %04x:", i);
+        for (int j = 0; j < 16 && i + j < 128; j++) {
+            printf(" %02x", ((const unsigned char*)data)[i + j]);
+        }
+        printf("  ");
+        for (int j = 0; j < 16 && i + j < 128; j++) {
+            char c = ((const unsigned char*)data)[i + j];
+            printf("%c", (c >= 32 && c <= 126) ? c : '.');
+        }
+        printf("\n");
+    }
+    
+    // Skip APE header
+    p += sizeof(struct ApeHeader);
+    
+    printf("\nSearching for printf statement...\n");
+    
+    // Search for printf statement with ELF header
+    while (p < end - 4) {  // Need at least 4 bytes for minimal printf
+        // Look for printf command
         if (memcmp(p, "printf", 6) == 0) {
-            printf("Found printf at offset: %td\n", p - (const unsigned char*)data);
+            printf("\nFound printf at offset 0x%tx\n", p - (const unsigned char*)data);
             
-            p += 6;
-            // Skip whitespace and quote
-            while (p < end && (*p == ' ' || *p == '\t' || *p == '\'' || *p == '"')) p++;
-            
-            // Print next few bytes for debugging
-            printf("Next bytes after printf: ");
-            for (int i = 0; i < 16 && p + i < end; i++) {
-                printf("%c", p[i] >= 32 && p[i] <= 126 ? p[i] : '.');
-            }
-            printf("\nHex: ");
-            for (int i = 0; i < 16 && p + i < end; i++) {
-                printf("%02x ", p[i]);
+            // Print context around printf
+            printf("Context (32 bytes before):\n");
+            for (int i = -32; i < 0; i++) {
+                if (p + i >= (const unsigned char*)data) {
+                    printf("%c", (p[i] >= 32 && p[i] <= 126) ? p[i] : '.');
+                }
             }
             printf("\n");
             
-            // Check for octal escape sequence for ELF magic
-            if (p[0] == '\\' && p[1] == '1' && p[2] == '7' && p[3] == '7') {
-                printf("Found potential ELF magic octal sequence\n");
-                // Found potential ELF header
-                unsigned char* elf_header = malloc(sizeof(Elf64_Ehdr));
-                if (!elf_header) {
-                    printf("Failed to allocate memory for ELF header\n");
-                    return NULL;
-                }
-                
-                size_t elf_pos = 0;
-                const unsigned char* parse_start = p;
-                
-                // Parse octal escape sequences
-                while (p < end && elf_pos < sizeof(Elf64_Ehdr)) {
-                    if (*p == '\\') {
-                        p++;
-                        int c;
-                        int new_pos = parse_octal((const unsigned char*)p, 0, &c);
-                        if (new_pos > 0) {
-                            p += new_pos;
-                            elf_header[elf_pos++] = c;
-                        } else {
-                            p++;
-                        }
-                    } else if (*p == '\'' || *p == '"') {
-                        break;
-                    } else {
-                        p++;
-                    }
-                }
-                
-                // Verify ELF magic
-                if (elf_pos >= 4 && 
-                    elf_header[0] == 0x7f && 
-                    elf_header[1] == 'E' && 
-                    elf_header[2] == 'L' && 
-                    elf_header[3] == 'F') {
-                    printf("Found ELF header in printf statement\n");
-                    return elf_header;
-                }
-                
-                free(elf_header);
+            const unsigned char* printf_start = p;
+            p += 6;
+            
+            // Skip whitespace
+            while (p < end && (*p == ' ' || *p == '\t')) {
+                printf("Skipping whitespace: 0x%02x\n", *p);
+                p++;
             }
+            
+            // Check for single quote or double quote
+            char quote = 0;
+            if (*p == '\'' || *p == '"') {
+                quote = *p;
+                printf("Found quote: %c\n", quote);
+                p++;
+            }
+            
+            printf("Processing printf argument:\n");
+            
+            // Save start of argument for context printing
+            const unsigned char* arg_start = p;
+            
+            // Process printf argument
+            while (p < end && *p != quote && *p != '\n') {
+                if (*p == '\\') {  // Found escape sequence
+                    printf("Found escape at offset 0x%tx: ", p - (const unsigned char*)data);
+                    p++;  // Skip backslash
+                    if (p >= end) break;
+                    
+                    // Parse octal sequence
+                    if ('0' <= *p && *p <= '7') {
+                        printf("Found octal sequence at offset 0x%tx: ", p - (const unsigned char*)data);
+                        int c;
+                        const unsigned char* seq_start = p;
+                        int chars_processed = parse_octal(p, 0, &c);
+                        if (chars_processed > 0) {
+                            printf("decoded 0x%02x ('%c') from sequence '", 
+                                   c, (c >= 32 && c <= 126) ? c : '.');
+                            // Print the actual sequence
+                            for (int i = 0; i < chars_processed; i++) {
+                                printf("%c", seq_start[i]);
+                            }
+                            printf("'\n");
+                            
+                            p += chars_processed;
+                            if (elf_pos < sizeof(elf_buffer)) {
+                                elf_buffer[elf_pos++] = (unsigned char)c;
+                                
+                                // Check if we have enough for ELF magic
+                                if (elf_pos >= SELFMAG) {
+                                    printf("Checking ELF magic at position %d:\n", elf_pos - SELFMAG);
+                                    printf("Got:      ");
+                                    for (int i = 0; i < SELFMAG; i++) {
+                                        printf("%02x ", elf_buffer[elf_pos - SELFMAG + i]);
+                                    }
+                                    printf("\nExpected: ");
+                                    for (int i = 0; i < SELFMAG; i++) {
+                                        printf("%02x ", ELFMAG[i]);
+                                    }
+                                    printf("\n");
+                                }
+                                
+                                // Check if we have enough for ELF header
+                                if (elf_pos >= sizeof(Elf64_Ehdr)) {
+                                    ehdr = (const Elf64_Ehdr*)elf_buffer;
+                                    printf("\nGot complete ELF header (%zu bytes):\n", sizeof(Elf64_Ehdr));
+                                    // Print raw bytes for debugging
+                                    for (size_t i = 0; i < sizeof(Elf64_Ehdr); i++) {
+                                        if (i % 16 == 0) printf("\n%04zx: ", i);
+                                        printf("%02x ", elf_buffer[i]);
+                                    }
+                                    printf("\n");
+                                    
+                                    // Verify ELF header
+                                    if (validate_elf_header(elf_buffer, elf_pos, &ehdr)) {
+                                        printf("Found valid ELF header\n");
+                                        if (out_size) *out_size = elf_pos;
+                                        return elf_buffer;
+                                    }
+                                }
+                            }
+                        } else {
+                            printf("failed to parse octal sequence starting with '%c'\n", *p);
+                            p++;  // Skip invalid octal
+                        }
+                    } else {
+                        printf("Skipping non-octal escape: %c\n", *p);
+                        p++;  // Skip non-octal escape
+                    }
+                } else {
+                    if (*p >= 32 && *p <= 126) {
+                        printf("Skipping regular character: '%c'\n", *p);
+                    } else {
+                        printf("Skipping non-printable character: 0x%02x\n", *p);
+                    }
+                    p++;  // Skip regular character
+                }
+            }
+            
+            // Print the entire printf argument
+            printf("\nComplete printf argument:\n");
+            for (const unsigned char* s = arg_start; s < p; s++) {
+                printf("%c", (*s >= 32 && *s <= 126) ? *s : '.');
+            }
+            printf("\n");
+            
+            printf("End of printf argument\n");
+            
+            // Reset buffer if this printf didn't contain valid ELF
+            elf_pos = 0;
         }
         p++;
     }
     
-    // If not found in printf, try direct ELF header at APE offset
-    const struct ApeHeader* ape = data;
-    printf("\nChecking APE header at offset 0:\n");
-    printf("  Magic: %.8s\n", ape->magic);
-    printf("  Size: %u (0x%x)\n", ape->size, ape->size);
-    printf("  ELF offset: %u (0x%x)\n", ape->elf_off, ape->elf_off);
-    
-    if (ape->elf_off && ape->elf_off < size) {
-        const unsigned char* elf = (const unsigned char*)data + ape->elf_off;
-        printf("\nChecking for ELF header at offset %u (0x%x):\n", ape->elf_off, ape->elf_off);
-        hex_dump("  ", elf, 64);
+    // If we didn't find it in printf statements, try the APE offset
+    if (ape->elf_off > 0 && ape->elf_off + sizeof(Elf64_Ehdr) <= size) {
+        const unsigned char* elf_data = (const unsigned char*)data + ape->elf_off;
+        ehdr = (const Elf64_Ehdr*)elf_data;
         
-        if (elf[0] == 0x7f && 
-            elf[1] == 'E' && 
-            elf[2] == 'L' && 
-            elf[3] == 'F') {
-            printf("Found ELF header at APE offset: %u\n", ape->elf_off);
-            return elf;
+        printf("\nTrying ELF header at APE offset 0x%x:\n", ape->elf_off);
+        printf("  Magic: %02x %02x %02x %02x\n",
+               ehdr->e_ident[0], ehdr->e_ident[1],
+               ehdr->e_ident[2], ehdr->e_ident[3]);
+        
+        // Check ELF magic number
+        if (memcmp(elf_data, ELFMAG, SELFMAG) != 0) {
+            printf("Invalid ELF magic number:\n");
+            printf("Expected: %02x %02x %02x %02x\n", 
+                   ELFMAG[0], ELFMAG[1], ELFMAG[2], ELFMAG[3]);
+            printf("Got:      %02x %02x %02x %02x\n", 
+                   elf_data[0], elf_data[1], 
+                   elf_data[2], elf_data[3]);
+            return NULL;
         }
-        printf("Invalid ELF magic at APE offset %u: %02x %02x %02x %02x\n",
-               ape->elf_off, elf[0], elf[1], elf[2], elf[3]);
+        
+        if (ehdr->e_ident[EI_CLASS] == ELFCLASS64 &&
+            ehdr->e_ident[EI_DATA] == ELFDATA2LSB &&
+            ehdr->e_machine == EM_X86_64 &&
+            (ehdr->e_type == ET_EXEC || ehdr->e_type == ET_DYN) &&
+            ehdr->e_phentsize == sizeof(Elf64_Phdr)) {
+            printf("Found valid x86_64 ELF header at APE offset\n");
+            if (out_size) *out_size = sizeof(Elf64_Ehdr);
+            return elf_data;
+        } else {
+            printf("Invalid ELF header at APE offset:\n");
+            printf("  Class: %d (expected %d)\n", ehdr->e_ident[EI_CLASS], ELFCLASS64);
+            printf("  Data: %d (expected %d)\n", ehdr->e_ident[EI_DATA], ELFDATA2LSB);
+            printf("  Machine: %d (expected %d)\n", ehdr->e_machine, EM_X86_64);
+            printf("  Type: %d (expected %d or %d)\n", ehdr->e_type, ET_EXEC, ET_DYN);
+            printf("  PHEntSize: %d (expected %d)\n", ehdr->e_phentsize, (int)sizeof(Elf64_Phdr));
+        }
     }
     
-    printf("No valid ELF header found\n");
+    printf("\nNo valid ELF header found\n");
     return NULL;
 }
 
 // Load ELF segments into memory
-static void* load_elf_segments(const unsigned char* elf_data, size_t elf_size) {
-    // First try to find embedded ELF header
-    const unsigned char* elf_header = find_elf_header(elf_data, elf_size);
-    if (!elf_header) {
-        SET_ERROR("Could not find valid ELF header");
+static void* load_elf_segments(const void* data, size_t size) {
+    // First check APE header
+    const struct ApeHeader* ape = data;
+    if (ape->elf_off == 0 || ape->elf_off >= size) {
+        SET_ERROR("Invalid ELF offset in APE header: %u", ape->elf_off);
         return NULL;
     }
-    
+
+    // Get ELF header from APE offset
+    const unsigned char* elf_header = (const unsigned char*)data + ape->elf_off;
     const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)elf_header;
-    if (!validate_elf_header(elf_header, elf_size - (elf_header - elf_data), &ehdr)) {
+    
+    // Validate ELF header
+    if (!validate_elf_header(elf_header, size - ape->elf_off, &ehdr)) {
         return NULL;
     }
 
@@ -367,12 +484,30 @@ static void* load_elf_segments(const unsigned char* elf_data, size_t elf_size) {
     // Calculate total memory size needed
     size_t min_addr = (size_t)-1;
     size_t max_addr = 0;
+    
+    // Program headers are relative to the ELF header
     const Elf64_Phdr* phdr = (const Elf64_Phdr*)(elf_header + ehdr->e_phoff);
     
+    printf("Program headers at offset: %lx\n", ehdr->e_phoff);
+    printf("Number of program headers: %d\n", ehdr->e_phnum);
+    
+    // First pass: calculate memory requirements
     for (int i = 0; i < ehdr->e_phnum; i++) {
+        printf("Program header %d:\n", i);
+        printf("  Type: %x\n", phdr[i].p_type);
+        printf("  Flags: %x\n", phdr[i].p_flags);
+        printf("  Offset: %lx\n", phdr[i].p_offset);
+        printf("  VAddr: %lx\n", phdr[i].p_vaddr);
+        printf("  PAddr: %lx\n", phdr[i].p_paddr);
+        printf("  FileSize: %lx\n", phdr[i].p_filesz);
+        printf("  MemSize: %lx\n", phdr[i].p_memsz);
+        printf("  Align: %lx\n", phdr[i].p_align);
+        
         if (phdr[i].p_type == PT_LOAD) {
             size_t seg_start = ROUND_DOWN(phdr[i].p_vaddr, PAGE_SIZE);
             size_t seg_end = ROUND_UP(phdr[i].p_vaddr + phdr[i].p_memsz, PAGE_SIZE);
+            
+            printf("  Loadable segment: start=%lx, end=%lx\n", seg_start, seg_end);
             
             if (seg_start < min_addr) min_addr = seg_start;
             if (seg_end > max_addr) max_addr = seg_end;
@@ -386,14 +521,14 @@ static void* load_elf_segments(const unsigned char* elf_data, size_t elf_size) {
 
     // Allocate memory for all segments
     size_t total_size = max_addr - min_addr;
-    void* base = allocate_memory(total_size, elf_to_sys_prot(ehdr->e_flags));
+    void* base = allocate_memory(total_size, PROT_READ | PROT_WRITE);
     if (!base) {
         return NULL;
     }
 
     printf("Allocated base memory at %p, size: %zu\n", base, total_size);
 
-    // Load segments
+    // Second pass: load segments
     for (int i = 0; i < ehdr->e_phnum; i++) {
         if (phdr[i].p_type != PT_LOAD) {
             continue;
@@ -403,18 +538,29 @@ static void* load_elf_segments(const unsigned char* elf_data, size_t elf_size) {
         void* seg_addr = (char*)base + (phdr[i].p_vaddr - min_addr);
         size_t file_size = phdr[i].p_filesz;
         size_t mem_size = phdr[i].p_memsz;
+        
+        // File data is relative to the ELF header
+        const void* file_data = elf_header + phdr[i].p_offset;
 
-        printf("Loading segment %d: vaddr=%lx, file_size=%zu, mem_size=%zu\n",
-               i, phdr[i].p_vaddr, file_size, mem_size);
+        printf("Loading segment %d:\n", i);
+        printf("  vaddr=%lx\n", phdr[i].p_vaddr);
+        printf("  file_size=%zu\n", file_size);
+        printf("  mem_size=%zu\n", mem_size);
+        printf("  file_offset=%lx\n", phdr[i].p_offset);
+        printf("  seg_addr=%p\n", seg_addr);
 
         // Copy segment data
         if (file_size > 0) {
-            if (phdr[i].p_offset + file_size > elf_size) {
+            if (phdr[i].p_offset + file_size > size - ape->elf_off) {
                 SET_ERROR("Segment %d extends beyond file size", i);
                 free_memory(base, total_size);
                 return NULL;
             }
-            memcpy(seg_addr, elf_header + phdr[i].p_offset, file_size);
+            memcpy(seg_addr, file_data, file_size);
+            
+            // Verify the copy
+            printf("Verifying segment %d data:\n", i);
+            hex_dump("  ", seg_addr, MIN(file_size, 64));
         }
 
         // Zero out remaining memory (BSS)
@@ -517,4 +663,5 @@ int main(int argc, char* argv[]) {
     cleanup_context(&ctx);
     return ret;
 }
+
 

@@ -1,10 +1,25 @@
-static uint32_t READ32(const unsigned char* p) {
-    uint32_t val = ((uint32_t)p[0]) |
-                   ((uint32_t)p[1] << 8) |
-                   ((uint32_t)p[2] << 16) |
-                   ((uint32_t)p[3] << 24);
-    printf("Reading 32-bit value at offset %p: %02x %02x %02x %02x = %u (0x%x)\n", 
-           p, p[0], p[1], p[2], p[3], val, val);
+// 大小端枚举
+typedef enum {
+    ENDIAN_LITTLE,
+    ENDIAN_BIG
+} endian_t;
+
+static uint32_t READ32(const unsigned char* p, endian_t endian) {
+    uint32_t val;
+    if (endian == ENDIAN_LITTLE) {
+        val = ((uint32_t)p[3] << 24) |
+              ((uint32_t)p[2] << 16) |
+              ((uint32_t)p[1] << 8) |
+              ((uint32_t)p[0]);
+    } else {
+        val = ((uint32_t)p[0] << 24) |
+              ((uint32_t)p[1] << 16) |
+              ((uint32_t)p[2] << 8) |
+              ((uint32_t)p[3]);
+    }
+    printf("Reading 32-bit value at offset %p (%s endian): %02x %02x %02x %02x = %u (0x%x)\n", 
+           p, endian == ENDIAN_LITTLE ? "little" : "big",
+           p[0], p[1], p[2], p[3], val, val);
     return val;
 }
 
@@ -12,17 +27,44 @@ static int validate_ape_header(const unsigned char* raw, size_t file_size) {
     printf("APE header validation:\n");
     printf("  File size: 0x%x\n", (uint32_t)file_size);
     
-    uint32_t size = READ32(raw + 8);
-    uint32_t elf_off = READ32(raw + 12);
+    // 检查APE头的魔数
+    if (memcmp(raw, "MZqFpD=", 7) != 0 &&
+        memcmp(raw, "jartsr=", 7) != 0 &&
+        memcmp(raw, "APEDBG=", 7) != 0) {
+        printf("Invalid APE magic number\n");
+        return 0;
+    }
+    
+    // 检查APE头的结构
+    if (raw[7] != '\'') {
+        printf("Invalid APE header format (missing quote)\n");
+        return 0;
+    }
+    
+    // 检查Unix换行符(\n)
+    if (raw[8] != '\n') {
+        printf("Invalid APE header format (missing LF)\n");
+        return 0;
+    }
+    
+    // 读取size和elf_off (考虑\n后的偏移)
+    uint32_t size = READ32(raw + 9, ENDIAN_LITTLE);
+    uint32_t elf_off = READ32(raw + 13, ENDIAN_LITTLE);
     
     printf("  APE size: 0x%x\n", size);
     printf("  ELF offset: 0x%x\n", elf_off);
     
-    printf("Raw bytes for size: %02x %02x %02x %02x\n", raw[8], raw[9], raw[10], raw[11]);
-    printf("Raw bytes for elf_off: %02x %02x %02x %02x\n", raw[12], raw[13], raw[14], raw[15]);
+    printf("Raw bytes for size: %02x %02x %02x %02x\n", raw[9], raw[10], raw[11], raw[12]);
+    printf("Raw bytes for elf_off: %02x %02x %02x %02x\n", raw[13], raw[14], raw[15], raw[16]);
     
-    if (size > file_size) {
-        printf("Invalid APE size: %u > %u\n", size, (uint32_t)file_size);
+    // 验证size和elf_off的合理性
+    if (size > file_size || size < 0x1000) {
+        printf("Invalid APE size: %u\n", size);
+        return 0;
+    }
+    
+    if (elf_off >= size || elf_off < 0x1000) {
+        printf("Invalid ELF offset: %u\n", elf_off);
         return 0;
     }
     
@@ -60,93 +102,98 @@ static int parse_octal(const unsigned char* p, size_t size, size_t* pos, unsigne
 static const Elf64_Ehdr* search_elf_header(const unsigned char* raw, 
                                                 size_t file_size,
                                                 uint32_t hint_offset) {
-    printf("\nSearching for ELF header in printf statements...\n");
+    printf("\nSearching for ELF header...\n");
     
-    // 在前8192字节中搜索printf语句
+    // 首先验证APE头
+    if (!validate_ape_header(raw, file_size)) {
+        printf("APE header validation failed\n");
+        return NULL;
+    }
+    
+    // 先尝试搜索printf语句
     const size_t search_size = file_size < 8192 ? file_size : 8192;
     printf("Searching first %zu bytes for printf statement...\n", search_size);
     
-    // 搜索printf语句的特征
-    const char* printf_patterns[] = {
-        "printf '\\177ELF",  // 标准格式
-        "printf \"\\177ELF", // 双引号格式
-        NULL
-    };
+    static unsigned char elf_buffer[4096];
+    const unsigned char* p = raw;
+    const unsigned char* pe = raw + search_size;
     
-    for (const char** pattern = printf_patterns; *pattern; pattern++) {
-        size_t pattern_len = strlen(*pattern);
-        
-        for (size_t i = 0; i < search_size - pattern_len; i++) {
-            if (memcmp(raw + i, *pattern, pattern_len) == 0) {
-                printf("Found printf statement at offset 0x%zx\n", i);
-                
-                // 解析八进制转义序列
-                unsigned char elf_header[sizeof(Elf64_Ehdr)];
-                size_t elf_pos = 0;
-                size_t pos = i + pattern_len;
-                
-                // 跳过printf语句开头的引号
-                while (pos < search_size && raw[pos] != '\'' && raw[pos] != '"') pos++;
-                if (pos >= search_size) continue;
-                pos++; // 跳过引号
-                
-                while (pos < search_size && elf_pos < sizeof(Elf64_Ehdr)) {
-                    if (raw[pos] == '\\') {
-                        unsigned char val;
-                        if (parse_octal(raw, search_size, &pos, &val)) {
-                            elf_header[elf_pos++] = val;
+    while (p + 8 <= pe) {
+        // 搜索 printf '
+        if (memcmp(p, "printf '", 8) == 0) {
+            printf("Found printf statement at offset 0x%tx\n", p - raw);
+            
+            size_t i = 0;
+            p += 8;
+            
+            // 解析printf内容直到结束引号
+            while (p + 3 < pe && *p != '\'') {
+                unsigned char c = *p++;
+                if (c == '\\') {
+                    if ('0' <= *p && *p <= '7') {
+                        c = *p++ - '0';
+                        if ('0' <= *p && *p <= '7') {
+                            c = (c << 3) + (*p++ - '0');
+                            if ('0' <= *p && *p <= '7') {
+                                c = (c << 3) + (*p++ - '0');
+                            }
                         }
-                    } else if (raw[pos] == '\'' || raw[pos] == '"') {
-                        break;
-                    } else if (raw[pos] >= 32 && raw[pos] <= 126) {
-                        // 直接复制可打印ASCII字符
-                        elf_header[elf_pos++] = raw[pos++];
-                    } else {
-                        pos++;
                     }
                 }
-                
-                if (elf_pos >= sizeof(Elf64_Ehdr)) {
-                    printf("Successfully parsed ELF header from printf statement\n");
-                    const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)elf_header;
-                    
-                    // 打印ELF头的详细信息
-                    printf("ELF header details:\n");
-                    printf("  Magic: %02x %02x %02x %02x\n", 
-                           ehdr->e_ident[0], ehdr->e_ident[1],
-                           ehdr->e_ident[2], ehdr->e_ident[3]);
-                    printf("  Class: %d\n", ehdr->e_ident[EI_CLASS]);
-                    printf("  Data: %d\n", ehdr->e_ident[EI_DATA]);
-                    printf("  Type: 0x%x\n", ehdr->e_type);
-                    printf("  Machine: 0x%x\n", ehdr->e_machine);
-                    
-                    // 验证ELF头
-                    if (memcmp(ehdr->e_ident, "\x7f""ELF", 4) == 0 &&
-                        ehdr->e_ident[EI_CLASS] == ELFCLASS64 &&
-                        ehdr->e_ident[EI_DATA] == ELFDATA2LSB &&
-                        (ehdr->e_type == ET_EXEC || ehdr->e_type == ET_DYN) &&
-                        ehdr->e_machine == EM_X86_64) {
-                        printf("Found valid ELF header\n");
-                        return ehdr;
-                    }
-                    printf("Invalid ELF header (failed validation)\n");
+                if (i < sizeof(elf_buffer)) {
+                    elf_buffer[i++] = c;
                 }
             }
+            
+            // 检查是否有足够的数据构成ELF头
+            if (i >= sizeof(Elf64_Ehdr)) {
+                printf("Found potential ELF header in printf statement, size: %zu bytes\n", i);
+                printf("First 16 bytes: ");
+                for (size_t j = 0; j < 16; j++) {
+                    printf("%02x ", elf_buffer[j]);
+                }
+                printf("\n");
+                
+                const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)elf_buffer;
+                
+                // 验证ELF头
+                if (memcmp(ehdr->e_ident, "\x7f""ELF", 4) == 0 &&
+                    ehdr->e_ident[EI_CLASS] == ELFCLASS64 &&
+                    ehdr->e_ident[EI_DATA] == ELFDATA2LSB &&
+                    (ehdr->e_type == ET_EXEC || ehdr->e_type == ET_DYN) &&
+                    ehdr->e_machine == EM_X86_64) {
+                    printf("Found valid ELF header in printf statement\n");
+                    return ehdr;
+                }
+                printf("Invalid ELF header in printf statement (failed validation)\n");
+            }
         }
+        p++;
     }
     
-    printf("No valid ELF header found in printf statements\n");
+    // 如果在printf语句中没找到，尝试在指定偏移处查找
+    uint32_t elf_off = READ32(raw + 13, ENDIAN_LITTLE);
+    printf("Using ELF offset from APE header: 0x%x\n", elf_off);
     
-    // 如果在printf语句中找不到,尝试在hint_offset处查找
-    if (hint_offset + sizeof(Elf64_Ehdr) <= file_size) {
-        printf("Trying hint offset 0x%x...\n", hint_offset);
-        const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)(raw + hint_offset);
+    // 检查ELF头
+    if (elf_off + sizeof(Elf64_Ehdr) <= file_size) {
+        const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)(raw + elf_off);
         if (memcmp(ehdr->e_ident, "\x7f""ELF", 4) == 0) {
-            printf("Found ELF header at hint offset\n");
+            printf("Found ELF header at offset 0x%x\n", elf_off);
             return ehdr;
         }
+        printf("No valid ELF header at offset 0x%x\n", elf_off);
+        
+        // 打印ELF头的内容以便调试
+        printf("ELF header bytes at 0x%x:\n", elf_off);
+        for (size_t i = 0; i < sizeof(Elf64_Ehdr); i++) {
+            printf("%02x ", raw[elf_off + i]);
+            if ((i + 1) % 16 == 0) printf("\n");
+        }
+        printf("\n");
     }
     
+    printf("No valid ELF header found\n");
     return NULL;
 }
 
@@ -178,6 +225,97 @@ static void dump_strings(const unsigned char* data, size_t size) {
     printf("\n");
 }
 
+static void* find_elf_header(const unsigned char* raw, size_t size) {
+    // 首先检查 APE header
+    if (size < 17 || (memcmp(raw, "MZqFpD=", 7) != 0 && 
+                      memcmp(raw, "jartsr=", 7) != 0 && 
+                      memcmp(raw, "APEDBG=", 7) != 0)) {
+        printf("Error: Invalid APE magic number\n");
+        return NULL;
+    }
+
+    // 检查引号和换行符
+    if (raw[7] != '\'' || raw[8] != '\n') {
+        printf("Error: Invalid APE header format\n");
+        return NULL;
+    }
+
+    uint32_t ape_size = READ32(raw + 9, ENDIAN_LITTLE);
+    uint32_t elf_off = READ32(raw + 13, ENDIAN_LITTLE);
+    printf("APE header:\n");
+    printf("  Magic: %.*s\n", 7, raw);
+    printf("  Size: %u (0x%x)\n", ape_size, ape_size);
+    printf("  ELF offset: %u (0x%x)\n", elf_off, elf_off);
+
+    // 在前 8192 字节中搜索 printf 语句
+    static unsigned char elf_buffer[4096];
+    const unsigned char* p = raw;
+    const unsigned char* pe = raw + (size < 8192 ? size : 8192);
+
+    while (p + 8 <= pe) {
+        // 搜索 printf '
+        if (memcmp(p, "printf '", 8) == 0) {
+            printf("Found printf statement at offset 0x%tx\n", p - raw);
+            
+            size_t i = 0;
+            p += 8;
+            
+            // 解析 printf 内容直到结束引号
+            while (p + 3 < pe && *p != '\'') {
+                unsigned char c = *p++;
+                if (c == '\\') {
+                    if ('0' <= *p && *p <= '7') {
+                        c = *p++ - '0';
+                        if ('0' <= *p && *p <= '7') {
+                            c = (c << 3) + (*p++ - '0');
+                            if ('0' <= *p && *p <= '7') {
+                                c = (c << 3) + (*p++ - '0');
+                            }
+                        }
+                    }
+                }
+                if (i < sizeof(elf_buffer)) {
+                    elf_buffer[i++] = c;
+                }
+            }
+            
+            // 检查是否有足够的数据构成 ELF 头
+            if (i >= sizeof(Elf64_Ehdr)) {
+                printf("Found %zu bytes in printf statement\n", i);
+                printf("First 16 bytes: ");
+                for (size_t j = 0; j < 16; j++) {
+                    printf("%02x ", elf_buffer[j]);
+                }
+                printf("\n");
+                
+                const Elf64_Ehdr* ehdr = (const Elf64_Ehdr*)elf_buffer;
+                
+                // 验证 ELF 头
+                if (memcmp(ehdr->e_ident, "\x7f""ELF", 4) == 0 &&
+                    ehdr->e_ident[EI_CLASS] == ELFCLASS64 &&
+                    ehdr->e_ident[EI_DATA] == ELFDATA2LSB &&
+                    (ehdr->e_type == ET_EXEC || ehdr->e_type == ET_DYN) &&
+                    ehdr->e_machine == EM_X86_64) {
+                    printf("Found valid ELF header in printf statement\n");
+                    return (void*)ehdr;
+                }
+                printf("Invalid ELF header in printf statement (failed validation)\n");
+                printf("  Magic: %02x %02x %02x %02x\n", 
+                       ehdr->e_ident[0], ehdr->e_ident[1], 
+                       ehdr->e_ident[2], ehdr->e_ident[3]);
+                printf("  Class: %02x\n", ehdr->e_ident[EI_CLASS]);
+                printf("  Data: %02x\n", ehdr->e_ident[EI_DATA]);
+                printf("  Type: %04x\n", ehdr->e_type);
+                printf("  Machine: %04x\n", ehdr->e_machine);
+            }
+        }
+        p++;
+    }
+    
+    printf("Error: No valid ELF header found\n");
+    return NULL;
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) {
         printf("Usage: %s <target_file>\n", argv[0]);
@@ -203,7 +341,7 @@ int main(int argc, char** argv) {
     }
     printf("File size: %zu bytes\n", st.st_size);
 
-    // Map file into memory
+    // Map file into memory 
     void* mapped_data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (mapped_data == MAP_FAILED) {
         printf("Failed to map file\n");
@@ -220,14 +358,14 @@ int main(int argc, char** argv) {
     hexdump(raw, 0x40);
 
     // Read and validate APE header
-    uint32_t size = READ32(raw + 8);
-    uint32_t elf_off = READ32(raw + 12);
+    uint32_t size = READ32(raw + 9, ENDIAN_LITTLE);
+    uint32_t elf_off = READ32(raw + 13, ENDIAN_LITTLE);
     printf("APE header validation:\n");
     printf("  File size: 0x%zx\n", st.st_size);
     printf("  APE size: 0x%x\n", size);
     printf("  ELF offset: 0x%x\n", elf_off);
-    printf("Raw bytes for size: %02x %02x %02x %02x\n", raw[8], raw[9], raw[10], raw[11]);
-    printf("Raw bytes for elf_off: %02x %02x %02x %02x\n", raw[12], raw[13], raw[14], raw[15]);
+    printf("Raw bytes for size: %02x %02x %02x %02x\n", raw[9], raw[10], raw[11], raw[12]);
+    printf("Raw bytes for elf_off: %02x %02x %02x %02x\n", raw[13], raw[14], raw[15], raw[16]);
 
     // Validate APE header
     if (!validate_ape_header(raw, st.st_size)) {
@@ -256,28 +394,44 @@ int main(int argc, char** argv) {
         hexdump(raw + st.st_size - 128, 128);
     }
 
-    // Search for ELF header in the file
-    printf("\nSearching from APE header end (0x1000) for %zu bytes...\n\n", st.st_size - 0x1000);
-    for (size_t offset = 0x1000; offset < st.st_size - 0x1000; offset += 0x1000) {
-        printf("\nChecking at offset 0x%zx:\n", offset);
-        hexdump(raw + offset, 64);
-    }
-
-    // Check for ELF header
-    const unsigned char* elf_header = find_elf_header(raw, st.st_size, elf_off);
-    if (!elf_header) {
-        printf("No valid ELF header found\n");
-        printf("Failed to locate valid ELF header\n");
+    // Search for ELF header
+    const Elf64_Ehdr* ehdr = search_elf_header(raw, st.st_size, elf_off);
+    if (!ehdr) {
+        printf("Error: Failed to find ELF header\n");
         munmap(mapped_data, st.st_size);
         close(fd);
         return 1;
     }
 
-    printf("Found valid ELF header at offset 0x%zx\n", elf_header - raw);
-    printf("ELF header contents:\n");
-    hexdump(elf_header, 64);
+    // Print ELF header info
+    printf("\nELF header found:\n");
+    printf("  Magic: %02x %02x %02x %02x\n", 
+           ehdr->e_ident[0], ehdr->e_ident[1], 
+           ehdr->e_ident[2], ehdr->e_ident[3]);
+    printf("  Class: %02x\n", ehdr->e_ident[EI_CLASS]);
+    printf("  Data: %02x\n", ehdr->e_ident[EI_DATA]);
+    printf("  Version: %02x\n", ehdr->e_ident[EI_VERSION]);
+    printf("  Type: %04x\n", ehdr->e_type);
+    printf("  Machine: %04x\n", ehdr->e_machine);
+    printf("  Entry: %016lx\n", ehdr->e_entry);
+    printf("  PHoff: %016lx\n", ehdr->e_phoff);
+    printf("  SHoff: %016lx\n", ehdr->e_shoff);
+    printf("  Flags: %08x\n", ehdr->e_flags);
+    printf("  EHSize: %04x\n", ehdr->e_ehsize);
+    printf("  PHEntSize: %04x\n", ehdr->e_phentsize);
+    printf("  PHNum: %04x\n", ehdr->e_phnum);
+    printf("  SHEntSize: %04x\n", ehdr->e_shentsize);
+    printf("  SHNum: %04x\n", ehdr->e_shnum);
+    printf("  SHStrNdx: %04x\n", ehdr->e_shstrndx);
 
-    // Clean up
+    // Load segments
+    if (!load_segments(raw, st.st_size, ehdr)) {
+        printf("Error: Failed to load segments\n");
+        munmap(mapped_data, st.st_size);
+        close(fd);
+        return 1;
+    }
+
     munmap(mapped_data, st.st_size);
     close(fd);
     return 0;
