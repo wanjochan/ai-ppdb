@@ -13,12 +13,20 @@ typedef unsigned long* LPDWORD;
 typedef unsigned short WORD;
 typedef unsigned char BYTE;
 typedef BYTE* LPBYTE;
-typedef unsigned long long ULONGLONG;  // 移动到这里
+typedef unsigned long long ULONGLONG;
 
 #define FALSE 0
 #define TRUE 1
 #define INFINITE 0xFFFFFFFF
 #define MAX_PATH 260
+
+// Windows Memory Management
+#define MEM_COMMIT      0x00001000
+#define MEM_RESERVE     0x00002000
+#define MEM_RELEASE     0x00008000
+#define PAGE_EXECUTE_READWRITE  0x40
+
+// Function prototypes
 
 typedef struct _STARTUPINFOA {
     DWORD  cb;
@@ -74,92 +82,92 @@ __attribute__((__noreturn__)) void ApeLoader(long di, long *sp, char dl);
 
 // PE 文件格式相关结构
 typedef struct _IMAGE_DOS_HEADER {
-    uint16_t e_magic;    // Magic number (MZ)
-    uint16_t e_cblp;     // Bytes on last page of file
-    uint16_t e_cp;       // Pages in file
-    uint16_t e_crlc;     // Relocations
-    uint16_t e_cparhdr;  // Size of header in paragraphs
-    uint16_t e_minalloc; // Minimum extra paragraphs needed
-    uint16_t e_maxalloc; // Maximum extra paragraphs needed
-    uint16_t e_ss;       // Initial (relative) SS value
-    uint16_t e_sp;       // Initial SP value
-    uint16_t e_csum;     // Checksum
-    uint16_t e_ip;       // Initial IP value
-    uint16_t e_cs;       // Initial (relative) CS value
-    uint16_t e_lfarlc;   // File address of relocation table
-    uint16_t e_ovno;     // Overlay number
-    uint16_t e_res[4];   // Reserved words
-    uint16_t e_oemid;    // OEM identifier
-    uint16_t e_oeminfo;  // OEM information
-    uint16_t e_res2[10]; // Reserved words
-    uint32_t e_lfanew;   // File address of new exe header
+    WORD e_magic;
+    WORD e_cblp;
+    WORD e_cp;
+    WORD e_crlc;
+    WORD e_cparhdr;
+    WORD e_minalloc;
+    WORD e_maxalloc;
+    WORD e_ss;
+    WORD e_sp;
+    WORD e_csum;
+    WORD e_ip;
+    WORD e_cs;
+    WORD e_lfarlc;
+    WORD e_ovno;
+    WORD e_res[4];
+    WORD e_oemid;
+    WORD e_oeminfo;
+    WORD e_res2[10];
+    DWORD e_lfanew;
 } IMAGE_DOS_HEADER;
 
 typedef struct _IMAGE_FILE_HEADER {
-    uint16_t Machine;
-    uint16_t NumberOfSections;
-    uint32_t TimeDateStamp;
-    uint32_t PointerToSymbolTable;
-    uint32_t NumberOfSymbols;
-    uint16_t SizeOfOptionalHeader;
-    uint16_t Characteristics;
+    WORD Machine;
+    WORD NumberOfSections;
+    DWORD TimeDateStamp;
+    DWORD PointerToSymbolTable;
+    DWORD NumberOfSymbols;
+    WORD SizeOfOptionalHeader;
+    WORD Characteristics;
 } IMAGE_FILE_HEADER;
 
 typedef struct _IMAGE_DATA_DIRECTORY {
-    uint32_t VirtualAddress;
-    uint32_t Size;
+    DWORD VirtualAddress;
+    DWORD Size;
 } IMAGE_DATA_DIRECTORY;
 
 typedef struct _IMAGE_OPTIONAL_HEADER64 {
-    uint16_t Magic;
-    uint8_t  MajorLinkerVersion;
-    uint8_t  MinorLinkerVersion;
-    uint32_t SizeOfCode;
-    uint32_t SizeOfInitializedData;
-    uint32_t SizeOfUninitializedData;
-    uint32_t AddressOfEntryPoint;
-    uint32_t BaseOfCode;
-    uint64_t ImageBase;
-    uint32_t SectionAlignment;
-    uint32_t FileAlignment;
-    uint16_t MajorOperatingSystemVersion;
-    uint16_t MinorOperatingSystemVersion;
-    uint16_t MajorImageVersion;
-    uint16_t MinorImageVersion;
-    uint16_t MajorSubsystemVersion;
-    uint16_t MinorSubsystemVersion;
-    uint32_t Win32VersionValue;
-    uint32_t SizeOfImage;
-    uint32_t SizeOfHeaders;
-    uint32_t CheckSum;
-    uint16_t Subsystem;
-    uint16_t DllCharacteristics;
-    uint64_t SizeOfStackReserve;
-    uint64_t SizeOfStackCommit;
-    uint64_t SizeOfHeapReserve;
-    uint64_t SizeOfHeapCommit;
-    uint32_t LoaderFlags;
-    uint32_t NumberOfRvaAndSizes;
+    WORD Magic;
+    BYTE MajorLinkerVersion;
+    BYTE MinorLinkerVersion;
+    DWORD SizeOfCode;
+    DWORD SizeOfInitializedData;
+    DWORD SizeOfUninitializedData;
+    DWORD AddressOfEntryPoint;
+    DWORD BaseOfCode;
+    ULONGLONG ImageBase;
+    DWORD SectionAlignment;
+    DWORD FileAlignment;
+    WORD MajorOperatingSystemVersion;
+    WORD MinorOperatingSystemVersion;
+    WORD MajorImageVersion;
+    WORD MinorImageVersion;
+    WORD MajorSubsystemVersion;
+    WORD MinorSubsystemVersion;
+    DWORD Win32VersionValue;
+    DWORD SizeOfImage;
+    DWORD SizeOfHeaders;
+    DWORD CheckSum;
+    WORD Subsystem;
+    WORD DllCharacteristics;
+    ULONGLONG SizeOfStackReserve;
+    ULONGLONG SizeOfStackCommit;
+    ULONGLONG SizeOfHeapReserve;
+    ULONGLONG SizeOfHeapCommit;
+    DWORD LoaderFlags;
+    DWORD NumberOfRvaAndSizes;
     IMAGE_DATA_DIRECTORY DataDirectory[16];
 } IMAGE_OPTIONAL_HEADER64;
 
 typedef struct _IMAGE_NT_HEADERS64 {
-    uint32_t Signature;
+    DWORD Signature;
     IMAGE_FILE_HEADER FileHeader;
     IMAGE_OPTIONAL_HEADER64 OptionalHeader;
 } IMAGE_NT_HEADERS64;
 
 typedef struct _IMAGE_SECTION_HEADER {
-    uint8_t  Name[8];
-    uint32_t VirtualSize;
-    uint32_t VirtualAddress;
-    uint32_t SizeOfRawData;
-    uint32_t PointerToRawData;
-    uint32_t PointerToRelocations;
-    uint32_t PointerToLinenumbers;
-    uint16_t NumberOfRelocations;
-    uint16_t NumberOfLinenumbers;
-    uint32_t Characteristics;
+    BYTE Name[8];
+    DWORD VirtualSize;
+    DWORD VirtualAddress;
+    DWORD SizeOfRawData;
+    DWORD PointerToRawData;
+    DWORD PointerToRelocations;
+    DWORD PointerToLinenumbers;
+    WORD NumberOfRelocations;
+    WORD NumberOfLinenumbers;
+    DWORD Characteristics;
 } IMAGE_SECTION_HEADER;
 
 #define IMAGE_SCN_MEM_EXECUTE 0x20000000
@@ -194,6 +202,13 @@ typedef struct _IMAGE_IMPORT_BY_NAME {
 #define IMAGE_ORDINAL_FLAG64 0x8000000000000000ULL
 #define IMAGE_ORDINAL64(Ordinal) (Ordinal & 0xFFFF)
 
+typedef struct _IMAGE_BASE_RELOCATION {
+    DWORD VirtualAddress;
+    DWORD SizeOfBlock;
+} IMAGE_BASE_RELOCATION;
+
+#define IMAGE_REL_BASED_DIR64 10
+
 int process_imports(void* imageBase, IMAGE_NT_HEADERS64* ntHeaders) {
     IMAGE_DATA_DIRECTORY* importDir = &ntHeaders->OptionalHeader.DataDirectory[1];
     if (importDir->Size == 0) {
@@ -201,56 +216,60 @@ int process_imports(void* imageBase, IMAGE_NT_HEADERS64* ntHeaders) {
         return 0;
     }
 
-    IMAGE_IMPORT_DESCRIPTOR* importDesc = (IMAGE_IMPORT_DESCRIPTOR*)((char*)imageBase + 
-        importDir->VirtualAddress);
-
     printf("Processing imports...\n");
-    for (; importDesc->Name; importDesc++) {
-        char* dllName = (char*)imageBase + importDesc->Name;
-        printf("Loading DLL: %s\n", dllName);
+    IMAGE_IMPORT_DESCRIPTOR* importDesc = (IMAGE_IMPORT_DESCRIPTOR*)((char*)imageBase + importDir->VirtualAddress);
 
-        int64_t dllBase = (int64_t)LoadLibraryA(dllName);  // 修改类型转换
+    // 遍历所有导入 DLL
+    while (importDesc->Name) {
+        char* dllName = (char*)imageBase + importDesc->Name;
+        printf("  Loading DLL: %s\n", dllName);
+
+        int64_t dllBase = (int64_t)LoadLibraryA(dllName);
         if (!dllBase) {
-            printf("Failed to load DLL: %s\n", dllName);
+            printf("    Failed to load DLL: %s\n", dllName);
             return 1;
         }
 
-        IMAGE_THUNK_DATA64* thunk = (IMAGE_THUNK_DATA64*)((char*)imageBase + 
-            importDesc->FirstThunk);
-        IMAGE_THUNK_DATA64* origThunk = (IMAGE_THUNK_DATA64*)((char*)imageBase + 
-            importDesc->OriginalFirstThunk);
+        // 处理 IAT
+        IMAGE_THUNK_DATA64* firstThunk = (IMAGE_THUNK_DATA64*)((char*)imageBase + importDesc->FirstThunk);
+        IMAGE_THUNK_DATA64* origThunk = importDesc->OriginalFirstThunk ?
+            (IMAGE_THUNK_DATA64*)((char*)imageBase + importDesc->OriginalFirstThunk) : firstThunk;
 
-        for (; origThunk->u1.Function; origThunk++, thunk++) {
-            void* funcAddr;
+        while (origThunk->u1.AddressOfData) {
+            void* funcAddr = NULL;
+            char* funcName = NULL;
+
             if (origThunk->u1.Ordinal & IMAGE_ORDINAL_FLAG64) {
+                // 按序号导入
                 WORD ordinal = IMAGE_ORDINAL64(origThunk->u1.Ordinal);
                 funcAddr = GetProcAddress(dllBase, (const char*)(uintptr_t)ordinal);
-                printf("  Imported by ordinal: %d\n", ordinal);
+                printf("    Import by ordinal: %d\n", ordinal);
             } else {
+                // 按名称导入
                 IMAGE_IMPORT_BY_NAME* importByName = (IMAGE_IMPORT_BY_NAME*)((char*)imageBase + 
                     origThunk->u1.AddressOfData);
-                funcAddr = GetProcAddress(dllBase, (const char*)importByName->Name);
-                printf("  Imported by name: %s\n", importByName->Name);
+                funcName = (char*)importByName->Name;
+                funcAddr = GetProcAddress(dllBase, funcName);
+                printf("    Import by name: %s\n", funcName);
             }
 
             if (!funcAddr) {
-                printf("Failed to get function address\n");
+                printf("    Failed to get function address%s%s\n", 
+                    funcName ? ": " : "", 
+                    funcName ? funcName : "");
                 return 1;
             }
 
-            thunk->u1.Function = (ULONGLONG)(uintptr_t)funcAddr;  // 修改类型转换
+            firstThunk->u1.Function = (ULONGLONG)(uintptr_t)funcAddr;
+            origThunk++;
+            firstThunk++;
         }
+
+        importDesc++;
     }
 
     return 0;
 }
-
-typedef struct _IMAGE_BASE_RELOCATION {
-    DWORD VirtualAddress;
-    DWORD SizeOfBlock;
-} IMAGE_BASE_RELOCATION;
-
-#define IMAGE_REL_BASED_DIR64 10
 
 int process_relocations(void* imageBase, IMAGE_NT_HEADERS64* ntHeaders, uint64_t delta) {
     if (delta == 0) {
@@ -264,29 +283,282 @@ int process_relocations(void* imageBase, IMAGE_NT_HEADERS64* ntHeaders, uint64_t
         return 0;
     }
 
-    printf("Processing relocations...\n");
-    IMAGE_BASE_RELOCATION* reloc = (IMAGE_BASE_RELOCATION*)((char*)imageBase + 
-        relocDir->VirtualAddress);
+    printf("Processing relocations (Delta: 0x%llx)...\n", delta);
 
-    while (reloc->VirtualAddress) {
+    // 找到包含重定位数据的节
+    IMAGE_SECTION_HEADER* sections = (IMAGE_SECTION_HEADER*)((char*)ntHeaders + 
+        sizeof(IMAGE_NT_HEADERS64));
+
+    IMAGE_SECTION_HEADER* relocSection = NULL;
+    for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
+        if (sections[i].VirtualAddress == relocDir->VirtualAddress) {
+            relocSection = &sections[i];
+            break;
+        }
+    }
+
+    if (!relocSection) {
+        printf("Failed to find relocation section\n");
+        return 1;
+    }
+
+    printf("Found relocation section at VA: 0x%x, Size: 0x%x\n",
+           relocSection->VirtualAddress, relocSection->VirtualSize);
+
+    // 获取重定位数据
+    char* relocBase = (char*)imageBase + relocDir->VirtualAddress;
+    char* relocEnd = relocBase + relocSection->VirtualSize;
+
+    // 处理每个重定位块
+    IMAGE_BASE_RELOCATION* reloc = (IMAGE_BASE_RELOCATION*)relocBase;
+    while ((char*)reloc < relocEnd && reloc->VirtualAddress != 0) {
+        // 验证块大小
+        if (reloc->SizeOfBlock < sizeof(IMAGE_BASE_RELOCATION) || 
+            (char*)reloc + reloc->SizeOfBlock > relocEnd ||
+            reloc->SizeOfBlock > 0x1000) {  // 通常不会超过一个页面大小
+            printf("  Invalid block size at VA: 0x%x, Size: 0x%x\n", 
+                   reloc->VirtualAddress, reloc->SizeOfBlock);
+            break;
+        }
+
+        // 验证虚拟地址
+        if (reloc->VirtualAddress >= ntHeaders->OptionalHeader.SizeOfImage) {
+            printf("  Invalid block VA: 0x%x\n", reloc->VirtualAddress);
+            break;
+        }
+
+        // 获取重定位项
         WORD* relocData = (WORD*)((char*)reloc + sizeof(IMAGE_BASE_RELOCATION));
-        int numRelocations = (reloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
+        int numEntries = (reloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
 
-        for (int i = 0; i < numRelocations; i++) {
-            WORD relocEntry = relocData[i];
-            WORD type = (relocEntry >> 12) & 0xF;
-            WORD offset = relocEntry & 0xFFF;
+        // 验证条目数量
+        if (numEntries <= 0 || numEntries > 1000) {  // 使用一个合理的上限
+            printf("  Invalid number of entries: %d\n", numEntries);
+            break;
+        }
 
+        printf("  Block VA: 0x%x, Entries: %d\n", reloc->VirtualAddress, numEntries);
+
+        // 处理每个重定位项
+        for (int i = 0; i < numEntries; i++) {
+            WORD entry = relocData[i];
+            WORD type = (entry >> 12) & 0xf;
+            WORD offset = entry & 0xfff;
+
+            // 验证偏移量
+            if (offset >= 0x1000) {  // 页面大小
+                printf("    Skip invalid offset: 0x%x\n", offset);
+                continue;
+            }
+
+            // 计算需要修改的地址
+            char* pageRva = (char*)imageBase + reloc->VirtualAddress;
+            char* targetAddr = pageRva + offset;
+
+            // 验证目标地址
+            if (targetAddr < (char*)imageBase || 
+                targetAddr >= (char*)imageBase + ntHeaders->OptionalHeader.SizeOfImage - sizeof(uint64_t)) {
+                printf("    Skip invalid target address: %p\n", targetAddr);
+                continue;
+            }
+
+            // 根据类型进行重定位
             if (type == IMAGE_REL_BASED_DIR64) {
-                uint64_t* address = (uint64_t*)((char*)imageBase + reloc->VirtualAddress + offset);
-                *address += delta;
+                uint64_t* patchAddr = (uint64_t*)targetAddr;
+                uint64_t oldValue = *patchAddr;
+                *patchAddr += delta;
+                printf("    Relocation at %p: 0x%llx -> 0x%llx\n", 
+                       patchAddr, oldValue, *patchAddr);
             }
         }
 
+        // 移动到下一个块
         reloc = (IMAGE_BASE_RELOCATION*)((char*)reloc + reloc->SizeOfBlock);
     }
 
     return 0;
+}
+
+// 错误处理函数
+void print_error(const char* msg) {
+    printf("Error: %s\n", msg);
+}
+
+// PE加载器上下文
+typedef struct {
+    void* base;           // 映射基址
+    size_t size;         // 映射大小
+    void* entry;         // 入口点
+    BOOL is_dll;         // 是否是DLL
+} PE_CONTEXT;
+
+// 初始化PE上下文
+PE_CONTEXT* init_pe_context() {
+    PE_CONTEXT* ctx = (PE_CONTEXT*)malloc(sizeof(PE_CONTEXT));
+    if (!ctx) {
+        print_error("Failed to allocate PE context");
+        return NULL;
+    }
+    memset(ctx, 0, sizeof(PE_CONTEXT));
+    return ctx;
+}
+
+// 清理PE上下文
+void cleanup_pe_context(PE_CONTEXT* ctx) {
+    if (ctx) {
+        if (ctx->base) {
+            munmap(ctx->base, ctx->size);
+        }
+        free(ctx);
+    }
+}
+
+// 加载PE文件
+PE_CONTEXT* load_pe_file(const char* path) {
+    PE_CONTEXT* ctx = init_pe_context();
+    if (!ctx) return NULL;
+
+    // 打开文件
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        print_error("Failed to open file");
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    // 获取文件大小
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        print_error("Failed to get file size");
+        close(fd);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    // 读取文件内容
+    void* file_data = malloc(st.st_size);
+    if (!file_data) {
+        print_error("Failed to allocate memory for file");
+        close(fd);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    if (read(fd, file_data, st.st_size) != st.st_size) {
+        print_error("Failed to read file");
+        free(file_data);
+        close(fd);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    close(fd);
+
+    // 解析DOS头
+    IMAGE_DOS_HEADER* dos_header = (IMAGE_DOS_HEADER*)file_data;
+    if (dos_header->e_magic != 0x5A4D) {
+        print_error("Invalid DOS signature");
+        free(file_data);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    // 解析NT头
+    IMAGE_NT_HEADERS64* nt_headers = (IMAGE_NT_HEADERS64*)((char*)file_data + dos_header->e_lfanew);
+    if (nt_headers->Signature != 0x4550) {
+        print_error("Invalid PE signature");
+        free(file_data);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    printf("PE file info:\n");
+    printf("  ImageBase: 0x%llx\n", nt_headers->OptionalHeader.ImageBase);
+    printf("  SizeOfImage: 0x%x\n", nt_headers->OptionalHeader.SizeOfImage);
+    printf("  NumberOfSections: %d\n", nt_headers->FileHeader.NumberOfSections);
+
+    // 分配内存
+    size_t image_size = nt_headers->OptionalHeader.SizeOfImage;
+    ctx->size = (image_size + 0xFFF) & ~0xFFF;
+    ctx->base = mmap(NULL, ctx->size,
+                    PROT_READ | PROT_WRITE | PROT_EXEC,
+                    MAP_PRIVATE | MAP_ANONYMOUS,
+                    -1, 0);
+
+    if (ctx->base == MAP_FAILED) {
+        print_error("Failed to allocate memory for image");
+        free(file_data);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    printf("Memory allocated at %p\n", ctx->base);
+
+    // 复制PE头
+    size_t headers_size = nt_headers->OptionalHeader.SizeOfHeaders;
+    memcpy(ctx->base, file_data, headers_size);
+
+    // 复制节
+    IMAGE_SECTION_HEADER* sections = (IMAGE_SECTION_HEADER*)((char*)nt_headers + sizeof(IMAGE_NT_HEADERS64));
+    for (int i = 0; i < nt_headers->FileHeader.NumberOfSections; i++) {
+        void* dest = (char*)ctx->base + sections[i].VirtualAddress;
+        void* src = (char*)file_data + sections[i].PointerToRawData;
+        
+        printf("Section %d: %.*s\n", i, 8, sections[i].Name);
+        printf("  VA: 0x%x, Size: 0x%x\n", sections[i].VirtualAddress, sections[i].VirtualSize);
+        
+        // 清零整个节
+        size_t virtual_size = (sections[i].VirtualSize + 0xFFF) & ~0xFFF;
+        memset(dest, 0, virtual_size);
+
+        // 复制原始数据
+        if (sections[i].SizeOfRawData > 0) {
+            memcpy(dest, src, sections[i].SizeOfRawData);
+        }
+    }
+
+    // 计算重定位增量
+    uint64_t delta = (uint64_t)ctx->base - nt_headers->OptionalHeader.ImageBase;
+    printf("Relocation delta: 0x%llx\n", delta);
+
+    // 处理重定位
+    if (process_relocations(ctx->base, (IMAGE_NT_HEADERS64*)((char*)ctx->base + dos_header->e_lfanew), delta) != 0) {
+        print_error("Failed to process relocations");
+        free(file_data);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    // 处理导入表
+    if (process_imports(ctx->base, (IMAGE_NT_HEADERS64*)((char*)ctx->base + dos_header->e_lfanew)) != 0) {
+        print_error("Failed to process imports");
+        free(file_data);
+        cleanup_pe_context(ctx);
+        return NULL;
+    }
+
+    // 设置最终的页面权限
+    for (int i = 0; i < nt_headers->FileHeader.NumberOfSections; i++) {
+        void* dest = (char*)ctx->base + sections[i].VirtualAddress;
+        size_t virtual_size = (sections[i].VirtualSize + 0xFFF) & ~0xFFF;
+
+        int prot = PROT_READ;
+        if (sections[i].Characteristics & IMAGE_SCN_MEM_WRITE)   prot |= PROT_WRITE;
+        if (sections[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) prot |= PROT_EXEC;
+
+        if (mprotect(dest, virtual_size, prot) != 0) {
+            printf("Warning: Failed to set section %d permissions\n", i);
+        }
+    }
+
+    // 设置入口点
+    ctx->entry = (char*)ctx->base + nt_headers->OptionalHeader.AddressOfEntryPoint;
+    ctx->is_dll = (nt_headers->FileHeader.Characteristics & 0x2000) != 0;
+
+    printf("Entry point at %p\n", ctx->entry);
+
+    free(file_data);
+    return ctx;
 }
 
 int main(int argc, char** argv) {
@@ -295,145 +567,23 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // 1. 打开文件
-    int fd = open(argv[1], O_RDONLY);
-    if (fd < 0) {
-        printf("Failed to open file: %s\n", argv[1]);
+    // 加载PE文件
+    PE_CONTEXT* ctx = load_pe_file(argv[1]);
+    if (!ctx) {
         return 1;
     }
 
-    // 2. 获取文件大小
-    struct stat st;
-    if (fstat(fd, &st) < 0) {
-        printf("Failed to get file size\n");
-        close(fd);
-        return 1;
-    }
-
-    // 3. 读取文件内容到临时缓冲区
-    void* fileBuffer = malloc(st.st_size);
-    if (!fileBuffer) {
-        printf("Failed to allocate memory for file\n");
-        close(fd);
-        return 1;
-    }
-
-    if (read(fd, fileBuffer, st.st_size) != st.st_size) {
-        printf("Failed to read file\n");
-        free(fileBuffer);
-        close(fd);
-        return 1;
-    }
-
-    close(fd);
-
-    // 4. 检查 DOS 头
-    IMAGE_DOS_HEADER* dosHeader = (IMAGE_DOS_HEADER*)fileBuffer;
-    if (dosHeader->e_magic != 0x5A4D) { // "MZ"
-        printf("Invalid DOS signature\n");
-        free(fileBuffer);
-        return 1;
-    }
-
-    printf("DOS Header OK\n");
-
-    // 5. 获取 PE 头
-    IMAGE_NT_HEADERS64* ntHeaders = (IMAGE_NT_HEADERS64*)((char*)fileBuffer + dosHeader->e_lfanew);
-    if (ntHeaders->Signature != 0x4550) { // "PE\0\0"
-        printf("Invalid PE signature\n");
-        free(fileBuffer);
-        return 1;
-    }
-
-    printf("PE Header OK\n");
-    printf("Entry Point RVA: 0x%x\n", ntHeaders->OptionalHeader.AddressOfEntryPoint);
-    printf("Image Base: 0x%llx\n", ntHeaders->OptionalHeader.ImageBase);
-    printf("Size of Image: 0x%x\n", ntHeaders->OptionalHeader.SizeOfImage);
-
-    // 6. 分配内存
-    void* imageBase = mmap((void*)ntHeaders->OptionalHeader.ImageBase,
-                          ntHeaders->OptionalHeader.SizeOfImage,
-                          PROT_READ | PROT_WRITE | PROT_EXEC,
-                          MAP_PRIVATE | MAP_ANONYMOUS,
-                          -1, 0);
-
-    if (imageBase == MAP_FAILED) {
-        printf("Failed to allocate memory at preferred base. Trying anywhere...\n");
-        imageBase = mmap(NULL, ntHeaders->OptionalHeader.SizeOfImage,
-                        PROT_READ | PROT_WRITE | PROT_EXEC,
-                        MAP_PRIVATE | MAP_ANONYMOUS,
-                        -1, 0);
-        if (imageBase == MAP_FAILED) {
-            printf("Failed to allocate memory for image\n");
-            free(fileBuffer);
-            return 1;
-        }
-    }
-
-    printf("Allocated memory at: %p\n", imageBase);
-
-    // 7. 复制头部
-    memcpy(imageBase, fileBuffer, ntHeaders->OptionalHeader.SizeOfHeaders);
-
-    // 8. 加载节
-    IMAGE_SECTION_HEADER* sections = (IMAGE_SECTION_HEADER*)((char*)ntHeaders + 
-        sizeof(IMAGE_NT_HEADERS64));
-
-    printf("Loading %d sections:\n", ntHeaders->FileHeader.NumberOfSections);
-    for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
-        printf("Section %d: VA=0x%x Size=0x%x\n", 
-               i, sections[i].VirtualAddress, sections[i].VirtualSize);
-
-        if (sections[i].SizeOfRawData > 0) {
-            void* dest = (char*)imageBase + sections[i].VirtualAddress;
-            void* src = (char*)fileBuffer + sections[i].PointerToRawData;
-            memcpy(dest, src, sections[i].SizeOfRawData);
-
-            // 设置节权限
-            int prot = PROT_READ;  // 默认可读
-            if (sections[i].Characteristics & IMAGE_SCN_MEM_WRITE)   prot |= PROT_WRITE;
-            if (sections[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) prot |= PROT_EXEC;
-
-            if (mprotect((void*)((uintptr_t)dest & ~0xFFF), 
-                        (sections[i].VirtualSize + 0xFFF) & ~0xFFF, 
-                        prot) != 0) {
-                printf("Warning: Failed to set section %d permissions\n", i);
-            }
-        }
-    }
-
-    free(fileBuffer);
-
-    // 计算重定位增量
-    uint64_t delta = (uint64_t)imageBase - ntHeaders->OptionalHeader.ImageBase;
-
-    // 处理重定位
-    if (process_relocations(imageBase, ntHeaders, delta) != 0) {
-        printf("Failed to process relocations\n");
-        munmap(imageBase, ntHeaders->OptionalHeader.SizeOfImage);
-        return 1;
-    }
-
-    // 处理导入表
-    if (process_imports(imageBase, ntHeaders) != 0) {
-        printf("Failed to process imports\n");
-        munmap(imageBase, ntHeaders->OptionalHeader.SizeOfImage);
-        return 1;
-    }
-
-    // 获取入口点
-    void* entry = (char*)imageBase + ntHeaders->OptionalHeader.AddressOfEntryPoint;
-    printf("Entry point at: %p\n", entry);
+    printf("PE file loaded at %p, entry point at %p\n", ctx->base, ctx->entry);
 
     // 执行入口点
     typedef int (*DllMain)(void* hinstDLL, unsigned long fdwReason, void* lpvReserved);
-    DllMain ep = (DllMain)entry;
+    DllMain ep = (DllMain)ctx->entry;
     
     printf("Executing...\n");
-    int result = ep(imageBase, 1, NULL);  // 1 = DLL_PROCESS_ATTACH
+    int result = ep(ctx->base, 1, NULL);  // 1 = DLL_PROCESS_ATTACH
     printf("Execution result: %d\n", result);
 
     // 清理
-    munmap(imageBase, ntHeaders->OptionalHeader.SizeOfImage);
+    cleanup_pe_context(ctx);
     return result;
 }
