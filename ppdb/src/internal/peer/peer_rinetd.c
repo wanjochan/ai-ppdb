@@ -517,20 +517,11 @@ static infra_error_t parse_config_file(const char* path) {
     }
     config_path[RINETD_MAX_PATH_LEN - 1] = '\0';
 
-    // 尝试加载配置文件，如果失败则保持当前配置
+    // 尝试加载配置文件
     infra_error_t err = rinetd_load_config(config_path);
     if (err != INFRA_OK) {
-        INFRA_LOG_WARN("Failed to load config file: %s, keeping current configuration", config_path);
-        // 如果当前没有任何规则，尝试加载默认配置
-        if (g_context.rule_count == 0) {
-            strncpy(g_context.config_path, "ppdb/rinetd.conf", RINETD_MAX_PATH_LEN - 1);
-            g_context.config_path[RINETD_MAX_PATH_LEN - 1] = '\0';
-            
-            err = rinetd_load_config(g_context.config_path);
-            if (err != INFRA_OK) {
-                INFRA_LOG_WARN("Failed to load default config file: %s", g_context.config_path);
-            }
-        }
+        INFRA_LOG_ERROR("Failed to load config file: %s", config_path);
+        return err;
     }
 
     return INFRA_OK;  // 总是返回成功，让服务可以继续启动
@@ -766,14 +757,13 @@ static infra_error_t start_service(const char* program_path) {
             
             infra_sleep(1000);  // 每秒检查一次运行状态
         }
-        
-        return INFRA_OK;
     } else {
         INFRA_LOG_ERROR("Failed to start listeners: %d", err);
+        infra_mutex_unlock(g_context.mutex);
+        return err;
     }
     
-    infra_mutex_unlock(g_context.mutex);
-    return err;
+    return INFRA_OK;
 }
 
 static infra_error_t stop_service(void) {
@@ -887,23 +877,50 @@ infra_error_t rinetd_cmd_handler(int argc, char** argv) {
         return err;
     }
 
-    const char* cmd = argv[1];
-    if (strcmp(cmd, "--start") == 0) {
-        return start_service(argv[0]);
-    } else if (strcmp(cmd, "--stop") == 0) {
-        return stop_service();
-    } else if (strcmp(cmd, "--status") == 0) {
-        return show_status();
-    } else if (strcmp(cmd, "--config") == 0) {
-        if (argc < 3) {
-            INFRA_LOG_ERROR("Missing config file path");
-            return INFRA_ERROR_INVALID_PARAM;
+    // 处理命令行参数
+    bool should_start = false;
+    const char* config_path = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        const char* arg = argv[i];
+        if (strcmp(arg, "--start") == 0) {
+            should_start = true;
+        } else if (strcmp(arg, "--stop") == 0) {
+            err = stop_service();
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to stop service: %d", err);
+            }
+            return err;
+        } else if (strcmp(arg, "--status") == 0) {
+            return show_status();
+        } else if (strcmp(arg, "--config") == 0) {
+            if (i + 1 >= argc) {
+                INFRA_LOG_ERROR("Missing config file path");
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+            config_path = argv[++i];
         }
-        return parse_config_file(argv[2]);
     }
 
-    INFRA_LOG_ERROR("rinetd: unknown operation: %s", cmd);
-    return INFRA_ERROR_INVALID_PARAM;
+    // 如果指定了配置文件，先加载配置
+    if (config_path != NULL) {
+        err = parse_config_file(config_path);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to parse config file: %d", err);
+            return err;
+        }
+    }
+
+    // 如果需要启动服务
+    if (should_start) {
+        err = start_service(argv[0]);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to start service: %d", err);
+        }
+        return err;
+    }
+
+    return INFRA_OK;
 }
 
 static infra_error_t start_listeners(void) {
