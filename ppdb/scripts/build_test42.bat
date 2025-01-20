@@ -18,10 +18,14 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 rem Build test42
 echo Building test42...
-"%GCC%" %CFLAGS% "%PPDB_DIR%\test\white\test_42.c" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\42_test.exe.dbg"
+"%GCC%" %CFLAGS% "%PPDB_DIR%\test\white\test_42.c" %LDFLAGS% %LIBS% ^
+  -o "%BUILD_DIR%\42_test.exe.dbg" ^
+  -I %COSMO% -Wl,-T,%BUILD_DIR%\ape.lds ^
+  "%COSMO%\ape.o" "%COSMO%\crt.o" "%COSMO%\cosmopolitan.a"
 if errorlevel 1 exit /b 1
 
-"%OBJCOPY%" -S -O binary "%BUILD_DIR%\42_test.exe.dbg" "%BUILD_DIR%\42_test.exe"
+"%OBJCOPY%" -S -O binary "%BUILD_DIR%\42_test.exe.dbg" ^
+  "%BUILD_DIR%\42_test.exe"
 if errorlevel 1 exit /b 1
 
 rem Run the test if not explicitly disabled

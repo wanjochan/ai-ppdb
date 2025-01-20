@@ -1,12 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set ROOT_DIR=%~dp0..\
-set SRC_DIR=%ROOT_DIR%src\internal\infra
-set BUILD_DIR=%ROOT_DIR%build\infra
-set INCLUDE_DIR=%ROOT_DIR%include
-set CROSS9_DIR=%ROOT_DIR%..\cross9
-set COSMOPOLITAN_DIR=%ROOT_DIR%..\cosmopolitan
+call %~dp0\build_env.bat
+@rem set SRC_DIR=%ROOT_DIR%\src\internal\infra
+@rem echo SRC_DIR=%SRC_DIR%
+set BUILD_DIR=%ROOT_DIR%\build\infra
 
 set SRC_FILES=infra_core.c infra_platform.c infra_sync.c infra_error.c infra_ds.c infra_memory.c infra_net.c infra_mux.c infra_mux_epoll.c
 
@@ -55,17 +53,20 @@ if !NEED_REBUILD!==1 (
         
         if !NEED_BUILD!==1 (
             echo Building %%~nf...
-            "%GCC%" %CFLAGS% -I"%SRC_DIR%" "!SRC_FILE!" -c -o "!OBJ_FILE!"
+            "%GCC%" %CFLAGS% -I"%SRC_DIR%" "!SRC_FILE!" -c -o "!OBJ_FILE!" ^
+	    -I %PPDB_DIR%\src 
+@rem  -I %COSMO% -Wl,-T,%BUILD_DIR%\ape.lds ^
+@rem  "%COSMO%\ape.o" "%COSMO%\crt.o" "%COSMO%\cosmopolitan.a"
             if errorlevel 1 exit /b 1
         ) else (
             echo %%~nf is up to date.
         )
     )
     
-    rem Create static library
-    echo Creating library...
-    "%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_ds.o" "%BUILD_DIR%\infra\infra_memory.o" "%BUILD_DIR%\infra\infra_net.o" "%BUILD_DIR%\infra\infra_mux.o" "%BUILD_DIR%\infra\infra_mux_epoll.o"
-    if errorlevel 1 exit /b 1
+@rem     rem Create static library
+@rem     echo Creating library...
+@rem     "%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_ds.o" "%BUILD_DIR%\infra\infra_memory.o" "%BUILD_DIR%\infra\infra_net.o" "%BUILD_DIR%\infra\infra_mux.o" "%BUILD_DIR%\infra\infra_mux_epoll.o"
+@rem     if errorlevel 1 exit /b 1
     
     echo Build infra complete.
 ) else (

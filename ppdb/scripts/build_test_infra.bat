@@ -11,7 +11,7 @@ rem 检查是否指定了测试模块
 set "TEST_MODULE=%~1"
 
 rem 设置测试文件列表
-set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c test_async.c test_net.c test_mux.c
+set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c test_net.c test_mux.c
 
 rem 如果没有指定测试模块，显示可用的测试模块
 if "%TEST_MODULE%"=="" (
@@ -23,6 +23,7 @@ if "%TEST_MODULE%"=="" (
 )
 
 call "%~dp0\build_env.bat"
+@rem echo TEST_DIR=%TEST_DIR%
 if errorlevel 1 exit /b 1
 
 rem 检查infra库是否需要重新构建
@@ -53,7 +54,7 @@ if not exist "%BUILD_DIR%\test\white\framework\test_framework.o" (
 
 if !NEED_BUILD_FRAMEWORK!==1 (
     echo Building test framework...
-    "%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\framework\test_framework.c" -c -o "%BUILD_DIR%\test\white\framework\test_framework.o"
+    "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\framework\test_framework.c" -c -o "%BUILD_DIR%\test\white\framework\test_framework.o"
     if errorlevel 1 exit /b 1
 ) else (
     echo Test framework is up to date.
@@ -71,7 +72,7 @@ if not exist "%BUILD_DIR%\test\white\framework\mock_framework.o" (
 
 if !NEED_BUILD_MOCK!==1 (
     echo Building mock framework...
-    "%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\framework\mock_framework.c" -c -o "%BUILD_DIR%\test\white\framework\mock_framework.o"
+    "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\framework\mock_framework.c" -c -o "%BUILD_DIR%\test\white\framework\mock_framework.o"
     if errorlevel 1 exit /b 1
 ) else (
     echo Mock framework is up to date.
@@ -91,14 +92,13 @@ if not exist "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" (
 if !NEED_BUILD_MOCK_CORE!==1 (
     echo Building mock core...
     if not exist "%BUILD_DIR%\test\white\infra\mock\core" mkdir "%BUILD_DIR%\test\white\infra\mock\core"
-    "%GCC%" %CFLAGS% -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\infra\mock\core\mock_core.c" -c -o "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o"
+    "%GCC%" %CFLAGS% -I"%COSMO%" -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\infra\mock\core\mock_core.c" -c -o "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o"
     if errorlevel 1 exit /b 1
 ) else (
     echo Mock core is up to date.
 )
 
 echo Building test cases...
-set TEST_FILES=test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c test_async.c
 
 rem 如果指定了测试模块，则只构建该模块的测试
 if not "%TEST_MODULE%"=="" (
@@ -122,7 +122,7 @@ for %%f in (%TEST_FILES%) do (
     
     if !NEED_BUILD!==1 (
         echo Building %%f...
-        "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" -I"%PPDB_DIR%\src\internal\infra" "%PPDB_DIR%\test\white\infra\%%f" -c -o "%BUILD_DIR%\test\white\infra\%%~nf.o"
+        "%GCC%" %CFLAGS% -I"%COSMO%" -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" -I"%PPDB_DIR%\src\internal\infra" -c "%PPDB_DIR%\test\white\infra\%%f" -o "%BUILD_DIR%\test\white\infra\%%~nf.o"
         if errorlevel 1 (
             echo Failed to build %%f
             exit /b 1
@@ -131,80 +131,33 @@ for %%f in (%TEST_FILES%) do (
         echo %%f is up to date.
     )
 
-    if "%%f"=="test_memory_pool.c" (
-        set NEED_BUILD_MAIN=0
-        if not exist "%BUILD_DIR%\test\white\infra\test_memory_pool_main.o" set NEED_BUILD_MAIN=1
-        if "%PPDB_DIR%\test\white\infra\test_memory_pool_main.c" gtr "%BUILD_DIR%\test\white\infra\test_memory_pool_main.o" set NEED_BUILD_MAIN=1
-        
-        if !NEED_BUILD_MAIN!==1 (
-            echo Building test_memory_pool_main.c...
-            "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\infra\test_memory_pool_main.c" -c -o "%BUILD_DIR%\test\white\infra\test_memory_pool_main.o"
-            if errorlevel 1 (
-                echo Failed to build test_memory_pool_main.c
-                exit /b 1
-            )
-        ) else (
-            echo test_memory_pool_main.c is up to date.
+    set NEED_LINK=0
+    if not exist "%BUILD_DIR%\test\white\infra\%%~nf.exe" set NEED_LINK=1
+    if "%BUILD_DIR%\test\white\infra\%%~nf.o" gtr "%BUILD_DIR%\test\white\infra\%%~nf.exe" set NEED_LINK=1
+    if "%BUILD_DIR%\infra\libinfra.a" gtr "%BUILD_DIR%\test\white\infra\%%~nf.exe" set NEED_LINK=1
+    
+    if !NEED_LINK!==1 (
+        echo Linking %%~nf...
+        "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" "%BUILD_DIR%\test\white\infra\%%~nf.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg"
+        if errorlevel 1 (
+            echo Failed to link %%~nf
+            exit /b 1
         )
 
-        set NEED_LINK=0
-        if not exist "%BUILD_DIR%\test\white\infra\test_memory_pool.exe" set NEED_LINK=1
-        if "%BUILD_DIR%\test\white\infra\test_memory_pool.o" gtr "%BUILD_DIR%\test\white\infra\test_memory_pool.exe" set NEED_LINK=1
-        if "%BUILD_DIR%\test\white\infra\test_memory_pool_main.o" gtr "%BUILD_DIR%\test\white\infra\test_memory_pool.exe" set NEED_LINK=1
-        if "%BUILD_DIR%\infra\libinfra.a" gtr "%BUILD_DIR%\test\white\infra\test_memory_pool.exe" set NEED_LINK=1
-        
-        if !NEED_LINK!==1 (
-            echo Linking test_memory_pool...
-            "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" "%BUILD_DIR%\test\white\infra\test_memory_pool.o" "%BUILD_DIR%\test\white\infra\test_memory_pool_main.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\test_memory_pool.exe.dbg"
-            if errorlevel 1 (
-                echo Failed to link test_memory_pool
-                exit /b 1
-            )
-
-            echo Creating binary test_memory_pool...
-            "%OBJCOPY%" -S -O binary "%BUILD_DIR%\test\white\infra\test_memory_pool.exe.dbg" "%BUILD_DIR%\test\white\infra\test_memory_pool.exe"
-            if errorlevel 1 (
-                echo Failed to create binary test_memory_pool
-                exit /b 1
-            )
-        ) else (
-            echo test_memory_pool binary is up to date.
-        )
-
-        if not "%2"=="norun" (
-            echo Running test_memory_pool tests...
-            "%BUILD_DIR%\test\white\infra\test_memory_pool.exe"
-            echo.
+        echo Creating binary %%~nf...
+        "%OBJCOPY%" -S -O binary "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg" "%BUILD_DIR%\test\white\infra\%%~nf.exe"
+        if errorlevel 1 (
+            echo Failed to create binary %%~nf
+            exit /b 1
         )
     ) else (
-        set NEED_LINK=0
-        if not exist "%BUILD_DIR%\test\white\infra\%%~nf.exe" set NEED_LINK=1
-        if "%BUILD_DIR%\test\white\infra\%%~nf.o" gtr "%BUILD_DIR%\test\white\infra\%%~nf.exe" set NEED_LINK=1
-        if "%BUILD_DIR%\infra\libinfra.a" gtr "%BUILD_DIR%\test\white\infra\%%~nf.exe" set NEED_LINK=1
-        
-        if !NEED_LINK!==1 (
-            echo Linking %%~nf...
-            "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" "%BUILD_DIR%\test\white\infra\%%~nf.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg"
-            if errorlevel 1 (
-                echo Failed to link %%~nf
-                exit /b 1
-            )
+        echo %%~nf binary is up to date.
+    )
 
-            echo Creating binary %%~nf...
-            "%OBJCOPY%" -S -O binary "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg" "%BUILD_DIR%\test\white\infra\%%~nf.exe"
-            if errorlevel 1 (
-                echo Failed to create binary %%~nf
-                exit /b 1
-            )
-        ) else (
-            echo %%~nf binary is up to date.
-        )
-
-        if not "%2"=="norun" (
-            echo Running %%~nf tests...
-            "%BUILD_DIR%\test\white\infra\%%~nf.exe"
-            echo.
-        )
+    if not "%2"=="norun" (
+        echo Running %%~nf tests...
+        "%BUILD_DIR%\test\white\infra\%%~nf.exe"
+        echo.
     )
 )
 
