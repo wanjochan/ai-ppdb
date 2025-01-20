@@ -868,10 +868,10 @@ infra_error_t rinetd_cmd_handler(int argc, char** argv) {
         INFRA_LOG_ERROR("Invalid arguments");
         return INFRA_ERROR_INVALID_PARAM;
     }
-
+    infra_error_t err;
     // Initialize service if not already initialized
     infra_config_t config = INFRA_DEFAULT_CONFIG;
-    infra_error_t err = rinetd_init(&config);
+    err = rinetd_init(&config);
     if (err != INFRA_OK && err != INFRA_ERROR_ALREADY_EXISTS) {
         INFRA_LOG_ERROR("Failed to initialize rinetd service");
         return err;

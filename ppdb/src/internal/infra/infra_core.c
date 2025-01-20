@@ -62,8 +62,9 @@ infra_global_t g_infra = {
     }
 };
 
-// 自动初始化函数
+// 自动初始化
 static void __attribute__((constructor)) infra_auto_init(void) {
+    //infra_fprintf(stdout, "infra_auto_init()\n");
     // 如果没有设置 INFRA_AUTO_INIT 环境变量，则跳过自动初始化
     const char* auto_init = getenv("INFRA_AUTO_INIT");
     if (!auto_init) {
@@ -72,12 +73,14 @@ static void __attribute__((constructor)) infra_auto_init(void) {
 
     infra_error_t err = infra_init();
     if (err != INFRA_OK) {
-        fprintf(stderr, "Failed to initialize infra: %d\n", err);
+        infra_fprintf(stderr, "Failed to initialize infra: %d\n", err);
         abort();
+    }else{
+        infra_fprintf(stdout, "infra_auto_init() success\n");//TODO infra_log()
     }
 }
 
-// 自动清理函数
+// 自动清理
 static void __attribute__((destructor)) infra_auto_cleanup(void) {
     // 如果没有设置 INFRA_AUTO_INIT 环境变量，则跳过自动清理
     const char* auto_init = getenv("INFRA_AUTO_INIT");
@@ -235,6 +238,7 @@ infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_confi
 infra_error_t infra_init(void) {
     // Check if already initialized
     if (g_infra.initialized) {
+        INFRA_LOG_DEBUG("infra_init() g_infra.initialized");
         return INFRA_OK;  // Already initialized, just return success
     }
 

@@ -10,10 +10,9 @@
 // Error Type
 //-----------------------------------------------------------------------------
 
-//TODO INFRA_ERROR_NULL_CONFIG 我觉得需要
 typedef enum {
     INFRA_OK = 0,
-    INFRA_ERROR_INVALID = -1, // EMPTY/NULL mostly
+    INFRA_ERROR_INVALID = -1, // EMPTY/NULL 
     INFRA_ERROR_INVALID_PARAM = -2, //@infra_init() and infra_config_init()
     INFRA_ERROR_NO_MEMORY = -3,
     INFRA_ERROR_EXISTS = -4,
