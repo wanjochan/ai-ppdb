@@ -118,6 +118,7 @@ test/white/
 .\ppdb\scripts\build_test_mock.bat  
 
 # 用于确定 infra 层运作正常
+.\ppdb\scripts\build_test_infra_all.bat 全部infra模块
 .\ppdb\scripts\build_test_infra.bat [module] [norun]  //用于确定 infra 层运作正常
   - 不带参数：会触发帮助
   - module参数：指定要测试的模块，当前支持的测试模块包括：
