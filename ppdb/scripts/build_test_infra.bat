@@ -54,7 +54,7 @@ if not exist "%BUILD_DIR%\test\white\framework\test_framework.o" (
 
 if !NEED_BUILD_FRAMEWORK!==1 (
     echo Building test framework...
-    "%GCC%" %CFLAGS% -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\framework\test_framework.c" -c -o "%BUILD_DIR%\test\white\framework\test_framework.o"
+    "%GCC%" %CFLAGS% -I"%COSMO%" -I"%PPDB_DIR%" -I"%SRC_DIR%" -I"%TEST_DIR%" -I"%TEST_DIR%\white" "%PPDB_DIR%\test\white\framework\test_framework.c" -c -o "%BUILD_DIR%\test\white\framework\test_framework.o"
     if errorlevel 1 exit /b 1
 ) else (
     echo Test framework is up to date.

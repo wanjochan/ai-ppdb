@@ -262,15 +262,18 @@ static void test_system_allocator(void) {
 
 int test_memory_pool_run(void) {
     TEST_BEGIN();
-
+    
     RUN_TEST(test_memory_pool_init);
     RUN_TEST(test_memory_pool_basic);
     RUN_TEST(test_memory_pool_alignment);
     RUN_TEST(test_memory_pool_stress);
     RUN_TEST(test_memory_pool_fragmentation);
-    RUN_TEST(test_system_allocator);  // 添加系统分配器测试
-
+    RUN_TEST(test_system_allocator);
+    
     TEST_END();
-
     return 0;
+}
+
+int main(void) {
+    return test_memory_pool_run();
 } 

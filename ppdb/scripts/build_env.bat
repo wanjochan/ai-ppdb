@@ -5,7 +5,8 @@ REM 设置目录路径
 set SCRIPT_DIR=%~dp0
 set ROOT_DIR=%SCRIPT_DIR%\..\..
 pushd "%ROOT_DIR%"
-@rem set "ROOT_DIR=%CD%"
+cd/d %ROOT_DIR%
+set "ROOT_DIR=%CD%"
 popd
 echo ROOT_DIR=%ROOT_DIR%
 set PPDB_DIR=%ROOT_DIR%\ppdb

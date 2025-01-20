@@ -53,10 +53,7 @@ if !NEED_REBUILD!==1 (
         
         if !NEED_BUILD!==1 (
             echo Building %%~nf...
-            "%GCC%" %CFLAGS% -I"%SRC_DIR%" "!SRC_FILE!" -c -o "!OBJ_FILE!" ^
-	    -I %PPDB_DIR%\src 
-@rem  -I %COSMO% -Wl,-T,%BUILD_DIR%\ape.lds ^
-@rem  "%COSMO%\ape.o" "%COSMO%\crt.o" "%COSMO%\cosmopolitan.a"
+            "%GCC%" %CFLAGS% -I"%COSMO%" -I"%SRC_DIR%" -I"%PPDB_DIR%\src" "!SRC_FILE!" -c -o "!OBJ_FILE!"
             if errorlevel 1 exit /b 1
         ) else (
             echo %%~nf is up to date.
