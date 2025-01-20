@@ -64,7 +64,7 @@ typedef struct {
 //-----------------------------------------------------------------------------
 
 // Initialize the rinetd service
-infra_error_t rinetd_init(void);
+infra_error_t rinetd_init(const infra_config_t* config);
 
 // Cleanup the rinetd service
 infra_error_t rinetd_cleanup(void);

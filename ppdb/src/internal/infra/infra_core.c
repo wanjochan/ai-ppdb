@@ -566,14 +566,6 @@ int infra_vsnprintf(char* str, size_t size, const char* format, va_list args) {
         return -1;
     }
     
-#ifdef _WIN32
-    int ret = _vsnprintf_s(str, size, _TRUNCATE, format, args);
-    if (ret < 0) {
-        str[size - 1] = '\0';
-        return (int)size - 1;
-    }
-    return ret;
-#else
     int ret = vsnprintf(str, size, format, args);
     if (ret < 0) {
         str[size - 1] = '\0';
@@ -584,7 +576,6 @@ int infra_vsnprintf(char* str, size_t size, const char* format, va_list args) {
         return (int)size - 1;
     }
     return ret;
-#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -749,6 +740,18 @@ uint64_t infra_time_ms(void) {
 
 void infra_random_seed(uint32_t seed) {
     srand(seed);  // 使用标准库的 srand 函数
+}
+
+infra_error_t infra_get_cwd(char* buffer, size_t size) {
+    if (!buffer || size == 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (!getcwd(buffer, size)) {
+        return INFRA_ERROR_IO;
+    }
+
+    return INFRA_OK;
 }
 
 

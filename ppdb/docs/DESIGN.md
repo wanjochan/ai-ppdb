@@ -134,8 +134,8 @@ test/white/
   里面会复制 ppdb.exe 到 .\ppdb\ppdb_latest.exe
 
    .\ppdb\scripts\build_ppdb.bat
-   .\ppdb\ppdb_latest.exe --log-level=5 rinetd --config ppdb/rinetd.conf
    .\ppdb\ppdb_latest.exe --log-level=5 rinetd --start
+   .\ppdb\ppdb_latest.exe --log-level=5 rinetd --config ppdb/rinetd.conf
 
 
 ```

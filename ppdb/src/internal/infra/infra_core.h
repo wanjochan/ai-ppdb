@@ -378,4 +378,7 @@ extern infra_global_t g_infra;
  */
 void infra_random_seed(uint32_t seed);
 
+// 获取当前工作目录
+infra_error_t infra_get_cwd(char* buffer, size_t size);
+
 #endif /* INFRA_CORE_H */
