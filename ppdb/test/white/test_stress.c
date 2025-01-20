@@ -1,5 +1,4 @@
 #include "framework/test_framework.h"
-#include "internal/infra/infra.h"
 #include "ppdb/ppdb.h"
 #include "internal/base.h"
 #include "test_framework.h"

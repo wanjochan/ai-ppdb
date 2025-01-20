@@ -1,4 +1,7 @@
 #include "mock_platform.h"
+#include "internal/infra/infra_platform.h"
+#include "internal/infra/infra_sync.h"
+#include "internal/infra/infra_error.h"
 
 // Original function pointers
 infra_error_t (*real_infra_thread_create)(infra_thread_t* thread, infra_thread_func_t func, void* arg);

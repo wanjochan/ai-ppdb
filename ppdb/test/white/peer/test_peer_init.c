@@ -2,7 +2,8 @@
 #include "../../../src/internal/peer.h"
 #include "../test_framework.h"
 #include "../framework/test_framework.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_error.h"
 
 // Test peer initialization and cleanup
 int main(void) {

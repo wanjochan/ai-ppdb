@@ -1,8 +1,6 @@
 #ifndef RINETD_H
 #define RINETD_H
 
-#include "internal/infra/infra.h"
-
 // 转发规则配置
 typedef struct {
     char* listen_addr;     // 监听地址

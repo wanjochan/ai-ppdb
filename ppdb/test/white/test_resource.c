@@ -1,5 +1,6 @@
 #include "framework/test_framework.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_sync.h"
 #include "test_framework.h"
 #include "test_plan.h"
 #include "ppdb/ppdb.h"

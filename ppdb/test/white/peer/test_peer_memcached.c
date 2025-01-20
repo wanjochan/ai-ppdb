@@ -1,5 +1,5 @@
 #include "../../framework/test_framework.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
 #include "../test_framework.h"
 #include "internal/peer.h"
 

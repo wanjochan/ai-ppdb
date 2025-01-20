@@ -1,5 +1,5 @@
 #include "framework/test_framework.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_sync.h"
 #include "internal/base.h"
 #include "../test_macros.h"
 

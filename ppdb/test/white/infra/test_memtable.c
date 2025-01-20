@@ -1,5 +1,4 @@
 #include "test/test_common.h"
-#include "internal/infra/infra.h"
 #include "internal/infra/infra_struct.h"
 #include "internal/infra/infra_memory.h"
 #include "test/test_framework.h"

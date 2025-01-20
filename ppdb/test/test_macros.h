@@ -1,8 +1,6 @@
 #ifndef PPDB_TEST_MACROS_H
 #define PPDB_TEST_MACROS_H
 
-#include "internal/infra/infra.h"
-
 // 测试计数器
 extern int g_test_count;
 extern int g_test_passed;

@@ -2,8 +2,8 @@
 #define PPDB_TEST_INFRA_MOCK_PLATFORM_H
 
 #include "framework/mock_framework/mock_framework.h"
-#include "internal/infra/infra.h"
 #include "internal/infra/infra_platform.h"
+#include "internal/infra/infra_error.h"
 
 // Thread mocks
 MOCK_FUNC(infra_error_t, infra_thread_create, infra_thread_t* thread, infra_thread_func_t func, void* arg);

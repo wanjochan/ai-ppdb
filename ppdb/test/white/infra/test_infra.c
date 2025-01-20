@@ -1,4 +1,3 @@
-#include "internal/infra/infra.h"
 #include "test/test_framework.h"
 
 // 测试基础设施层初始化

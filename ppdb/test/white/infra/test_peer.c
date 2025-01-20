@@ -1,5 +1,6 @@
 #include "test/test_common.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_error.h"
 #include "internal/infra/infra_net.h"
 #include "test/test_framework.h"
 #include "test_macros.h"

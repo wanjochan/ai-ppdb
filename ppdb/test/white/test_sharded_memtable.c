@@ -1,5 +1,4 @@
 #include "framework/test_framework.h"
-#include "internal/infra/infra.h"
 #include "test_framework.h"
 #include "test_plan.h"
 #include "kvstore/internal/kvstore_memtable.h"

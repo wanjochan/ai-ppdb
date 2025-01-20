@@ -1,5 +1,5 @@
 #include "framework/test_framework.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"    // For event loop functionality
 
 // Test event loop creation and destruction
 static void test_event_loop(void) {

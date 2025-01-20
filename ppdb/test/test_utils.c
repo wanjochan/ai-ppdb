@@ -1,5 +1,5 @@
 #include "test_utils.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
 
 void test_init_logger(void) {
     ppdb_logger_init(PPDB_LOG_DEBUG);

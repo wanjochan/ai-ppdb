@@ -1,7 +1,6 @@
 #ifndef TEST_FRAMEWORK_H
 #define TEST_FRAMEWORK_H
 
-#include "internal/infra/infra.h"
 #include "internal/infra/infra_core.h"
 
 // Utility macros

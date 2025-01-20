@@ -1,7 +1,8 @@
 #include "framework/test_framework.h"
 #include "test_framework.h"
 #include "test_plan.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"    // Core functionality
+#include "internal/infra/infra_error.h"   // Error handling
 #include "ppdb/ppdb.h"
 #include "internal/base.h"
 #include "kvstore/internal/kvstore_internal.h"

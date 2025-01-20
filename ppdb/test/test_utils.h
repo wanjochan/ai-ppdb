@@ -1,7 +1,8 @@
 #ifndef PPDB_TEST_UTILS_H
 #define PPDB_TEST_UTILS_H
 
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_error.h"
 #include "ppdb/ppdb.h"
 
 // 测试工具函数

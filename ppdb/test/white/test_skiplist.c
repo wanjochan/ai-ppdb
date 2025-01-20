@@ -1,5 +1,4 @@
 #include "framework/test_framework.h"
-#include "internal/infra/infra.h"
 #include "ppdb/ppdb.h"
 #include "ppdb/kvstore/skiplist.h"
 #include "internal/base.h"

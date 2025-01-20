@@ -1,5 +1,5 @@
 #include "../../../framework/test_framework.h"
-#include "internal/infra/infra.h"
+#include "internal/infra/infra_ds.h"
 #include "test_framework.h"
 
 // Compare function for integers

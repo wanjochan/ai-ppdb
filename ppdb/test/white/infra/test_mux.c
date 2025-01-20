@@ -2,7 +2,6 @@
  * test_mux.c - Multiplexing Test Suite
  */
 
-#include "internal/infra/infra.h"
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_error.h"
 #include "internal/infra/infra_memory.h"

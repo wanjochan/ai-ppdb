@@ -7,7 +7,6 @@
  */
 
 #include "cosmopolitan.h"
-#include "internal/infra/infra.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_sync.h"
 
