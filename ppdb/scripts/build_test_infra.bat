@@ -100,6 +100,9 @@ if !NEED_BUILD_MOCK_CORE!==1 (
 
 echo Building test cases...
 
+rem 创建必要的目录
+if not exist "%BUILD_DIR%\test\white\infra" mkdir "%BUILD_DIR%\test\white\infra"
+
 rem 如果指定了测试模块，则只构建该模块的测试
 if not "%TEST_MODULE%"=="" (
     if exist "%PPDB_DIR%\test\white\infra\test_%TEST_MODULE%.c" (
@@ -138,7 +141,7 @@ for %%f in (%TEST_FILES%) do (
     
     if !NEED_LINK!==1 (
         echo Linking %%~nf...
-        "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" "%BUILD_DIR%\test\white\infra\%%~nf.o" "%BUILD_DIR%\infra\libinfra.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg"
+        "%GCC%" "%BUILD_DIR%\test\white\framework\test_framework.o" "%BUILD_DIR%\test\white\framework\mock_framework.o" "%BUILD_DIR%\test\white\infra\mock\core\mock_core.o" "%BUILD_DIR%\test\white\infra\%%~nf.o" "%BUILD_DIR%\infra\libinfra.a" -Wl,-T,"%COSMO%\ape.lds" "%COSMO%\ape.o" "%COSMO%\crt.o" "%COSMO%\cosmopolitan.a" %LDFLAGS% %LIBS% -o "%BUILD_DIR%\test\white\infra\%%~nf.exe.dbg"
         if errorlevel 1 (
             echo Failed to link %%~nf
             exit /b 1
