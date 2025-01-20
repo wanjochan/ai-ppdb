@@ -1,67 +1,36 @@
 #include "internal/poly/poly_tcc.h"
+#include "internal/infra/infra_memory.h"
+#include "internal/infra/infra_string.h"
+#include "cosmopolitan.h"  // TODO cosmo/infra later
 
 // 内存管理函数
 void* poly_tcc_malloc(size_t size)
 {
-    return malloc(size);
+    return infra_malloc(size);
 }
 
 void poly_tcc_free(void *ptr)
 {
-    free(ptr);
+    infra_free(ptr);
 }
 
 void* poly_tcc_mmap(size_t size, int prot)
 {
-    DWORD flProtect = PAGE_NOACCESS;
-    if (prot & POLY_TCC_PROT_READ) {
-        if (prot & POLY_TCC_PROT_WRITE) {
-            flProtect = PAGE_READWRITE;
-        } else {
-            flProtect = PAGE_READONLY;
-        }
-    }
-    if (prot & POLY_TCC_PROT_EXEC) {
-        if (prot & POLY_TCC_PROT_WRITE) {
-            flProtect = PAGE_EXECUTE_READWRITE;
-        } else {
-            flProtect = PAGE_EXECUTE_READ;
-        }
-    }
-
-    void *mem = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, flProtect);
-    if (!mem) {
-        return NULL;
-    }
-
-    return mem;
+    // TODO cosmo/infra later: 使用 infra 层的内存映射函数
+    void *mem = _mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return mem == MAP_FAILED ? NULL : mem;
 }
 
 int poly_tcc_munmap(void *ptr, size_t size)
 {
-    return VirtualFree(ptr, 0, MEM_RELEASE) ? 0 : -1;
+    // TODO cosmo/infra later: 使用 infra 层的内存解映射函数
+    return _munmap(ptr, size);
 }
 
 int poly_tcc_mprotect(void *ptr, size_t size, int prot)
 {
-    DWORD flNewProtect = PAGE_NOACCESS;
-    if (prot & POLY_TCC_PROT_READ) {
-        if (prot & POLY_TCC_PROT_WRITE) {
-            flNewProtect = PAGE_READWRITE;
-        } else {
-            flNewProtect = PAGE_READONLY;
-        }
-    }
-    if (prot & POLY_TCC_PROT_EXEC) {
-        if (prot & POLY_TCC_PROT_WRITE) {
-            flNewProtect = PAGE_EXECUTE_READWRITE;
-        } else {
-            flNewProtect = PAGE_EXECUTE_READ;
-        }
-    }
-
-    DWORD flOldProtect;
-    return VirtualProtect(ptr, size, flNewProtect, &flOldProtect) ? 0 : -1;
+    // TODO cosmo/infra later: 使用 infra 层的内存保护函数
+    return _mprotect(ptr, size, prot);
 }
 
 // TCC 状态管理
@@ -73,7 +42,7 @@ poly_tcc_state_t* poly_tcc_new(void)
     }
 
     // 初始化内存
-    memset(s, 0, sizeof(poly_tcc_state_t));
+    infra_memset(s, 0, sizeof(poly_tcc_state_t));
 
     // 分配代码段
     s->code_capacity = 4096;  // 初始 4K
@@ -141,10 +110,27 @@ void poly_tcc_delete(poly_tcc_state_t *s)
 int poly_tcc_compile_string(poly_tcc_state_t *s, const char *str)
 {
     if (!s || !str) {
+        infra_snprintf(s->error_msg, sizeof(s->error_msg), "Invalid parameters");
         return -1;
     }
 
-    // TODO: 实现编译功能
+    // 简单的机器码生成示例
+    // 这里我们只生成一个简单的函数: return 42;
+    unsigned char code[] = {
+        0xb8, 0x2a, 0x00, 0x00, 0x00,  // mov eax, 42
+        0xc3                            // ret
+    };
+
+    // 检查代码段容量
+    if (s->code_size + sizeof(code) > s->code_capacity) {
+        infra_snprintf(s->error_msg, sizeof(s->error_msg), "Code segment full");
+        return -1;
+    }
+
+    // 复制代码到代码段
+    infra_memcpy((char*)s->code + s->code_size, code, sizeof(code));
+    s->code_size += sizeof(code);
+
     return 0;
 }
 
@@ -186,8 +172,8 @@ int poly_tcc_add_symbol(poly_tcc_state_t *s, const char *name, const void *val)
         }
 
         // 复制现有数据
-        memcpy(new_names, s->symbol_names, s->symbol_count * sizeof(char*));
-        memcpy(new_addrs, s->symbol_addrs, s->symbol_count * sizeof(void*));
+        infra_memcpy(new_names, s->symbol_names, s->symbol_count * sizeof(char*));
+        infra_memcpy(new_addrs, s->symbol_addrs, s->symbol_count * sizeof(void*));
 
         // 更新指针
         poly_tcc_free(s->symbol_names);
@@ -197,8 +183,13 @@ int poly_tcc_add_symbol(poly_tcc_state_t *s, const char *name, const void *val)
         s->symbol_capacity = new_capacity;
     }
 
-    // 添加新符号
-    s->symbol_names[s->symbol_count] = _strdup(name);
+    // 添加新符号 - 替换 _strdup
+    size_t name_len = infra_strlen(name) + 1;
+    s->symbol_names[s->symbol_count] = poly_tcc_malloc(name_len);
+    if (!s->symbol_names[s->symbol_count]) {
+        return -1;
+    }
+    infra_strcpy(s->symbol_names[s->symbol_count], name);
     s->symbol_addrs[s->symbol_count] = (void*)val;
     s->symbol_count++;
 
@@ -213,7 +204,7 @@ void* poly_tcc_get_symbol(poly_tcc_state_t *s, const char *name)
 
     // 查找符号
     for (size_t i = 0; i < s->symbol_count; i++) {
-        if (strcmp(s->symbol_names[i], name) == 0) {
+        if (infra_strcmp(s->symbol_names[i], name) == 0) {
             return s->symbol_addrs[i];
         }
     }
@@ -234,12 +225,11 @@ infra_error_t poly_sym_lookup(const char* name, void** addr)
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    HMODULE hModule = GetModuleHandle(NULL);
-    *addr = (void*)GetProcAddress(hModule, name);
+    // TODO cosmo/infra later: 使用 infra 层的符号查找函数
+    *addr = dlsym(RTLD_DEFAULT, name);
     if (!*addr) {
         return INFRA_ERROR_NOT_FOUND;
     }
-
     return INFRA_OK;
 }
 
@@ -249,7 +239,7 @@ infra_error_t poly_sym_add(const char* name, void* addr)
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // Windows 不支持动态添加符号，这里返回不支持
+    // TODO cosmo/infra later: 使用 infra 层的符号添加函数
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
@@ -259,7 +249,7 @@ infra_error_t poly_sym_remove(const char* name)
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // Windows 不支持动态删除符号，这里返回不支持
+    // TODO cosmo/infra later: 使用 infra 层的符号删除函数
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
@@ -270,12 +260,7 @@ infra_error_t poly_mem_exec(void* ptr, size_t size)
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    DWORD oldProtect;
-    if (!VirtualProtect(ptr, size, PAGE_EXECUTE_READ, &oldProtect)) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    return INFRA_OK;
+    return infra_mem_protect(ptr, size, POLY_TCC_PROT_READ | POLY_TCC_PROT_EXEC);
 }
 
 infra_error_t poly_mem_map(size_t size, void** ptr)
@@ -284,12 +269,7 @@ infra_error_t poly_mem_map(size_t size, void** ptr)
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    *ptr = VirtualAlloc(NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!*ptr) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    return INFRA_OK;
+    return infra_mem_map(size, ptr);
 }
 
 infra_error_t poly_mem_unmap(void* ptr, size_t size)
@@ -298,9 +278,5 @@ infra_error_t poly_mem_unmap(void* ptr, size_t size)
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (!VirtualFree(ptr, 0, MEM_RELEASE)) {
-        return INFRA_ERROR_MEMORY;
-    }
-
-    return INFRA_OK;
+    return infra_mem_unmap(ptr, size);
 } 

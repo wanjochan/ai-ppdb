@@ -1,9 +1,7 @@
 #include "internal/peer/peer_tccrun.h"
 #include "internal/infra/infra_core.h"
 #include "internal/poly/poly_cmdline.h"
-
-// TinyCC 头文件
-#include "repos/tinycc/libtcc.h"
+#include "internal/poly/poly_tcc.h"
 
 //-----------------------------------------------------------------------------
 // Global Variables
@@ -24,14 +22,6 @@ const poly_cmd_option_t tccrun_options[] = {
 const int tccrun_option_count = sizeof(tccrun_options) / sizeof(tccrun_options[0]);
 
 //-----------------------------------------------------------------------------
-// Helper Functions
-//-----------------------------------------------------------------------------
-
-static void tcc_error_func(void* opaque, const char* msg) {
-    INFRA_LOG_ERROR("TCC Error: %s", msg);
-}
-
-//-----------------------------------------------------------------------------
 // Core Functions Implementation
 //-----------------------------------------------------------------------------
 
@@ -45,7 +35,7 @@ infra_error_t tccrun_init(const infra_config_t* config) {
     }
 
     // 清空上下文
-    memset(&g_context, 0, sizeof(g_context));
+    infra_memset(&g_context, 0, sizeof(g_context));
 
     // 创建互斥锁
     infra_error_t err = infra_mutex_create(&g_mutex);
@@ -64,7 +54,7 @@ infra_error_t tccrun_cleanup(void) {
         g_mutex = NULL;
     }
 
-    memset(&g_context, 0, sizeof(g_context));
+    infra_memset(&g_context, 0, sizeof(g_context));
     return INFRA_OK;
 }
 
@@ -74,47 +64,61 @@ infra_error_t tccrun_execute(const char* source_path, int argc, char** argv) {
     }
 
     // 创建 TCC 状态
-    TCCState* s = tcc_new();
+    poly_tcc_state_t* s = poly_tcc_new();
     if (!s) {
         INFRA_LOG_ERROR("Could not create TCC state");
         return INFRA_ERROR_NO_MEMORY;
     }
 
-    // 设置错误处理函数
-    tcc_set_error_func(s, NULL, tcc_error_func);
-
-    // 设置输出类型为内存
-    tcc_set_output_type(s, TCC_OUTPUT_MEMORY);
-
-    // 编译源文件
-    if (tcc_add_file(s, source_path) == -1) {
-        INFRA_LOG_ERROR("Could not compile '%s'", source_path);
-        tcc_delete(s);
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    // 重定位代码
-    if (tcc_relocate(s, TCC_RELOCATE_AUTO) < 0) {
-        INFRA_LOG_ERROR("Could not relocate code");
-        tcc_delete(s);
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    // 获取入口点
-    int (*func)(int, char**) = (int (*)(int, char**))tcc_get_symbol(s, "main");
-    if (!func) {
-        INFRA_LOG_ERROR("Could not find main() function");
-        tcc_delete(s);
+    // 读取源文件
+    FILE* fp = fopen(source_path, "rb");  // TODO cosmo/infra later: 使用 infra 文件操作
+    if (!fp) {
+        INFRA_LOG_ERROR("Could not open '%s'", source_path);
+        poly_tcc_delete(s);
         return INFRA_ERROR_NOT_FOUND;
     }
 
-    // 运行程序
-    int ret = func(argc, argv);
-    INFRA_LOG_INFO("Program exited with code: %d", ret);
+    // 获取文件大小
+    fseek(fp, 0, SEEK_END);  // TODO cosmo/infra later: 使用 infra 文件操作
+    long size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
 
+    // 读取文件内容
+    char* source = poly_tcc_malloc(size + 1);
+    if (!source) {
+        INFRA_LOG_ERROR("Could not allocate memory for source");
+        fclose(fp);
+        poly_tcc_delete(s);
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    if (fread(source, 1, size, fp) != (size_t)size) {  // TODO cosmo/infra later: 使用 infra 文件操作
+        INFRA_LOG_ERROR("Could not read source file");
+        fclose(fp);
+        poly_tcc_free(source);
+        poly_tcc_delete(s);
+        return INFRA_ERROR_IO;
+    }
+    source[size] = '\0';
+    fclose(fp);
+
+    // 编译源代码
+    if (poly_tcc_compile_string(s, source) != 0) {
+        INFRA_LOG_ERROR("Could not compile source: %s", poly_tcc_get_error_msg(s));
+        poly_tcc_free(source);
+        poly_tcc_delete(s);
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    poly_tcc_free(source);
+
+    // 执行代码
+    int ret = poly_tcc_run(s, argc, argv);
+    
     // 清理
-    tcc_delete(s);
-    return INFRA_OK;
+    poly_tcc_delete(s);
+
+    return ret == 0 ? INFRA_OK : INFRA_ERROR_RUNTIME;
 }
 
 infra_error_t tccrun_cmd_handler(int argc, char** argv) {
