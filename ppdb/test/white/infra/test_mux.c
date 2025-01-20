@@ -354,6 +354,24 @@ static void test_mux_stress(void) {
     infra_mux_destroy(mux);
 }
 
+// 测试 NULL 配置
+static void test_mux_null_config(void) {
+    infra_error_t err;
+    infra_mux_t* mux = NULL;
+    
+    // 测试 NULL 配置
+    err = infra_mux_create(NULL, &mux);
+    TEST_ASSERT_MSG(err == INFRA_ERROR_INVALID_PARAM, 
+        "Expected INFRA_ERROR_INVALID_PARAM for NULL config, got %d", err);
+    TEST_ASSERT(mux == NULL);
+    
+    // 测试 NULL mux 指针
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
+    err = infra_mux_create(&config, NULL);
+    TEST_ASSERT_MSG(err == INFRA_ERROR_INVALID_PARAM,
+        "Expected INFRA_ERROR_INVALID_PARAM for NULL mux pointer, got %d", err);
+}
+
 int main(void) {
     infra_error_t err = infra_init();
     if (err != INFRA_OK) {
@@ -362,6 +380,7 @@ int main(void) {
     }
     TEST_BEGIN();
 
+    RUN_TEST(test_mux_null_config);  // 添加新测试
     RUN_TEST(test_mux_basic);
     RUN_TEST(test_mux_events);
     RUN_TEST(test_mux_wait);

@@ -110,6 +110,7 @@ test/white/
 
 - 测试流程
 
+```
 # 【热身】主要用于确认 cross9/cosmopolitan 工具链运作正常，运行后不管是否正常都算热身完毕，停下来等待下一步安排。
 .\pdpb\scripts\build_test42.bat
 
@@ -130,4 +131,11 @@ test/white/
 
 # 构建 ppdb 产品
 .\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）
+  里面会复制 ppdb.exe 到 .\ppdb\ppdb_latest.exe
 
+   .\ppdb\scripts\build_ppdb.bat
+   .\ppdb\ppdb_latest.exe --log-level=5 rinetd --config ppdb/rinetd.conf
+   .\ppdb\ppdb_latest.exe --log-level=5 rinetd --start
+
+
+```
