@@ -1,6 +1,7 @@
 #include "internal/poly/poly_cmdline.h"
 #include "internal/infra/infra_core.h"
 #include "internal/peer/peer_rinetd.h"
+#include "internal/peer/peer_tccrun.h"
 
 // Global options
 static const poly_cmd_option_t global_options[] = {
@@ -156,6 +157,24 @@ int main(int argc, char** argv) {
         return 1;
     }
     INFRA_LOG_DEBUG("Help command registered");
+
+    // Register rinetd command
+    err = poly_cmdline_register("rinetd", "Rinetd service management",
+        rinetd_cmd_handler, rinetd_options, rinetd_option_count);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to register rinetd command");
+        return err;
+    }
+    INFRA_LOG_DEBUG("Command line framework initialized");
+
+    // Register tccrun command
+    err = poly_cmdline_register("tccrun", "Run C source files using TinyCC",
+        tccrun_cmd_handler, tccrun_options, tccrun_option_count);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to register tccrun command");
+        return err;
+    }
+    INFRA_LOG_DEBUG("TCC run command registered");
 
     // If no command specified, show help
     if (i >= argc) {
