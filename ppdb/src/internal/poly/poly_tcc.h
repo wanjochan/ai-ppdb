@@ -6,6 +6,7 @@
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_memory.h"
 #include "internal/infra/infra_error.h"
+#include "cosmopolitan.h"  // TODO cosmo/infra later: 需要文件操作函数
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -60,6 +61,80 @@ typedef uint32_t Elf32_Word;
 #define STT_SECTION 3
 #define STT_FILE    4
 
+// Value types
+#define VT_INT       0x0001  // integer type
+#define VT_CHAR      0x0002  // character type
+#define VT_SHORT     0x0004  // short type
+#define VT_VOID      0x0008  // void type
+#define VT_LONG      0x0010  // long type
+#define VT_FLOAT     0x0020  // float type
+#define VT_DOUBLE    0x0040  // double type
+#define VT_SIGNED    0x0080  // signed type
+#define VT_UNSIGNED  0x0100  // unsigned type
+#define VT_ARRAY     0x0200  // array type
+#define VT_POINTER   0x0400  // pointer type
+#define VT_FUNC      0x0800  // function type
+#define VT_STRUCT    0x1000  // struct type
+#define VT_ENUM      0x2000  // enum type
+#define VT_STATIC    0x4000  // static type
+#define VT_EXTERN    0x8000  // extern type
+
+// Token types
+#define TOK_EOF       (-1)  // end of file
+#define TOK_IDENT     256   // identifier
+#define TOK_INT       257   // integer constant
+#define TOK_FLOAT     258   // float constant
+#define TOK_STR       259   // string constant
+#define TOK_CHAR      260   // character constant
+#define TOK_IF        261   // if
+#define TOK_ELSE      262   // else
+#define TOK_WHILE     263   // while
+#define TOK_BREAK     264   // break
+#define TOK_RETURN    265   // return
+#define TOK_FOR       266   // for
+#define TOK_EXTERN    267   // extern
+#define TOK_STATIC    268   // static
+#define TOK_UNSIGNED  269   // unsigned
+#define TOK_GOTO      270   // goto
+#define TOK_CONTINUE  271   // continue
+#define TOK_SWITCH    272   // switch
+#define TOK_CASE      273   // case
+
+// Forward declarations
+struct Sym;
+
+// Token symbol
+typedef struct TokenSym {
+    struct TokenSym *next;   // next token in hash bucket
+    struct Sym *sym_label;   // associated label
+    int tok;                 // token number
+    int len;                 // token length
+    char str[1];            // token string
+} TokenSym;
+
+// Type structure
+typedef struct CType {
+    int t;            // type
+    struct Sym *ref;  // reference to a symbol
+} CType;
+
+// Value structure
+typedef union CValue {
+    int i;           // integer value
+    float f;         // float value
+    double d;        // double value
+    char *str;       // string value
+    void *ptr;       // pointer value
+} CValue;
+
+// Symbol structure
+typedef struct Sym {
+    int v;           // symbol value
+    CType type;      // symbol type
+    CValue c;        // symbol constant value
+    struct Sym *next;  // next symbol in stack
+} Sym;
+
 // ELF 头
 typedef struct {
     unsigned char e_ident[EI_NIDENT];
@@ -102,61 +177,81 @@ typedef struct {
     Elf32_Half st_shndx;
 } Elf32_Sym;
 
-// 前向声明
-typedef struct poly_tcc_sym poly_tcc_sym_t;
-
-// TCC 状态
+// TCC state structure
 typedef struct poly_tcc_state {
-    // 代码段
-    unsigned char* code;
-    size_t code_size;
-    size_t code_capacity;
+    // Memory segments
+    void *code;              // code segment
+    size_t code_size;        // code size
+    size_t code_capacity;    // code capacity
+    void *data;              // data segment
+    size_t data_size;        // data size
+    size_t data_capacity;    // data capacity
 
-    // 数据段
-    unsigned char* data;
-    size_t data_size;
-    size_t data_capacity;
+    // Symbol tables
+    Sym *global_stack;       // global symbol stack
+    Sym *local_stack;        // local symbol stack
+    Sym *define_stack;       // macro definition stack
+    Sym *global_label_stack; // global label stack
+    Sym *local_label_stack;  // local label stack
 
-    // 符号表
-    poly_tcc_sym_t *sym_head;
+    // Source code
+    const char *source;      // current source code
+    int source_len;          // source code length
+    int source_pos;          // current position in source
+    int line_num;           // current line number
+    int tok;                // current token
+    CValue tokc;           // token value
 
-    // 错误信息
+    // Error message
     char error_msg[256];
 } poly_tcc_state_t;
 
 //-----------------------------------------------------------------------------
-// Functions
+// Function declarations
 //-----------------------------------------------------------------------------
 
-// TCC 状态管理
+// State management
 poly_tcc_state_t* poly_tcc_new(void);
-void poly_tcc_delete(poly_tcc_state_t *s);
+void poly_tcc_delete(poly_tcc_state_t* s);
 
-// 编译和执行
-int poly_tcc_compile_string(poly_tcc_state_t *s, const char *str);
-int poly_tcc_run(poly_tcc_state_t *s, int argc, char **argv);
-
-// 符号管理
+// Symbol management
 int poly_tcc_add_symbol(poly_tcc_state_t *s, const char *name, void *addr);
 void* poly_tcc_get_symbol(poly_tcc_state_t *s, const char *name);
 
-// 错误处理
-const char* poly_tcc_get_error_msg(poly_tcc_state_t *s);
+// Code generation
+int poly_tcc_compile_string(poly_tcc_state_t *s, const char *str);
+int poly_tcc_run(poly_tcc_state_t *s, int argc, char **argv);
 
-// 内存管理
+// Memory management
 void* poly_tcc_malloc(size_t size);
 void poly_tcc_free(void *ptr);
-
-// 内存管理函数
 void* poly_tcc_mmap(void *addr, size_t size, int prot);
 infra_error_t poly_tcc_munmap(void *ptr, size_t size);
 infra_error_t poly_tcc_mprotect(void *ptr, size_t size, int prot);
 
-// 路径管理
+// Path management
 int poly_tcc_add_include_path(poly_tcc_state_t* s, const char* path);
 int poly_tcc_add_library_path(poly_tcc_state_t* s, const char* path);
 
-// 静态库链接函数
+// Library management
 int poly_tcc_add_lib(poly_tcc_state_t *s, const char *libpath);
+
+// ELF parsing
+int poly_tcc_parse_elf(poly_tcc_state_t* s, const char* elf_path);
+
+// Error handling
+const char* poly_tcc_get_error_msg(poly_tcc_state_t *s);
+
+// Memory protection flags
+#define POLY_TCC_PROT_NONE  0
+#define POLY_TCC_PROT_READ  1
+#define POLY_TCC_PROT_WRITE 2
+#define POLY_TCC_PROT_EXEC  4
+
+// Symbol table management (internal)
+Sym* sym_push2(Sym **ps, int v, int t, int c);
+Sym* sym_find2(Sym *s, int v);
+void sym_free(Sym *s);
+void sym_pop(Sym **ps, Sym *b);
 
 #endif // POLY_TCC_H 
