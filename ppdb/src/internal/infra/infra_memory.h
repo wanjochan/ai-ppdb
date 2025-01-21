@@ -79,7 +79,7 @@ void infra_memory_cleanup(void);
 infra_error_t infra_memory_get_stats(infra_memory_stats_t* stats);
 
 // 内存映射函数
-infra_error_t infra_mem_map(void **addr, size_t size, int prot);
+void* infra_mem_map(void *addr, size_t size, int prot);
 infra_error_t infra_mem_unmap(void *addr, size_t size);
 infra_error_t infra_mem_protect(void *addr, size_t size, int prot);
 

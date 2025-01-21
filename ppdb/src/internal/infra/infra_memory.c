@@ -552,18 +552,17 @@ int infra_memcmp(const void* s1, const void* s2, size_t n) {
     return memcmp(s1, s2, n);
 }
 
-infra_error_t infra_mem_map(void **addr, size_t size, int prot)
+void* infra_mem_map(void *addr, size_t size, int prot)
 {
-    if (!addr || size == 0) {
-        return INFRA_ERROR_INVALID_PARAM;
+    if (size == 0) {
+        return NULL;
     }
 
-    void *mem = mmap(*addr, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void *mem = mmap(addr, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (mem == MAP_FAILED) {
-        return INFRA_ERROR_NO_MEMORY;
+        return NULL;
     }
-    *addr = mem;  // 返回分配的地址
-    return INFRA_OK;
+    return mem;
 }
 
 infra_error_t infra_mem_unmap(void *addr, size_t size)

@@ -139,8 +139,7 @@ static void test_memory_stress(void) {
 static void test_memory_protection(void) {
     // 分配一页内存
     const size_t page_size = 4096;
-    void* ptr = NULL;
-    TEST_ASSERT(infra_mem_map(&ptr, page_size, INFRA_PROT_READ | INFRA_PROT_WRITE) == INFRA_OK);
+    void* ptr = infra_mem_map(NULL, page_size, INFRA_PROT_READ | INFRA_PROT_WRITE);
     TEST_ASSERT(ptr != NULL);
 
     // 测试只读保护
