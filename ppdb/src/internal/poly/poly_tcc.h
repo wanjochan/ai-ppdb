@@ -2,12 +2,13 @@
 #define POLY_TCC_H
 
 #include "internal/infra/infra_core.h"
+#include "internal/infra/infra_memory.h"
 
 // 内存保护标志
-#define POLY_TCC_PROT_NONE  0x00    // 无权限
-#define POLY_TCC_PROT_READ  0x01    // 可读
-#define POLY_TCC_PROT_WRITE 0x02    // 可写
-#define POLY_TCC_PROT_EXEC  0x04    // 可执行
+#define POLY_TCC_PROT_NONE  INFRA_PROT_NONE
+#define POLY_TCC_PROT_READ  INFRA_PROT_READ
+#define POLY_TCC_PROT_WRITE INFRA_PROT_WRITE
+#define POLY_TCC_PROT_EXEC  INFRA_PROT_EXEC
 
 // TCC 状态结构
 typedef struct poly_tcc_state {
@@ -49,8 +50,10 @@ const char* poly_tcc_get_error_msg(poly_tcc_state_t *s);
 // 内存管理
 void* poly_tcc_malloc(size_t size);
 void poly_tcc_free(void *ptr);
-void* poly_tcc_mmap(size_t size, int prot);
-int poly_tcc_munmap(void *ptr, size_t size);
-int poly_tcc_mprotect(void *ptr, size_t size, int prot);
+
+// 内存管理函数
+void* poly_tcc_mmap(void *addr, size_t size, int prot);
+infra_error_t poly_tcc_munmap(void *ptr, size_t size);
+infra_error_t poly_tcc_mprotect(void *ptr, size_t size, int prot);
 
 #endif // POLY_TCC_H 

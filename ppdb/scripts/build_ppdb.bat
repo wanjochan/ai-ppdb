@@ -25,6 +25,8 @@ echo Building ppdb...
     "%SRC_DIR%\internal\infra\infra_net.c" ^
     "%SRC_DIR%\internal\infra\infra_platform.c" ^
     "%SRC_DIR%\internal\infra\infra_sync.c" ^
+    "%SRC_DIR%\internal\poly\poly_tcc.c" ^
+    "%SRC_DIR%\internal\peer\peer_tccrun.c" ^
     %LDFLAGS% %LIBS% -o "%BUILD_DIR%\ppdb.exe.dbg" ^
 -Wl,-T,"%COSMO%\ape.lds" "%COSMO%\ape.o" "%COSMO%\crt.o" "%COSMO%\cosmopolitan.a" 
 if errorlevel 1 exit /b 1

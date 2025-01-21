@@ -3,6 +3,7 @@
 #include "internal/infra/infra_net.h"
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_mux.h"
+#include "cosmopolitan.h"  // TODO cosmo/infra later: 需要文件操作函数
 
 //-----------------------------------------------------------------------------
 // Global Variables
@@ -261,6 +262,7 @@ static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rine
     }
 
     // Initialize session
+    // TODO cosmo/infra later: 使用 infra_memset
     memset(session, 0, sizeof(rinetd_session_t));
     session->client_sock = client_sock;
     session->server_sock = server_sock;
@@ -330,7 +332,7 @@ static void cleanup_forward_session(rinetd_session_t* session) {
 }
 
 static infra_error_t init_session_list(void) {
-    // We don't need to allocate dynamically anymore since we're using a fixed array
+    // TODO cosmo/infra later: 使用 infra_memset
     memset(g_context.active_sessions, 0, 
         RINETD_MAX_RULES * sizeof(rinetd_session_t));
     g_context.session_count = 0;
@@ -360,6 +362,7 @@ static void cleanup_session_list(void) {
     }
     
     // Clear all sessions
+    // TODO cosmo/infra later: 使用 infra_memset
     memset(g_context.active_sessions, 0, 
         RINETD_MAX_RULES * sizeof(rinetd_session_t));
     g_context.session_count = 0;
@@ -372,6 +375,7 @@ static infra_error_t add_session_to_list(rinetd_session_t* session) {
         return INFRA_ERROR_NO_MEMORY;
     }
 
+    // TODO cosmo/infra later: 使用 infra_memcpy
     memcpy(&g_context.active_sessions[g_context.session_count], 
         session, sizeof(rinetd_session_t));
     g_context.session_count++;
@@ -387,11 +391,13 @@ static void remove_session_from_list(rinetd_session_t* session) {
             g_context.active_sessions[i].server_sock == session->server_sock) {
             // Move last session to this slot if not the last one
             if (i < g_context.session_count - 1) {
+                // TODO cosmo/infra later: 使用 infra_memcpy
                 memcpy(&g_context.active_sessions[i],
                     &g_context.active_sessions[g_context.session_count - 1],
                     sizeof(rinetd_session_t));
             }
             // Clear the last slot
+            // TODO cosmo/infra later: 使用 infra_memset
             memset(&g_context.active_sessions[g_context.session_count - 1], 
                 0, sizeof(rinetd_session_t));
             g_context.session_count--;
@@ -415,6 +421,7 @@ infra_error_t rinetd_init(const infra_config_t* config) {
     }
 
     // 清空上下文
+    // TODO cosmo/infra later: 使用 infra_memset
     memset(&g_context, 0, sizeof(g_context));
 
     // 创建互斥锁
@@ -446,6 +453,7 @@ infra_error_t rinetd_init(const infra_config_t* config) {
 
     // 尝试加载默认配置文件
     if (g_context.config_path[0] == '\0') {
+        // TODO cosmo/infra later: 使用 infra_strncpy
         strncpy(g_context.config_path, "ppdb/rinetd.conf", RINETD_MAX_PATH_LEN - 1);
         g_context.config_path[RINETD_MAX_PATH_LEN - 1] = '\0';
         
@@ -477,6 +485,7 @@ infra_error_t rinetd_cleanup(void) {
         g_context.mutex = NULL;
     }
 
+    // TODO cosmo/infra later: 使用 infra_memset
     memset(&g_context, 0, sizeof(g_context));
     return INFRA_OK;
 }
@@ -536,10 +545,12 @@ infra_error_t rinetd_load_config(const char* path) {
         return INFRA_ERROR_NOT_SUPPORTED;
     }
 
+    // TODO cosmo/infra later: 使用 infra_strncpy
     strncpy(g_context.config_path, path, RINETD_MAX_PATH_LEN - 1);
     g_context.config_path[RINETD_MAX_PATH_LEN - 1] = '\0';
 
     // Open config file
+    // TODO cosmo/infra later: 使用 infra 层的文件操作函数
     FILE* fp = fopen(path, "r");
     if (fp == NULL) {
         INFRA_LOG_ERROR("Failed to open config file: %s", path);
@@ -548,10 +559,12 @@ infra_error_t rinetd_load_config(const char* path) {
 
     // Clear existing rules
     g_context.rule_count = 0;
+    // TODO cosmo/infra later: 使用 infra_memset
     memset(g_context.rules, 0, sizeof(g_context.rules));
 
     // Parse config file
     char line[256];
+    // TODO cosmo/infra later: 使用 infra 层的文件操作函数
     while (fgets(line, sizeof(line), fp)) {
         // Skip comments and empty lines
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') {
@@ -566,6 +579,7 @@ infra_error_t rinetd_load_config(const char* path) {
         int dst_port = 0;
 
         if (sscanf(line, "%s %d %s %d", src_addr, &src_port, dst_addr, &dst_port) == 4) {
+            // TODO cosmo/infra later: 使用 infra_strncpy
             strncpy(rule.src_addr, src_addr, RINETD_MAX_ADDR_LEN - 1);
             rule.src_port = src_port;
             strncpy(rule.dst_addr, dst_addr, RINETD_MAX_ADDR_LEN - 1);
@@ -574,6 +588,7 @@ infra_error_t rinetd_load_config(const char* path) {
 
             // Add rule
             if (g_context.rule_count < RINETD_MAX_RULES) {
+                // TODO cosmo/infra later: 使用 infra_memcpy
                 memcpy(&g_context.rules[g_context.rule_count], &rule, sizeof(rule));
                 g_context.rule_count++;
                 INFRA_LOG_INFO("Added rule: %s:%d -> %s:%d", 
@@ -585,6 +600,7 @@ infra_error_t rinetd_load_config(const char* path) {
         }
     }
 
+    // TODO cosmo/infra later: 使用 infra 层的文件操作函数
     fclose(fp);
     return INFRA_OK;
 }
@@ -596,6 +612,7 @@ infra_error_t rinetd_save_config(const char* path) {
     }
 
     // Open config file
+    // TODO cosmo/infra later: 使用 infra 层的文件操作函数
     FILE* fp = fopen(path, "w");
     if (fp == NULL) {
         INFRA_LOG_ERROR("Failed to open config file: %s", path);
@@ -603,12 +620,14 @@ infra_error_t rinetd_save_config(const char* path) {
     }
 
     // Write header
+    // TODO cosmo/infra later: 使用 infra 层的文件操作函数
     fprintf(fp, "# rinetd configuration file\n");
     fprintf(fp, "# format: src_addr src_port dst_addr dst_port\n\n");
 
     // Write rules
     for (int i = 0; i < g_context.rule_count; i++) {
         if (g_context.rules[i].enabled) {
+            // TODO cosmo/infra later: 使用 infra 层的文件操作函数
             fprintf(fp, "%s %d %s %d\n",
                 g_context.rules[i].src_addr,
                 g_context.rules[i].src_port,
@@ -617,6 +636,7 @@ infra_error_t rinetd_save_config(const char* path) {
         }
     }
 
+    // TODO cosmo/infra later: 使用 infra 层的文件操作函数
     fclose(fp);
     return INFRA_OK;
 }
@@ -636,6 +656,7 @@ infra_error_t rinetd_add_rule(const rinetd_rule_t* rule) {
     for (int i = 0; i < g_context.rule_count; i++) {
         if (g_context.rules[i].enabled &&
             g_context.rules[i].src_port == rule->src_port &&
+            // TODO cosmo/infra later: 使用 infra_strcmp
             strcmp(g_context.rules[i].src_addr, rule->src_addr) == 0) {
             INFRA_LOG_ERROR("Rule already exists for %s:%d",
                 rule->src_addr, rule->src_port);
@@ -644,6 +665,7 @@ infra_error_t rinetd_add_rule(const rinetd_rule_t* rule) {
     }
 
     // Add new rule
+    // TODO cosmo/infra later: 使用 infra_memcpy
     memcpy(&g_context.rules[g_context.rule_count], rule, sizeof(rinetd_rule_t));
     g_context.rule_count++;
 

@@ -549,4 +549,29 @@ int infra_memcmp(const void* s1, const void* s2, size_t n) {
         return 0;
     }
     return memcmp(s1, s2, n);
+}
+
+infra_error_t infra_mem_map(void *addr, size_t size, int prot)
+{
+    void *mem = mmap(addr, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mem == MAP_FAILED) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    return INFRA_OK;
+}
+
+infra_error_t infra_mem_unmap(void *addr, size_t size)
+{
+    if (munmap(addr, size) != 0) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    return INFRA_OK;
+}
+
+infra_error_t infra_mem_protect(void *addr, size_t size, int prot)
+{
+    if (mprotect(addr, size, prot) != 0) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    return INFRA_OK;
 } 

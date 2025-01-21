@@ -159,20 +159,32 @@ int main(int argc, char** argv) {
     INFRA_LOG_DEBUG("Help command registered");
 
     // Register rinetd command
-    err = poly_cmdline_register("rinetd", "Rinetd service management",
-        rinetd_cmd_handler, rinetd_options, rinetd_option_count);
+    poly_cmd_t rinetd_cmd = {
+        .name = "rinetd",
+        .desc = "Rinetd service management",
+        .handler = rinetd_cmd_handler,
+        .options = rinetd_options,
+        .option_count = rinetd_option_count
+    };
+    err = poly_cmdline_register(&rinetd_cmd);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register rinetd command");
-        return err;
+        INFRA_LOG_ERROR("Failed to register rinetd command: %d", err);
+        return 1;
     }
     INFRA_LOG_DEBUG("Command line framework initialized");
 
     // Register tccrun command
-    err = poly_cmdline_register("tccrun", "Run C source files using TinyCC",
-        tccrun_cmd_handler, tccrun_options, tccrun_option_count);
+    poly_cmd_t tccrun_cmd = {
+        .name = "tccrun",
+        .desc = "Run C source files using TinyCC",
+        .handler = tccrun_cmd_handler,
+        .options = tccrun_options,
+        .option_count = tccrun_option_count
+    };
+    err = poly_cmdline_register(&tccrun_cmd);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register tccrun command");
-        return err;
+        INFRA_LOG_ERROR("Failed to register tccrun command: %d", err);
+        return 1;
     }
     INFRA_LOG_DEBUG("TCC run command registered");
 

@@ -27,7 +27,9 @@ typedef enum {
     INFRA_ERROR_CLOSED = -13,
     INFRA_ERROR_NOT_SUPPORTED = -14,
     INFRA_ERROR_ALREADY_EXISTS = -15,
-    INFRA_ERROR_INVALID_OPERATION = -16  // Invalid operation for current state
+    INFRA_ERROR_INVALID_OPERATION = -16,  // Invalid operation for current state
+    INFRA_ERROR_RUNTIME = -17,  // 运行时错误
+    INFRA_ERROR_MAX
 } infra_error_t;
 
 //-----------------------------------------------------------------------------

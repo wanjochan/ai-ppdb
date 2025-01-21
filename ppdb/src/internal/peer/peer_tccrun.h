@@ -2,13 +2,21 @@
 #define PEER_TCCRUN_H
 
 #include "internal/infra/infra_core.h"
+#include "internal/poly/poly_cmdline.h"
 
 //-----------------------------------------------------------------------------
 // Constants
 //-----------------------------------------------------------------------------
 
 #define TCCRUN_MAX_PATH_LEN 256
-#define TCCRUN_MAX_ARGS 16
+#define TCCRUN_MAX_ARGS 64
+
+//-----------------------------------------------------------------------------
+// Command Line Options
+//-----------------------------------------------------------------------------
+
+extern const poly_cmd_option_t tccrun_options[];
+extern const int tccrun_option_count;
 
 //-----------------------------------------------------------------------------
 // Types

@@ -1,7 +1,6 @@
 #include "internal/poly/poly_tcc.h"
 #include "internal/infra/infra_memory.h"
-#include "internal/infra/infra_string.h"
-#include "cosmopolitan.h"  // TODO cosmo/infra later
+#include "cosmopolitan.h"  // TODO cosmo/infra later: 需要文件操作函数
 
 // 内存管理函数
 void* poly_tcc_malloc(size_t size)
@@ -14,23 +13,29 @@ void poly_tcc_free(void *ptr)
     infra_free(ptr);
 }
 
-void* poly_tcc_mmap(size_t size, int prot)
+infra_error_t poly_tcc_mmap(void *addr, size_t size, int prot)
 {
-    // TODO cosmo/infra later: 使用 infra 层的内存映射函数
-    void *mem = _mmap(NULL, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    return mem == MAP_FAILED ? NULL : mem;
+    void *mem = mmap(addr, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mem == MAP_FAILED) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    return INFRA_OK;
 }
 
-int poly_tcc_munmap(void *ptr, size_t size)
+infra_error_t poly_tcc_munmap(void *ptr, size_t size)
 {
-    // TODO cosmo/infra later: 使用 infra 层的内存解映射函数
-    return _munmap(ptr, size);
+    if (munmap(ptr, size) != 0) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    return INFRA_OK;
 }
 
-int poly_tcc_mprotect(void *ptr, size_t size, int prot)
+infra_error_t poly_tcc_mprotect(void *ptr, size_t size, int prot)
 {
-    // TODO cosmo/infra later: 使用 infra 层的内存保护函数
-    return _mprotect(ptr, size, prot);
+    if (mprotect(ptr, size, prot) != 0) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    return INFRA_OK;
 }
 
 // TCC 状态管理
@@ -46,7 +51,7 @@ poly_tcc_state_t* poly_tcc_new(void)
 
     // 分配代码段
     s->code_capacity = 4096;  // 初始 4K
-    s->code = poly_tcc_mmap(s->code_capacity, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
+    s->code = poly_tcc_mmap(NULL, s->code_capacity, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
     if (!s->code) {
         poly_tcc_free(s);
         return NULL;
@@ -54,7 +59,7 @@ poly_tcc_state_t* poly_tcc_new(void)
 
     // 分配数据段
     s->data_capacity = 4096;  // 初始 4K
-    s->data = poly_tcc_mmap(s->data_capacity, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
+    s->data = poly_tcc_mmap(NULL, s->data_capacity, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
     if (!s->data) {
         poly_tcc_munmap(s->code, s->code_capacity);
         poly_tcc_free(s);
@@ -263,13 +268,9 @@ infra_error_t poly_mem_exec(void* ptr, size_t size)
     return infra_mem_protect(ptr, size, POLY_TCC_PROT_READ | POLY_TCC_PROT_EXEC);
 }
 
-infra_error_t poly_mem_map(size_t size, void** ptr)
+infra_error_t poly_mem_map(size_t size, void **ptr)
 {
-    if (!ptr || size == 0) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    return infra_mem_map(size, ptr);
+    return infra_mem_map(NULL, size, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
 }
 
 infra_error_t poly_mem_unmap(void* ptr, size_t size)
