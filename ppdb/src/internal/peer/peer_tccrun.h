@@ -10,6 +10,7 @@
 
 #define TCCRUN_MAX_PATH_LEN 256
 #define TCCRUN_MAX_ARGS 64
+#define TCCRUN_MAX_PATH 1024
 
 //-----------------------------------------------------------------------------
 // Command Line Options

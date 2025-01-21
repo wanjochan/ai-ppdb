@@ -19,6 +19,7 @@ const poly_cmd_option_t tccrun_options[] = {
     {"source", "Source file path", true},
     {"I", "Add include path", false},
     {"L", "Add library path", false},
+    {"l", "Add library to link", false},
     {"args", "Program arguments", false},
 };
 
@@ -125,7 +126,7 @@ infra_error_t tccrun_execute(const char* source_path, int argc, char** argv) {
     return ret == 0 ? INFRA_OK : INFRA_ERROR_RUNTIME;
 }
 
-infra_error_t tccrun_cmd_handler(int argc, char** argv) {
+int tccrun_cmd_handler(int argc, char** argv) {
     INFRA_LOG_DEBUG("tccrun_cmd_handler: argc=%d", argc);
     for (int i = 0; i < argc; i++) {
         INFRA_LOG_DEBUG("  argv[%d] = %s", i, argv[i]);
@@ -159,7 +160,7 @@ infra_error_t tccrun_cmd_handler(int argc, char** argv) {
             }
             source_path = argv[++i];
             INFRA_LOG_DEBUG("Found source path: %s", source_path);
-        } else if (strcmp(arg, "--I") == 0) {
+        } else if (strcmp(arg, "-I") == 0) {
             if (i + 1 >= argc) {
                 INFRA_LOG_ERROR("Missing include path");
                 poly_tcc_delete(s);
@@ -167,14 +168,33 @@ infra_error_t tccrun_cmd_handler(int argc, char** argv) {
             }
             poly_tcc_add_include_path(s, argv[++i]);
             INFRA_LOG_DEBUG("Added include path: %s", argv[i]);
-        } else if (strcmp(arg, "--L") == 0) {
+        } else if (strcmp(arg, "-L") == 0) {
             if (i + 1 >= argc) {
                 INFRA_LOG_ERROR("Missing library path");
                 poly_tcc_delete(s);
                 return INFRA_ERROR_INVALID_PARAM;
             }
-            poly_tcc_add_library_path(s, argv[++i]);
-            INFRA_LOG_DEBUG("Added library path: %s", argv[i]);
+            const char *lib_path = argv[++i];
+            // 添加库搜索路径
+            poly_tcc_add_library_path(s, lib_path);
+            INFRA_LOG_DEBUG("Added library path: %s", lib_path);
+        } else if (strcmp(arg, "-l") == 0) {
+            if (i + 1 >= argc) {
+                INFRA_LOG_ERROR("Missing library name");
+                poly_tcc_delete(s);
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+            const char *lib_name = argv[++i];
+            // 尝试加载库文件，使用完整路径
+            char lib_file[TCCRUN_MAX_PATH] = {0};
+            infra_snprintf(lib_file, sizeof(lib_file), "..\\repos\\cosmopolitan_pub\\%s", lib_name);
+            INFRA_LOG_DEBUG("Trying to load library: %s", lib_file);
+            if (poly_tcc_add_lib(s, lib_file) != 0) {
+                INFRA_LOG_ERROR("Failed to load library: %s", lib_file);
+                poly_tcc_delete(s);
+                return -1;
+            }
+            INFRA_LOG_DEBUG("Successfully loaded library: %s", lib_file);
         } else if (strcmp(arg, "--args") == 0) {
             // 收集程序参数
             prog_argv[prog_argc++] = (char*)source_path;  // argv[0] 是程序名
@@ -201,37 +221,37 @@ infra_error_t tccrun_cmd_handler(int argc, char** argv) {
 
     INFRA_LOG_DEBUG("Opening source file: %s", source_path);
 
-    // 读取源文件
-    FILE* fp = fopen(source_path, "rb");  // TODO cosmo/infra later: 使用 infra 文件操作
-    if (!fp) {
-        INFRA_LOG_ERROR("Could not open '%s': %s", source_path, strerror(errno));
+    // 打开源文件
+    FILE* f = fopen(source_path, "r");
+    if (!f) {
+        INFRA_LOG_ERROR("Could not open source file: %s", source_path);
         poly_tcc_delete(s);
-        return INFRA_ERROR_NOT_FOUND;
+        return -1;
     }
 
     // 获取文件大小
-    fseek(fp, 0, SEEK_END);  // TODO cosmo/infra later: 使用 infra 文件操作
-    long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
+    fseek(f, 0, SEEK_END);  // TODO cosmo/infra later: 使用 infra 文件操作
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
 
     // 读取文件内容
     char* source = poly_tcc_malloc(size + 1);
     if (!source) {
         INFRA_LOG_ERROR("Could not allocate memory for source");
-        fclose(fp);  // TODO cosmo/infra later: 使用 infra 文件操作
+        fclose(f);  // TODO cosmo/infra later: 使用 infra 文件操作
         poly_tcc_delete(s);
         return INFRA_ERROR_NO_MEMORY;
     }
 
-    if (fread(source, 1, size, fp) != (size_t)size) {  // TODO cosmo/infra later: 使用 infra 文件操作
+    if (fread(source, 1, size, f) != (size_t)size) {  // TODO cosmo/infra later: 使用 infra 文件操作
         INFRA_LOG_ERROR("Could not read source file");
-        fclose(fp);
+        fclose(f);
         poly_tcc_free(source);
         poly_tcc_delete(s);
         return INFRA_ERROR_IO;
     }
     source[size] = '\0';
-    fclose(fp);  // TODO cosmo/infra later: 使用 infra 文件操作
+    fclose(f);  // TODO cosmo/infra later: 使用 infra 文件操作
 
     // 编译源代码
     if (poly_tcc_compile_string(s, source) != 0) {
