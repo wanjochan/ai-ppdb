@@ -1,5 +1,6 @@
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_platform.h"
+#include "internal/infra/infra_memory.h"
 #include "../framework/test_framework.h"
 
 // 性能统计结构
@@ -134,6 +135,34 @@ static void test_memory_stress(void) {
     }
 }
 
+// 内存保护测试
+static void test_memory_protection(void) {
+    // 分配一页内存
+    const size_t page_size = 4096;
+    void* ptr = NULL;
+    TEST_ASSERT(infra_mem_map(&ptr, page_size, INFRA_PROT_READ | INFRA_PROT_WRITE) == INFRA_OK);
+    TEST_ASSERT(ptr != NULL);
+
+    // 测试只读保护
+    TEST_ASSERT(infra_mem_protect(ptr, page_size, INFRA_PROT_READ) == INFRA_OK);
+    
+    // 测试读写保护
+    TEST_ASSERT(infra_mem_protect(ptr, page_size, INFRA_PROT_READ | INFRA_PROT_WRITE) == INFRA_OK);
+    
+    // 测试执行保护
+    TEST_ASSERT(infra_mem_protect(ptr, page_size, INFRA_PROT_READ | INFRA_PROT_EXEC) == INFRA_OK);
+    
+    // 测试无访问权限
+    TEST_ASSERT(infra_mem_protect(ptr, page_size, INFRA_PROT_NONE) == INFRA_OK);
+    
+    // 测试错误情况
+    TEST_ASSERT(infra_mem_protect(NULL, page_size, INFRA_PROT_READ) == INFRA_ERROR_INVALID_PARAM);
+    TEST_ASSERT(infra_mem_protect(ptr, 0, INFRA_PROT_READ) == INFRA_ERROR_INVALID_PARAM);
+    
+    // 清理
+    TEST_ASSERT(infra_mem_unmap(ptr, page_size) == INFRA_OK);
+}
+
 int main(void) {
     TEST_BEGIN();
     
@@ -142,6 +171,7 @@ int main(void) {
     RUN_TEST(test_memory_operations);
     RUN_TEST(test_memory_performance);
     RUN_TEST(test_memory_stress);
+    RUN_TEST(test_memory_protection);
     RUN_TEST(test_memory_cleanup);
     
     TEST_END();

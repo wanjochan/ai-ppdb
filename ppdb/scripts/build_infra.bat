@@ -60,10 +60,10 @@ if !NEED_REBUILD!==1 (
         )
     )
     
-@rem     rem Create static library
-@rem     echo Creating library...
-@rem     "%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_ds.o" "%BUILD_DIR%\infra\infra_memory.o" "%BUILD_DIR%\infra\infra_net.o" "%BUILD_DIR%\infra\infra_mux.o" "%BUILD_DIR%\infra\infra_mux_epoll.o"
-@rem     if errorlevel 1 exit /b 1
+    rem Create static library
+    echo Creating library...
+    "%AR%" rcs "%BUILD_DIR%\infra\libinfra.a" "%BUILD_DIR%\infra\infra_core.o" "%BUILD_DIR%\infra\infra_platform.o" "%BUILD_DIR%\infra\infra_sync.o" "%BUILD_DIR%\infra\infra_error.o" "%BUILD_DIR%\infra\infra_ds.o" "%BUILD_DIR%\infra\infra_memory.o" "%BUILD_DIR%\infra\infra_net.o" "%BUILD_DIR%\infra\infra_mux.o" "%BUILD_DIR%\infra\infra_mux_epoll.o"
+    if errorlevel 1 exit /b 1
     
     echo Build infra complete.
 ) else (

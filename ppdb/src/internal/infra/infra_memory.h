@@ -79,14 +79,14 @@ void infra_memory_cleanup(void);
 infra_error_t infra_memory_get_stats(infra_memory_stats_t* stats);
 
 // 内存映射函数
-infra_error_t infra_mem_map(void *addr, size_t size, int prot);
+infra_error_t infra_mem_map(void **addr, size_t size, int prot);
 infra_error_t infra_mem_unmap(void *addr, size_t size);
 infra_error_t infra_mem_protect(void *addr, size_t size, int prot);
 
 // 内存保护标志
-#define INFRA_PROT_NONE  0x0
-#define INFRA_PROT_READ  0x1
-#define INFRA_PROT_WRITE 0x2
-#define INFRA_PROT_EXEC  0x4
+#define INFRA_PROT_NONE  PROT_NONE
+#define INFRA_PROT_READ  PROT_READ
+#define INFRA_PROT_WRITE PROT_WRITE
+#define INFRA_PROT_EXEC  PROT_EXEC
 
 #endif // INFRA_MEMORY_H 
