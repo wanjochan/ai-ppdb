@@ -73,10 +73,10 @@ static void __attribute__((constructor)) infra_auto_init(void) {
 
     infra_error_t err = infra_init();
     if (err != INFRA_OK) {
-        infra_fprintf(stderr, "Failed to initialize infra: %d\n", err);
+	INFRA_LOG_ERROR("Failed to initialize infra: %d\n", err);
         abort();
     }else{
-        infra_fprintf(stdout, "infra_auto_init() success\n");//TODO infra_log()
+	INFRA_LOG_DEBUG("infra_auto_init() success\n");
     }
 }
 

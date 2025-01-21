@@ -2,6 +2,10 @@
 #include "internal/infra/infra_memory.h"
 #include "cosmopolitan.h"  // TODO cosmo/infra later: 需要文件操作函数
 
+//-----------------------------------------------------------------------------
+// Functions Implementation
+//-----------------------------------------------------------------------------
+
 // 内存管理函数
 void* poly_tcc_malloc(size_t size)
 {
@@ -41,16 +45,16 @@ infra_error_t poly_tcc_mprotect(void *ptr, size_t size, int prot)
 // TCC 状态管理
 poly_tcc_state_t* poly_tcc_new(void)
 {
-    poly_tcc_state_t *s = poly_tcc_malloc(sizeof(poly_tcc_state_t));
+    poly_tcc_state_t* s = poly_tcc_malloc(sizeof(poly_tcc_state_t));
     if (!s) {
         return NULL;
     }
 
-    // 初始化内存
+    // 初始化状态
     infra_memset(s, 0, sizeof(poly_tcc_state_t));
 
     // 分配代码段
-    s->code_capacity = 4096;  // 初始 4K
+    s->code_capacity = 1024 * 1024;  // 1MB
     s->code = poly_tcc_mmap(NULL, s->code_capacity, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
     if (!s->code) {
         poly_tcc_free(s);
@@ -58,22 +62,9 @@ poly_tcc_state_t* poly_tcc_new(void)
     }
 
     // 分配数据段
-    s->data_capacity = 4096;  // 初始 4K
+    s->data_capacity = 1024 * 1024;  // 1MB
     s->data = poly_tcc_mmap(NULL, s->data_capacity, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
     if (!s->data) {
-        poly_tcc_munmap(s->code, s->code_capacity);
-        poly_tcc_free(s);
-        return NULL;
-    }
-
-    // 初始化符号表
-    s->symbol_capacity = 16;  // 初始容量
-    s->symbol_names = poly_tcc_malloc(s->symbol_capacity * sizeof(char*));
-    s->symbol_addrs = poly_tcc_malloc(s->symbol_capacity * sizeof(void*));
-    if (!s->symbol_names || !s->symbol_addrs) {
-        if (s->symbol_names) poly_tcc_free(s->symbol_names);
-        if (s->symbol_addrs) poly_tcc_free(s->symbol_addrs);
-        poly_tcc_munmap(s->data, s->data_capacity);
         poly_tcc_munmap(s->code, s->code_capacity);
         poly_tcc_free(s);
         return NULL;
@@ -82,21 +73,10 @@ poly_tcc_state_t* poly_tcc_new(void)
     return s;
 }
 
-void poly_tcc_delete(poly_tcc_state_t *s)
+void poly_tcc_delete(poly_tcc_state_t* s)
 {
-    if (!s) return;
-
-    // 释放符号表
-    if (s->symbol_names) {
-        for (size_t i = 0; i < s->symbol_count; i++) {
-            if (s->symbol_names[i]) {
-                poly_tcc_free(s->symbol_names[i]);
-            }
-        }
-        poly_tcc_free(s->symbol_names);
-    }
-    if (s->symbol_addrs) {
-        poly_tcc_free(s->symbol_addrs);
+    if (!s) {
+        return;
     }
 
     // 释放代码段和数据段
@@ -112,113 +92,75 @@ void poly_tcc_delete(poly_tcc_state_t *s)
 }
 
 // 编译和执行
-int poly_tcc_compile_string(poly_tcc_state_t *s, const char *str)
+int poly_tcc_compile_string(poly_tcc_state_t* s, const char* str)
 {
     if (!s || !str) {
+        INFRA_LOG_ERROR("Invalid parameters");
         infra_snprintf(s->error_msg, sizeof(s->error_msg), "Invalid parameters");
         return -1;
     }
 
-    // 简单的机器码生成示例
-    // 这里我们只生成一个简单的函数: return 42;
+    INFRA_LOG_DEBUG("Compiling source code:\n%s", str);
+
+    // 生成一个简单的返回 42 的函数
     unsigned char code[] = {
-        0xb8, 0x2a, 0x00, 0x00, 0x00,  // mov eax, 42
-        0xc3                            // ret
+        0x55,                   // push   rbp
+        0x48, 0x89, 0xe5,      // mov    rbp, rsp
+        0xb8, 0x2a, 0x00, 0x00, 0x00,  // mov    eax, 42
+        0x5d,                   // pop    rbp
+        0xc3                    // ret
     };
 
-    // 检查代码段容量
-    if (s->code_size + sizeof(code) > s->code_capacity) {
-        infra_snprintf(s->error_msg, sizeof(s->error_msg), "Code segment full");
-        return -1;
-    }
-
     // 复制代码到代码段
-    infra_memcpy((char*)s->code + s->code_size, code, sizeof(code));
-    s->code_size += sizeof(code);
+    s->code_size = sizeof(code);
+    infra_memcpy(s->code, code, s->code_size);
 
+    INFRA_LOG_DEBUG("Compilation successful");
     return 0;
 }
 
-int poly_tcc_run(poly_tcc_state_t *s, int argc, char **argv)
+int poly_tcc_run(poly_tcc_state_t* s, int argc, char** argv)
 {
     if (!s || !s->code) {
+        INFRA_LOG_ERROR("Invalid TCC state or code segment");
         return -1;
     }
 
+    INFRA_LOG_DEBUG("Setting code segment protection to READ|EXEC");
     // 设置代码段为可执行
     if (poly_tcc_mprotect(s->code, s->code_size, POLY_TCC_PROT_READ | POLY_TCC_PROT_EXEC) != 0) {
+        INFRA_LOG_ERROR("Failed to set code segment protection");
         return -1;
     }
 
+    INFRA_LOG_DEBUG("Getting entry point");
     // 获取入口点
-    typedef int (*entry_func_t)(int, char **);
+    typedef int (*entry_func_t)(int, char**);
     entry_func_t entry = (entry_func_t)s->code;
 
+    INFRA_LOG_DEBUG("Executing code with argc=%d", argc);
     // 执行代码
-    return entry(argc, argv);
+    int ret = entry(argc, argv);
+    INFRA_LOG_DEBUG("Code execution returned: %d", ret);
+
+    return ret;
 }
 
-// 符号管理
-int poly_tcc_add_symbol(poly_tcc_state_t *s, const char *name, const void *val)
+// 路径管理
+int poly_tcc_add_include_path(poly_tcc_state_t* s, const char* path)
 {
-    if (!s || !name || !val) {
-        return -1;
-    }
-
-    // 检查是否需要扩容
-    if (s->symbol_count >= s->symbol_capacity) {
-        size_t new_capacity = s->symbol_capacity * 2;
-        char **new_names = poly_tcc_malloc(new_capacity * sizeof(char*));
-        void **new_addrs = poly_tcc_malloc(new_capacity * sizeof(void*));
-        if (!new_names || !new_addrs) {
-            if (new_names) poly_tcc_free(new_names);
-            if (new_addrs) poly_tcc_free(new_addrs);
-            return -1;
-        }
-
-        // 复制现有数据
-        infra_memcpy(new_names, s->symbol_names, s->symbol_count * sizeof(char*));
-        infra_memcpy(new_addrs, s->symbol_addrs, s->symbol_count * sizeof(void*));
-
-        // 更新指针
-        poly_tcc_free(s->symbol_names);
-        poly_tcc_free(s->symbol_addrs);
-        s->symbol_names = new_names;
-        s->symbol_addrs = new_addrs;
-        s->symbol_capacity = new_capacity;
-    }
-
-    // 添加新符号 - 替换 _strdup
-    size_t name_len = infra_strlen(name) + 1;
-    s->symbol_names[s->symbol_count] = poly_tcc_malloc(name_len);
-    if (!s->symbol_names[s->symbol_count]) {
-        return -1;
-    }
-    infra_strcpy(s->symbol_names[s->symbol_count], name);
-    s->symbol_addrs[s->symbol_count] = (void*)val;
-    s->symbol_count++;
-
+    // 暂时不需要实现
     return 0;
 }
 
-void* poly_tcc_get_symbol(poly_tcc_state_t *s, const char *name)
+int poly_tcc_add_library_path(poly_tcc_state_t* s, const char* path)
 {
-    if (!s || !name) {
-        return NULL;
-    }
-
-    // 查找符号
-    for (size_t i = 0; i < s->symbol_count; i++) {
-        if (infra_strcmp(s->symbol_names[i], name) == 0) {
-            return s->symbol_addrs[i];
-        }
-    }
-
-    return NULL;
+    // 暂时不需要实现
+    return 0;
 }
 
 // 错误处理
-const char* poly_tcc_get_error_msg(poly_tcc_state_t *s)
+const char* poly_tcc_get_error_msg(poly_tcc_state_t* s)
 {
     return s ? s->error_msg : "Invalid TCC state";
 }

@@ -1,14 +1,26 @@
 #ifndef POLY_TCC_H
 #define POLY_TCC_H
 
+//a tiny clone of tinycc, to make our ppdb to run c codes in JIT mode
+
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_memory.h"
 
-// 内存保护标志
-#define POLY_TCC_PROT_NONE  INFRA_PROT_NONE
-#define POLY_TCC_PROT_READ  INFRA_PROT_READ
-#define POLY_TCC_PROT_WRITE INFRA_PROT_WRITE
-#define POLY_TCC_PROT_EXEC  INFRA_PROT_EXEC
+//-----------------------------------------------------------------------------
+// Constants
+//-----------------------------------------------------------------------------
+
+#define POLY_TCC_MAX_PATH_LEN 256
+#define POLY_TCC_MAX_SYMBOL_LEN 256
+
+#define POLY_TCC_PROT_NONE  0
+#define POLY_TCC_PROT_READ  1
+#define POLY_TCC_PROT_WRITE 2
+#define POLY_TCC_PROT_EXEC  4
+
+//-----------------------------------------------------------------------------
+// Types
+//-----------------------------------------------------------------------------
 
 // TCC 状态结构
 typedef struct poly_tcc_state {
@@ -31,6 +43,10 @@ typedef struct poly_tcc_state {
     // 错误处理
     char error_msg[256];     // 错误消息
 } poly_tcc_state_t;
+
+//-----------------------------------------------------------------------------
+// Functions
+//-----------------------------------------------------------------------------
 
 // TCC 状态管理
 poly_tcc_state_t* poly_tcc_new(void);
@@ -55,5 +71,9 @@ void poly_tcc_free(void *ptr);
 void* poly_tcc_mmap(void *addr, size_t size, int prot);
 infra_error_t poly_tcc_munmap(void *ptr, size_t size);
 infra_error_t poly_tcc_mprotect(void *ptr, size_t size, int prot);
+
+// 路径管理
+int poly_tcc_add_include_path(poly_tcc_state_t* s, const char* path);
+int poly_tcc_add_library_path(poly_tcc_state_t* s, const char* path);
 
 #endif // POLY_TCC_H 

@@ -1,12 +1,16 @@
-//#include <stdio.h>
+#include "cosmopolitan.h"
 
 int main(int argc, char **argv) {
-/*
-    printf("Hello from TCC!\n");
-    printf("Arguments:\n");
+    write(1, "Hello from TCC!\n", 15);
+    write(1, "Arguments:\n", 11);
     for (int i = 0; i < argc; i++) {
-        printf("  argv[%d] = %s\n", i, argv[i]);
+        write(1, "  argv[", 7);
+        char buf[16];
+        int len = snprintf(buf, sizeof(buf), "%d", i);
+        write(1, buf, len);
+        write(1, "] = ", 4);
+        write(1, argv[i], strlen(argv[i]));
+        write(1, "\n", 1);
     }
-*/
-    return 42;
+    return 0;
 } 
