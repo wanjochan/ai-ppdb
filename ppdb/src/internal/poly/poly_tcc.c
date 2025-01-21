@@ -636,17 +636,8 @@ void poly_tcc_free(void *ptr)
     }
 }
 
-void* poly_tcc_mmap(void *addr, size_t size, int prot)
+void* poly_tcc_mmap(void* addr, size_t size, int prot)
 {
-    // Align size to page boundary
-    size = PAGEALIGN(size);
-
-    // Try to map at high address first
-    if (!addr) {
-        addr = (void*)0x100080100000ULL;
-        addr = (void*)PAGEALIGN((addr_t)addr);
-    }
-
     // 转换保护标志
     int mprot = INFRA_PROT_READ;  // 总是允许读
     if (prot & POLY_TCC_PROT_WRITE) mprot |= INFRA_PROT_WRITE;

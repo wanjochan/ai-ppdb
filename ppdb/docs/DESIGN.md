@@ -139,9 +139,10 @@ test/white/
   .\ppdb\ppdb_latest.exe --log-level=5 rinetd --start
   .\ppdb\ppdb_latest.exe --log-level=5 rinetd --config ./ppdb/rinetd2.conf --start
 
-.\ppdb\ppdb_latest.exe --log-level=5 tccrun --source .\ppdb\test.c
 
+##tccrun
 .\ppdb\ppdb_latest.exe --log-level=4 tccrun --source .\ppdb\test2.c -I.\repos\cosmopolitan_pub -L .\repos\cosmopolitan_pub -lcosmopolitan.a
-
+.\ppdb\ppdb_latest.exe --log-level=1 tccrun --source ppdb/test2.c -I repos\cosmopolitan_pub -L repos\cosmopolitan_pub -l cosmopolitan.a
+.\ppdb\ppdb_latest.exe --log-level=5 tccrun --source .\ppdb\test.c
 
 ```
