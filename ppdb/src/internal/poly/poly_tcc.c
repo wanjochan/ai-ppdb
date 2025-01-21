@@ -227,28 +227,40 @@ static int next_token(poly_tcc_state_t *s)
 
 poly_tcc_state_t* poly_tcc_new(void)
 {
+    INFRA_LOG_DEBUG("Creating new TCC state");
+    
     poly_tcc_state_t* s = poly_tcc_malloc(sizeof(poly_tcc_state_t));
-    if (!s) return NULL;
+    if (!s) {
+        INFRA_LOG_ERROR("Failed to allocate TCC state");
+        return NULL;
+    }
 
     // Initialize state
+    INFRA_LOG_DEBUG("Initializing TCC state");
     infra_memset(s, 0, sizeof(poly_tcc_state_t));
 
     // Allocate code segment
     s->code_capacity = 1024 * 1024;  // 1MB
+    INFRA_LOG_DEBUG("Allocating code segment of size %zu", s->code_capacity);
     s->code = poly_tcc_mmap(NULL, s->code_capacity, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
     if (!s->code) {
+        INFRA_LOG_ERROR("Failed to allocate code segment");
         poly_tcc_free(s);
         return NULL;
     }
+    INFRA_LOG_DEBUG("Code segment allocated at %p", s->code);
 
     // Allocate data segment
     s->data_capacity = 1024 * 1024;  // 1MB
+    INFRA_LOG_DEBUG("Allocating data segment of size %zu", s->data_capacity);
     s->data = poly_tcc_mmap(NULL, s->data_capacity, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
     if (!s->data) {
+        INFRA_LOG_ERROR("Failed to allocate data segment");
         poly_tcc_munmap(s->code, s->code_capacity);
         poly_tcc_free(s);
         return NULL;
     }
+    INFRA_LOG_DEBUG("Data segment allocated at %p", s->data);
 
     // Initialize symbol tables
     s->global_stack = NULL;
@@ -257,6 +269,7 @@ poly_tcc_state_t* poly_tcc_new(void)
     s->global_label_stack = NULL;
     s->local_label_stack = NULL;
 
+    INFRA_LOG_DEBUG("TCC state created successfully");
     return s;
 }
 
@@ -638,13 +651,16 @@ void poly_tcc_free(void *ptr)
 
 void* poly_tcc_mmap(void* addr, size_t size, int prot)
 {
+    if (size == 0) {
+        return NULL;
+    }
+
     // 转换保护标志
     int mprot = INFRA_PROT_READ;  // 总是允许读
     if (prot & POLY_TCC_PROT_WRITE) mprot |= INFRA_PROT_WRITE;
     if (prot & POLY_TCC_PROT_EXEC) mprot |= INFRA_PROT_EXEC;
 
-    // 分配内存
-    void* ptr = infra_malloc(size);
+    void* ptr = infra_mem_map(addr, size, mprot);
     if (!ptr) {
         INFRA_LOG_ERROR("Failed to allocate memory of size %zu", size);
         return NULL;
