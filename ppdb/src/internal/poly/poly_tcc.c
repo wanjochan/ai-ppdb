@@ -13,13 +13,13 @@ void poly_tcc_free(void *ptr)
     infra_free(ptr);
 }
 
-infra_error_t poly_tcc_mmap(void *addr, size_t size, int prot)
+void* poly_tcc_mmap(void *addr, size_t size, int prot)
 {
     void *mem = mmap(addr, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (mem == MAP_FAILED) {
-        return INFRA_ERROR_NO_MEMORY;
+        return NULL;
     }
-    return INFRA_OK;
+    return mem;
 }
 
 infra_error_t poly_tcc_munmap(void *ptr, size_t size)
@@ -270,7 +270,15 @@ infra_error_t poly_mem_exec(void* ptr, size_t size)
 
 infra_error_t poly_mem_map(size_t size, void **ptr)
 {
-    return infra_mem_map(NULL, size, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE);
+    if (!ptr || size == 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    *ptr = mmap(NULL, size, POLY_TCC_PROT_READ | POLY_TCC_PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (*ptr == MAP_FAILED) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    return INFRA_OK;
 }
 
 infra_error_t poly_mem_unmap(void* ptr, size_t size)

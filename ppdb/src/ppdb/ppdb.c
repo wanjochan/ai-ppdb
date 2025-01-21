@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
         INFRA_LOG_ERROR("Failed to register rinetd command: %d", err);
         return 1;
     }
-    INFRA_LOG_DEBUG("Command line framework initialized");
+    INFRA_LOG_DEBUG("Rinetd command registered");
 
     // Register tccrun command
     poly_cmd_t tccrun_cmd = {

@@ -1,42 +1,29 @@
 #include "internal/poly/poly_cmdline.h"
 #include "internal/infra/infra_core.h"
-#include "internal/peer/peer_rinetd.h"
 
-#define POLY_CMD_MAX_COUNT 32
+// 命令列表
+static poly_cmd_t* g_commands = NULL;
+static int g_command_count = 0;
+static int g_command_capacity = 0;
 
-typedef struct {
-    poly_cmd_t commands[POLY_CMD_MAX_COUNT];
-    int command_count;
-} poly_cmdline_t;
-
-static poly_cmdline_t g_cmdline;
-
-infra_error_t poly_cmdline_init(void) {
+infra_error_t poly_cmdline_init(void)
+{
     INFRA_LOG_DEBUG("Initializing command line framework");
-    memset(&g_cmdline, 0, sizeof(g_cmdline));
-    
-    // Register rinetd command
-    INFRA_LOG_DEBUG("Creating rinetd command structure");
-    poly_cmd_t rinetd_cmd = {
-        .name = "rinetd",
-        .desc = "Rinetd service management",
-        .options = rinetd_options,
-        .option_count = rinetd_option_count,
-        .handler = rinetd_cmd_handler
-    };
 
-    INFRA_LOG_DEBUG("Registering rinetd command");
-    infra_error_t err = poly_cmdline_register(&rinetd_cmd);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register rinetd command");
-        return err;
+    // 初始化命令列表
+    g_command_capacity = 16;  // 初始容量
+    g_commands = infra_malloc(g_command_capacity * sizeof(poly_cmd_t));
+    if (!g_commands) {
+        INFRA_LOG_ERROR("Failed to allocate command list");
+        return INFRA_ERROR_NO_MEMORY;
     }
+
     INFRA_LOG_DEBUG("Command line framework initialized successfully");
     return INFRA_OK;
 }
 
 infra_error_t poly_cmdline_cleanup(void) {
-    memset(&g_cmdline, 0, sizeof(g_cmdline));
+    memset(&g_commands, 0, sizeof(g_commands));
     return INFRA_OK;
 }
 
@@ -47,23 +34,23 @@ infra_error_t poly_cmdline_register(const poly_cmd_t* cmd) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (g_cmdline.command_count >= POLY_CMD_MAX_COUNT) {
+    if (g_command_count >= g_command_capacity) {
         INFRA_LOG_ERROR("Too many commands");
         return INFRA_ERROR_NO_MEMORY;
     }
 
-    for (int i = 0; i < g_cmdline.command_count; i++) {
-        if (strcmp(g_cmdline.commands[i].name, cmd->name) == 0) {
+    for (int i = 0; i < g_command_count; i++) {
+        if (strcmp(g_commands[i].name, cmd->name) == 0) {
             INFRA_LOG_ERROR("Command %s already exists", cmd->name);
             return INFRA_ERROR_EXISTS;
         }
     }
 
-    memcpy(&g_cmdline.commands[g_cmdline.command_count], cmd, sizeof(poly_cmd_t));
-    g_cmdline.command_count++;
+    memcpy(&g_commands[g_command_count], cmd, sizeof(poly_cmd_t));
+    g_command_count++;
 
     INFRA_LOG_INFO("Command %s registered", cmd->name);
-    INFRA_LOG_DEBUG("Command count: %d", g_cmdline.command_count);
+    INFRA_LOG_DEBUG("Command count: %d", g_command_count);
     return INFRA_OK;
 }
 
@@ -76,11 +63,11 @@ infra_error_t poly_cmdline_execute(int argc, char** argv) {
 
     const char* cmd_name = argv[0];
     INFRA_LOG_DEBUG("Looking for command: %s", cmd_name);
-    for (int i = 0; i < g_cmdline.command_count; i++) {
-        if (strcmp(g_cmdline.commands[i].name, cmd_name) == 0) {
+    for (int i = 0; i < g_command_count; i++) {
+        if (strcmp(g_commands[i].name, cmd_name) == 0) {
             INFRA_LOG_INFO("Executing command %s", cmd_name);
             INFRA_LOG_DEBUG("Calling command handler");
-            return g_cmdline.commands[i].handler(argc, argv);
+            return g_commands[i].handler(argc, argv);
         }
     }
 
@@ -94,8 +81,8 @@ const poly_cmd_t* poly_cmdline_get_commands(int* count) {
         return NULL;
     }
 
-    *count = g_cmdline.command_count;
-    return g_cmdline.commands;
+    *count = g_command_count;
+    return g_commands;
 }
 
 infra_error_t poly_cmdline_help(const char* cmd_name) {
@@ -104,23 +91,23 @@ infra_error_t poly_cmdline_help(const char* cmd_name) {
         INFRA_LOG_INFO("Usage: ppdb <command> [options]");
         INFRA_LOG_INFO("Available commands:");
 
-        for (int i = 0; i < g_cmdline.command_count; i++) {
-            INFRA_LOG_INFO("  %-20s %s", g_cmdline.commands[i].name, g_cmdline.commands[i].desc);
+        for (int i = 0; i < g_command_count; i++) {
+            INFRA_LOG_INFO("  %-20s %s", g_commands[i].name, g_commands[i].desc);
         }
     } else {
         // Show command specific help
-        for (int i = 0; i < g_cmdline.command_count; i++) {
-            if (strcmp(g_cmdline.commands[i].name, cmd_name) == 0) {
+        for (int i = 0; i < g_command_count; i++) {
+            if (strcmp(g_commands[i].name, cmd_name) == 0) {
                 INFRA_LOG_INFO("Command: %s", cmd_name);
-                INFRA_LOG_INFO("Description: %s", g_cmdline.commands[i].desc);
+                INFRA_LOG_INFO("Description: %s", g_commands[i].desc);
                 
-                if (g_cmdline.commands[i].options != NULL && g_cmdline.commands[i].option_count > 0) {
+                if (g_commands[i].options != NULL && g_commands[i].option_count > 0) {
                     INFRA_LOG_INFO("Options:");
-                    for (int j = 0; j < g_cmdline.commands[i].option_count; j++) {
+                    for (int j = 0; j < g_commands[i].option_count; j++) {
                         INFRA_LOG_INFO("  --%s%s\t%s",
-                            g_cmdline.commands[i].options[j].name,
-                            g_cmdline.commands[i].options[j].has_value ? "=<value>" : "",
-                            g_cmdline.commands[i].options[j].desc);
+                            g_commands[i].options[j].name,
+                            g_commands[i].options[j].has_value ? "=<value>" : "",
+                            g_commands[i].options[j].desc);
                     }
                 }
                 return INFRA_OK;

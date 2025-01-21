@@ -124,6 +124,11 @@ infra_error_t tccrun_execute(const char* source_path, int argc, char** argv) {
 }
 
 infra_error_t tccrun_cmd_handler(int argc, char** argv) {
+    INFRA_LOG_DEBUG("tccrun_cmd_handler: argc=%d", argc);
+    for (int i = 0; i < argc; i++) {
+        INFRA_LOG_DEBUG("  argv[%d] = %s", i, argv[i]);
+    }
+
     if (argc < 2) {
         INFRA_LOG_ERROR("Invalid arguments");
         return INFRA_ERROR_INVALID_PARAM;
@@ -136,17 +141,21 @@ infra_error_t tccrun_cmd_handler(int argc, char** argv) {
 
     for (int i = 1; i < argc; i++) {
         const char* arg = argv[i];
+        INFRA_LOG_DEBUG("Processing arg[%d]: %s", i, arg);
         if (strcmp(arg, "--source") == 0) {
             if (i + 1 >= argc) {
                 INFRA_LOG_ERROR("Missing source file path");
                 return INFRA_ERROR_INVALID_PARAM;
             }
             source_path = argv[++i];
+            INFRA_LOG_DEBUG("Found source path: %s", source_path);
         } else if (strcmp(arg, "--args") == 0) {
             // 收集程序参数
             prog_argv[prog_argc++] = (char*)source_path;  // argv[0] 是程序名
+            INFRA_LOG_DEBUG("Added program name: %s", source_path);
             while (++i < argc && prog_argc < TCCRUN_MAX_ARGS) {
                 prog_argv[prog_argc++] = argv[i];
+                INFRA_LOG_DEBUG("Added program arg: %s", argv[i]);
             }
             break;
         }
@@ -160,8 +169,10 @@ infra_error_t tccrun_cmd_handler(int argc, char** argv) {
     // 如果没有提供参数，至少传入程序名
     if (prog_argc == 0) {
         prog_argv[prog_argc++] = (char*)source_path;
+        INFRA_LOG_DEBUG("Using source path as program name: %s", source_path);
     }
 
+    INFRA_LOG_DEBUG("Opening source file: %s", source_path);
     // 创建 TCC 状态
     poly_tcc_state_t* s = poly_tcc_new();
     if (!s) {
@@ -172,7 +183,7 @@ infra_error_t tccrun_cmd_handler(int argc, char** argv) {
     // 读取源文件
     FILE* fp = fopen(source_path, "rb");  // TODO cosmo/infra later: 使用 infra 文件操作
     if (!fp) {
-        INFRA_LOG_ERROR("Could not open '%s'", source_path);
+        INFRA_LOG_ERROR("Could not open '%s': %s", source_path, strerror(errno));
         poly_tcc_delete(s);
         return INFRA_ERROR_NOT_FOUND;
     }
