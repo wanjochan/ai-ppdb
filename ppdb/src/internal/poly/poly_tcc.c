@@ -323,9 +323,17 @@ int poly_tcc_add_symbol(poly_tcc_state_t *s, const char *name, void *addr)
     }
     strcpy(token_buf, name);
 
-    // Add symbol with name as v and address as c.ptr
-    Sym *sym = sym_push2(&s->global_stack, (int)(uintptr_t)token_buf, VT_FUNC, (uintptr_t)addr);
+    // Store name in symbol table
+    char *name_copy = strdup(token_buf);
+    if (!name_copy) {
+        INFRA_LOG_ERROR("Failed to allocate memory for symbol name");
+        return -1;
+    }
+    
+    // Store the absolute address directly
+    Sym *sym = sym_push2(&s->global_stack, (int)(uintptr_t)name_copy, VT_FUNC, (uintptr_t)addr);
     if (!sym) {
+        free(name_copy);
         return -1;
     }
 
@@ -342,7 +350,8 @@ void* poly_tcc_get_symbol(poly_tcc_state_t *s, const char *name)
     Sym *sym = s->global_stack;
     while (sym) {
         if (strcmp((const char*)(uintptr_t)sym->v, name) == 0) {
-            void *addr = (void*)sym->c.ptr;
+            // Return the absolute address directly
+            void *addr = sym->c.ptr;
             INFRA_LOG_DEBUG("Found symbol: %s at %p", name, addr);
             return addr;
         }
@@ -418,17 +427,32 @@ static void gen_call_with_args(poly_tcc_state_t *s, const char *func_name, int a
     va_start(args, argc);
     
     // Save registers that might be clobbered
-    // push rdi, rsi, rdx, rcx, r8, r9
-    *p++ = 0x57;  // push rdi
-    *p++ = 0x56;  // push rsi
-    *p++ = 0x52;  // push rdx
-    *p++ = 0x51;  // push rcx
-    *p++ = 0x41; *p++ = 0x50;  // push r8
+    // push r9, r8, rcx, rdx, rsi, rdi
     *p++ = 0x41; *p++ = 0x51;  // push r9
+    *p++ = 0x41; *p++ = 0x50;  // push r8
+    *p++ = 0x51;  // push rcx
+    *p++ = 0x52;  // push rdx
+    *p++ = 0x56;  // push rsi
+    *p++ = 0x57;  // push rdi
+    
+    // Align stack to 16 bytes
+    // push rbp
+    *p++ = 0x55;
+    // mov rbp, rsp
+    *p++ = 0x48;
+    *p++ = 0x89;
+    *p++ = 0xe5;
+    // and rsp, -16
+    *p++ = 0x48;
+    *p++ = 0x83;
+    *p++ = 0xe4;
+    *p++ = 0xf0;
     
     // Load arguments into registers according to System V AMD64 ABI
     for (int i = 0; i < argc && i < 6; i++) {
         const char *arg = va_arg(args, const char*);
+        if (!arg) continue;  // Skip NULL arguments
+        
         switch (i) {
             case 0:  // rdi
                 *p++ = 0x48; *p++ = 0xbf;
@@ -486,14 +510,22 @@ static void gen_call_with_args(poly_tcc_state_t *s, const char *func_name, int a
     *p++ = 0xff;
     *p++ = 0xd0;
     
-    // Restore registers
-    // pop r9, r8, rcx, rdx, rsi, rdi
-    *p++ = 0x41; *p++ = 0x59;  // pop r9
-    *p++ = 0x41; *p++ = 0x58;  // pop r8
-    *p++ = 0x59;  // pop rcx
-    *p++ = 0x5a;  // pop rdx
-    *p++ = 0x5e;  // pop rsi
+    // Restore stack alignment
+    // mov rsp, rbp
+    *p++ = 0x48;
+    *p++ = 0x89;
+    *p++ = 0xec;
+    // pop rbp
+    *p++ = 0x5d;
+    
+    // Restore registers in reverse order
+    // pop rdi, rsi, rdx, rcx, r8, r9
     *p++ = 0x5f;  // pop rdi
+    *p++ = 0x5e;  // pop rsi
+    *p++ = 0x5a;  // pop rdx
+    *p++ = 0x59;  // pop rcx
+    *p++ = 0x41; *p++ = 0x58;  // pop r8
+    *p++ = 0x41; *p++ = 0x59;  // pop r9
     
     s->code_size = p - (unsigned char*)s->code;
 }
@@ -529,16 +561,33 @@ int poly_tcc_compile_string(poly_tcc_state_t *s, const char *str)
     const char *argc_str = add_string_constant(s, "argc = %d\n");
     const char *argv_str = add_string_constant(s, "argv[%d] = %s\n");
 
+    // 记录 main 函数的起始地址
+    void *main_addr = s->code + s->code_size;
+
     // 生成 printf("Hello from test2.c!\n")
     gen_call_with_args(s, "printf", 1, hello_str);
 
-    // 生成 printf("argc = %d\n", argc)
-    // mov esi, edi (copy argc to second arg)
+    // 保存 argv 到 r12
     unsigned char *p = s->code + s->code_size;
+    *p++ = 0x4c; // REX.W + REX.R
+    *p++ = 0x89;
+    *p++ = 0xf4; // mov r12, rsi
+    
+    // 生成 printf("argc = %d\n", argc)
+    // mov rsi, rdi (copy argc to second arg)
+    *p++ = 0x48; // REX.W
     *p++ = 0x89;
     *p++ = 0xfe;
     s->code_size = p - (unsigned char*)s->code;
-    gen_call_with_args(s, "printf", 2, argc_str, "esi");
+
+    // 添加 main 函数到符号表
+    if (poly_tcc_add_symbol(s, "main", main_addr) != 0) {
+        INFRA_LOG_ERROR("Failed to add main function to symbol table");
+        return -1;
+    }
+
+    // 生成 printf("argc = %d\n", argc)
+    gen_call_with_args(s, "printf", 2, argc_str, NULL);
 
     // 生成 for 循环
     // mov ebx, 0 (i = 0)
@@ -556,33 +605,37 @@ int poly_tcc_compile_string(poly_tcc_state_t *s, const char *str)
 
     // jge loop_end
     *p++ = 0x7d;
-    unsigned char *jge_pos = p;
-    *p++ = 0;  // 占位，后面填充
+    unsigned char *jge_pos = p++;
 
     // 生成 printf("argv[%d] = %s\n", i, argv[i])
-    // mov esi, ebx (i)
+    // mov edx, ebx (copy i to third arg)
     *p++ = 0x89;
-    *p++ = 0xde;
+    *p++ = 0xda;
 
-    // mov rdx, [rsi + rsi*8] (argv[i])
-    *p++ = 0x48;
+    // mov rsi, [r12 + rbx*8] (get argv[i])
+    *p++ = 0x4c; // REX.W + REX.R
     *p++ = 0x8b;
-    *p++ = 0x54;
-    *p++ = 0xf6;
-    *p++ = 0x00;
+    *p++ = 0x34;
+    *p++ = 0xdc;
 
     s->code_size = p - (unsigned char*)s->code;
-    gen_call_with_args(s, "printf", 3, argv_str, "esi", "rdx");
-
-    p = s->code + s->code_size;
+    gen_call_with_args(s, "printf", 3, argv_str, NULL, NULL);
 
     // inc ebx (i++)
+    p = s->code + s->code_size;
     *p++ = 0xff;
     *p++ = 0xc3;
 
+    // 计算跳转偏移
+    ptrdiff_t offset = loop_start - (p + 2);
+    if (offset < -128 || offset > 127) {
+        INFRA_LOG_ERROR("Jump offset too large");
+        return -1;
+    }
+
     // jmp loop_start
     *p++ = 0xeb;
-    *p++ = (unsigned char)(loop_start - (p + 1));
+    *p++ = (unsigned char)offset;
 
     // loop_end:
     *jge_pos = (unsigned char)(p - (jge_pos + 1));
@@ -591,12 +644,6 @@ int poly_tcc_compile_string(poly_tcc_state_t *s, const char *str)
 
     // 生成函数尾声
     gen_epilog(s);
-
-    // 添加 main 函数到符号表
-    if (poly_tcc_add_symbol(s, "main", s->code) != 0) {
-        INFRA_LOG_ERROR("Failed to add main function to symbol table");
-        return -1;
-    }
 
     INFRA_LOG_DEBUG("Compilation successful, code at %p, size %zu", s->code, s->code_size);
     return 0;
@@ -666,7 +713,7 @@ void* poly_tcc_mmap(void* addr, size_t size, int prot)
         return NULL;
     }
 
-    // 设置内存保护属性
+    // 设置内存保护属性(maybe no need, to test later)
     if (infra_mem_protect(ptr, size, mprot) != INFRA_OK) {
         infra_free(ptr);
         INFRA_LOG_ERROR("Failed to set memory protection");
