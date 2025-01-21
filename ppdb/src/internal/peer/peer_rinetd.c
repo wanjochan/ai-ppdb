@@ -56,25 +56,68 @@ static void* forward_thread(void* arg) {
     char buffer[RINETD_BUFFER_SIZE];
     size_t bytes_received = 0;
     size_t bytes_sent = 0;
+    infra_error_t err = INFRA_OK;
+    uint64_t last_activity = infra_time_ms();
+    const uint64_t TIMEOUT_MS = 300000;  // 5分钟超时
 
-    while (session->active) {
+    INFRA_LOG_DEBUG("Started forward thread for session");
+
+    while (1) {
+        infra_mutex_lock(g_context.mutex);
+        if (!session->active) {
+            infra_mutex_unlock(g_context.mutex);
+            break;
+        }
+        infra_mutex_unlock(g_context.mutex);
+
+        // 检查超时
+        uint64_t current_time = infra_time_ms();
+        if (current_time - last_activity > TIMEOUT_MS) {
+            INFRA_LOG_WARN("Forward thread timeout");
+            break;
+        }
+
+        // 设置接收超时
+        err = infra_net_set_timeout(src, 1000);  // 1秒超时
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to set recv timeout: %d", err);
+            break;
+        }
+
         // Forward data from client to server
         if (src) {
-            infra_error_t err = infra_net_recv(src, buffer, sizeof(buffer), &bytes_received);
+            err = infra_net_recv(src, buffer, sizeof(buffer), &bytes_received);
+            if (err == INFRA_ERROR_TIMEOUT) {
+                continue;  // 超时继续等待
+            }
             if (err != INFRA_OK || bytes_received == 0) {
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Forward thread recv error: %d", err);
+                } else {
+                    INFRA_LOG_DEBUG("Forward thread connection closed by client");
+                }
                 break;
             }
+
+            last_activity = infra_time_ms();  // 更新活动时间
 
             if (dst) {
                 err = infra_net_send(dst, buffer, bytes_received, &bytes_sent);
                 if (err != INFRA_OK || bytes_sent != bytes_received) {
+                    INFRA_LOG_ERROR("Forward thread send error: %d", err);
                     break;
                 }
+                last_activity = infra_time_ms();  // 更新活动时间
             }
         }
     }
 
-    session->active = false;  // Signal other thread to stop
+    // 安全地标记会话结束
+    infra_mutex_lock(g_context.mutex);
+    session->active = false;
+    infra_mutex_unlock(g_context.mutex);
+    
+    INFRA_LOG_DEBUG("Forward thread stopped");
     return NULL;
 }
 
@@ -85,25 +128,68 @@ static void* backward_thread(void* arg) {
     char buffer[RINETD_BUFFER_SIZE];
     size_t bytes_received = 0;
     size_t bytes_sent = 0;
+    infra_error_t err = INFRA_OK;
+    uint64_t last_activity = infra_time_ms();
+    const uint64_t TIMEOUT_MS = 300000;  // 5分钟超时
 
-    while (session->active) {
+    INFRA_LOG_DEBUG("Started backward thread for session");
+
+    while (1) {
+        infra_mutex_lock(g_context.mutex);
+        if (!session->active) {
+            infra_mutex_unlock(g_context.mutex);
+            break;
+        }
+        infra_mutex_unlock(g_context.mutex);
+
+        // 检查超时
+        uint64_t current_time = infra_time_ms();
+        if (current_time - last_activity > TIMEOUT_MS) {
+            INFRA_LOG_WARN("Backward thread timeout");
+            break;
+        }
+
+        // 设置接收超时
+        err = infra_net_set_timeout(src, 1000);  // 1秒超时
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to set recv timeout: %d", err);
+            break;
+        }
+
         // Forward data from server to client
         if (src) {
-            infra_error_t err = infra_net_recv(src, buffer, sizeof(buffer), &bytes_received);
+            err = infra_net_recv(src, buffer, sizeof(buffer), &bytes_received);
+            if (err == INFRA_ERROR_TIMEOUT) {
+                continue;  // 超时继续等待
+            }
             if (err != INFRA_OK || bytes_received == 0) {
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Backward thread recv error: %d", err);
+                } else {
+                    INFRA_LOG_DEBUG("Backward thread connection closed by server");
+                }
                 break;
             }
+
+            last_activity = infra_time_ms();  // 更新活动时间
 
             if (dst) {
                 err = infra_net_send(dst, buffer, bytes_received, &bytes_sent);
                 if (err != INFRA_OK || bytes_sent != bytes_received) {
+                    INFRA_LOG_ERROR("Backward thread send error: %d", err);
                     break;
                 }
+                last_activity = infra_time_ms();  // 更新活动时间
             }
         }
     }
 
-    session->active = false;  // Signal other thread to stop
+    // 安全地标记会话结束
+    infra_mutex_lock(g_context.mutex);
+    session->active = false;
+    infra_mutex_unlock(g_context.mutex);
+    
+    INFRA_LOG_DEBUG("Backward thread stopped");
     return NULL;
 }
 
@@ -117,25 +203,59 @@ static void* listener_thread(void* arg) {
     listener_thread_param_t* param = (listener_thread_param_t*)arg;
     rinetd_rule_t* rule = param->rule;
     infra_socket_t listener = param->listener;
+    infra_error_t err = INFRA_OK;
+    
+    INFRA_LOG_INFO("Started listener thread for %s:%d -> %s:%d",
+        rule->src_addr, rule->src_port, rule->dst_addr, rule->dst_port);
     
     // Accept loop
-    while (g_context.running) {
+    while (1) {
+        // 检查服务是否还在运行
+        infra_mutex_lock(g_context.mutex);
+        bool is_running = g_context.running;
+        infra_mutex_unlock(g_context.mutex);
+        
+        if (!is_running) {
+            break;
+        }
+
         infra_socket_t client = NULL;
         infra_net_addr_t client_addr = {0};
-        infra_error_t err = infra_net_accept(listener, &client, &client_addr);
+        err = infra_net_accept(listener, &client, &client_addr);
         if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Accept failed: %d", err);
+            infra_sleep(100);  // 避免过于频繁的失败
             continue;
         }
+
+        INFRA_LOG_DEBUG("Accepted new connection from %s:%d",
+            client_addr.host, client_addr.port);
 
         // Create forward session
         rinetd_session_t* session = create_forward_session(client, rule);
         if (!session) {
+            INFRA_LOG_ERROR("Failed to create forward session");
             infra_net_close(client);
+            infra_sleep(100);  // 避免过于频繁的失败
+            continue;
+        }
+
+        // 检查会话是否正常启动
+        infra_mutex_lock(g_context.mutex);
+        bool session_active = session->active;
+        infra_mutex_unlock(g_context.mutex);
+
+        if (!session_active) {
+            INFRA_LOG_ERROR("Session failed to start properly");
+            cleanup_forward_session(session);
             continue;
         }
     }
 
     // 清理
+    INFRA_LOG_INFO("Stopping listener thread for %s:%d",
+        rule->src_addr, rule->src_port);
+    
     infra_net_close(listener);
     free(param);
     return NULL;
@@ -224,6 +344,9 @@ static infra_error_t stop_listener(int rule_index) {
 
 static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rinetd_rule_t* rule) {
     if (!client_sock || !rule) {
+        if (client_sock) {
+            infra_net_close(client_sock);
+        }
         return NULL;
     }
 
@@ -232,6 +355,8 @@ static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rine
     infra_config_t config = {0};
     infra_error_t err = infra_net_create(&server_sock, false, &config);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create server socket: %d", err);
+        infra_net_close(client_sock);
         return NULL;
     }
 
@@ -241,13 +366,27 @@ static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rine
     addr.port = rule->dst_port;
     err = infra_net_connect(&addr, &server_sock, &config);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to connect to destination %s:%d: %d", 
+            rule->dst_addr, rule->dst_port, err);
         infra_net_close(server_sock);
+        infra_net_close(client_sock);
         return NULL;
     }
 
     // Find free session slot
     rinetd_session_t* session = NULL;
     infra_mutex_lock(g_context.mutex);
+    
+    // 检查是否达到最大会话数限制
+    if (g_context.session_count >= RINETD_MAX_RULES) {
+        INFRA_LOG_ERROR("Maximum session limit reached");
+        infra_mutex_unlock(g_context.mutex);
+        infra_net_close(server_sock);
+        infra_net_close(client_sock);
+        return NULL;
+    }
+
+    // 查找空闲会话槽位
     for (int i = 0; i < RINETD_MAX_RULES; i++) {
         if (!g_context.active_sessions[i].active) {
             session = &g_context.active_sessions[i];
@@ -256,13 +395,14 @@ static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rine
     }
 
     if (!session) {
+        INFRA_LOG_ERROR("No free session slot available");
         infra_mutex_unlock(g_context.mutex);
         infra_net_close(server_sock);
+        infra_net_close(client_sock);
         return NULL;
     }
 
     // Initialize session
-    // TODO cosmo/infra later: 使用 infra_memset
     memset(session, 0, sizeof(rinetd_session_t));
     session->client_sock = client_sock;
     session->server_sock = server_sock;
@@ -272,24 +412,32 @@ static rinetd_session_t* create_forward_session(infra_socket_t client_sock, rine
     // Create forward thread (client to server)
     err = infra_thread_create(&session->forward_thread, forward_thread, session);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create forward thread: %d", err);
         session->active = false;
         infra_mutex_unlock(g_context.mutex);
         infra_net_close(server_sock);
+        infra_net_close(client_sock);
         return NULL;
     }
 
     // Create backward thread (server to client)
     err = infra_thread_create(&session->backward_thread, backward_thread, session);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create backward thread: %d", err);
         session->active = false;
         infra_thread_join(session->forward_thread);
         infra_mutex_unlock(g_context.mutex);
         infra_net_close(server_sock);
+        infra_net_close(client_sock);
         return NULL;
     }
 
     g_context.session_count++;
     infra_mutex_unlock(g_context.mutex);
+    
+    INFRA_LOG_DEBUG("Created new session: %s:%d -> %s:%d",
+        rule->src_addr, rule->src_port, rule->dst_addr, rule->dst_port);
+    
     return session;
 }
 
@@ -298,12 +446,12 @@ static void cleanup_forward_session(rinetd_session_t* session) {
         return;
     }
 
-    // 先停止会话
+    // 先标记会话结束，这样转发线程会自动退出
     infra_mutex_lock(g_context.mutex);
     session->active = false;
     infra_mutex_unlock(g_context.mutex);
 
-    // 等待线程结束
+    // 等待线程结束 - 在锁外等待，避免死锁
     if (session->forward_thread != NULL) {
         infra_thread_join(session->forward_thread);
         session->forward_thread = NULL;
@@ -314,8 +462,7 @@ static void cleanup_forward_session(rinetd_session_t* session) {
         session->backward_thread = NULL;
     }
 
-    // 关闭socket
-    infra_mutex_lock(g_context.mutex);
+    // 关闭socket - 在锁外关闭，因为网络操作可能会阻塞
     if (session->client_sock != NULL) {
         infra_net_close(session->client_sock);
         session->client_sock = NULL;
@@ -326,8 +473,23 @@ static void cleanup_forward_session(rinetd_session_t* session) {
         session->server_sock = NULL;
     }
 
-    // 从列表中移除
-    remove_session_from_list(session);
+    // 从会话列表中移除 - 需要加锁保护
+    infra_mutex_lock(g_context.mutex);
+    for (int i = 0; i < g_context.session_count; i++) {
+        if (&g_context.active_sessions[i] == session) {
+            // 如果不是最后一个会话，将最后一个会话移到当前位置
+            if (i < g_context.session_count - 1) {
+                memcpy(&g_context.active_sessions[i],
+                    &g_context.active_sessions[g_context.session_count - 1],
+                    sizeof(rinetd_session_t));
+            }
+            // 清空最后一个会话槽位
+            memset(&g_context.active_sessions[g_context.session_count - 1],
+                0, sizeof(rinetd_session_t));
+            g_context.session_count--;
+            break;
+        }
+    }
     infra_mutex_unlock(g_context.mutex);
 }
 

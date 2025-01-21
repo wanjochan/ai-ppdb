@@ -1,7 +1,7 @@
 #include "internal/poly/poly_cmdline.h"
 #include "internal/infra/infra_core.h"
 #include "internal/peer/peer_rinetd.h"
-#include "internal/peer/peer_tccrun.h"
+// #include "internal/peer/peer_tccrun.h"
 
 // Global options
 static const poly_cmd_option_t global_options[] = {
@@ -174,6 +174,7 @@ int main(int argc, char** argv) {
     INFRA_LOG_DEBUG("Rinetd command registered");
 
     // Register tccrun command
+    /*
     poly_cmd_t tccrun_cmd = {
         .name = "tccrun",
         .desc = "Run C source files using TinyCC",
@@ -187,6 +188,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     INFRA_LOG_DEBUG("TCC run command registered");
+    */
 
     // If no command specified, show help
     if (i >= argc) {
