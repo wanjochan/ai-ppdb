@@ -61,11 +61,15 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
     while (total_sent < bytes_received) {
         err = infra_net_send(dst, buffer + total_sent, bytes_received - total_sent, &bytes_sent);
         if (err != INFRA_OK) {
-            if (err != INFRA_ERROR_TIMEOUT && err != INFRA_ERROR_WOULD_BLOCK) {
+            if (err == INFRA_ERROR_WOULD_BLOCK) {
+                // 发送缓冲区满，等待下一次循环
+                return INFRA_ERROR_WOULD_BLOCK;
+            }
+            if (err != INFRA_ERROR_TIMEOUT) {
                 INFRA_LOG_ERROR("Failed to send data: %d", err);
                 return err;
             }
-            continue;  // 超时或阻塞,继续尝试
+            continue;  // 超时，继续尝试
         }
         
         if (bytes_sent == 0) {
@@ -76,24 +80,15 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
         total_sent += bytes_sent;
     }
 
-    // 确保数据刷新
-    err = infra_net_flush(dst);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to flush data: %d", err);
-        return err;
-    }
-
     INFRA_LOG_INFO("%s: %zu bytes", direction, total_sent);
     return INFRA_OK;
 }
 
 // 单向转发线程参数
 typedef struct {
-    infra_socket_t src;
-    infra_socket_t dst;
-    const char* direction;
-    rinetd_rule_t* rule;
-    bool* should_stop;  // 共享的停止标志
+    infra_socket_t src;                 // 源socket
+    infra_socket_t dst;                 // 目标socket
+    const char* direction;              // 转发方向
 } forward_thread_param_t;
 
 // 单向转发
@@ -108,18 +103,23 @@ static void* forward_thread(void* arg) {
     infra_net_set_nonblock(param->dst, true);
 
     char buffer[RINETD_BUFFER_SIZE];
+    bool waiting_write = false;
+    size_t write_pos = 0;
+    size_t write_len = 0;
     
-    while (g_context.running && !(*param->should_stop)) {
+    while (g_context.running) {
         fd_set readfds, writefds;
         FD_ZERO(&readfds);
         FD_ZERO(&writefds);
         
-        // 源socket只需要监控读
-        FD_SET(infra_net_get_fd(param->src), &readfds);
-        // 目标socket需要监控写
-        FD_SET(infra_net_get_fd(param->dst), &writefds);
+        if (!waiting_write) {
+            FD_SET(infra_net_get_fd(param->src), &readfds);
+        }
+        if (waiting_write) {
+            FD_SET(infra_net_get_fd(param->dst), &writefds);
+        }
 
-        struct timeval tv = {0, 100000};  // 100ms超时
+        struct timeval tv = {1, 0};  // 1秒超时，避免频繁轮询
         int max_fd = infra_net_get_fd(param->src);
         if (infra_net_get_fd(param->dst) > max_fd) {
             max_fd = infra_net_get_fd(param->dst);
@@ -131,29 +131,70 @@ static void* forward_thread(void* arg) {
             break;
         }
         if (ready == 0) {
-            continue;  // 超时,继续等待
+            continue;
         }
 
-        // 只有当源可读且目标可写时才转发数据
-        if (FD_ISSET(infra_net_get_fd(param->src), &readfds) && 
-            FD_ISSET(infra_net_get_fd(param->dst), &writefds)) {
-            infra_error_t err = forward_data(param->src, param->dst, buffer, param->direction);
-            if (err == INFRA_ERROR_CLOSED) {
-                INFRA_LOG_DEBUG("%s: Connection closed", param->direction);
-                *param->should_stop = true;  // 通知另一个线程停止
-                break;
+        if (waiting_write && FD_ISSET(infra_net_get_fd(param->dst), &writefds)) {
+            size_t bytes_sent = 0;
+            infra_error_t err = infra_net_send(param->dst, buffer + write_pos, write_len, &bytes_sent);
+            if (err == INFRA_ERROR_WOULD_BLOCK) {
+                continue;
             }
             if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
-                INFRA_LOG_DEBUG("%s: Forward error: %d", param->direction, err);
-                *param->should_stop = true;  // 通知另一个线程停止
+                INFRA_LOG_DEBUG("%s: Send error: %d", param->direction, err);
                 break;
+            }
+            if (bytes_sent > 0) {
+                write_pos += bytes_sent;
+                write_len -= bytes_sent;
+                if (write_len == 0) {
+                    waiting_write = false;
+                    INFRA_LOG_INFO("%s: %zu bytes", param->direction, write_pos);
+                }
+            }
+        }
+        else if (!waiting_write && FD_ISSET(infra_net_get_fd(param->src), &readfds)) {
+            size_t bytes_received = 0;
+            infra_error_t err = infra_net_recv(param->src, buffer, RINETD_BUFFER_SIZE, &bytes_received);
+            
+            if (err == INFRA_ERROR_CLOSED || bytes_received == 0) {
+                INFRA_LOG_DEBUG("%s: Connection closed", param->direction);
+                // 先关闭写入端，让对端能收到FIN
+                infra_net_shutdown(param->src, INFRA_NET_SHUTDOWN_WRITE);
+                // 等待一小段时间，让数据发送完
+                infra_sleep(100);
+                // 然后完全关闭
+                infra_net_close(param->src);
+                break;
+            }
+            
+            if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
+                INFRA_LOG_DEBUG("%s: Receive error: %d", param->direction, err);
+                break;
+            }
+            
+            if (bytes_received > 0) {
+                size_t bytes_sent = 0;
+                err = infra_net_send(param->dst, buffer, bytes_received, &bytes_sent);
+                if (err == INFRA_ERROR_WOULD_BLOCK) {
+                    waiting_write = true;
+                    write_pos = bytes_sent;
+                    write_len = bytes_received - bytes_sent;
+                    continue;
+                }
+                if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
+                    INFRA_LOG_DEBUG("%s: Send error: %d", param->direction, err);
+                    break;
+                }
+                if (bytes_sent > 0) {
+                    INFRA_LOG_INFO("%s: %zu bytes", param->direction, bytes_sent);
+                }
             }
         }
     }
 
-    // 确保关闭连接
+    // 只关闭源socket，让对端的线程关闭目标socket
     infra_net_close(param->src);
-    infra_net_close(param->dst);
     free(param);
     return NULL;
 }
@@ -169,42 +210,28 @@ static void* handle_connection(void* arg) {
         conn->rule->src_addr, conn->rule->src_port,
         conn->rule->dst_addr, conn->rule->dst_port);
 
-    // 创建共享的停止标志
-    bool* should_stop = malloc(sizeof(bool));
-    if (!should_stop) {
-        goto cleanup;
-    }
-    *should_stop = false;
-
-    // 创建客户端到服务器的转发线程
+    // 创建客户端到服务器的转发线程参数
     forward_thread_param_t* c2s = malloc(sizeof(forward_thread_param_t));
     if (!c2s) {
-        free(should_stop);
         goto cleanup;
     }
     c2s->src = conn->client;
     c2s->dst = conn->server;
     c2s->direction = "Client to server";
-    c2s->rule = conn->rule;
-    c2s->should_stop = should_stop;
 
-    // 创建服务器到客户端的转发线程
+    // 创建服务器到客户端的转发线程参数
     forward_thread_param_t* s2c = malloc(sizeof(forward_thread_param_t));
     if (!s2c) {
-        free(should_stop);
         free(c2s);
         goto cleanup;
     }
     s2c->src = conn->server;
     s2c->dst = conn->client;
     s2c->direction = "Server to client";
-    s2c->rule = conn->rule;
-    s2c->should_stop = should_stop;
 
     // 启动转发线程
     infra_error_t err = infra_thread_pool_submit(g_context.pool, forward_thread, c2s);
     if (err != INFRA_OK) {
-        free(should_stop);
         free(c2s);
         free(s2c);
         goto cleanup;
@@ -212,12 +239,11 @@ static void* handle_connection(void* arg) {
 
     err = infra_thread_pool_submit(g_context.pool, forward_thread, s2c);
     if (err != INFRA_OK) {
-        *should_stop = true;  // 通知第一个线程停止
         free(s2c);
         goto cleanup;
     }
 
-    // 主线程退出,转发线程会继续运行
+    // 主线程退出，转发线程会继续运行
     free(conn);
     return NULL;
 
@@ -524,3 +550,4 @@ infra_error_t rinetd_load_config(const char* path) {
     fclose(fp);
     return INFRA_OK;
 } 
+

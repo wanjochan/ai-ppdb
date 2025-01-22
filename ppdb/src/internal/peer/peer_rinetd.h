@@ -14,8 +14,8 @@
 #define RINETD_BUFFER_SIZE 8192        // 转发缓冲区大小
 #define RINETD_MAX_ADDR_LEN 256        // 地址最大长度
 #define RINETD_MAX_PATH_LEN 256        // 路径最大长度
-#define RINETD_MIN_THREADS 4           // 最小线程数
-#define RINETD_MAX_THREADS 256         // 最大线程数
+#define RINETD_MIN_THREADS 32           // 最小线程数
+#define RINETD_MAX_THREADS 512         // 最大线程数
 #define RINETD_MAX_RULES 128           // 最大规则数
 
 //-----------------------------------------------------------------------------

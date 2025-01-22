@@ -61,4 +61,14 @@ int infra_net_get_fd(infra_socket_t sock);
 // 刷新发送缓冲区
 infra_error_t infra_net_flush(infra_socket_t socket);
 
+// 关闭方式
+typedef enum {
+    INFRA_NET_SHUTDOWN_READ = 0,    // 关闭读
+    INFRA_NET_SHUTDOWN_WRITE = 1,   // 关闭写
+    INFRA_NET_SHUTDOWN_BOTH = 2     // 关闭读写
+} infra_net_shutdown_how_t;
+
+// 关闭socket的读写
+infra_error_t infra_net_shutdown(infra_socket_t socket, infra_net_shutdown_how_t how);
+
 #endif /* INFRA_NET_H */ 

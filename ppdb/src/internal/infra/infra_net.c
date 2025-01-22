@@ -645,4 +645,36 @@ infra_error_t infra_net_flush(infra_socket_t socket) {
     }
 
     return INFRA_OK;
+}
+
+infra_error_t infra_net_shutdown(infra_socket_t socket, infra_net_shutdown_how_t how) {
+    if (!socket) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    int fd = infra_net_get_fd(socket);
+    if (fd < 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    int sys_how;
+    switch (how) {
+        case INFRA_NET_SHUTDOWN_READ:
+            sys_how = SHUT_RD;
+            break;
+        case INFRA_NET_SHUTDOWN_WRITE:
+            sys_how = SHUT_WR;
+            break;
+        case INFRA_NET_SHUTDOWN_BOTH:
+            sys_how = SHUT_RDWR;
+            break;
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (shutdown(fd, sys_how) < 0) {
+        return INFRA_ERROR_IO;
+    }
+
+    return INFRA_OK;
 } 
