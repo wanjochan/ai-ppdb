@@ -93,6 +93,7 @@ typedef struct {
     infra_socket_t dst;
     const char* direction;
     rinetd_rule_t* rule;
+    bool* should_stop;  // 共享的停止标志
 } forward_thread_param_t;
 
 // 单向转发
@@ -108,18 +109,51 @@ static void* forward_thread(void* arg) {
 
     char buffer[RINETD_BUFFER_SIZE];
     
-    while (g_context.running) {
-        infra_error_t err = forward_data(param->src, param->dst, buffer, param->direction);
-        if (err == INFRA_ERROR_CLOSED) {
-            INFRA_LOG_DEBUG("%s: Connection closed", param->direction);
+    while (g_context.running && !(*param->should_stop)) {
+        fd_set readfds, writefds;
+        FD_ZERO(&readfds);
+        FD_ZERO(&writefds);
+        
+        // 源socket只需要监控读
+        FD_SET(infra_net_get_fd(param->src), &readfds);
+        // 目标socket需要监控写
+        FD_SET(infra_net_get_fd(param->dst), &writefds);
+
+        struct timeval tv = {0, 100000};  // 100ms超时
+        int max_fd = infra_net_get_fd(param->src);
+        if (infra_net_get_fd(param->dst) > max_fd) {
+            max_fd = infra_net_get_fd(param->dst);
+        }
+
+        int ready = select(max_fd + 1, &readfds, &writefds, NULL, &tv);
+        if (ready < 0) {
+            INFRA_LOG_ERROR("%s: Select error", param->direction);
             break;
         }
-        if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
-            INFRA_LOG_DEBUG("%s: Forward error: %d", param->direction, err);
-            break;
+        if (ready == 0) {
+            continue;  // 超时,继续等待
+        }
+
+        // 只有当源可读且目标可写时才转发数据
+        if (FD_ISSET(infra_net_get_fd(param->src), &readfds) && 
+            FD_ISSET(infra_net_get_fd(param->dst), &writefds)) {
+            infra_error_t err = forward_data(param->src, param->dst, buffer, param->direction);
+            if (err == INFRA_ERROR_CLOSED) {
+                INFRA_LOG_DEBUG("%s: Connection closed", param->direction);
+                *param->should_stop = true;  // 通知另一个线程停止
+                break;
+            }
+            if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
+                INFRA_LOG_DEBUG("%s: Forward error: %d", param->direction, err);
+                *param->should_stop = true;  // 通知另一个线程停止
+                break;
+            }
         }
     }
 
+    // 确保关闭连接
+    infra_net_close(param->src);
+    infra_net_close(param->dst);
     free(param);
     return NULL;
 }
@@ -135,19 +169,29 @@ static void* handle_connection(void* arg) {
         conn->rule->src_addr, conn->rule->src_port,
         conn->rule->dst_addr, conn->rule->dst_port);
 
+    // 创建共享的停止标志
+    bool* should_stop = malloc(sizeof(bool));
+    if (!should_stop) {
+        goto cleanup;
+    }
+    *should_stop = false;
+
     // 创建客户端到服务器的转发线程
     forward_thread_param_t* c2s = malloc(sizeof(forward_thread_param_t));
     if (!c2s) {
+        free(should_stop);
         goto cleanup;
     }
     c2s->src = conn->client;
     c2s->dst = conn->server;
     c2s->direction = "Client to server";
     c2s->rule = conn->rule;
+    c2s->should_stop = should_stop;
 
     // 创建服务器到客户端的转发线程
     forward_thread_param_t* s2c = malloc(sizeof(forward_thread_param_t));
     if (!s2c) {
+        free(should_stop);
         free(c2s);
         goto cleanup;
     }
@@ -155,10 +199,12 @@ static void* handle_connection(void* arg) {
     s2c->dst = conn->client;
     s2c->direction = "Server to client";
     s2c->rule = conn->rule;
+    s2c->should_stop = should_stop;
 
     // 启动转发线程
     infra_error_t err = infra_thread_pool_submit(g_context.pool, forward_thread, c2s);
     if (err != INFRA_OK) {
+        free(should_stop);
         free(c2s);
         free(s2c);
         goto cleanup;
@@ -166,6 +212,7 @@ static void* handle_connection(void* arg) {
 
     err = infra_thread_pool_submit(g_context.pool, forward_thread, s2c);
     if (err != INFRA_OK) {
+        *should_stop = true;  // 通知第一个线程停止
         free(s2c);
         goto cleanup;
     }
