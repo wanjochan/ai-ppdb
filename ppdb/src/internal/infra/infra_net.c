@@ -626,4 +626,23 @@ int infra_net_get_fd(infra_socket_t sock) {
         return -1;  // 无效的套接字
     }
     return sock->fd;
+}
+
+infra_error_t infra_net_flush(infra_socket_t socket) {
+    if (!socket) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 获取原始socket句柄
+    int fd = infra_net_get_fd(socket);
+    if (fd < 0) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    int flag = 1;
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) < 0) {
+        return INFRA_ERROR_IO;
+    }
+
+    return INFRA_OK;
 } 

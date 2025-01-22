@@ -38,21 +38,90 @@ static infra_error_t create_listener(void);
 //-----------------------------------------------------------------------------
 
 // 转发数据
-static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* buffer) {
+static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* buffer, const char* direction) {
     size_t bytes_received = 0;
     size_t bytes_sent = 0;
+    size_t total_sent = 0;
     
     infra_error_t err = infra_net_recv(src, buffer, RINETD_BUFFER_SIZE, &bytes_received);
-    if (err != INFRA_OK || bytes_received == 0) {
+    if (err != INFRA_OK) {
+        if (err != INFRA_ERROR_TIMEOUT && err != INFRA_ERROR_WOULD_BLOCK) {
+            INFRA_LOG_ERROR("Failed to receive data: %d", err);
+            return err;
+        }
+        return INFRA_ERROR_TIMEOUT;
+    }
+    
+    if (bytes_received == 0) {
+        INFRA_LOG_DEBUG("Peer closed connection");
+        return INFRA_ERROR_CLOSED;
+    }
+
+    // 循环发送直到所有数据都发送完
+    while (total_sent < bytes_received) {
+        err = infra_net_send(dst, buffer + total_sent, bytes_received - total_sent, &bytes_sent);
+        if (err != INFRA_OK) {
+            if (err != INFRA_ERROR_TIMEOUT && err != INFRA_ERROR_WOULD_BLOCK) {
+                INFRA_LOG_ERROR("Failed to send data: %d", err);
+                return err;
+            }
+            continue;  // 超时或阻塞,继续尝试
+        }
+        
+        if (bytes_sent == 0) {
+            INFRA_LOG_ERROR("Send returned 0 bytes");
+            return INFRA_ERROR_IO;
+        }
+
+        total_sent += bytes_sent;
+    }
+
+    // 确保数据刷新
+    err = infra_net_flush(dst);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to flush data: %d", err);
         return err;
     }
 
-    err = infra_net_send(dst, buffer, bytes_received, &bytes_sent);
-    if (err != INFRA_OK || bytes_sent != bytes_received) {
-        return err;
-    }
-
+    INFRA_LOG_INFO("%s: %zu bytes", direction, total_sent);
     return INFRA_OK;
+}
+
+// 单向转发线程参数
+typedef struct {
+    infra_socket_t src;
+    infra_socket_t dst;
+    const char* direction;
+    rinetd_rule_t* rule;
+} forward_thread_param_t;
+
+// 单向转发
+static void* forward_thread(void* arg) {
+    forward_thread_param_t* param = (forward_thread_param_t*)arg;
+    if (!param) {
+        return NULL;
+    }
+
+    // 设置非阻塞模式
+    infra_net_set_nonblock(param->src, true);
+    infra_net_set_nonblock(param->dst, true);
+
+    char buffer[RINETD_BUFFER_SIZE];
+    
+    while (g_context.running) {
+        infra_error_t err = forward_data(param->src, param->dst, buffer, param->direction);
+        if (err == INFRA_ERROR_CLOSED) {
+            INFRA_LOG_DEBUG("%s: Connection closed", param->direction);
+            break;
+        }
+        if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
+            INFRA_LOG_DEBUG("%s: Forward error: %d", param->direction, err);
+            break;
+        }
+    }
+
+    free(param);
+    return NULL;
 }
 
 // 处理单个连接
@@ -62,65 +131,50 @@ static void* handle_connection(void* arg) {
         return NULL;
     }
 
-    // 设置非阻塞模式
-    infra_net_set_nonblock(conn->client, true);
-    infra_net_set_nonblock(conn->server, true);
-
-    // 获取原始socket句柄
-    int client_fd = infra_net_get_fd(conn->client);
-    int server_fd = infra_net_get_fd(conn->server);
-
     INFRA_LOG_DEBUG("Started forwarding: %s:%d -> %s:%d",
         conn->rule->src_addr, conn->rule->src_port,
         conn->rule->dst_addr, conn->rule->dst_port);
 
-    while (g_context.running) {
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        FD_SET(client_fd, &readfds);
-        FD_SET(server_fd, &readfds);
+    // 创建客户端到服务器的转发线程
+    forward_thread_param_t* c2s = malloc(sizeof(forward_thread_param_t));
+    if (!c2s) {
+        goto cleanup;
+    }
+    c2s->src = conn->client;
+    c2s->dst = conn->server;
+    c2s->direction = "Client to server";
+    c2s->rule = conn->rule;
 
-        // 设置超时
-        struct timeval tv = {1, 0};  // 1秒超时
-        int max_fd = client_fd > server_fd ? client_fd : server_fd;
+    // 创建服务器到客户端的转发线程
+    forward_thread_param_t* s2c = malloc(sizeof(forward_thread_param_t));
+    if (!s2c) {
+        free(c2s);
+        goto cleanup;
+    }
+    s2c->src = conn->server;
+    s2c->dst = conn->client;
+    s2c->direction = "Server to client";
+    s2c->rule = conn->rule;
 
-        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
-        if (ready < 0) {
-            INFRA_LOG_ERROR("Select error");
-            break;
-        }
-        if (ready == 0) {
-            continue;  // 超时,继续等待
-        }
-
-        // 处理客户端到服务器的数据
-        if (FD_ISSET(client_fd, &readfds)) {
-            infra_error_t err = forward_data(conn->client, conn->server, conn->buffer);
-            if (err != INFRA_OK) {
-                if (err != INFRA_ERROR_TIMEOUT) {
-                    INFRA_LOG_DEBUG("Client to server forward error: %d", err);
-                    break;
-                }
-            }
-        }
-
-        // 处理服务器到客户端的数据
-        if (FD_ISSET(server_fd, &readfds)) {
-            infra_error_t err = forward_data(conn->server, conn->client, conn->buffer);
-            if (err != INFRA_OK) {
-                if (err != INFRA_ERROR_TIMEOUT) {
-                    INFRA_LOG_DEBUG("Server to client forward error: %d", err);
-                    break;
-                }
-            }
-        }
+    // 启动转发线程
+    infra_error_t err = infra_thread_pool_submit(g_context.pool, forward_thread, c2s);
+    if (err != INFRA_OK) {
+        free(c2s);
+        free(s2c);
+        goto cleanup;
     }
 
-    INFRA_LOG_DEBUG("Connection closed: %s:%d -> %s:%d",
-        conn->rule->src_addr, conn->rule->src_port,
-        conn->rule->dst_addr, conn->rule->dst_port);
+    err = infra_thread_pool_submit(g_context.pool, forward_thread, s2c);
+    if (err != INFRA_OK) {
+        free(s2c);
+        goto cleanup;
+    }
 
-    // 清理资源
+    // 主线程退出,转发线程会继续运行
+    free(conn);
+    return NULL;
+
+cleanup:
     if (conn->client) {
         infra_net_close(conn->client);
     }
@@ -128,7 +182,6 @@ static void* handle_connection(void* arg) {
         infra_net_close(conn->server);
     }
     free(conn);
-
     return NULL;
 }
 

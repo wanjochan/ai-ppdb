@@ -58,4 +58,7 @@ infra_error_t infra_net_addr_to_str(const infra_net_addr_t* addr, char* buf, siz
 // socket fd or handle
 int infra_net_get_fd(infra_socket_t sock);
 
+// 刷新发送缓冲区
+infra_error_t infra_net_flush(infra_socket_t socket);
+
 #endif /* INFRA_NET_H */ 
