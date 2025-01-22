@@ -44,10 +44,18 @@ typedef struct {
     char buffer[RINETD_BUFFER_SIZE];    // 转发缓冲区
 } rinetd_conn_t;
 
-// 转发会话
+// // 转发会话
+// typedef struct {
+//     rinetd_conn_t* conn;                // 转发连接
+//     bool active;                        // 是否活跃
+// } rinetd_session_t;
+
+// 连接会话
 typedef struct {
-    rinetd_conn_t* conn;                // 转发连接
-    bool active;                        // 是否活跃
+    infra_socket_t client;              // 客户端socket
+    infra_socket_t server;              // 服务器socket
+    volatile bool c2s_failed;           // 客户端到服务器方向是否失败
+    volatile bool s2c_failed;           // 服务器到客户端方向是否失败
 } rinetd_session_t;
 
 // 服务上下文
