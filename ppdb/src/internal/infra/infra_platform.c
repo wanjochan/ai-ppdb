@@ -5,7 +5,6 @@
 #include "cosmopolitan.h"
 #include "infra_platform.h"
 #include "infra_error.h"
-#include "infra_mux.h"
 #include "internal/infra/infra_core.h"
 
 // 事件类型定义
