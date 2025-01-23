@@ -78,6 +78,104 @@ static const memkv_cmd_handler_t* find_handler(const char* cmd) {
     return NULL;
 }
 
+// 带锁的存储操作
+static infra_error_t store_with_lock(const char* key, void* value, 
+    size_t value_size, uint32_t flags, time_t exptime, 
+    bool update_stats) {
+    
+    infra_mutex_lock(&g_context.store_mutex);
+    
+    memkv_item_t* item = create_item(key, value, value_size, flags, exptime);
+    if (!item) {
+        infra_mutex_unlock(&g_context.store_mutex);
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    
+    infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
+    
+    if (err == INFRA_OK && update_stats) {
+        update_stats_set(item->value_size);
+    }
+    
+    infra_mutex_unlock(&g_context.store_mutex);
+    
+    if (err != INFRA_OK) {
+        destroy_item(item);
+    }
+    
+    return err;
+}
+
+// 带锁的获取操作
+static infra_error_t get_with_lock(const char* key, memkv_item_t** item) {
+    infra_mutex_lock(&g_context.store_mutex);
+    
+    infra_error_t err = poly_hashtable_get(g_context.store, key, 
+        (void**)item);
+    
+    if (err == INFRA_OK && *item && is_item_expired(*item)) {
+        err = INFRA_ERROR_NOT_FOUND;
+        *item = NULL;
+    }
+    
+    infra_mutex_unlock(&g_context.store_mutex);
+    return err;
+}
+
+// 带锁的删除操作
+static infra_error_t delete_with_lock(const char* key, bool update_stats) {
+    infra_mutex_lock(&g_context.store_mutex);
+    
+    memkv_item_t* item = NULL;
+    infra_error_t err = poly_hashtable_get(g_context.store, key, 
+        (void**)&item);
+    
+    if (err == INFRA_OK && item && !is_item_expired(item)) {
+        err = poly_hashtable_delete(g_context.store, key);
+        if (err == INFRA_OK) {
+            if (update_stats) {
+                update_stats_delete(item->value_size);
+            }
+            destroy_item(item);
+        }
+    } else {
+        err = INFRA_ERROR_NOT_FOUND;
+    }
+    
+    infra_mutex_unlock(&g_context.store_mutex);
+    return err;
+}
+
+// 发送值响应
+static infra_error_t send_value_response(memkv_conn_t* conn, 
+    memkv_item_t* item) {
+    
+    infra_error_t err = memkv_send_response(conn, 
+        "VALUE %s %u %zu %lu\\r\\n", 
+        item->key, item->flags, item->value_size, item->cas);
+    
+    if (err == INFRA_OK) {
+        size_t bytes_sent = 0;
+        err = infra_net_send(conn->socket, item->value, 
+            item->value_size, &bytes_sent);
+        
+        if (err == INFRA_OK) {
+            err = memkv_send_response(conn, "\\r\\n");
+        }
+    }
+    
+    return err;
+}
+
+// 检查数值类型
+static bool is_numeric_value(const char* value) {
+    if (!value) return false;
+    
+    char* end;
+    strtoull(value, &end, 10);
+    return *end == '\0';
+}
+
 //-----------------------------------------------------------------------------
 // Command Implementation
 //-----------------------------------------------------------------------------
@@ -191,91 +289,28 @@ static infra_error_t handle_get(memkv_conn_t* conn) {
     memkv_item_t* item = NULL;
     bool hit = false;
 
-    infra_mutex_lock(&g_context.store_mutex);
-    infra_error_t err = poly_hashtable_get(g_context.store, 
-        conn->current_cmd.key, (void**)&item);
-    
-    if (err == INFRA_OK && !is_item_expired(item)) {
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    if (err == INFRA_OK && item) {
         hit = true;
-        err = memkv_send_response(conn, 
-            "VALUE %s %u %zu %lu\r\n", 
-            item->key, item->flags, item->value_size, item->cas);
+        err = send_value_response(conn, item);
         
         if (err == INFRA_OK) {
-            size_t bytes_sent = 0;
-            err = infra_net_send(conn->socket, item->value, 
-                item->value_size, &bytes_sent);
-            
-            if (err == INFRA_OK) {
-                err = memkv_send_response(conn, "\r\n");
-            }
+            err = memkv_send_response(conn, "END\r\n");
         }
     }
-    infra_mutex_unlock(&g_context.store_mutex);
-
     update_stats_get(hit);
-
-    if (err == INFRA_OK) {
-        err = memkv_send_response(conn, "END\r\n");
-    }
 
     return err;
 }
 
 static infra_error_t handle_set(memkv_conn_t* conn) {
-    memkv_item_t* item = create_item(
-        conn->current_cmd.key,
-        conn->current_cmd.data,
-        conn->current_cmd.bytes,
-        conn->current_cmd.flags,
-        conn->current_cmd.exptime
-    );
-
-    if (!item) {
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    // 先删除旧值
-    memkv_item_t* old_item = NULL;
-    if (poly_hashtable_get(g_context.store, item->key, 
-        (void**)&old_item) == INFRA_OK) {
-        update_stats_delete(old_item->value_size);
-    }
-
-    // 存储新值
-    infra_error_t err = poly_hashtable_put(g_context.store, 
-        item->key, item);
-    
-    infra_mutex_unlock(&g_context.store_mutex);
-
-    if (err == INFRA_OK) {
-        update_stats_set(item->value_size);
-        return memkv_send_response(conn, "STORED\r\n");
-    } else {
-        destroy_item(item);
-        return memkv_send_response(conn, "NOT_STORED\r\n");
-    }
+    return store_with_lock(conn->current_cmd.key, conn->current_cmd.data, 
+        conn->current_cmd.bytes, conn->current_cmd.flags, 
+        conn->current_cmd.exptime, true);
 }
 
 static infra_error_t handle_delete(memkv_conn_t* conn) {
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    memkv_item_t* item = NULL;
-    infra_error_t err = poly_hashtable_get(g_context.store, 
-        conn->current_cmd.key, (void**)&item);
-    
-    if (err == INFRA_OK && !is_item_expired(item)) {
-        update_stats_delete(item->value_size);
-        err = poly_hashtable_remove(g_context.store, item->key);
-        destroy_item(item);
-    }
-    
-    infra_mutex_unlock(&g_context.store_mutex);
-
-    return memkv_send_response(conn, 
-        err == INFRA_OK ? "DELETED\r\n" : "NOT_FOUND\r\n");
+    return delete_with_lock(conn->current_cmd.key, true);
 }
 
 static infra_error_t handle_stats(memkv_conn_t* conn) {
@@ -315,148 +350,58 @@ static infra_error_t handle_quit(memkv_conn_t* conn) {
 //-----------------------------------------------------------------------------
 
 static infra_error_t handle_add(memkv_conn_t* conn) {
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    // 检查键是否已存在
-    void* existing = NULL;
-    if (poly_hashtable_get(g_context.store, conn->current_cmd.key, &existing) == INFRA_OK) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "NOT_STORED\\r\\n");
-    }
-    
-    // 创建新项
-    memkv_item_t* item = create_item(
-        conn->current_cmd.key,
-        conn->current_cmd.data,
-        conn->current_cmd.bytes,
-        conn->current_cmd.flags,
-        conn->current_cmd.exptime
-    );
-    
-    if (!item) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "SERVER_ERROR out of memory\\r\\n");
-    }
-    
-    // 存储
-    infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
-    infra_mutex_unlock(&g_context.store_mutex);
-    
-    if (err == INFRA_OK) {
-        update_stats_set(item->value_size);
-        return memkv_send_response(conn, "STORED\\r\\n");
-    } else {
-        destroy_item(item);
-        return memkv_send_response(conn, "NOT_STORED\\r\\n");
-    }
+    return store_with_lock(conn->current_cmd.key, conn->current_cmd.data, 
+        conn->current_cmd.bytes, conn->current_cmd.flags, 
+        conn->current_cmd.exptime, true);
 }
 
 static infra_error_t handle_replace(memkv_conn_t* conn) {
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    // 检查键是否存在
     memkv_item_t* old_item = NULL;
-    if (poly_hashtable_get(g_context.store, conn->current_cmd.key, 
-        (void**)&old_item) != INFRA_OK) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "NOT_STORED\\r\\n");
-    }
-    
-    // 创建新项
-    memkv_item_t* item = create_item(
-        conn->current_cmd.key,
-        conn->current_cmd.data,
-        conn->current_cmd.bytes,
-        conn->current_cmd.flags,
-        conn->current_cmd.exptime
-    );
-    
-    if (!item) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "SERVER_ERROR out of memory\\r\\n");
-    }
-    
-    // 更新统计信息
-    update_stats_delete(old_item->value_size);
-    
-    // 存储新项
-    infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
-    infra_mutex_unlock(&g_context.store_mutex);
-    
-    if (err == INFRA_OK) {
-        update_stats_set(item->value_size);
-        destroy_item(old_item);
-        return memkv_send_response(conn, "STORED\\r\\n");
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    if (err == INFRA_OK && old_item) {
+        err = store_with_lock(conn->current_cmd.key, conn->current_cmd.data, 
+            conn->current_cmd.bytes, conn->current_cmd.flags, 
+            conn->current_cmd.exptime, true);
+        if (err == INFRA_OK) {
+            destroy_item(old_item);
+        }
     } else {
-        destroy_item(item);
-        return memkv_send_response(conn, "NOT_STORED\\r\\n");
+        err = INFRA_ERROR_NOT_FOUND;
     }
+    return err;
 }
 
 static infra_error_t handle_append_prepend(memkv_conn_t* conn, bool append) {
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    // 获取现有项
     memkv_item_t* old_item = NULL;
-    if (poly_hashtable_get(g_context.store, conn->current_cmd.key, 
-        (void**)&old_item) != INFRA_OK) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "NOT_STORED\\r\\n");
-    }
-    
-    // 计算新大小
-    size_t new_size = old_item->value_size + conn->current_cmd.bytes;
-    
-    // 创建新缓冲区
-    void* new_value = malloc(new_size);
-    if (!new_value) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "SERVER_ERROR out of memory\\r\\n");
-    }
-    
-    // 复制数据
-    if (append) {
-        memcpy(new_value, old_item->value, old_item->value_size);
-        memcpy((char*)new_value + old_item->value_size, 
-            conn->current_cmd.data, conn->current_cmd.bytes);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    if (err == INFRA_OK && old_item) {
+        size_t new_size = old_item->value_size + conn->current_cmd.bytes;
+        void* new_value = malloc(new_size);
+        if (!new_value) {
+            return INFRA_ERROR_NO_MEMORY;
+        }
+        
+        if (append) {
+            memcpy(new_value, old_item->value, old_item->value_size);
+            memcpy((char*)new_value + old_item->value_size, 
+                conn->current_cmd.data, conn->current_cmd.bytes);
+        } else {
+            memcpy(new_value, conn->current_cmd.data, conn->current_cmd.bytes);
+            memcpy((char*)new_value + conn->current_cmd.bytes, 
+                old_item->value, old_item->value_size);
+        }
+        
+        err = store_with_lock(conn->current_cmd.key, new_value, new_size, 
+            old_item->flags, old_item->exptime ? 
+                old_item->exptime - time(NULL) : 0, true);
+        free(new_value);
+        if (err == INFRA_OK) {
+            destroy_item(old_item);
+        }
     } else {
-        memcpy(new_value, conn->current_cmd.data, conn->current_cmd.bytes);
-        memcpy((char*)new_value + conn->current_cmd.bytes, 
-            old_item->value, old_item->value_size);
+        err = INFRA_ERROR_NOT_FOUND;
     }
-    
-    // 创建新项，保持原有的标志和过期时间
-    memkv_item_t* item = create_item(
-        conn->current_cmd.key,
-        new_value,
-        new_size,
-        old_item->flags,
-        old_item->exptime ? 
-            old_item->exptime - time(NULL) : 0
-    );
-    
-    free(new_value);
-    
-    if (!item) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "SERVER_ERROR out of memory\\r\\n");
-    }
-    
-    // 更新统计信息
-    update_stats_delete(old_item->value_size);
-    
-    // 存储新项
-    infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
-    infra_mutex_unlock(&g_context.store_mutex);
-    
-    if (err == INFRA_OK) {
-        update_stats_set(item->value_size);
-        destroy_item(old_item);
-        return memkv_send_response(conn, "STORED\\r\\n");
-    } else {
-        destroy_item(item);
-        return memkv_send_response(conn, "NOT_STORED\\r\\n");
-    }
+    return err;
 }
 
 static infra_error_t handle_append(memkv_conn_t* conn) {
@@ -468,51 +413,22 @@ static infra_error_t handle_prepend(memkv_conn_t* conn) {
 }
 
 static infra_error_t handle_cas(memkv_conn_t* conn) {
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    // 获取现有项
     memkv_item_t* old_item = NULL;
-    if (poly_hashtable_get(g_context.store, conn->current_cmd.key, 
-        (void**)&old_item) != INFRA_OK) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "NOT_FOUND\\r\\n");
-    }
-    
-    // 检查 CAS 值
-    if (old_item->cas != conn->current_cmd.cas) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "EXISTS\\r\\n");
-    }
-    
-    // 创建新项
-    memkv_item_t* item = create_item(
-        conn->current_cmd.key,
-        conn->current_cmd.data,
-        conn->current_cmd.bytes,
-        conn->current_cmd.flags,
-        conn->current_cmd.exptime
-    );
-    
-    if (!item) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "SERVER_ERROR out of memory\\r\\n");
-    }
-    
-    // 更新统计信息
-    update_stats_delete(old_item->value_size);
-    
-    // 存储新项
-    infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
-    infra_mutex_unlock(&g_context.store_mutex);
-    
-    if (err == INFRA_OK) {
-        update_stats_set(item->value_size);
-        destroy_item(old_item);
-        return memkv_send_response(conn, "STORED\\r\\n");
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    if (err == INFRA_OK && old_item) {
+        if (old_item->cas != conn->current_cmd.cas) {
+            return INFRA_ERROR_EXISTS;
+        }
+        err = store_with_lock(conn->current_cmd.key, conn->current_cmd.data, 
+            conn->current_cmd.bytes, conn->current_cmd.flags, 
+            conn->current_cmd.exptime, true);
+        if (err == INFRA_OK) {
+            destroy_item(old_item);
+        }
     } else {
-        destroy_item(item);
-        return memkv_send_response(conn, "NOT_STORED\\r\\n");
+        err = INFRA_ERROR_NOT_FOUND;
     }
+    return err;
 }
 
 //-----------------------------------------------------------------------------
@@ -520,71 +436,39 @@ static infra_error_t handle_cas(memkv_conn_t* conn) {
 //-----------------------------------------------------------------------------
 
 static infra_error_t handle_incr_decr(memkv_conn_t* conn, bool increment) {
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    // 获取现有项
     memkv_item_t* old_item = NULL;
-    if (poly_hashtable_get(g_context.store, conn->current_cmd.key, 
-        (void**)&old_item) != INFRA_OK) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "NOT_FOUND\\r\\n");
-    }
-    
-    // 解析当前值
-    char* end;
-    uint64_t current = strtoull(old_item->value, &end, 10);
-    if (*end != '\0') {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "CLIENT_ERROR cannot increment or decrement non-numeric value\\r\\n");
-    }
-    
-    // 计算新值
-    uint64_t delta = strtoull(conn->current_cmd.key, NULL, 10);
-    uint64_t new_value;
-    if (increment) {
-        new_value = current + delta;
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    if (err == INFRA_OK && old_item) {
+        char* end;
+        uint64_t current = strtoull(old_item->value, &end, 10);
+        if (*end != '\0') {
+            return INFRA_ERROR_CLIENT_ERROR;
+        }
+        
+        uint64_t delta = strtoull(conn->current_cmd.key, NULL, 10);
+        uint64_t new_value;
+        if (increment) {
+            new_value = current + delta;
+        } else {
+            new_value = (current > delta) ? (current - delta) : 0;
+        }
+        
+        char value_str[32];
+        int len = snprintf(value_str, sizeof(value_str), "%lu", new_value);
+        if (len < 0 || len >= sizeof(value_str)) {
+            return INFRA_ERROR_BUFFER_FULL;
+        }
+        
+        err = store_with_lock(conn->current_cmd.key, value_str, len, 
+            old_item->flags, old_item->exptime ? 
+                old_item->exptime - time(NULL) : 0, true);
+        if (err == INFRA_OK) {
+            destroy_item(old_item);
+        }
     } else {
-        new_value = (current > delta) ? (current - delta) : 0;
+        err = INFRA_ERROR_NOT_FOUND;
     }
-    
-    // 转换为字符串
-    char value_str[32];
-    int len = snprintf(value_str, sizeof(value_str), "%lu", new_value);
-    if (len < 0 || len >= sizeof(value_str)) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "SERVER_ERROR value too large\\r\\n");
-    }
-    
-    // 创建新项
-    memkv_item_t* item = create_item(
-        conn->current_cmd.key,
-        value_str,
-        len,
-        old_item->flags,
-        old_item->exptime ? 
-            old_item->exptime - time(NULL) : 0
-    );
-    
-    if (!item) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "SERVER_ERROR out of memory\\r\\n");
-    }
-    
-    // 更新统计信息
-    update_stats_delete(old_item->value_size);
-    
-    // 存储新项
-    infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
-    infra_mutex_unlock(&g_context.store_mutex);
-    
-    if (err == INFRA_OK) {
-        update_stats_set(item->value_size);
-        destroy_item(old_item);
-        return memkv_send_response(conn, "%lu\\r\\n", new_value);
-    } else {
-        destroy_item(item);
-        return memkv_send_response(conn, "SERVER_ERROR\\r\\n");
-    }
+    return err;
 }
 
 static infra_error_t handle_incr(memkv_conn_t* conn) {
@@ -596,62 +480,30 @@ static infra_error_t handle_decr(memkv_conn_t* conn) {
 }
 
 static infra_error_t handle_touch(memkv_conn_t* conn) {
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    // 获取现有项
     memkv_item_t* old_item = NULL;
-    if (poly_hashtable_get(g_context.store, conn->current_cmd.key, 
-        (void**)&old_item) != INFRA_OK) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        return memkv_send_response(conn, "NOT_FOUND\\r\\n");
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    if (err == INFRA_OK && old_item) {
+        old_item->exptime = conn->current_cmd.exptime ? 
+            time(NULL) + conn->current_cmd.exptime : 0;
+    } else {
+        err = INFRA_ERROR_NOT_FOUND;
     }
-    
-    // 更新过期时间
-    old_item->exptime = conn->current_cmd.exptime ? 
-        time(NULL) + conn->current_cmd.exptime : 0;
-    
-    infra_mutex_unlock(&g_context.store_mutex);
-    return memkv_send_response(conn, "TOUCHED\\r\\n");
+    return err;
 }
 
 static infra_error_t handle_gat(memkv_conn_t* conn) {
-    infra_mutex_lock(&g_context.store_mutex);
-    
-    // 获取现有项
     memkv_item_t* item = NULL;
-    if (poly_hashtable_get(g_context.store, conn->current_cmd.key, 
-        (void**)&item) != INFRA_OK || is_item_expired(item)) {
-        infra_mutex_unlock(&g_context.store_mutex);
-        update_stats_get(false);
-        return memkv_send_response(conn, "END\\r\\n");
-    }
-    
-    // 更新过期时间
-    item->exptime = conn->current_cmd.exptime ? 
-        time(NULL) + conn->current_cmd.exptime : 0;
-    
-    // 发送响应
-    infra_error_t err = memkv_send_response(conn, 
-        "VALUE %s %u %zu %lu\\r\\n", 
-        item->key, item->flags, item->value_size, item->cas);
-    
-    if (err == INFRA_OK) {
-        size_t bytes_sent = 0;
-        err = infra_net_send(conn->socket, item->value, 
-            item->value_size, &bytes_sent);
-        
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    if (err == INFRA_OK && item) {
+        item->exptime = conn->current_cmd.exptime ? 
+            time(NULL) + conn->current_cmd.exptime : 0;
+        err = send_value_response(conn, item);
         if (err == INFRA_OK) {
-            err = memkv_send_response(conn, "\\r\\n");
+            err = memkv_send_response(conn, "END\r\n");
         }
+    } else {
+        err = INFRA_ERROR_NOT_FOUND;
     }
-    
-    infra_mutex_unlock(&g_context.store_mutex);
-    update_stats_get(true);
-    
-    if (err == INFRA_OK) {
-        err = memkv_send_response(conn, "END\\r\\n");
-    }
-    
     return err;
 }
 
@@ -667,5 +519,5 @@ static infra_error_t handle_flush_all(memkv_conn_t* conn) {
     memset(&g_context.stats, 0, sizeof(g_context.stats));
     
     infra_mutex_unlock(&g_context.store_mutex);
-    return memkv_send_response(conn, "OK\\r\\n");
+    return memkv_send_response(conn, "OK\r\n");
 }
