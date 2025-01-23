@@ -23,14 +23,14 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
         .level = INFRA_LOG_LEVEL_INFO,
         .log_file = NULL
     },
-    .ds = {
-        .hash_initial_size = 16,
-        .hash_load_factor = 75
-    },
-    .mux = {
-        .max_events = 1024,
-        .edge_trigger = false
-    },
+    //.ds = {
+    //    .hash_initial_size = 16,
+    //    .hash_load_factor = 75
+    //},
+    //.mux = {
+    //    .max_events = 1024,
+    //    .edge_trigger = false
+    //},
     .net = {
         .flags = 0,  // 默认使用阻塞模式
         .connect_timeout_ms = 1000,  // 1秒连接超时
@@ -54,13 +54,10 @@ infra_global_t g_infra = {
         .callback = NULL,
         .mutex = NULL
     },
-    .ds = {
-        .hash_initial_size = INFRA_DEFAULT_CONFIG.ds.hash_initial_size,
-        .hash_load_factor = INFRA_DEFAULT_CONFIG.ds.hash_load_factor
-    },
-    .platform = {
-        .is_windows = false  //@infra_init_with_config()
-    }
+    //.ds = {
+    //    .hash_initial_size = INFRA_DEFAULT_CONFIG.ds.hash_initial_size,
+    //    .hash_load_factor = INFRA_DEFAULT_CONFIG.ds.hash_load_factor
+    //},
 };
 
 // 自动初始化
@@ -125,11 +122,11 @@ infra_error_t infra_config_validate(const infra_config_t* config) {
     }
 
     // 验证数据结构配置
-    if (config->ds.hash_initial_size == 0 || 
-        config->ds.hash_load_factor == 0 || 
-        config->ds.hash_load_factor > 100) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+    //if (config->ds.hash_initial_size == 0 || 
+    //    config->ds.hash_load_factor == 0 || 
+    //    config->ds.hash_load_factor > 100) {
+    //    return INFRA_ERROR_INVALID_PARAM;
+    //}
 
     return INFRA_OK;
 }
@@ -149,8 +146,8 @@ infra_error_t infra_config_apply(const infra_config_t* config) {
     g_infra.log.log_file = config->log.log_file;
 
     // 应用数据结构配置
-    g_infra.ds.hash_initial_size = config->ds.hash_initial_size;
-    g_infra.ds.hash_load_factor = config->ds.hash_load_factor;
+    //g_infra.ds.hash_initial_size = config->ds.hash_initial_size;
+    //g_infra.ds.hash_load_factor = config->ds.hash_load_factor;
 
     return INFRA_OK;
 }

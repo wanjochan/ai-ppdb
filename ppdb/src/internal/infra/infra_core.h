@@ -110,16 +110,18 @@ typedef struct {
         const char* log_file;
     } log;
     
-    struct {
-        size_t hash_initial_size;
-        uint32_t hash_load_factor;
-    } ds;
+//@infra_ds
+    //struct {
+    //    size_t hash_initial_size;
+    //    uint32_t hash_load_factor;
+    //} ds;
 
-    struct {
-        size_t max_events;   // 单次处理的最大事件数
-        bool edge_trigger;   // 是否启用边缘触发(仅epoll)
-    } mux;
+    //struct {
+    //    size_t max_events;   // 单次处理的最大事件数
+    //    bool edge_trigger;   // 是否启用边缘触发(仅epoll)
+    //} mux;
 
+//@infra_net
     struct {
         infra_flags_t flags;     // 网络配置标志
         uint32_t connect_timeout_ms;  // 连接超时时间
@@ -355,15 +357,10 @@ typedef struct {
     } log;
 
     // 数据结构状态
-    struct {
-        size_t hash_initial_size;
-        uint32_t hash_load_factor;
-    } ds;
-
-    // 平台状态
-    struct {
-        bool is_windows;
-    } platform;
+    //struct {
+    //    size_t hash_initial_size;
+    //    uint32_t hash_load_factor;
+    //} ds;
 } infra_global_t;
 
 // 全局变量声明
