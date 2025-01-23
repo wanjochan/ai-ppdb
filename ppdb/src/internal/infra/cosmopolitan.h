@@ -28,6 +28,10 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
+#include "libc/calls/calls.h"
+#include "libc/sysv/consts/poll.h"
+#include "libc/mem/mem.h"
+
 /* epoll 相关定义 */
 #define EPOLL_CTL_ADD 1
 #define EPOLL_CTL_DEL 2
