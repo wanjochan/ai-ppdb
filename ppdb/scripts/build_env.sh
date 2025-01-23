@@ -45,15 +45,15 @@ LDFLAGS="-static -Wl,--gc-sections -Wl,--build-id=none"
 # CFLAGS="-Os -fdata-sections -ffunction-sections -fno-unwind-tables -fno-asynchronous-unwind-tables"
 # LDFLAGS="-static -Wl,--gc-sections -Wl,--strip-all -Wl,--build-id=none"
 
-# 验证运行时文件
-for file in "crt.o" "ape.o" "ape.lds" "cosmopolitan.a" "cosmopolitan.h"; do
-    if [ ! -f "${COSMOS}/$file" ]; then
-        echo "Error: $file not found at ${COSMOS}/$file"
-        exit 1
-    else
-        echo "Found ${COSMOS}/$file"
-    fi
-done
+## 验证运行时文件
+#for file in "crt.o" "ape.o" "ape.lds" "cosmopolitan.a" "cosmopolitan.h"; do
+#    if [ ! -f "${COSMOS}/$file" ]; then
+#        echo "Error: $file not found at ${COSMOS}/$file"
+#        exit 1
+#    else
+#        echo "Found ${COSMOS}/$file"
+#    fi
+#done
 
 # 导出环境变量
 export ROOT_DIR PPDB_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR 

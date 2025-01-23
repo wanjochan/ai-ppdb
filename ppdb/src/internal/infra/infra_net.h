@@ -5,7 +5,6 @@
 #ifndef INFRA_NET_H
 #define INFRA_NET_H
 
-//#include "cosmopolitan.h"
 #include "internal/infra/infra_error.h"
 #include "internal/infra/infra_core.h"
 

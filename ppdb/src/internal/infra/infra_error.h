@@ -4,7 +4,6 @@
 #ifndef INFRA_ERROR_H_
 #define INFRA_ERROR_H_
 
-//#include "cosmopolitan.h"
 
 //-----------------------------------------------------------------------------
 // Error Type
