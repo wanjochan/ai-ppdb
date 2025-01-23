@@ -25,17 +25,23 @@ set -x  # 启用调试输出
     "${SRC_DIR}/internal/infra/infra_net.c" \
     "${SRC_DIR}/internal/infra/infra_platform.c" \
     "${SRC_DIR}/internal/infra/infra_sync.c" \
-    ${LDFLAGS} -o "${BUILD_DIR}/ppdb"
+    ${LDFLAGS} -o "${BUILD_DIR}/ppdb_latest.exe"
 set +x  # 关闭调试输出
 
 if [ $? -ne 0 ]; then
+    echo "Error: Build failed"
     exit 1
 fi
 
-# 如果没有明确禁用运行，则运行程序
-if [ "$1" != "norun" ]; then
-    cp -f "${BUILD_DIR}/ppdb" "${PPDB_DIR}/ppdb_latest.exe"
-    "${PPDB_DIR}/ppdb_latest.exe" help
+# 检查可执行文件是否存在且有执行权限
+if [ ! -x "${BUILD_DIR}/ppdb_latest.exe" ]; then
+    echo "Error: Executable not found or not executable"
+    exit 1
 fi
+
+# 运行可执行文件
+echo "List and run ppdb_latest.exe"
+ls -l "${BUILD_DIR}/ppdb_latest.exe"
+"${BUILD_DIR}/ppdb_latest.exe"
 
 exit 0 
