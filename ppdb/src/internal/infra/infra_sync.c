@@ -6,7 +6,7 @@
  * infra_sync.c - Synchronization Primitives Implementation
  */
 
-#include "cosmopolitan.h"
+//#include "cosmopolitan.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_sync.h"
 

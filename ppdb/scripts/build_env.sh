@@ -36,8 +36,14 @@ for tool in "$CC" "$AR" "$OBJCOPY"; do
 done
 
 # 设置构建标志
-CFLAGS="-g -O2 -fno-pie -fno-pic -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -mcmodel=large"
+#CFLAGS="-g -O2 -fno-pie -fno-pic -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -mcmodel=large"
+# cursor 推荐
+CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large"
 LDFLAGS="-static -Wl,--gc-sections -Wl,--build-id=none"
+
+# 使用 windsurf 推荐的 (failed)
+# CFLAGS="-Os -fdata-sections -ffunction-sections -fno-unwind-tables -fno-asynchronous-unwind-tables"
+# LDFLAGS="-static -Wl,--gc-sections -Wl,--strip-all -Wl,--build-id=none"
 
 # 验证运行时文件
 for file in "crt.o" "ape.o" "ape.lds" "cosmopolitan.a" "cosmopolitan.h"; do

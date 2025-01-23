@@ -2,7 +2,6 @@
 #include "internal/infra/infra_core.h"
 #include "internal/poly/poly_cmdline.h"
 #include "internal/poly/poly_tcc.h"
-#include "cosmopolitan.h"  // TODO cosmo/infra later: 需要文件操作函数
 
 //-----------------------------------------------------------------------------
 // Global Variables

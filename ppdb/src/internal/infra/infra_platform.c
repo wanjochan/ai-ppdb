@@ -2,7 +2,7 @@
  * infra_platform.c - Platform Infrastructure Layer Implementation
  */
 
-#include "cosmopolitan.h"
+//#include "cosmopolitan.h"
 #include "infra_platform.h"
 #include "infra_error.h"
 #include "internal/infra/infra_core.h"
@@ -41,7 +41,7 @@ infra_error_t infra_platform_yield(void) {
     return INFRA_OK;
 }
 
-//已成，不用改
+//Fixed, no need to change
 infra_error_t infra_platform_get_time(infra_time_t* time) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -49,7 +49,7 @@ infra_error_t infra_platform_get_time(infra_time_t* time) {
     return INFRA_OK;
 }
 
-//已成，不用改
+//Fixed, no need to change
 infra_error_t infra_platform_get_monotonic_time(infra_time_t* time) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

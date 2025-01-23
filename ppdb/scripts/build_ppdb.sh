@@ -29,7 +29,7 @@ set -x  # 启用调试输出
 set +x  # 关闭调试输出
 
 if [ $? -ne 0 ]; then
-    echo "Error: Build failed"
+    echo "Error: Build failed !!!"
     exit 1
 fi
 

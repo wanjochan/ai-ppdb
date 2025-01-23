@@ -2,6 +2,7 @@
  * infra_error.c - Error handling implementation
  */
 
+#include "internal/infra/infra_core.h"
 #include "internal/infra/infra_error.h"
 
 // 预期错误状态

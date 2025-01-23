@@ -3,6 +3,7 @@
  */
 
 #define INFRA_INTERNAL
+#include "internal/infra/infra_core.h"
 #include "internal/infra/infra_memory.h"
 #include "internal/infra/infra_sync.h"
 

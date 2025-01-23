@@ -8,6 +8,7 @@
 #define INFRA_CORE_H
 
 #include "cosmopolitan.h"
+
 #include "internal/infra/infra_memory.h"
 #include "internal/infra/infra_error.h"
 

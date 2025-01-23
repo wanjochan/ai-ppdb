@@ -5,7 +5,7 @@
 #ifndef INFRA_MEMORY_H
 #define INFRA_MEMORY_H
 
-#include "cosmopolitan.h"
+//#include "cosmopolitan.h"
 #include "internal/infra/infra_error.h"
 
 //-----------------------------------------------------------------------------

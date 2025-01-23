@@ -2,6 +2,7 @@
  * infra.c - Infrastructure Layer Implementation
  */
 
+#include "cosmopolitan.h"
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_memory.h"
 #include "internal/infra/infra_platform.h"
