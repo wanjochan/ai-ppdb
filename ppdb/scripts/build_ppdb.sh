@@ -10,38 +10,32 @@ fi
 mkdir -p "${BUILD_DIR}"
 
 # 添加源目录到包含路径
-CFLAGS="${CFLAGS} -I${SRC_DIR} -I${COSMO}"
+CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include"
 
 # 构建 ppdb
 echo "Building ppdb..."
-"${GCC}" ${CFLAGS} \
+set -x  # 启用调试输出
+"${CC}" ${CFLAGS} \
     "${SRC_DIR}/ppdb/ppdb.c" \
     "${SRC_DIR}/internal/poly/poly_cmdline.c" \
     "${SRC_DIR}/internal/peer/peer_rinetd.c" \
     "${SRC_DIR}/internal/infra/infra_core.c" \
     "${SRC_DIR}/internal/infra/infra_memory.c" \
     "${SRC_DIR}/internal/infra/infra_error.c" \
-    "${SRC_DIR}/internal/infra/infra_mux.c" \
-    "${SRC_DIR}/internal/infra/infra_mux_epoll.c" \
     "${SRC_DIR}/internal/infra/infra_net.c" \
     "${SRC_DIR}/internal/infra/infra_platform.c" \
     "${SRC_DIR}/internal/infra/infra_sync.c" \
-    ${LDFLAGS} -o "${BUILD_DIR}/ppdb.dbg" \
-    -Wl,-T,"${COSMO}/ape.lds" "${COSMO}/ape.o" "${COSMO}/crt.o" "${COSMO}/cosmopolitan.a"
+    ${LDFLAGS} -o "${BUILD_DIR}/ppdb"
+set +x  # 关闭调试输出
 
-if [ $? -ne 0 ]; then
-    exit 1
-fi
-
-"${OBJCOPY}" -S -O binary "${BUILD_DIR}/ppdb.dbg" "${BUILD_DIR}/ppdb"
 if [ $? -ne 0 ]; then
     exit 1
 fi
 
 # 如果没有明确禁用运行，则运行程序
 if [ "$1" != "norun" ]; then
-    cp -f "${BUILD_DIR}/ppdb" "${PPDB_DIR}/ppdb_latest"
-    "${PPDB_DIR}/ppdb_latest" help
+    cp -f "${BUILD_DIR}/ppdb" "${PPDB_DIR}/ppdb_latest.exe"
+    "${PPDB_DIR}/ppdb_latest.exe" help
 fi
 
 exit 0 

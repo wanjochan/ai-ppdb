@@ -16,14 +16,20 @@ set SRC_DIR=%PPDB_DIR%\src
 set INCLUDE_DIR=%PPDB_DIR%\include
 set INTERNAL_DIR=%PPDB_DIR%\internal
 set TEST_DIR=%PPDB_DIR%\test
-set COSMO=%ROOT_DIR%\repos\cosmopolitan_pub
-set COSMOSRC=%ROOT_DIR%\repos\cosmopolitan
+
+# binary
+set COSMOS=%ROOT_DIR%\repos\cosmos
+
+# cross9 for win only
+set COSMOCC=%ROOT_DIR%\repos\cross9
+# src
+set COSMOPOLITAN=%ROOT_DIR%\repos\cosmopolitan
 
 REM 设置工具链路径
-set CROSS9=%ROOT_DIR%\repos\cross9\bin
-set GCC=%CROSS9%\x86_64-pc-linux-gnu-gcc.exe
-set AR=%CROSS9%\x86_64-pc-linux-gnu-ar.exe
-set OBJCOPY=%CROSS9%\x86_64-pc-linux-gnu-objcopy.exe
+set TOOLCHAIN_DIR=%COSMOCC%\bin
+set GCC=%TOOLCHAIN_DIR%\x86_64-pc-linux-gnu-gcc.exe
+set AR=%TOOLCHAIN_DIR%\x86_64-pc-linux-gnu-ar.exe
+set OBJCOPY=%TOOLCHAIN_DIR%\x86_64-pc-linux-gnu-objcopy.exe
 
 REM 验证工具链
 if not exist "%GCC%" (
@@ -71,12 +77,13 @@ endlocal & (
     set "ROOT_DIR=%ROOT_DIR%"
     set "PPDB_DIR=%PPDB_DIR%"
     set "BUILD_DIR=%BUILD_DIR%"
-    set "CROSS9=%CROSS9%"
+    set "TOOLCHAIN_DIR=%TOOLCHAIN_DIR%"
     set "GCC=%GCC%"
     set "AR=%AR%"
     set "OBJCOPY=%OBJCOPY%"
     set "COSMO=%COSMO%"
-    set "COSMOSRC=%COSMOSRC%"
+    set "COSMOS=%COSMOS%"
+    set "COSMOPOLITAN=%COSMOPOLITAN%"
     set "CFLAGS=%CFLAGS%"
     set "LDFLAGS=%LDFLAGS%"
     set "TEST_DIR=%TEST_DIR%"

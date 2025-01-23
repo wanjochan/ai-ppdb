@@ -134,15 +134,15 @@ infra_error_t infra_platform_mutex_unlock(void* handle) {
 // EPOLL Functions
 //-----------------------------------------------------------------------------
 
-int infra_platform_create_epoll(void) {
-    return epoll_create1(0);
-}
+// int infra_platform_create_epoll(void) {
+//     return epoll_create1(0);
+// }
 
-void infra_platform_close_epoll(int epoll_fd) {
-    if (epoll_fd >= 0) {
-        close(epoll_fd);
-    }
-}
+// void infra_platform_close_epoll(int epoll_fd) {
+//     if (epoll_fd >= 0) {
+//         close(epoll_fd);
+//     }
+// }
 /*
 关于 infra_platform_epoll_add 中未使用的 user_data 参数：
 这不是设计问题，而是一个有意为之的设计。从代码中可以看到：
@@ -155,73 +155,73 @@ user_data 参数的存在是为了保持与 Windows IOCP 的接口一致性（�
 为将来可能的功能扩展预留空间
 允许用户在事件触发时能够获取到相关的上下文信息
 */
-infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool edge_trigger, void* user_data) {
-    /* user_data 参数预留给将来扩展使用，比如存储回调函数或上下文信息 */
-    (void)user_data;  // 显式忽略未使用的参数
+// infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool edge_trigger, void* user_data) {
+//     /* user_data 参数预留给将来扩展使用，比如存储回调函数或上下文信息 */
+//     (void)user_data;  // 显式忽略未使用的参数
 
-    if (epoll_fd < 0 || fd < 0) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+//     if (epoll_fd < 0 || fd < 0) {
+//         return INFRA_ERROR_INVALID_PARAM;
+//     }
 
-    struct epoll_event ev = {0};
-    ev.events = ((events & INFRA_EVENT_READ) ? EPOLLIN : 0) |
-                ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
-                ((events & INFRA_EVENT_ERROR) ? EPOLLERR : 0) |
-                (edge_trigger ? EPOLLET : 0);
-    ev.data.fd = fd;
+//     struct epoll_event ev = {0};
+//     ev.events = ((events & INFRA_EVENT_READ) ? EPOLLIN : 0) |
+//                 ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
+//                 ((events & INFRA_EVENT_ERROR) ? EPOLLERR : 0) |
+//                 (edge_trigger ? EPOLLET : 0);
+//     ev.data.fd = fd;
     
-    infra_printf("Adding fd %d to epoll with events 0x%x\n", fd, ev.events);
-    return (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
-}
+//     infra_printf("Adding fd %d to epoll with events 0x%x\n", fd, ev.events);
+//     return (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &ev) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+// }
 
-infra_error_t infra_platform_epoll_modify(int epoll_fd, int fd, int events, bool edge_trigger) {
-    if (epoll_fd < 0 || fd < 0) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+// infra_error_t infra_platform_epoll_modify(int epoll_fd, int fd, int events, bool edge_trigger) {
+//     if (epoll_fd < 0 || fd < 0) {
+//         return INFRA_ERROR_INVALID_PARAM;
+//     }
 
-    struct epoll_event ev = {0};
-    ev.events = ((events & INFRA_EVENT_READ) ? EPOLLIN : 0) |
-                ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
-                ((events & INFRA_EVENT_ERROR) ? EPOLLERR : 0) |
-                (edge_trigger ? EPOLLET : 0);
-    ev.data.fd = fd;
+//     struct epoll_event ev = {0};
+//     ev.events = ((events & INFRA_EVENT_READ) ? EPOLLIN : 0) |
+//                 ((events & INFRA_EVENT_WRITE) ? EPOLLOUT : 0) |
+//                 ((events & INFRA_EVENT_ERROR) ? EPOLLERR : 0) |
+//                 (edge_trigger ? EPOLLET : 0);
+//     ev.data.fd = fd;
     
-    infra_printf("Modifying fd %d in epoll with events 0x%x\n", fd, ev.events);
-    return (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &ev) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
-}
+//     infra_printf("Modifying fd %d in epoll with events 0x%x\n", fd, ev.events);
+//     return (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &ev) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+// }
 
-infra_error_t infra_platform_epoll_remove(int epoll_fd, int fd) {
-    if (epoll_fd < 0 || fd < 0) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+// infra_error_t infra_platform_epoll_remove(int epoll_fd, int fd) {
+//     if (epoll_fd < 0 || fd < 0) {
+//         return INFRA_ERROR_INVALID_PARAM;
+//     }
     
-    infra_printf("Removing fd %d from epoll\n", fd);
-    return (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
-}
+//     infra_printf("Removing fd %d from epoll\n", fd);
+//     return (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL) == 0) ? INFRA_OK : INFRA_ERROR_SYSTEM;
+// }
 
-infra_error_t infra_platform_epoll_wait(int epoll_fd, void* events, size_t max_events, int timeout_ms) {
-    if (epoll_fd < 0 || !events || max_events == 0) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+// infra_error_t infra_platform_epoll_wait(int epoll_fd, void* events, size_t max_events, int timeout_ms) {
+//     if (epoll_fd < 0 || !events || max_events == 0) {
+//         return INFRA_ERROR_INVALID_PARAM;
+//     }
 
-    int ret;
-    do {
-        ret = epoll_wait(epoll_fd, (struct epoll_event*)events, max_events, timeout_ms);
-        if (ret > 0) {
-            struct epoll_event* ev = (struct epoll_event*)events;
-            for (int i = 0; i < ret; i++) {
-                infra_printf("epoll_wait: fd %d has events 0x%x\n", ev[i].data.fd, ev[i].events);
-            }
-        }
-    } while (ret < 0 && errno == EINTR);  // 如果被信号中断，则重试
+//     int ret;
+//     do {
+//         ret = epoll_wait(epoll_fd, (struct epoll_event*)events, max_events, timeout_ms);
+//         if (ret > 0) {
+//             struct epoll_event* ev = (struct epoll_event*)events;
+//             for (int i = 0; i < ret; i++) {
+//                 infra_printf("epoll_wait: fd %d has events 0x%x\n", ev[i].data.fd, ev[i].events);
+//             }
+//         }
+//     } while (ret < 0 && errno == EINTR);  // 如果被信号中断，则重试
 
-    if (ret < 0) {
-        infra_printf("epoll_wait failed with errno %d\n", errno);
-        return INFRA_ERROR_SYSTEM;
-    }
+//     if (ret < 0) {
+//         infra_printf("epoll_wait failed with errno %d\n", errno);
+//         return INFRA_ERROR_SYSTEM;
+//     }
 
-    return ret;  // 返回事件数量
-}
+//     return ret;  // 返回事件数量
+// }
 
 //-----------------------------------------------------------------------------
 // Condition Variable Operations

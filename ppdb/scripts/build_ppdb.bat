@@ -9,7 +9,7 @@ rem Create build directory if it doesn't exist
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 
 rem Add source directory to include path
-set CFLAGS=%CFLAGS% -I"%SRC_DIR%" -I"%COSMO%"
+set CFLAGS=%CFLAGS% -I"%SRC_DIR%" -I"%COSMOS%"
 
 rem Build ppdb
 echo Building ppdb...
@@ -26,7 +26,7 @@ echo Building ppdb...
     "%SRC_DIR%\internal\infra\infra_platform.c" ^
     "%SRC_DIR%\internal\infra\infra_sync.c" ^
     %LDFLAGS% %LIBS% -o "%BUILD_DIR%\ppdb.exe.dbg" ^
--Wl,-T,"%COSMO%\ape.lds" "%COSMO%\ape.o" "%COSMO%\crt.o" "%COSMO%\cosmopolitan.a" 
+-Wl,-T,"%COSMOS%\ape.lds" "%COSMOS%\ape.o" "%COSMOS%\crt.o" "%COSMOS%\cosmopolitan.a" 
 if errorlevel 1 exit /b 1
 
 "%OBJCOPY%" -S -O binary "%BUILD_DIR%\ppdb.exe.dbg" "%BUILD_DIR%\ppdb.exe"
