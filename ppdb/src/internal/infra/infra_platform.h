@@ -159,12 +159,4 @@ int32_t infra_atomic_inc(infra_atomic_t* atomic);
 int32_t infra_atomic_dec(infra_atomic_t* atomic);
 bool infra_atomic_cas(infra_atomic_t* atomic, int32_t expected, int32_t desired);
 
-// EPOLL相关函数（cosmopolitan在windows已经接入了iocp）
-// int infra_platform_create_epoll(void);
-// void infra_platform_close_epoll(int epoll_fd);
-// infra_error_t infra_platform_epoll_add(int epoll_fd, int fd, int events, bool edge_trigger, void* user_data);
-// infra_error_t infra_platform_epoll_modify(int epoll_fd, int fd, int events, bool edge_trigger);
-// infra_error_t infra_platform_epoll_remove(int epoll_fd, int fd);
-// infra_error_t infra_platform_epoll_wait(int epoll_fd, void* events, size_t max_events, int timeout_ms);
-
 #endif /* INFRA_PLATFORM_H */ 

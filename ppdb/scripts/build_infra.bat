@@ -6,7 +6,7 @@ call %~dp0\build_env.bat
 @rem echo SRC_DIR=%SRC_DIR%
 set BUILD_DIR=%ROOT_DIR%\build\infra
 
-set SRC_FILES=infra_core.c infra_platform.c infra_sync.c infra_error.c infra_ds.c infra_memory.c infra_net.c infra_mux.c infra_mux_epoll.c
+set SRC_FILES=infra_core.c infra_platform.c infra_sync.c infra_error.c infra_ds.c infra_memory.c infra_net.c
 
 rem 记录开始时间
 set START_TIME=%time%
