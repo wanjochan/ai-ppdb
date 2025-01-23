@@ -346,19 +346,76 @@ static void* handle_connection(void* arg) {
 // Command Processing
 //-----------------------------------------------------------------------------
 
-// TODO: 实现命令处理
 static infra_error_t process_command(memkv_conn_t* conn) {
-    // 暂时返回错误响应
-    const char* response = "ERROR\r\n";
-    size_t response_len = strlen(response);
-    
-    size_t bytes_sent = 0;
-    infra_error_t err = infra_net_send(conn->socket, response, response_len, &bytes_sent);
-    if (err != INFRA_OK) {
-        return err;
+    while (conn->buffer_used > 0) {
+        infra_error_t err;
+
+        // 解析命令
+        if (conn->state == PARSE_STATE_INIT) {
+            err = memkv_parse_command(conn);
+            if (err == INFRA_ERROR_WOULD_BLOCK) {
+                return INFRA_OK;
+            }
+            if (err != INFRA_OK) {
+                memkv_send_response(conn, "ERROR\r\n");
+                return err;
+            }
+        }
+
+        // 处理数据块
+        if (conn->state == PARSE_STATE_DATA) {
+            if (conn->buffer_used < conn->data_remaining) {
+                return INFRA_OK;
+            }
+
+            // 分配数据缓冲区
+            conn->current_cmd.data = malloc(conn->current_cmd.bytes);
+            if (!conn->current_cmd.data) {
+                memkv_send_response(conn, "SERVER_ERROR out of memory\r\n");
+                return INFRA_ERROR_NO_MEMORY;
+            }
+
+            // 复制数据
+            memcpy(conn->current_cmd.data, conn->buffer, 
+                conn->current_cmd.bytes);
+
+            // 检查结束标记
+            if (conn->buffer[conn->current_cmd.bytes] != '\r' ||
+                conn->buffer[conn->current_cmd.bytes + 1] != '\n') {
+                memkv_send_response(conn, "CLIENT_ERROR bad data chunk\r\n");
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+
+            // 移动缓冲区
+            memmove(conn->buffer, 
+                conn->buffer + conn->data_remaining,
+                conn->buffer_used - conn->data_remaining);
+            conn->buffer_used -= conn->data_remaining;
+            conn->state = PARSE_STATE_COMPLETE;
+        }
+
+        // 执行命令
+        if (conn->state == PARSE_STATE_COMPLETE) {
+            err = memkv_execute_command(conn);
+            
+            // 清理命令
+            if (conn->current_cmd.key) {
+                free(conn->current_cmd.key);
+                conn->current_cmd.key = NULL;
+            }
+            if (conn->current_cmd.data) {
+                free(conn->current_cmd.data);
+                conn->current_cmd.data = NULL;
+            }
+            
+            conn->state = PARSE_STATE_INIT;
+            
+            if (err == INFRA_ERROR_CLOSED) {
+                return err;
+            }
+        }
     }
 
-    conn->buffer_used = 0;  // 清空缓冲区
     return INFRA_OK;
 }
 
