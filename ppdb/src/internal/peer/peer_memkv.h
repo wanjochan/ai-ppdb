@@ -8,106 +8,116 @@
 #include "internal/poly/poly_hashtable.h"
 #include "internal/poly/poly_cmdline.h"
 
-// 命令类型
-typedef enum {
-    CMD_UNKNOWN = 0,
-    CMD_SET,
-    CMD_ADD,
-    CMD_REPLACE,
-    CMD_APPEND,
-    CMD_PREPEND,
-    CMD_CAS,
-    CMD_GET,
-    CMD_GETS,
-    CMD_INCR,
-    CMD_DECR,
-    CMD_TOUCH,
-    CMD_GAT,
-    CMD_FLUSH,
-    CMD_DELETE,
-    CMD_STATS,
-    CMD_VERSION,
-    CMD_QUIT,
-    CMD_MAX
-} memkv_cmd_type_t;
-
-// 错误码
-#define INFRA_ERROR_BUFFER_FULL      -100
-#define INFRA_ERROR_CLIENT_ERROR     -101
-
-#define MEMKV_BUFFER_SIZE 16384      // 命令缓冲区大小
-#define MEMKV_MAX_KEY_SIZE 250
-#define MEMKV_MAX_VALUE_SIZE (1024 * 1024)  // 1MB
-#define MEMKV_MAX_CONNECTIONS 10000
-#define MEMKV_DEFAULT_PORT 11211
+// 常量定义
+#define MEMKV_VERSION          "1.0.0"
+#define MEMKV_BUFFER_SIZE      16384
+#define MEMKV_MAX_KEY_SIZE     250
+#define MEMKV_MAX_VALUE_SIZE   (1024 * 1024)  // 1MB
+#define MEMKV_MAX_CONNECTIONS  10000
+#define MEMKV_DEFAULT_PORT     11211
 
 // 线程池配置
-#define MEMKV_MIN_THREADS 32           // 最小线程数
-#define MEMKV_MAX_THREADS 512          // 最大线程数
-#define MEMKV_QUEUE_SIZE 1000          // 任务队列大小
-#define MEMKV_IDLE_TIMEOUT 60000       // 空闲线程超时时间(ms)
+#define MEMKV_MIN_THREADS      4
+#define MEMKV_MAX_THREADS      32
+#define MEMKV_QUEUE_SIZE       1000
+#define MEMKV_IDLE_TIMEOUT     60000  // 60秒
 
-// 统计信息
-typedef struct memkv_stats {
-    uint64_t cmd_get;        // get 命令次数
-    uint64_t cmd_set;        // set 命令次数
-    uint64_t cmd_delete;     // delete 命令次数
-    uint64_t hits;           // 缓存命中次数
-    uint64_t misses;         // 缓存未命中次数
-    uint64_t curr_items;     // 当前项数量
-    uint64_t total_items;    // 总项数量
-    uint64_t bytes;          // 当前使用的字节数
-} memkv_stats_t;
+// 错误码定义
+#define MEMKV_OK                  0
+#define MEMKV_ERROR_NO_MEMORY    -1
+#define MEMKV_ERROR_NOT_FOUND    -2
+#define MEMKV_ERROR_EXISTS       -3
+#define MEMKV_ERROR_INVALID      -4
+#define MEMKV_ERROR_BUSY         -5
+
+// 命令类型
+typedef enum memkv_cmd_type {
+    CMD_UNKNOWN = 0,
+    CMD_SET,        // SET key flags exptime bytes [noreply]\r\n
+    CMD_GET,        // GET key [key...]\r\n
+    CMD_ADD,        // ADD key flags exptime bytes [noreply]\r\n
+    CMD_REPLACE,    // REPLACE key flags exptime bytes [noreply]\r\n
+    CMD_DELETE,     // DELETE key [noreply]\r\n
+    CMD_INCR,       // INCR key value [noreply]\r\n
+    CMD_DECR,       // DECR key value [noreply]\r\n
+    CMD_QUIT,       // QUIT\r\n
+    CMD_VERSION,    // VERSION\r\n
+    CMD_STATS       // STATS\r\n
+} memkv_cmd_type_t;
+
+// 命令状态
+typedef enum memkv_cmd_state {
+    CMD_STATE_INIT,         // 初始状态
+    CMD_STATE_READ_DATA,    // 读取数据
+    CMD_STATE_EXECUTING,    // 执行中
+    CMD_STATE_COMPLETE      // 完成
+} memkv_cmd_state_t;
+
+// 命令结构
+typedef struct memkv_cmd {
+    memkv_cmd_type_t type;     // 命令类型
+    memkv_cmd_state_t state;   // 命令状态
+    char* key;                 // 键
+    size_t key_len;           // 键长度
+    void* data;               // 数据
+    size_t bytes;             // 数据长度
+    size_t bytes_read;        // 已读取的数据长度
+    uint32_t flags;           // 标志位
+    uint32_t exptime;         // 过期时间
+    uint64_t cas;             // CAS值
+    bool noreply;             // 是否不需要回复
+} memkv_cmd_t;
 
 // 存储项
 typedef struct memkv_item {
-    char* key;                    // 键
-    void* value;                  // 值
-    size_t value_size;           // 值大小
-    uint32_t flags;              // 标志位
-    uint32_t exptime;            // 过期时间
-    uint64_t cas;                // CAS值
+    char* key;                // 键
+    void* data;               // 值
+    size_t bytes;             // 数据长度
+    uint32_t flags;           // 标志位
+    uint32_t exptime;         // 过期时间
+    uint64_t cas;             // CAS值
+    time_t ctime;             // 创建时间
+    time_t atime;             // 最后访问时间
 } memkv_item_t;
+
+// 连接结构
+typedef struct memkv_conn {
+    infra_socket_t sock;              // 套接字
+    char buffer[MEMKV_BUFFER_SIZE];   // 命令缓冲区
+    size_t buffer_used;               // 已使用的缓冲区大小
+    size_t buffer_read;               // 已读取的缓冲区大小
+    memkv_cmd_t cmd;                  // 当前命令
+    bool is_active;                   // 连接是否活跃
+} memkv_conn_t;
+
+// 统计信息
+typedef struct memkv_stats {
+    infra_atomic_t cmd_get;        // GET命令次数
+    infra_atomic_t cmd_set;        // SET命令次数
+    infra_atomic_t cmd_delete;     // DELETE命令次数
+    infra_atomic_t hits;           // 缓存命中次数
+    infra_atomic_t misses;         // 缓存未命中次数
+    infra_atomic_t curr_items;     // 当前项数量
+    infra_atomic_t total_items;    // 总项数量
+    infra_atomic_t curr_bytes;     // 当前使用的字节数
+    infra_atomic_t curr_conns;     // 当前连接数
+} memkv_stats_t;
 
 // 全局上下文
 typedef struct memkv_context {
     bool running;                  // 服务运行状态
     uint16_t port;                // 监听端口
-    infra_socket_t listener;      // 监听套接字
-    infra_mutex_t store_mutex;    // 存储锁
-    infra_thread_pool_t* pool;    // 线程池
-    memkv_stats_t stats;          // 统计信息
-    poly_hashtable_t* store;      // 存储哈希表
+    infra_socket_t listen_sock;    // 监听套接字
+    infra_thread_pool_t* pool;     // 线程池
+    infra_mutex_t store_mutex;     // 存储互斥锁
+    poly_hashtable_t* store;       // 存储哈希表
+    memkv_stats_t stats;           // 统计信息
 } memkv_context_t;
-
-// 客户端连接
-typedef struct memkv_conn {
-    infra_socket_t socket;        // 客户端socket
-    char* buffer;                 // 命令缓冲区
-    size_t buffer_size;          // 缓冲区大小
-    size_t buffer_used;          // 已使用大小
-    memkv_cmd_type_t cmd_type;   // 命令类型
-    void* data;                  // 命令数据
-    size_t data_size;           // 数据大小
-    size_t data_remaining;      // 剩余数据大小
-    char* key;                  // 当前命令的键
-    uint32_t flags;            // 标志位
-    uint32_t exptime;          // 过期时间
-    uint64_t cas;              // CAS值
-} memkv_conn_t;
 
 // 接口函数
 infra_error_t memkv_init(uint16_t port);
 infra_error_t memkv_start(void);
 infra_error_t memkv_stop(void);
 infra_error_t memkv_cleanup(void);
-
-// 辅助函数声明
-memkv_item_t* create_item(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime);
-void destroy_item(memkv_item_t* item);
-bool is_item_expired(const memkv_item_t* item);
-void update_stats_set(size_t value_size);
-void update_stats_get(bool hit);
-void update_stats_delete(size_t value_size);
 
 #endif // PEER_MEMKV_H
