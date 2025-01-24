@@ -76,6 +76,21 @@ static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn)
     new_conn->is_active = true;
     new_conn->buffer_used = 0;
     new_conn->buffer_read = 0;
+
+    // 设置非阻塞模式
+    infra_error_t err = infra_net_set_nonblock(sock, true);
+    if (err != INFRA_OK) {
+        free(new_conn);
+        return err;
+    }
+
+    // 分配缓冲区
+    new_conn->buffer = malloc(MEMKV_BUFFER_SIZE);
+    if (!new_conn->buffer) {
+        free(new_conn);
+        return MEMKV_ERROR_NO_MEMORY;
+    }
+
     poly_atomic_inc(&g_context.stats.total_items);
     *conn = new_conn;
     return MEMKV_OK;
@@ -189,7 +204,11 @@ static bool compare_fn(const void* key1, const void* key2) {
 }
 
 // Initialize MemKV
-infra_error_t memkv_init(uint16_t port) {
+infra_error_t memkv_init(uint16_t port, const infra_config_t* config) {
+    if (!config) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
     // Initialize global context
     memset(&g_context, 0, sizeof(g_context));
     g_context.port = port;
@@ -215,13 +234,22 @@ infra_error_t memkv_init(uint16_t port) {
         .idle_timeout = MEMKV_IDLE_TIMEOUT
     };
 
+    INFRA_LOG_DEBUG("Creating thread pool with config: min=%d, max=%d, queue=%d", 
+        pool_config.min_threads, pool_config.max_threads, pool_config.queue_size);
+
     // Create thread pool
     err = infra_thread_pool_create(&pool_config, &g_context.pool);
     if (err != INFRA_OK) {
-        infra_mutex_destroy(&g_context.store_mutex);
+        INFRA_LOG_ERROR("Failed to create thread pool: %d", err);
+        infra_mutex_destroy(g_context.store_mutex);
         poly_hashtable_destroy(g_context.store);
         return err;
     }
+
+    INFRA_LOG_DEBUG("Thread pool created successfully");
+
+    // Set start time
+    g_context.start_time = time(NULL);
 
     return INFRA_OK;
 }
@@ -255,32 +283,61 @@ infra_error_t memkv_cleanup(void) {
 }
 
 static infra_error_t create_listener(void) {
+    INFRA_LOG_DEBUG("Creating listener socket");
+    
     // Create listen socket
-    infra_error_t err = infra_net_create(&g_context.listen_sock, false, NULL);
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
+    infra_socket_t listener = NULL;
+    infra_error_t err = infra_net_create(&listener, false, &config);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create socket: %d", err);
         return err;
     }
+
+    if (listener == NULL) {
+        INFRA_LOG_ERROR("Socket creation returned NULL");
+        return INFRA_ERROR_RUNTIME;
+    }
+
+    INFRA_LOG_DEBUG("Socket created successfully");
+
+    // Set address reuse
+    err = infra_net_set_reuseaddr(listener, true);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set SO_REUSEADDR: %d", err);
+        infra_net_close(listener);
+        return err;
+    }
+
+    INFRA_LOG_DEBUG("SO_REUSEADDR set successfully");
 
     // Bind address
     infra_net_addr_t addr = {
-        .host = NULL,  // Bind all addresses
+        .host = "0.0.0.0",  // Explicitly bind all addresses
         .port = g_context.port
     };
-    err = infra_net_bind(g_context.listen_sock, &addr);
+    
+    INFRA_LOG_DEBUG("Binding to port %d", g_context.port);
+    err = infra_net_bind(listener, &addr);
     if (err != INFRA_OK) {
-        infra_net_close(g_context.listen_sock);
-        g_context.listen_sock = NULL;
+        INFRA_LOG_ERROR("Failed to bind socket: %d", err);
+        infra_net_close(listener);
         return err;
     }
+
+    INFRA_LOG_DEBUG("Socket bound successfully");
 
     // Start listening
-    err = infra_net_listen(g_context.listen_sock);
+    INFRA_LOG_DEBUG("Starting to listen");
+    err = infra_net_listen(listener);
     if (err != INFRA_OK) {
-        infra_net_close(g_context.listen_sock);
-        g_context.listen_sock = NULL;
+        INFRA_LOG_ERROR("Failed to listen: %d", err);
+        infra_net_close(listener);
         return err;
     }
 
+    INFRA_LOG_DEBUG("Listening started successfully");
+    g_context.listen_sock = listener;
     return INFRA_OK;
 }
 
@@ -297,37 +354,55 @@ infra_error_t memkv_start(void) {
         return err;
     }
 
+    // 设置非阻塞模式
+    err = infra_net_set_nonblock(g_context.listen_sock, true);
+    if (err != INFRA_OK) {
+        infra_net_close(g_context.listen_sock);
+        g_context.listen_sock = NULL;
+        return err;
+    }
+
     // 标记服务已启动
     g_context.is_running = true;
 
-    // 开始接受连接
+    // 在前台运行
+    INFRA_LOG_INFO("Starting memkv service in foreground on port %d", g_context.port);
+    infra_printf("MemKV service started on port %d\n", g_context.port);
+    
     while (g_context.is_running) {
-        infra_socket_t client_sock;
-        infra_net_addr_t client_addr;
-
-        if (!g_context.is_running) {
+        // 等待连接
+        infra_socket_t client = NULL;
+        infra_net_addr_t client_addr = {0};
+        err = infra_net_accept(g_context.listen_sock, &client, &client_addr);
+        if (err != INFRA_OK) {
+            if (err == INFRA_ERROR_WOULD_BLOCK) {
+                continue;
+            }
+            INFRA_LOG_ERROR("Failed to accept connection: %d", err);
             break;
         }
 
-        // 接受新连接
-        err = infra_net_accept(g_context.listen_sock, &client_sock, &client_addr);
+        INFRA_LOG_INFO("Accepted connection from %s:%d", 
+            client_addr.host, client_addr.port);
+
+        // 创建连接结构
+        memkv_conn_t* conn = NULL;
+        err = create_connection(client, &conn);
         if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to create connection: %d", err);
+            infra_net_close(client);
             continue;
         }
 
-        // 创建连接对象
-        memkv_conn_t* conn;
-        err = create_connection(client_sock, &conn);
-        if (err != INFRA_OK) {
-            infra_net_close(client_sock);
-            continue;
-        }
-
-        // 提交到线程池处理
+        // 提交到线程池
         err = infra_thread_pool_submit(g_context.pool, handle_connection, conn);
         if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to submit connection to thread pool: %d", err);
             destroy_connection(conn);
+            continue;
         }
+
+        INFRA_LOG_DEBUG("Connection submitted to thread pool successfully");
     }
 
     return INFRA_OK;
@@ -340,8 +415,17 @@ infra_error_t memkv_stop(void) {
     }
 
     g_context.is_running = false;
-    infra_net_close(g_context.listen_sock);
-    g_context.listen_sock = NULL;
+
+    // 等待接受连接的线程退出
+    if (g_context.accept_thread) {
+        infra_thread_join(g_context.accept_thread);
+        g_context.accept_thread = NULL;
+    }
+
+    if (g_context.listen_sock) {
+        infra_net_close(g_context.listen_sock);
+        g_context.listen_sock = NULL;
+    }
 
     return INFRA_OK;
 }
@@ -435,6 +519,8 @@ static void* handle_connection(void* arg) {
     memkv_conn_t* conn = (memkv_conn_t*)arg;
     infra_error_t err;
 
+    INFRA_LOG_DEBUG("New connection accepted");
+
     while (conn->is_active) {
         // 读取命令
         size_t bytes_read;
@@ -443,7 +529,18 @@ static void* handle_connection(void* arg) {
                             MEMKV_BUFFER_SIZE - conn->buffer_used,
                             &bytes_read);
 
-        if (err != INFRA_OK || bytes_read == 0) {
+        if (err != INFRA_OK) {
+            if (err == INFRA_ERROR_WOULD_BLOCK) {
+                // 没有数据可读，等待一下
+                infra_sleep(1);
+                continue;
+            }
+            INFRA_LOG_ERROR("Failed to receive data: %d", err);
+            break;
+        }
+
+        if (bytes_read == 0) {
+            INFRA_LOG_DEBUG("Connection closed by peer");
             break;
         }
 
@@ -452,10 +549,16 @@ static void* handle_connection(void* arg) {
         // 处理命令
         err = process_command(conn);
         if (err != INFRA_OK) {
+            if (err == INFRA_ERROR_WOULD_BLOCK) {
+                // 需要更多数据
+                continue;
+            }
+            INFRA_LOG_ERROR("Failed to process command: %d", err);
             break;
         }
     }
 
+    INFRA_LOG_DEBUG("Connection closed");
     destroy_connection(conn);
     return NULL;
 }
@@ -500,21 +603,40 @@ infra_error_t memkv_cmd_handler(int argc, char** argv) {
     }
 
     if (start) {
-        if (!port_str) {
-            INFRA_LOG_ERROR("Port not specified");
-            return INFRA_ERROR_INVALID_PARAM;
+        uint16_t port = MEMKV_DEFAULT_PORT;
+        if (port_str) {
+            // Parse port
+            char* endptr;
+            long p = strtol(port_str, &endptr, 10);
+            if (*endptr != '\0' || p <= 0 || p > 65535) {
+                INFRA_LOG_ERROR("Invalid port: %s", port_str);
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+            port = (uint16_t)p;
         }
 
-        // Parse port
-        char* endptr;
-        long port = strtol(port_str, &endptr, 10);
-        if (*endptr != '\0' || port <= 0 || port > 65535) {
-            INFRA_LOG_ERROR("Invalid port: %s", port_str);
-            return INFRA_ERROR_INVALID_PARAM;
+        INFRA_LOG_DEBUG("Initializing MemKV service on port %d", port);
+
+        // Initialize service
+        infra_config_t config = INFRA_DEFAULT_CONFIG;
+        infra_error_t err = memkv_init(port, &config);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to initialize MemKV service: %d", err);
+            return err;
         }
 
-        g_context.port = (uint16_t)port;
-        return memkv_start();
+        INFRA_LOG_DEBUG("MemKV service initialized successfully");
+
+        // Start service
+        err = memkv_start();
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to start MemKV service: %d", err);
+            memkv_cleanup();
+            return err;
+        }
+
+        INFRA_LOG_INFO("MemKV service started on port %d", port);
+        return INFRA_OK;
     }
 
     INFRA_LOG_ERROR("Invalid command");

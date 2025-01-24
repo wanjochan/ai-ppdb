@@ -47,7 +47,11 @@ fi
 
 # 运行可执行文件
 echo "List and run ppdb_latest.exe"
-ls -l "${BUILD_DIR}/ppdb_latest.exe"
 "${BUILD_DIR}/ppdb_latest.exe"
+
+echo "copy to ppdb/"
+cp -v "${BUILD_DIR}/ppdb_latest.exe" "${PPDB_DIR}/ppdb_latest.exe"
+ls -al "${PPDB_DIR}/ppdb_latest.exe"
+
 
 exit 0 

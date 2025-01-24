@@ -146,4 +146,8 @@ test/white/
 .\ppdb\ppdb_latest.exe --log-level=1 tccrun --source ppdb/test2.c -I repos\cosmopolitan_pub -L repos\cosmopolitan_pub -l cosmopolitan.a
 .\ppdb\ppdb_latest.exe --log-level=5 tccrun --source .\ppdb\test.c
 
+## memkv
+
+./ppdb/ppdb_latest.exe --log-level=5 memkv --start
+
 ```

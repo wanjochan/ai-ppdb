@@ -1,7 +1,8 @@
 /*
- * infra_ds.c - Data Structure Implementation
+ * infra_ds.c - Core Data Structure Implementation
  */
 
+#include "internal/infra/infra_core.h"
 #include "internal/infra/infra_ds.h"
 #include "internal/infra/infra_memory.h"
 

@@ -93,7 +93,7 @@ typedef struct memkv_item {
 // 连接结构
 typedef struct memkv_conn {
     infra_socket_t sock;              // 套接字
-    char buffer[MEMKV_BUFFER_SIZE];   // 命令缓冲区
+    char* buffer;                     // 命令缓冲区
     size_t buffer_used;               // 已使用的缓冲区大小
     size_t buffer_read;               // 已读取的缓冲区大小
     memkv_cmd_t current_cmd;          // 当前命令
@@ -122,6 +122,7 @@ typedef struct memkv_context {
     poly_hashtable_t* store;       // 存储哈希表
     memkv_stats_t stats;           // 统计信息
     time_t start_time;             // 启动时间
+    infra_thread_t* accept_thread;  // 接受连接的线程
 } memkv_context_t;
 
 // 声明全局上下文
@@ -132,7 +133,7 @@ infra_error_t send_response(memkv_conn_t* conn, const char* data, size_t len);
 infra_error_t poly_hashtable_delete(poly_hashtable_t* table, const char* key);
 
 // 接口函数
-infra_error_t memkv_init(uint16_t port);
+infra_error_t memkv_init(uint16_t port, const infra_config_t* config);
 infra_error_t memkv_cleanup(void);
 infra_error_t memkv_start(void);
 infra_error_t memkv_stop(void);

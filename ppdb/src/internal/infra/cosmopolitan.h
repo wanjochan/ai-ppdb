@@ -2,6 +2,7 @@
 #define COSMOPOLITAN_H_
 
 #if defined(_WIN32)
+
 //win for quick dev and test only, and the binary is not portable for arm osx
 //https://justine.lol/cosmopolitan/windows-compiling.html
 //https://justine.lol/cosmopolitan/cosmopolitan.zip

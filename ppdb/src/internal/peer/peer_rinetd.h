@@ -1,10 +1,11 @@
 #ifndef PEER_RINETD_H
 #define PEER_RINETD_H
 
+//rinet: tiny ports forwarding
+
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_net.h"
-//#include "internal/infra/infra_mux.h"
 #include "internal/poly/poly_cmdline.h"
 
 //-----------------------------------------------------------------------------

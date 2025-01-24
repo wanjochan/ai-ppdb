@@ -39,7 +39,8 @@ static infra_error_t memkv_cmd_handler(int argc, char** argv) {
                 return INFRA_ERROR_ALREADY_EXISTS;
             }
 
-            infra_error_t err = memkv_init(port);
+            infra_config_t config = INFRA_DEFAULT_CONFIG;
+            infra_error_t err = memkv_init(port, &config);
             if (err != INFRA_OK) {
                 infra_printf("Failed to initialize MemKV service: %d\n", err);
                 return err;
@@ -138,9 +139,63 @@ static infra_error_t help_cmd_handler(int argc, char** argv) {
 
 int main(int argc, char** argv) {
     infra_error_t err;
+    const char* log_level_str = NULL;
+
+    // Parse global options first
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "--log-level=", 12) == 0) {
+            log_level_str = argv[i] + 12;
+        }
+    }
+
+    // Initialize infrastructure layer with custom log level
+    infra_config_t config;
+    err = infra_config_init(&config);
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to initialize config\n");
+        return 1;
+    }
+
+    // Set log level if specified
+    if (log_level_str) {
+        // Parse the numeric value
+        char* endptr;
+        long level = strtol(log_level_str, &endptr, 10);
+        
+        // Check for conversion errors
+        if (*endptr != '\0' || endptr == log_level_str) {
+            fprintf(stderr, "ERROR: Invalid log level: %s (must be a number)\n", log_level_str);
+            return 1;
+        }
+        
+        // Check value range
+        if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
+            config.log.level = (int)level;
+        } else {
+            fprintf(stderr, "ERROR: Invalid log level: %ld (valid range: 0-5)\n", level);
+            return 1;
+        }
+    }
+
+    // Initialize infrastructure layer
+    err = infra_init_with_config(INFRA_INIT_ALL, &config);
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to initialize infrastructure layer\n");
+        return 1;
+    }
+
+    INFRA_LOG_DEBUG("Infrastructure layer initialized with log level %d", config.log.level);
+
+    // Initialize command line framework
+    err = poly_cmdline_init();
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to initialize command line framework");
+        return 1;
+    }
+
+    INFRA_LOG_DEBUG("Command line framework initialized");
 
     // Parse global options first (must be before command)
-    const char* log_level_str = NULL;
     int i;
     for (i = 1; i < argc; i++) {
         if (argv[i][0] != '-' || argv[i][1] != '-') {
@@ -178,54 +233,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Initialize infrastructure layer with custom log level
-    infra_config_t config;
-    err = infra_config_init(&config);
-    if (err != INFRA_OK) {
-        fprintf(stderr, "Failed to initialize config\n");
-        return 1;
-    }
-
-    // Set log level if specified
-    if (log_level_str) {
-        // Parse the numeric value
-        char* endptr;
-        long level = strtol(log_level_str, &endptr, 10);
-        
-        // Check for conversion errors
-        if (*endptr != '\0' || endptr == log_level_str) {
-            fprintf(stderr, "ERROR: Invalid log level: %s (must be a number)\n", log_level_str);
-            return 1;
-        }
-        
-        // Check value range
-        if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
-            config.log.level = (int)level;
-        } else {
-            fprintf(stderr, "ERROR: Invalid log level: %ld (valid range: 0-5)\n", level);
-            return 1;
-        }
-    } else {
-        config.log.level = INFRA_LOG_LEVEL_NONE;  // Default to NONE
-    }
-
-    // Initialize infrastructure layer
-    err = infra_init_with_config(INFRA_INIT_ALL, &config);
-    if (err != INFRA_OK) {
-        fprintf(stderr, "Failed to initialize infrastructure layer\n");
-        return 1;
-    }
-
-    INFRA_LOG_DEBUG("Infrastructure layer initialized with log level %d", config.log.level);
-
-    // Initialize command line framework
-    err = poly_cmdline_init();
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to initialize command line framework");
-        return 1;
-    }
-    INFRA_LOG_DEBUG("Command line framework initialized");
-
     // Register commands (after infra_init)
     poly_cmd_t help_cmd = {
         .name = "help",
@@ -239,7 +246,9 @@ int main(int argc, char** argv) {
         INFRA_LOG_ERROR("Failed to register help command");
         return 1;
     }
+    INFRA_LOG_DEBUG("Help command registered");
 
+    // Register memkv command
     poly_cmd_t memkv_cmd = {
         .name = "memkv",
         .desc = "MemKV service management",
@@ -252,6 +261,7 @@ int main(int argc, char** argv) {
         INFRA_LOG_ERROR("Failed to register memkv command");
         return 1;
     }
+    INFRA_LOG_DEBUG("MemKV command registered");
 
     poly_cmd_t rinetd_cmd = {
         .name = "rinetd",

@@ -1,5 +1,6 @@
 /*
  * infra_memory.c - Memory Management Module Implementation
+ * support system mode and pool mode
  */
 
 #define INFRA_INTERNAL
