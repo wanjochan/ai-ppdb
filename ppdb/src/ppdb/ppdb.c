@@ -1,6 +1,7 @@
 #include "internal/poly/poly_cmdline.h"
 #include "internal/infra/infra_core.h"
 #include "internal/peer/peer_rinetd.h"
+#include "internal/peer/peer_memkv.h"
 // #include "internal/peer/peer_tccrun.h"
 
 // Global options
@@ -9,6 +10,87 @@ static const poly_cmd_option_t global_options[] = {
 };
 
 static const int global_option_count = sizeof(global_options) / sizeof(global_options[0]);
+
+// MemKV command options
+static const poly_cmd_option_t memkv_options[] = {
+    {"port", "Port to listen on (default: 11211)", true},
+    {"start", "Start the service", false},
+    {"stop", "Stop the service", false},
+    {"status", "Show service status", false},
+};
+
+static const int memkv_option_count = sizeof(memkv_options) / sizeof(memkv_options[0]);
+
+static infra_error_t memkv_cmd_handler(int argc, char** argv) {
+    uint16_t port = MEMKV_DEFAULT_PORT;
+
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "--port=", 7) == 0) {
+            port = (uint16_t)atoi(argv[i] + 7);
+        }
+    }
+
+    // Check for action flags
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--start") == 0) {
+            if (memkv_is_running()) {
+                infra_printf("MemKV service is already running\n");
+                return INFRA_ERROR_ALREADY_EXISTS;
+            }
+
+            infra_error_t err = memkv_init(port);
+            if (err != INFRA_OK) {
+                infra_printf("Failed to initialize MemKV service: %d\n", err);
+                return err;
+            }
+
+            err = memkv_start();
+            if (err != INFRA_OK) {
+                infra_printf("Failed to start MemKV service: %d\n", err);
+                memkv_cleanup();
+                return err;
+            }
+
+            infra_printf("MemKV service started on port %d\n", port);
+            return INFRA_OK;
+        }
+
+        if (strcmp(argv[i], "--stop") == 0) {
+            if (!memkv_is_running()) {
+                infra_printf("MemKV service is not running\n");
+                return INFRA_ERROR_NOT_FOUND;
+            }
+
+            infra_error_t err = memkv_stop();
+            if (err != INFRA_OK) {
+                infra_printf("Failed to stop MemKV service: %d\n", err);
+                return err;
+            }
+
+            err = memkv_cleanup();
+            if (err != INFRA_OK) {
+                infra_printf("Failed to cleanup MemKV service: %d\n", err);
+                return err;
+            }
+
+            infra_printf("MemKV service stopped\n");
+            return INFRA_OK;
+        }
+
+        if (strcmp(argv[i], "--status") == 0) {
+            if (memkv_is_running()) {
+                infra_printf("MemKV service is running on port %d\n", port);
+            } else {
+                infra_printf("MemKV service is not running\n");
+            }
+            return INFRA_OK;
+        }
+    }
+
+    infra_printf("Error: Please specify --start, --stop, or --status\n");
+    return INFRA_ERROR_INVALID_PARAM;
+}
 
 static infra_error_t help_cmd_handler(int argc, char** argv) {
     (void)argc;
@@ -144,27 +226,39 @@ int main(int argc, char** argv) {
     }
     INFRA_LOG_DEBUG("Command line framework initialized");
 
-    // Register commands
-    const poly_cmd_t help_cmd = {
+    // Register commands (after infra_init)
+    poly_cmd_t help_cmd = {
         .name = "help",
         .desc = "Show help information",
-        .handler = help_cmd_handler,
+        .options = NULL,
+        .option_count = 0,
+        .handler = help_cmd_handler
     };
-
     err = poly_cmdline_register(&help_cmd);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to register help command");
         return 1;
     }
-    INFRA_LOG_DEBUG("Help command registered");
 
-    // Register rinetd command
+    poly_cmd_t memkv_cmd = {
+        .name = "memkv",
+        .desc = "MemKV service management",
+        .options = memkv_options,
+        .option_count = memkv_option_count,
+        .handler = memkv_cmd_handler
+    };
+    err = poly_cmdline_register(&memkv_cmd);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to register memkv command");
+        return 1;
+    }
+
     poly_cmd_t rinetd_cmd = {
         .name = "rinetd",
         .desc = "Rinetd service management",
-        .handler = rinetd_cmd_handler,
         .options = rinetd_options,
-        .option_count = rinetd_option_count
+        .option_count = rinetd_option_count,
+        .handler = rinetd_cmd_handler
     };
     err = poly_cmdline_register(&rinetd_cmd);
     if (err != INFRA_OK) {
@@ -172,23 +266,6 @@ int main(int argc, char** argv) {
         return 1;
     }
     INFRA_LOG_DEBUG("Rinetd command registered");
-
-    // Register tccrun command
-    /*
-    poly_cmd_t tccrun_cmd = {
-        .name = "tccrun",
-        .desc = "Run C source files using TinyCC",
-        .handler = tccrun_cmd_handler,
-        .options = tccrun_options,
-        .option_count = tccrun_option_count
-    };
-    err = poly_cmdline_register(&tccrun_cmd);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register tccrun command: %d", err);
-        return 1;
-    }
-    INFRA_LOG_DEBUG("TCC run command registered");
-    */
 
     // If no command specified, show help
     if (i >= argc) {

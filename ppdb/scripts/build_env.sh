@@ -26,7 +26,7 @@ AR="${TOOLCHAIN_DIR}/cosmoar"
 OBJCOPY="${TOOLCHAIN_DIR}/objbincopy"
 
 # 验证工具链
-for tool in "$CC" "$AR" "$OBJCOPY"; do
+for tool in "$CC" "$AR"; do
     if [ ! -f "$tool" ]; then
         echo "Error: ${tool}"
         exit 1

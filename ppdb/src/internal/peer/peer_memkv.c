@@ -38,7 +38,7 @@ const int memkv_option_count = sizeof(memkv_options) / sizeof(memkv_options[0]);
 // Global Variables
 //-----------------------------------------------------------------------------
 
-static memkv_context_t g_context;
+memkv_context_t g_context = {0};
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
@@ -48,7 +48,16 @@ static infra_error_t create_listener(void);
 static infra_error_t process_command(memkv_conn_t* conn);
 static infra_error_t parse_command(memkv_conn_t* conn);
 static infra_error_t execute_command(memkv_conn_t* conn);
-static infra_error_t send_response(memkv_conn_t* conn, const char* response);
+
+//-----------------------------------------------------------------------------
+// 内部函数声明
+//-----------------------------------------------------------------------------
+static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn);
+static void destroy_connection(memkv_conn_t* conn);
+static void* handle_connection(void* arg);
+static infra_error_t process_command(memkv_conn_t* conn);
+static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn);
+static void destroy_connection(memkv_conn_t* conn);
 
 //-----------------------------------------------------------------------------
 // Helper Functions
@@ -63,12 +72,11 @@ static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn)
 
     memset(new_conn, 0, sizeof(memkv_conn_t));
     new_conn->sock = sock;
+    new_conn->current_cmd.state = CMD_STATE_INIT;
     new_conn->is_active = true;
     new_conn->buffer_used = 0;
     new_conn->buffer_read = 0;
-    new_conn->cmd.state = CMD_STATE_INIT;
-
-    infra_atomic_inc(&g_context.stats.curr_conns);
+    poly_atomic_inc(&g_context.stats.total_items);
     *conn = new_conn;
     return MEMKV_OK;
 }
@@ -77,14 +85,15 @@ static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn)
 static void destroy_connection(memkv_conn_t* conn) {
     if (!conn) return;
     
-    if (conn->cmd.key) {
-        free(conn->cmd.key);
+    if (conn->current_cmd.key) {
+        free(conn->current_cmd.key);
     }
-    if (conn->cmd.data) {
-        free(conn->cmd.data);
+    if (conn->current_cmd.data) {
+        free(conn->current_cmd.data);
     }
     
     free(conn->buffer);
+    infra_net_close(conn->sock);
     free(conn);
 }
 
@@ -101,18 +110,18 @@ memkv_item_t* create_item(const char* key, const void* value, size_t value_size,
         return NULL;
     }
 
-    item->data = malloc(value_size);
-    if (!item->data) {
+    item->value = malloc(value_size);
+    if (!item->value) {
         free(item->key);
         free(item);
         return NULL;
     }
 
-    memcpy(item->data, value, value_size);
-    item->bytes = value_size;
+    memcpy(item->value, value, value_size);
+    item->value_size = value_size;
     item->flags = flags;
     item->exptime = exptime;
-    item->cas = 0; // TODO: 生成唯一的 CAS 值
+    item->cas = 0; // TODO: Generate CAS value
     item->ctime = time(NULL);
     item->atime = item->ctime;
 
@@ -123,40 +132,40 @@ memkv_item_t* create_item(const char* key, const void* value, size_t value_size,
 void destroy_item(memkv_item_t* item) {
     if (item) {
         free(item->key);
-        free(item->data);
+        free(item->value);
         free(item);
     }
 }
 
 // Check if item is expired
 bool is_item_expired(const memkv_item_t* item) {
-    if (item->exptime == 0) {
+    if (!item || !item->exptime) {
         return false;
     }
     return time(NULL) > item->exptime;
 }
 
 // Update statistics
-static void update_stats_set(size_t value_size) {
-    infra_atomic_inc(&g_context.stats.cmd_set);
-    infra_atomic_inc(&g_context.stats.curr_items);
-    infra_atomic_inc(&g_context.stats.total_items);
-    infra_atomic_add(&g_context.stats.curr_bytes, value_size);
+void update_stats_set(size_t value_size) {
+    poly_atomic_inc(&g_context.stats.cmd_set);
+    poly_atomic_inc(&g_context.stats.curr_items);
+    poly_atomic_inc(&g_context.stats.total_items);
+    poly_atomic_add(&g_context.stats.bytes, value_size);
 }
 
-static void update_stats_get(bool hit) {
-    infra_atomic_inc(&g_context.stats.cmd_get);
+void update_stats_get(bool hit) {
+    poly_atomic_inc(&g_context.stats.cmd_get);
     if (hit) {
-        infra_atomic_inc(&g_context.stats.hits);
+        poly_atomic_inc(&g_context.stats.hits);
     } else {
-        infra_atomic_inc(&g_context.stats.misses);
+        poly_atomic_inc(&g_context.stats.misses);
     }
 }
 
-static void update_stats_delete(size_t value_size) {
-    infra_atomic_inc(&g_context.stats.cmd_delete);
-    infra_atomic_dec(&g_context.stats.curr_items);
-    infra_atomic_sub(&g_context.stats.curr_bytes, value_size);
+void update_stats_delete(size_t value_size) {
+    poly_atomic_inc(&g_context.stats.cmd_delete);
+    poly_atomic_dec(&g_context.stats.curr_items);
+    poly_atomic_sub(&g_context.stats.bytes, value_size);
 }
 
 //-----------------------------------------------------------------------------
@@ -218,16 +227,18 @@ infra_error_t memkv_init(uint16_t port) {
 }
 
 infra_error_t memkv_cleanup(void) {
-    if (g_context.running) {
-        return INFRA_ERROR_BUSY;
+    if (g_context.is_running) {
+        memkv_stop();
     }
 
     if (g_context.store) {
+        // 获取锁
         infra_mutex_lock(&g_context.store_mutex);
-        poly_hashtable_foreach(g_context.store, 
-            (poly_hashtable_iter_fn)destroy_item, NULL);
-        poly_hashtable_destroy(g_context.store);
-        g_context.store = NULL;
+
+        // 清理存储
+        poly_hashtable_clear(g_context.store);
+
+        // 释放锁
         infra_mutex_unlock(&g_context.store_mutex);
     }
 
@@ -274,37 +285,37 @@ static infra_error_t create_listener(void) {
 }
 
 infra_error_t memkv_start(void) {
-    if (g_context.running) {
-        return INFRA_ERROR_BUSY;
+    infra_error_t err;
+
+    if (g_context.is_running) {
+        return INFRA_ERROR_ALREADY_EXISTS;
     }
 
     // Create listen socket
-    infra_error_t err = create_listener();
+    err = create_listener();
     if (err != INFRA_OK) {
         return err;
     }
 
-    g_context.running = true;
+    // 标记服务已启动
+    g_context.is_running = true;
 
-    // Main loop: accept connections
-    while (g_context.running) {
+    // 开始接受连接
+    while (g_context.is_running) {
         infra_socket_t client_sock;
         infra_net_addr_t client_addr;
-        err = infra_net_accept(g_context.listen_sock, &client_sock, &client_addr);
-        
-        if (!g_context.running) {
+
+        if (!g_context.is_running) {
             break;
         }
 
+        // 接受新连接
+        err = infra_net_accept(g_context.listen_sock, &client_sock, &client_addr);
         if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                continue;
-            }
-            INFRA_LOG_ERROR("Accept failed: %d", err);
             continue;
         }
 
-        // Create connection structure
+        // 创建连接对象
         memkv_conn_t* conn;
         err = create_connection(client_sock, &conn);
         if (err != INFRA_OK) {
@@ -312,32 +323,32 @@ infra_error_t memkv_start(void) {
             continue;
         }
 
-        // Submit to thread pool for processing
+        // 提交到线程池处理
         err = infra_thread_pool_submit(g_context.pool, handle_connection, conn);
         if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to submit task: %d", err);
             destroy_connection(conn);
-            infra_net_close(client_sock);
         }
     }
 
     return INFRA_OK;
 }
 
+// 停止服务
 infra_error_t memkv_stop(void) {
-    if (!g_context.running) {
-        return INFRA_ERROR_NOT_READY;  // Service not running
+    if (!g_context.is_running) {
+        return INFRA_ERROR_NOT_FOUND;
     }
 
-    g_context.running = false;
+    g_context.is_running = false;
     infra_net_close(g_context.listen_sock);
     g_context.listen_sock = NULL;
 
     return INFRA_OK;
 }
 
+// 查询服务状态
 bool memkv_is_running(void) {
-    return g_context.running;
+    return g_context.is_running;
 }
 
 //-----------------------------------------------------------------------------
@@ -345,59 +356,63 @@ bool memkv_is_running(void) {
 //-----------------------------------------------------------------------------
 
 static infra_error_t process_command(memkv_conn_t* conn) {
-    while (conn->buffer_used > 0) {
+    if (!conn) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    while (conn->is_active) {
         // 处理命令状态机
-        switch (conn->cmd.state) {
+        switch (conn->current_cmd.state) {
             case CMD_STATE_INIT:
                 // TODO: 解析命令头
-                conn->cmd.state = CMD_STATE_READ_DATA;
+                conn->current_cmd.state = CMD_STATE_READ_DATA;
                 break;
 
             case CMD_STATE_READ_DATA:
                 // 检查是否有足够的数据
-                if (conn->buffer_used < conn->cmd.bytes) {
+                if (conn->buffer_used < conn->current_cmd.bytes) {
                     return INFRA_OK; // 需要更多数据
                 }
 
                 // 分配数据缓冲区
-                conn->cmd.data = malloc(conn->cmd.bytes);
-                if (!conn->cmd.data) {
+                conn->current_cmd.data = malloc(conn->current_cmd.bytes);
+                if (!conn->current_cmd.data) {
                     send_response(conn, "SERVER_ERROR out of memory\r\n", 28);
                     return INFRA_ERROR_NO_MEMORY;
                 }
 
                 // 复制数据
-                memcpy(conn->cmd.data, conn->buffer, 
-                    conn->cmd.bytes);
+                memcpy(conn->current_cmd.data, conn->buffer,
+                    conn->current_cmd.bytes);
 
                 // 检查结束标记
-                if (conn->buffer[conn->cmd.bytes] != '\r' ||
-                    conn->buffer[conn->cmd.bytes + 1] != '\n') {
+                if (conn->buffer[conn->current_cmd.bytes] != '\r' ||
+                    conn->buffer[conn->current_cmd.bytes + 1] != '\n') {
                     send_response(conn, "CLIENT_ERROR bad data chunk\r\n", 28);
                     return INFRA_ERROR_INVALID;
                 }
 
                 // 移动缓冲区
-                memmove(conn->buffer, 
-                    conn->buffer + conn->cmd.bytes + 2,
-                    conn->buffer_used - conn->cmd.bytes - 2);
-                conn->buffer_used -= conn->cmd.bytes + 2;
-                conn->cmd.state = CMD_STATE_EXECUTING;
+                memmove(conn->buffer,
+                    conn->buffer + conn->current_cmd.bytes + 2,
+                    conn->buffer_used - conn->current_cmd.bytes - 2);
+                conn->buffer_used -= conn->current_cmd.bytes + 2;
+                conn->current_cmd.state = CMD_STATE_EXECUTING;
                 break;
 
             case CMD_STATE_EXECUTING:
                 // TODO: 执行命令
                 // 清理命令
-                if (conn->cmd.key) {
-                    free(conn->cmd.key);
-                    conn->cmd.key = NULL;
+                if (conn->current_cmd.key) {
+                    free(conn->current_cmd.key);
+                    conn->current_cmd.key = NULL;
                 }
-                if (conn->cmd.data) {
-                    free(conn->cmd.data);
-                    conn->cmd.data = NULL;
+                if (conn->current_cmd.data) {
+                    free(conn->current_cmd.data);
+                    conn->current_cmd.data = NULL;
                 }
                 
-                conn->cmd.state = CMD_STATE_INIT;
+                conn->current_cmd.state = CMD_STATE_INIT;
                 break;
 
             default:
@@ -408,7 +423,10 @@ static infra_error_t process_command(memkv_conn_t* conn) {
     return INFRA_OK;
 }
 
-static infra_error_t send_response(memkv_conn_t* conn, const char* response, size_t len) {
+infra_error_t send_response(memkv_conn_t* conn, const char* response, size_t len) {
+    if (!conn || !response) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
     size_t sent;
     return infra_net_send(conn->sock, response, len, &sent);
 }
@@ -417,7 +435,7 @@ static void* handle_connection(void* arg) {
     memkv_conn_t* conn = (memkv_conn_t*)arg;
     infra_error_t err;
 
-    while (g_context.running) {
+    while (conn->is_active) {
         // 读取命令
         size_t bytes_read;
         err = infra_net_recv(conn->sock,

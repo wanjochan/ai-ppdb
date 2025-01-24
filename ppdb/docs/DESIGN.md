@@ -2,9 +2,9 @@
 
 ## 项目目标
 
-分布式数据库：
-- MemKV （兼容Memcached基本协议）
-- DisKV 持久化存储（兼容 Redis基本协议）
+分布式数据库（分阶段实现）：
+- MemKV （开发中，兼容Memcached基本协议）
+- DisKV （持久化存储，兼容 Redis基本协议）
 - Distributed Cluster 分布式集群
 
 ## 目录结构

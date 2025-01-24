@@ -142,21 +142,4 @@ infra_error_t infra_file_remove(const char* path);
 infra_error_t infra_file_rename(const char* old_path, const char* new_path);
 infra_error_t infra_file_exists(const char* path, bool* exists);
 
-//-----------------------------------------------------------------------------
-// Atomic Operations
-//-----------------------------------------------------------------------------
-
-typedef struct {
-    volatile int32_t value;
-} infra_atomic_t;
-
-void infra_atomic_init(infra_atomic_t* atomic, int32_t value);
-int32_t infra_atomic_get(infra_atomic_t* atomic);
-void infra_atomic_set(infra_atomic_t* atomic, int32_t value);
-int32_t infra_atomic_add(infra_atomic_t* atomic, int32_t value);
-int32_t infra_atomic_sub(infra_atomic_t* atomic, int32_t value);
-int32_t infra_atomic_inc(infra_atomic_t* atomic);
-int32_t infra_atomic_dec(infra_atomic_t* atomic);
-bool infra_atomic_cas(infra_atomic_t* atomic, int32_t expected, int32_t desired);
-
 #endif /* INFRA_PLATFORM_H */ 
