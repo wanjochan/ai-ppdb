@@ -42,14 +42,17 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
     size_t bytes_received = 0;
     size_t bytes_sent = 0;
     size_t total_sent = 0;
+    int retry_count = 0;
+    const int MAX_RETRIES = 3;
     
+    // 接收数据
     infra_error_t err = infra_net_recv(src, buffer, RINETD_BUFFER_SIZE, &bytes_received);
     if (err != INFRA_OK) {
-        if (err != INFRA_ERROR_TIMEOUT && err != INFRA_ERROR_WOULD_BLOCK) {
-            INFRA_LOG_ERROR("Failed to receive data: %d", err);
-            return err;
+        if (err == INFRA_ERROR_TIMEOUT || err == INFRA_ERROR_WOULD_BLOCK) {
+            return INFRA_ERROR_TIMEOUT;
         }
-        return INFRA_ERROR_TIMEOUT;
+        INFRA_LOG_ERROR("Failed to receive data: %d", err);
+        return err;
     }
     
     if (bytes_received == 0) {
@@ -58,29 +61,42 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
     }
 
     // 循环发送直到所有数据都发送完
-    while (total_sent < bytes_received) {
+    while (total_sent < bytes_received && retry_count < MAX_RETRIES) {
         err = infra_net_send(dst, buffer + total_sent, bytes_received - total_sent, &bytes_sent);
         if (err != INFRA_OK) {
             if (err == INFRA_ERROR_WOULD_BLOCK) {
-                // 发送缓冲区满，等待下一次循环
-                return INFRA_ERROR_WOULD_BLOCK;
+                // 发送缓冲区满，短暂等待后重试
+                infra_sleep(10);  // 等待10ms
+                retry_count++;
+                continue;
             }
-            if (err != INFRA_ERROR_TIMEOUT) {
-                INFRA_LOG_ERROR("Failed to send data: %d", err);
-                return err;
+            if (err == INFRA_ERROR_TIMEOUT) {
+                retry_count++;
+                continue;
             }
-            continue;  // 超时，继续尝试
+            INFRA_LOG_ERROR("Failed to send data: %d", err);
+            return err;
         }
         
         if (bytes_sent == 0) {
-            INFRA_LOG_ERROR("Send returned 0 bytes");
-            return INFRA_ERROR_IO;
+            retry_count++;
+            if (retry_count >= MAX_RETRIES) {
+                INFRA_LOG_ERROR("Send failed after %d retries", MAX_RETRIES);
+                return INFRA_ERROR_IO;
+            }
+            continue;
         }
 
         total_sent += bytes_sent;
+        retry_count = 0;  // 重置重试计数
     }
 
-    INFRA_LOG_INFO("%s: %zu bytes", direction, total_sent);
+    if (total_sent < bytes_received) {
+        INFRA_LOG_ERROR("%s: Failed to send all data after %d retries", direction, MAX_RETRIES);
+        return INFRA_ERROR_IO;
+    }
+
+    INFRA_LOG_DEBUG("%s: %zu bytes forwarded", direction, total_sent);
     return INFRA_OK;
 }
 
@@ -107,6 +123,10 @@ static void* handle_connection(void* arg) {
     infra_net_set_nonblock(conn->client, true);
     infra_net_set_nonblock(conn->server, true);
 
+    // 设置socket超时（30秒）
+    infra_net_set_timeout(conn->client, 30000);  // 30秒 = 30000毫秒
+    infra_net_set_timeout(conn->server, 30000);
+
     // 初始化缓冲区状态
     buffer_state_t c2s = {0};  // 客户端到服务器
     buffer_state_t s2c = {0};  // 服务器到客户端
@@ -114,172 +134,82 @@ static void* handle_connection(void* arg) {
     // 连接状态
     bool client_closed = false;
     bool server_closed = false;
+    int idle_count = 0;
+    const int MAX_IDLE = 600;  // 最大空闲次数（约60秒）
 
-    while (g_context.running) {
-        fd_set readfds, writefds, exceptfds;
+    while (g_context.running && !client_closed && !server_closed && idle_count < MAX_IDLE) {
+        fd_set readfds, writefds;
         FD_ZERO(&readfds);
         FD_ZERO(&writefds);
-        FD_ZERO(&exceptfds);
 
-        // 设置异常监控
-        FD_SET(infra_net_get_fd(conn->client), &exceptfds);
-        FD_SET(infra_net_get_fd(conn->server), &exceptfds);
-
-        // 根据连接状态和缓冲区状态设置fd
+        // 根据缓冲区状态设置fd
         if (!client_closed && !c2s.has_pending_data) {
-            FD_SET(infra_net_get_fd(conn->client), &readfds);  // 客户端可读
+            FD_SET(infra_net_get_fd(conn->client), &readfds);
         }
         if (!server_closed && !s2c.has_pending_data) {
-            FD_SET(infra_net_get_fd(conn->server), &readfds);  // 服务器可读
+            FD_SET(infra_net_get_fd(conn->server), &readfds);
         }
         if (!server_closed && c2s.has_pending_data) {
-            FD_SET(infra_net_get_fd(conn->server), &writefds); // 服务器可写
+            FD_SET(infra_net_get_fd(conn->server), &writefds);
         }
         if (!client_closed && s2c.has_pending_data) {
-            FD_SET(infra_net_get_fd(conn->client), &writefds); // 客户端可写
+            FD_SET(infra_net_get_fd(conn->client), &writefds);
         }
 
-        // 如果两个方向都关闭了，退出
-        if (client_closed && server_closed) {
-            INFRA_LOG_DEBUG("Both directions closed");
-            break;
-        }
-
-        struct timeval tv = {0, 100000};  // 100ms超时
+        // 设置超时
+        struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};  // 100ms
         int max_fd = infra_net_get_fd(conn->client);
         if (infra_net_get_fd(conn->server) > max_fd) {
             max_fd = infra_net_get_fd(conn->server);
         }
 
-        int ready = select(max_fd + 1, &readfds, &writefds, &exceptfds, &tv);
+        int ready = select(max_fd + 1, &readfds, &writefds, NULL, &tv);
         if (ready < 0) {
-            INFRA_LOG_ERROR("Select error");
+            if (errno == EINTR) continue;
+            INFRA_LOG_ERROR("Select failed: %d", errno);
             break;
         }
+        
         if (ready == 0) {
+            idle_count++;
             continue;
         }
-
-        // 检查异常
-        if (FD_ISSET(infra_net_get_fd(conn->client), &exceptfds) ||
-            FD_ISSET(infra_net_get_fd(conn->server), &exceptfds)) {
-            INFRA_LOG_ERROR("Socket exception detected");
-            break;
-        }
+        
+        idle_count = 0;  // 重置空闲计数
 
         // 处理客户端到服务器的数据
-        if (!client_closed && !c2s.has_pending_data && 
-            FD_ISSET(infra_net_get_fd(conn->client), &readfds)) {
-            size_t bytes_received = 0;
-            infra_error_t err = infra_net_recv(conn->client, c2s.buffer, RINETD_BUFFER_SIZE, &bytes_received);
-            
-            if (err == INFRA_ERROR_CLOSED || bytes_received == 0) {
-                INFRA_LOG_DEBUG("Client closed connection");
+        if (!client_closed && FD_ISSET(infra_net_get_fd(conn->client), &readfds)) {
+            infra_error_t err = forward_data(conn->client, conn->server, c2s.buffer, "C->S");
+            if (err == INFRA_ERROR_CLOSED) {
                 client_closed = true;
-                continue;
-            }
-            
-            if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT && err != INFRA_ERROR_WOULD_BLOCK) {
-                INFRA_LOG_DEBUG("Client receive error: %d", err);
-                client_closed = true;
-                continue;
-            }
-            
-            if (bytes_received > 0) {
-                c2s.write_pos = 0;
-                c2s.write_len = bytes_received;
-                c2s.has_pending_data = true;
-                INFRA_LOG_DEBUG("Received %zu bytes from client", bytes_received);
+            } else if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
+                INFRA_LOG_ERROR("Forward C->S failed: %d", err);
+                break;
             }
         }
 
         // 处理服务器到客户端的数据
-        if (!server_closed && !s2c.has_pending_data && 
-            FD_ISSET(infra_net_get_fd(conn->server), &readfds)) {
-            size_t bytes_received = 0;
-            infra_error_t err = infra_net_recv(conn->server, s2c.buffer, RINETD_BUFFER_SIZE, &bytes_received);
-            
-            if (err == INFRA_ERROR_CLOSED || bytes_received == 0) {
-                INFRA_LOG_DEBUG("Server closed connection");
+        if (!server_closed && FD_ISSET(infra_net_get_fd(conn->server), &readfds)) {
+            infra_error_t err = forward_data(conn->server, conn->client, s2c.buffer, "S->C");
+            if (err == INFRA_ERROR_CLOSED) {
                 server_closed = true;
-                continue;
-            }
-            
-            if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT && err != INFRA_ERROR_WOULD_BLOCK) {
-                INFRA_LOG_DEBUG("Server receive error: %d", err);
-                server_closed = true;
-                continue;
-            }
-            
-            if (bytes_received > 0) {
-                s2c.write_pos = 0;
-                s2c.write_len = bytes_received;
-                s2c.has_pending_data = true;
-                INFRA_LOG_DEBUG("Received %zu bytes from server", bytes_received);
-            }
-        }
-
-        // 发送客户端到服务器的数据
-        if (!server_closed && c2s.has_pending_data && 
-            FD_ISSET(infra_net_get_fd(conn->server), &writefds)) {
-            size_t bytes_sent = 0;
-            infra_error_t err = infra_net_send(conn->server, 
-                c2s.buffer + c2s.write_pos, c2s.write_len, &bytes_sent);
-            
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                continue;
-            }
-            
-            if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
-                INFRA_LOG_DEBUG("Server send error: %d", err);
-                server_closed = true;
-                continue;
-            }
-            
-            if (bytes_sent > 0) {
-                c2s.write_pos += bytes_sent;
-                c2s.write_len -= bytes_sent;
-                if (c2s.write_len == 0) {
-                    c2s.has_pending_data = false;
-                    INFRA_LOG_INFO("Client to server: %zu bytes", bytes_sent);
-                }
-            }
-        }
-
-        // 发送服务器到客户端的数据
-        if (!client_closed && s2c.has_pending_data && 
-            FD_ISSET(infra_net_get_fd(conn->client), &writefds)) {
-            size_t bytes_sent = 0;
-            infra_error_t err = infra_net_send(conn->client, 
-                s2c.buffer + s2c.write_pos, s2c.write_len, &bytes_sent);
-            
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                continue;
-            }
-            
-            if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
-                INFRA_LOG_DEBUG("Client send error: %d", err);
-                client_closed = true;
-                continue;
-            }
-            
-            if (bytes_sent > 0) {
-                s2c.write_pos += bytes_sent;
-                s2c.write_len -= bytes_sent;
-                if (s2c.write_len == 0) {
-                    s2c.has_pending_data = false;
-                    INFRA_LOG_INFO("Server to client: %zu bytes", bytes_sent);
-                }
+            } else if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
+                INFRA_LOG_ERROR("Forward S->C failed: %d", err);
+                break;
             }
         }
     }
 
     // 清理连接
-    INFRA_LOG_DEBUG("Cleaning up connection");
+    INFRA_LOG_DEBUG("Cleaning up connection after %s", 
+        idle_count >= MAX_IDLE ? "idle timeout" : "normal close");
+    
     if (conn->client) {
+        infra_net_shutdown(conn->client, INFRA_NET_SHUTDOWN_BOTH);
         infra_net_close(conn->client);
     }
     if (conn->server) {
+        infra_net_shutdown(conn->server, INFRA_NET_SHUTDOWN_BOTH);
         infra_net_close(conn->server);
     }
     free(conn);
