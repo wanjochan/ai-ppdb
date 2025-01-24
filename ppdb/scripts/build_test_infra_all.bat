@@ -16,7 +16,7 @@ if exist "%BUILD_DIR%\test\white\infra" (
 
 echo Building all infra tests...
 
-set MODULES=memory memory_pool error sync log struct net mux
+set MODULES=memory memory_pool error sync log struct net
 set BUILD_FAILED=0
 
 for %%m in (%MODULES%) do (

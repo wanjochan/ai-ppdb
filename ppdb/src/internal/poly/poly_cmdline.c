@@ -23,7 +23,12 @@ infra_error_t poly_cmdline_init(void)
 }
 
 infra_error_t poly_cmdline_cleanup(void) {
-    memset(&g_commands, 0, sizeof(g_commands));
+    if (g_commands) {
+        infra_free(g_commands);
+        g_commands = NULL;
+    }
+    g_command_count = 0;
+    g_command_capacity = 0;
     return INFRA_OK;
 }
 
