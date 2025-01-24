@@ -212,8 +212,12 @@ static infra_error_t handle_get(memkv_conn_t* conn) {
     infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
     if (err == INFRA_OK && item) {
         err = send_value_response(conn, item);
+        if (err == INFRA_OK) {
+            err = send_response(conn, "END\r\n", 5);
+        }
         update_stats_get(true);
     } else {
+        err = send_response(conn, "END\r\n", 5);
         update_stats_get(false);
     }
     return err;
@@ -225,8 +229,12 @@ static infra_error_t handle_gets(memkv_conn_t* conn) {
     infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
     if (err == INFRA_OK && item) {
         err = send_value_response(conn, item);
+        if (err == INFRA_OK) {
+            err = send_response(conn, "END\r\n", 5);
+        }
         update_stats_get(true);
     } else {
+        err = send_response(conn, "END\r\n", 5);
         update_stats_get(false);
     }
     return err;

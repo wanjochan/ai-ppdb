@@ -135,7 +135,7 @@ memkv_item_t* create_item(const char* key, const void* value, size_t value_size,
     memcpy(item->value, value, value_size);
     item->value_size = value_size;
     item->flags = flags;
-    item->exptime = exptime;
+    item->exptime = exptime ? (time(NULL) + exptime) : 0;
     item->cas = 0; // TODO: Generate CAS value
     item->ctime = time(NULL);
     item->atime = item->ctime;
@@ -313,7 +313,7 @@ static infra_error_t create_listener(void) {
 
     // Bind address
     infra_net_addr_t addr = {
-        .host = "0.0.0.0",  // Explicitly bind all addresses
+        .host = "127.0.0.1",  // TODO g_context.host (oh no, need multiple config of [host,port]
         .port = g_context.port
     };
     
@@ -439,35 +439,299 @@ bool memkv_is_running(void) {
 // Connection Handling
 //-----------------------------------------------------------------------------
 
+static infra_error_t parse_command(memkv_conn_t* conn) {
+    if (!conn || !conn->buffer) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 查找命令结束符 \r\n
+    char* cmd_end = strstr(conn->buffer, "\r\n");
+    if (!cmd_end) {
+        return INFRA_ERROR_WOULD_BLOCK; // 需要更多数据
+    }
+
+    // 解析命令
+    char cmd[16] = {0};
+    char key[MEMKV_MAX_KEY_SIZE] = {0};
+    uint32_t flags = 0;
+    uint32_t exptime = 0;
+    size_t bytes = 0;
+    bool noreply = false;
+
+    // 临时将\r\n替换为\0以便解析
+    *cmd_end = '\0';
+    char* cmd_str = conn->buffer;
+    char* saveptr;
+    char* token = strtok_r(cmd_str, " ", &saveptr);
+    if (!token) {
+        *cmd_end = '\r';
+        return INFRA_ERROR_INVALID;
+    }
+    strncpy(cmd, token, sizeof(cmd) - 1);
+
+    // 设置命令类型
+    if (strcasecmp(cmd, "set") == 0) {
+        conn->current_cmd.type = CMD_SET;
+        // set <key> <flags> <exptime> <bytes> [noreply]\r\n
+        token = strtok_r(NULL, " ", &saveptr); // key
+        if (!token) goto parse_error;
+        strncpy(key, token, sizeof(key) - 1);
+
+        token = strtok_r(NULL, " ", &saveptr); // flags
+        if (!token) goto parse_error;
+        flags = atoi(token);
+
+        token = strtok_r(NULL, " ", &saveptr); // exptime
+        if (!token) goto parse_error;
+        exptime = atoi(token);
+
+        token = strtok_r(NULL, " ", &saveptr); // bytes
+        if (!token) goto parse_error;
+        bytes = atoi(token);
+
+        token = strtok_r(NULL, " ", &saveptr); // noreply (optional)
+        if (token && strcmp(token, "noreply") == 0) {
+            noreply = true;
+        }
+    } else if (strcasecmp(cmd, "get") == 0) {
+        conn->current_cmd.type = CMD_GET;
+        // get <key>\r\n
+        token = strtok_r(NULL, " ", &saveptr); // key
+        if (!token) goto parse_error;
+        strncpy(key, token, sizeof(key) - 1);
+    } else if (strcasecmp(cmd, "delete") == 0) {
+        conn->current_cmd.type = CMD_DELETE;
+        // delete <key> [noreply]\r\n
+        token = strtok_r(NULL, " ", &saveptr); // key
+        if (!token) goto parse_error;
+        strncpy(key, token, sizeof(key) - 1);
+
+        token = strtok_r(NULL, " ", &saveptr); // noreply (optional)
+        if (token && strcmp(token, "noreply") == 0) {
+            noreply = true;
+        }
+    } else if (strcasecmp(cmd, "flush_all") == 0) {
+        conn->current_cmd.type = CMD_FLUSH;
+        // flush_all [exptime] [noreply]\r\n
+        token = strtok_r(NULL, " ", &saveptr); // exptime (optional)
+        if (token) {
+            exptime = atoi(token);
+            token = strtok_r(NULL, " ", &saveptr); // noreply (optional)
+            if (token && strcmp(token, "noreply") == 0) {
+                noreply = true;
+            }
+        }
+    } else {
+        goto parse_error;
+    }
+
+    // 保存命令参数
+    conn->current_cmd.key = key[0] ? strdup(key) : NULL;
+    conn->current_cmd.key_len = key[0] ? strlen(key) : 0;
+    conn->current_cmd.flags = flags;
+    conn->current_cmd.exptime = exptime;
+    conn->current_cmd.bytes = bytes;
+    conn->current_cmd.noreply = noreply;
+
+    // 移动缓冲区指针
+    size_t cmd_len = cmd_end - conn->buffer + 2;
+    memmove(conn->buffer, conn->buffer + cmd_len, 
+            conn->buffer_used - cmd_len);
+    conn->buffer_used -= cmd_len;
+
+    *cmd_end = '\r'; // 恢复\r\n
+    return INFRA_OK;
+
+parse_error:
+    *cmd_end = '\r';
+    return INFRA_ERROR_INVALID;
+}
+
+static infra_error_t execute_command(memkv_conn_t* conn) {
+    if (!conn) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    char response[MEMKV_BUFFER_SIZE];
+    size_t response_len = 0;
+    infra_error_t err;
+
+    switch (conn->current_cmd.type) {
+        case CMD_SET: {
+            // 创建新项
+            memkv_item_t* item = create_item(conn->current_cmd.key, 
+                                           conn->current_cmd.data,
+                                           conn->current_cmd.bytes,
+                                           conn->current_cmd.flags,
+                                           conn->current_cmd.exptime);
+            if (!item) {
+                response_len = snprintf(response, sizeof(response), 
+                                     "SERVER_ERROR out of memory\r\n");
+                return send_response(conn, response, response_len);
+            }
+            
+            // 先删除旧项
+            void* old_value = NULL;
+            if (poly_hashtable_get(g_context.store, item->key, &old_value) == INFRA_OK) {
+                memkv_item_t* old_item = (memkv_item_t*)old_value;
+                poly_hashtable_remove(g_context.store, item->key);
+                destroy_item(old_item);
+            }
+            
+            // 存储到哈希表
+            err = poly_hashtable_put(g_context.store, item->key, item);
+            if (err != INFRA_OK) {
+                response_len = snprintf(response, sizeof(response), 
+                                     "SERVER_ERROR out of memory\r\n");
+                destroy_item(item);
+                return send_response(conn, response, response_len);
+            }
+
+            update_stats_set(conn->current_cmd.bytes);
+            if (!conn->current_cmd.noreply) {
+                response_len = snprintf(response, sizeof(response), 
+                                     "STORED\r\n");
+                return send_response(conn, response, response_len);
+            }
+            break;
+        }
+        case CMD_GET: {
+            // 从哈希表获取
+            void* value = NULL;
+            err = poly_hashtable_get(g_context.store, conn->current_cmd.key, &value);
+            if (err != INFRA_OK) {
+                update_stats_get(false);
+                response_len = snprintf(response, sizeof(response), "END\r\n");
+                return send_response(conn, response, response_len);
+            }
+
+            memkv_item_t* item = (memkv_item_t*)value;
+            if (is_item_expired(item)) {
+                // 删除过期项
+                poly_hashtable_remove(g_context.store, item->key);
+                destroy_item(item);
+                update_stats_get(false);
+                response_len = snprintf(response, sizeof(response), "END\r\n");
+                return send_response(conn, response, response_len);
+            }
+
+            // 更新访问时间
+            item->atime = time(NULL);
+            update_stats_get(true);
+
+            // 构建完整响应
+            char* full_response = malloc(MEMKV_BUFFER_SIZE);
+            if (!full_response) {
+                return MEMKV_ERROR_NO_MEMORY;
+            }
+
+            // 写入响应头
+            response_len = snprintf(full_response, MEMKV_BUFFER_SIZE,
+                "VALUE %s %u %zu\r\n",
+                item->key, item->flags, item->value_size);
+
+            // 写入值
+            memcpy(full_response + response_len, item->value, item->value_size);
+            response_len += item->value_size;
+
+            // 写入结束标记
+            memcpy(full_response + response_len, "\r\nEND\r\n", 7);
+            response_len += 7;
+
+            // 发送完整响应
+            err = send_response(conn, full_response, response_len);
+            free(full_response);
+            return err;
+        }
+        case CMD_DELETE: {
+            // 从哈希表删除
+            void* value = NULL;
+            err = poly_hashtable_get(g_context.store, conn->current_cmd.key, &value);
+            if (err != INFRA_OK) {
+                if (!conn->current_cmd.noreply) {
+                    response_len = snprintf(response, sizeof(response), 
+                                         "NOT_FOUND\r\n");
+                    return send_response(conn, response, response_len);
+                }
+                break;
+            }
+
+            memkv_item_t* item = (memkv_item_t*)value;
+            if (is_item_expired(item)) {
+                if (!conn->current_cmd.noreply) {
+                    response_len = snprintf(response, sizeof(response), 
+                                         "NOT_FOUND\r\n");
+                    return send_response(conn, response, response_len);
+                }
+                break;
+            }
+
+            poly_hashtable_remove(g_context.store, conn->current_cmd.key);
+            update_stats_delete(item->value_size);
+            destroy_item(item);
+
+            if (!conn->current_cmd.noreply) {
+                response_len = snprintf(response, sizeof(response), 
+                                     "DELETED\r\n");
+                return send_response(conn, response, response_len);
+            }
+            break;
+        }
+        case CMD_FLUSH: {
+            // 清空所有数据
+            poly_hashtable_clear(g_context.store);
+            if (!conn->current_cmd.noreply) {
+                response_len = snprintf(response, sizeof(response), 
+                                     "OK\r\n");
+                return send_response(conn, response, response_len);
+            }
+            break;
+        }
+        default:
+            response_len = snprintf(response, sizeof(response), 
+                                 "ERROR\r\n");
+            return send_response(conn, response, response_len);
+    }
+
+    return INFRA_OK;
+}
+
 static infra_error_t process_command(memkv_conn_t* conn) {
     if (!conn) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    infra_error_t err;
     while (conn->is_active) {
         // 处理命令状态机
         switch (conn->current_cmd.state) {
-            case CMD_STATE_INIT:
-                // TODO: 解析命令头
+            case CMD_STATE_INIT: {
+                // 解析命令
+                err = parse_command(conn);
+                if (err != INFRA_OK) {
+                    if (err == INFRA_ERROR_WOULD_BLOCK) {
+                        return INFRA_OK; // 需要更多数据
+                    }
+                    send_response(conn, "ERROR\r\n", 7);
+                    return err;
+                }
                 conn->current_cmd.state = CMD_STATE_READ_DATA;
                 break;
+            }
 
-            case CMD_STATE_READ_DATA:
+            case CMD_STATE_READ_DATA: {
+                // 对于不需要数据的命令直接执行
+                if (conn->current_cmd.type == CMD_GET || 
+                    conn->current_cmd.type == CMD_DELETE ||
+                    conn->current_cmd.type == CMD_FLUSH) {
+                    conn->current_cmd.state = CMD_STATE_EXECUTING;
+                    break;
+                }
+
                 // 检查是否有足够的数据
-                if (conn->buffer_used < conn->current_cmd.bytes) {
+                if (conn->buffer_used < conn->current_cmd.bytes + 2) {
                     return INFRA_OK; // 需要更多数据
                 }
-
-                // 分配数据缓冲区
-                conn->current_cmd.data = malloc(conn->current_cmd.bytes);
-                if (!conn->current_cmd.data) {
-                    send_response(conn, "SERVER_ERROR out of memory\r\n", 28);
-                    return INFRA_ERROR_NO_MEMORY;
-                }
-
-                // 复制数据
-                memcpy(conn->current_cmd.data, conn->buffer,
-                    conn->current_cmd.bytes);
 
                 // 检查结束标记
                 if (conn->buffer[conn->current_cmd.bytes] != '\r' ||
@@ -476,6 +740,15 @@ static infra_error_t process_command(memkv_conn_t* conn) {
                     return INFRA_ERROR_INVALID;
                 }
 
+                // 分配并复制数据
+                conn->current_cmd.data = malloc(conn->current_cmd.bytes);
+                if (!conn->current_cmd.data) {
+                    send_response(conn, "SERVER_ERROR out of memory\r\n", 28);
+                    return INFRA_ERROR_NO_MEMORY;
+                }
+                memcpy(conn->current_cmd.data, conn->buffer, 
+                       conn->current_cmd.bytes);
+
                 // 移动缓冲区
                 memmove(conn->buffer,
                     conn->buffer + conn->current_cmd.bytes + 2,
@@ -483,9 +756,15 @@ static infra_error_t process_command(memkv_conn_t* conn) {
                 conn->buffer_used -= conn->current_cmd.bytes + 2;
                 conn->current_cmd.state = CMD_STATE_EXECUTING;
                 break;
+            }
 
-            case CMD_STATE_EXECUTING:
-                // TODO: 执行命令
+            case CMD_STATE_EXECUTING: {
+                // 执行命令
+                err = execute_command(conn);
+                if (err != INFRA_OK) {
+                    return err;
+                }
+
                 // 清理命令
                 if (conn->current_cmd.key) {
                     free(conn->current_cmd.key);
@@ -498,6 +777,7 @@ static infra_error_t process_command(memkv_conn_t* conn) {
                 
                 conn->current_cmd.state = CMD_STATE_INIT;
                 break;
+            }
 
             default:
                 return INFRA_ERROR_INVALID;
@@ -511,36 +791,38 @@ infra_error_t send_response(memkv_conn_t* conn, const char* response, size_t len
     if (!conn || !response) {
         return INFRA_ERROR_INVALID_PARAM;
     }
+
     size_t sent;
-    return infra_net_send(conn->sock, response, len, &sent);
+    infra_error_t err = infra_net_send(conn->sock, response, len, &sent);
+    if (err != INFRA_OK || sent != len) {
+        conn->is_active = false;
+        return err;
+    }
+    return INFRA_OK;
 }
 
 static void* handle_connection(void* arg) {
+    if (!arg) {
+        return NULL;
+    }
+
     memkv_conn_t* conn = (memkv_conn_t*)arg;
     infra_error_t err;
-
-    INFRA_LOG_DEBUG("New connection accepted");
 
     while (conn->is_active) {
         // 读取命令
         size_t bytes_read;
-        err = infra_net_recv(conn->sock,
+        err = infra_net_recv(conn->sock, 
                             conn->buffer + conn->buffer_used,
                             MEMKV_BUFFER_SIZE - conn->buffer_used,
                             &bytes_read);
-
         if (err != INFRA_OK) {
             if (err == INFRA_ERROR_WOULD_BLOCK) {
-                // 没有数据可读，等待一下
-                infra_sleep(1);
+                infra_platform_sleep(1);
                 continue;
             }
-            INFRA_LOG_ERROR("Failed to receive data: %d", err);
             break;
-        }
-
-        if (bytes_read == 0) {
-            INFRA_LOG_DEBUG("Connection closed by peer");
+        } else if (bytes_read == 0) {
             break;
         }
 
@@ -548,17 +830,12 @@ static void* handle_connection(void* arg) {
 
         // 处理命令
         err = process_command(conn);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                // 需要更多数据
-                continue;
-            }
-            INFRA_LOG_ERROR("Failed to process command: %d", err);
+        if (err != INFRA_OK && err != INFRA_ERROR_WOULD_BLOCK) {
             break;
         }
     }
 
-    INFRA_LOG_DEBUG("Connection closed");
+    // 清理连接
     destroy_connection(conn);
     return NULL;
 }
@@ -645,14 +922,4 @@ infra_error_t memkv_cmd_handler(int argc, char** argv) {
 
 const memkv_stats_t* memkv_get_stats(void) {
     return &g_context.stats;
-}
-
-static infra_error_t parse_command(memkv_conn_t* conn) {
-    // TODO: Implement command parsing
-    return INFRA_OK;
-}
-
-static infra_error_t execute_command(memkv_conn_t* conn) {
-    // TODO: Implement command execution
-    return INFRA_OK;
 }
