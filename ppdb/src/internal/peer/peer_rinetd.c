@@ -21,8 +21,9 @@ const int rinetd_option_count = sizeof(rinetd_options) / sizeof(rinetd_options[0
 
 static struct {
     bool running;
-    rinetd_rule_t rule;
-    infra_socket_t listener;
+    rinetd_rule_t rules[RINETD_MAX_RULES];  // 规则数组
+    int rule_count;                          // 当前规则数量
+    infra_socket_t listeners[RINETD_MAX_RULES];  // 每个规则对应一个监听器
     infra_thread_pool_t* pool;
 } g_context = {0};
 
@@ -31,7 +32,7 @@ static struct {
 //-----------------------------------------------------------------------------
 
 static void* handle_connection(void* arg);
-static infra_error_t create_listener(void);
+static infra_error_t create_listener(int rule_index);
 
 //-----------------------------------------------------------------------------
 // Helper Functions
@@ -252,15 +253,23 @@ infra_error_t rinetd_cleanup(void) {
         g_context.pool = NULL;
     }
 
-    if (g_context.listener) {
-        infra_net_close(g_context.listener);
-        g_context.listener = NULL;
+    // 清理所有监听器
+    for (int i = 0; i < g_context.rule_count; i++) {
+        if (g_context.listeners[i]) {
+            infra_net_close(g_context.listeners[i]);
+            g_context.listeners[i] = NULL;
+        }
     }
+    g_context.rule_count = 0;
 
     return INFRA_OK;
 }
 
-static infra_error_t create_listener(void) {
+static infra_error_t create_listener(int rule_index) {
+    if (rule_index < 0 || rule_index >= g_context.rule_count) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
     // 创建监听socket
     infra_socket_t listener = NULL;
     infra_config_t config = {0};
@@ -278,8 +287,8 @@ static infra_error_t create_listener(void) {
 
     // 绑定地址
     infra_net_addr_t addr = {0};
-    addr.host = g_context.rule.src_addr;
-    addr.port = g_context.rule.src_port;
+    addr.host = g_context.rules[rule_index].src_addr;
+    addr.port = g_context.rules[rule_index].src_port;
     err = infra_net_bind(listener, &addr);
     if (err != INFRA_OK) {
         infra_net_close(listener);
@@ -293,7 +302,7 @@ static infra_error_t create_listener(void) {
         return err;
     }
 
-    g_context.listener = listener;
+    g_context.listeners[rule_index] = listener;
     return INFRA_OK;
 }
 
@@ -302,79 +311,119 @@ infra_error_t rinetd_start(void) {
         return INFRA_ERROR_BUSY;
     }
 
-    // 创建监听器
-    infra_error_t err = create_listener();
-    if (err != INFRA_OK) {
-        return err;
+    // 检查是否有规则
+    if (g_context.rule_count == 0) {
+        INFRA_LOG_ERROR("No rules configured");
+        return INFRA_ERROR_INVALID_STATE;
+    }
+
+    // 为每个规则创建监听器
+    for (int i = 0; i < g_context.rule_count; i++) {
+        infra_error_t err = create_listener(i);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to create listener for rule %d: %d", i, err);
+            // 清理已创建的监听器
+            for (int j = 0; j < i; j++) {
+                infra_net_close(g_context.listeners[j]);
+                g_context.listeners[j] = NULL;
+            }
+            return err;
+        }
     }
 
     // 设置运行标志
     g_context.running = true;
 
     // 在前台运行
-    INFRA_LOG_INFO("Starting rinetd service in foreground");
+    INFRA_LOG_INFO("Starting rinetd service in foreground with %d rules", g_context.rule_count);
     while (g_context.running) {
-        // 等待连接
-        infra_socket_t client = NULL;
-        infra_net_addr_t client_addr = {0};
-        err = infra_net_accept(g_context.listener, &client, &client_addr);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                continue;
-            }
-            INFRA_LOG_ERROR("Failed to accept connection: %d", err);
+        // 等待所有监听器的连接
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        int max_fd = -1;
+
+        // 设置所有监听器的文件描述符
+        for (int i = 0; i < g_context.rule_count; i++) {
+            int fd = infra_net_get_fd(g_context.listeners[i]);
+            FD_SET(fd, &readfds);
+            if (fd > max_fd) max_fd = fd;
+        }
+
+        // 设置超时
+        struct timeval tv = {.tv_sec = 1, .tv_usec = 0};  // 1秒超时
+        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            INFRA_LOG_ERROR("Select failed: %d", errno);
             break;
         }
+        if (ready == 0) continue;  // 超时，继续循环
 
-        INFRA_LOG_INFO("Accepted connection from %s:%d", 
-            client_addr.host, client_addr.port);
+        // 检查每个监听器
+        for (int i = 0; i < g_context.rule_count; i++) {
+            int fd = infra_net_get_fd(g_context.listeners[i]);
+            if (!FD_ISSET(fd, &readfds)) continue;
 
-        // 创建服务器连接
-        infra_socket_t server = NULL;
-        infra_config_t config = {0};
-        err = infra_net_create(&server, false, &config);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to create server socket: %d", err);
-            infra_net_close(client);
-            continue;
-        }
+            // 接受连接
+            infra_socket_t client = NULL;
+            infra_net_addr_t client_addr = {0};
+            infra_error_t err = infra_net_accept(g_context.listeners[i], &client, &client_addr);
+            if (err != INFRA_OK) {
+                if (err == INFRA_ERROR_WOULD_BLOCK) continue;
+                INFRA_LOG_ERROR("Failed to accept connection: %d", err);
+                continue;
+            }
 
-        // 连接到目标服务器
-        infra_net_addr_t addr = {0};
-        addr.host = g_context.rule.dst_addr;
-        addr.port = g_context.rule.dst_port;
-        err = infra_net_connect(&addr, &server, &config);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to connect to server: %d", err);
-            infra_net_close(client);
-            infra_net_close(server);
-            continue;
-        }
+            INFRA_LOG_INFO("Accepted connection from %s:%d for rule %d", 
+                client_addr.host, client_addr.port, i);
 
-        INFRA_LOG_INFO("Connected to server %s:%d", 
-            addr.host, addr.port);
+            // 创建服务器连接
+            infra_socket_t server = NULL;
+            infra_config_t config = {0};
+            err = infra_net_create(&server, false, &config);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to create server socket: %d", err);
+                infra_net_close(client);
+                continue;
+            }
 
-        // 创建连接结构
-        rinetd_conn_t* conn = malloc(sizeof(rinetd_conn_t));
-        if (!conn) {
-            INFRA_LOG_ERROR("Failed to allocate connection");
-            infra_net_close(client);
-            infra_net_close(server);
-            continue;
-        }
+            // 连接到目标服务器
+            infra_net_addr_t addr = {0};
+            addr.host = g_context.rules[i].dst_addr;
+            addr.port = g_context.rules[i].dst_port;
+            err = infra_net_connect(&addr, &server, &config);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to connect to server: %d", err);
+                infra_net_close(client);
+                infra_net_close(server);
+                continue;
+            }
 
-        conn->client = client;
-        conn->server = server;
-        conn->rule = &g_context.rule;
+            INFRA_LOG_INFO("Connected to server %s:%d for rule %d", 
+                addr.host, addr.port, i);
 
-        // 提交到线程池
-        err = infra_thread_pool_submit(g_context.pool, handle_connection, conn);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to submit connection to thread pool: %d", err);
-            infra_net_close(client);
-            infra_net_close(server);
-            free(conn);
-            continue;
+            // 创建连接结构
+            rinetd_conn_t* conn = malloc(sizeof(rinetd_conn_t));
+            if (!conn) {
+                INFRA_LOG_ERROR("Failed to allocate connection");
+                infra_net_close(client);
+                infra_net_close(server);
+                continue;
+            }
+
+            conn->client = client;
+            conn->server = server;
+            conn->rule = &g_context.rules[i];
+
+            // 提交到线程池
+            err = infra_thread_pool_submit(g_context.pool, handle_connection, conn);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to submit connection to thread pool: %d", err);
+                infra_net_close(client);
+                infra_net_close(server);
+                free(conn);
+                continue;
+            }
         }
     }
 
@@ -388,10 +437,14 @@ infra_error_t rinetd_stop(void) {
 
     g_context.running = false;
     
-    if (g_context.listener) {
-        infra_net_close(g_context.listener);
-        g_context.listener = NULL;
+    // 清理所有监听器
+    for (int i = 0; i < g_context.rule_count; i++) {
+        if (g_context.listeners[i]) {
+            infra_net_close(g_context.listeners[i]);
+            g_context.listeners[i] = NULL;
+        }
     }
+    g_context.rule_count = 0;
 
     return INFRA_OK;
 }
@@ -473,6 +526,9 @@ infra_error_t rinetd_load_config(const char* path) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    // 重置规则计数
+    g_context.rule_count = 0;
+
     // 尝试加载配置文件
     FILE* fp = fopen(path, "r");
     if (fp == NULL) {
@@ -482,7 +538,7 @@ infra_error_t rinetd_load_config(const char* path) {
 
     // 解析配置文件
     char line[256];
-    while (fgets(line, sizeof(line), fp)) {
+    while (fgets(line, sizeof(line), fp) && g_context.rule_count < RINETD_MAX_RULES) {
         // 跳过注释和空行
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') {
             continue;
@@ -495,17 +551,27 @@ infra_error_t rinetd_load_config(const char* path) {
         int dst_port = 0;
 
         if (sscanf(line, "%s %d %s %d", src_addr, &src_port, dst_addr, &dst_port) == 4) {
-            strncpy(g_context.rule.src_addr, src_addr, RINETD_MAX_ADDR_LEN - 1);
-            g_context.rule.src_port = src_port;
-            strncpy(g_context.rule.dst_addr, dst_addr, RINETD_MAX_ADDR_LEN - 1);
-            g_context.rule.dst_port = dst_port;
-            INFRA_LOG_INFO("Loaded rule: %s:%d -> %s:%d", 
+            strncpy(g_context.rules[g_context.rule_count].src_addr, src_addr, RINETD_MAX_ADDR_LEN - 1);
+            g_context.rules[g_context.rule_count].src_port = src_port;
+            strncpy(g_context.rules[g_context.rule_count].dst_addr, dst_addr, RINETD_MAX_ADDR_LEN - 1);
+            g_context.rules[g_context.rule_count].dst_port = dst_port;
+            INFRA_LOG_INFO("Loaded rule %d: %s:%d -> %s:%d", 
+                g_context.rule_count,
                 src_addr, src_port, dst_addr, dst_port);
-            break;  // 只使用第一条规则
+            g_context.rule_count++;
+        } else {
+            INFRA_LOG_WARN("Invalid rule format: %s", line);
         }
     }
 
     fclose(fp);
+
+    if (g_context.rule_count == 0) {
+        INFRA_LOG_ERROR("No valid rules found in config file");
+        return INFRA_ERROR_INVALID_CONFIG;
+    }
+
+    INFRA_LOG_INFO("Loaded %d rules from %s", g_context.rule_count, path);
     return INFRA_OK;
 } 
 

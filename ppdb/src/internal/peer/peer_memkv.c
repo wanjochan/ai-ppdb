@@ -58,6 +58,7 @@ static void* handle_connection(void* arg);
 static infra_error_t process_command(memkv_conn_t* conn);
 static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn);
 static void destroy_connection(memkv_conn_t* conn);
+static infra_error_t send_value_response(memkv_conn_t* conn, const memkv_item_t* item);
 
 //-----------------------------------------------------------------------------
 // Helper Functions
@@ -77,8 +78,15 @@ static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn)
     new_conn->buffer_used = 0;
     new_conn->buffer_read = 0;
 
-    // 设置非阻塞模式
-    infra_error_t err = infra_net_set_nonblock(sock, true);
+    // 使用阻塞模式但设置超时
+    infra_error_t err = infra_net_set_nonblock(sock, false);
+    if (err != INFRA_OK) {
+        free(new_conn);
+        return err;
+    }
+
+    // 设置30秒超时
+    err = infra_net_set_timeout(sock, 30000);
     if (err != INFRA_OK) {
         free(new_conn);
         return err;
@@ -615,32 +623,12 @@ static infra_error_t execute_command(memkv_conn_t* conn) {
                 return send_response(conn, response, response_len);
             }
 
-            // 更新访问时间
-            item->atime = time(NULL);
+            // 发送值响应
             update_stats_get(true);
-
-            // 构建完整响应
-            char* full_response = malloc(MEMKV_BUFFER_SIZE);
-            if (!full_response) {
-                return MEMKV_ERROR_NO_MEMORY;
+            err = send_value_response(conn, item);
+            if (err == INFRA_OK) {
+                err = send_response(conn, "END\r\n", 5);
             }
-
-            // 写入响应头
-            response_len = snprintf(full_response, MEMKV_BUFFER_SIZE,
-                "VALUE %s %u %zu\r\n",
-                item->key, item->flags, item->value_size);
-
-            // 写入值
-            memcpy(full_response + response_len, item->value, item->value_size);
-            response_len += item->value_size;
-
-            // 写入结束标记
-            memcpy(full_response + response_len, "\r\nEND\r\n", 7);
-            response_len += 7;
-
-            // 发送完整响应
-            err = send_response(conn, full_response, response_len);
-            free(full_response);
             return err;
         }
         case CMD_DELETE: {
@@ -816,21 +804,15 @@ static void* handle_connection(void* arg) {
                             conn->buffer + conn->buffer_used,
                             MEMKV_BUFFER_SIZE - conn->buffer_used,
                             &bytes_read);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                infra_platform_sleep(1);
-                continue;
-            }
-            break;
-        } else if (bytes_read == 0) {
-            break;
+        if (err != INFRA_OK || bytes_read == 0) {
+            break;  // 错误或连接关闭
         }
 
         conn->buffer_used += bytes_read;
 
         // 处理命令
         err = process_command(conn);
-        if (err != INFRA_OK && err != INFRA_ERROR_WOULD_BLOCK) {
+        if (err != INFRA_OK) {
             break;
         }
     }
@@ -922,4 +904,27 @@ infra_error_t memkv_cmd_handler(int argc, char** argv) {
 
 const memkv_stats_t* memkv_get_stats(void) {
     return &g_context.stats;
+}
+
+static infra_error_t send_value_response(memkv_conn_t* conn, const memkv_item_t* item) {
+    char header[256];
+    size_t header_len = snprintf(header, sizeof(header), "VALUE %s %u %zu\r\n", 
+        item->key, item->flags, item->value_size);
+
+    // 发送头部
+    infra_error_t err = send_response(conn, header, header_len);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // 发送值
+    size_t sent;
+    err = infra_net_send(conn->sock, item->value, item->value_size, &sent);
+    if (err != INFRA_OK || sent != item->value_size) {
+        conn->is_active = false;
+        return err;
+    }
+
+    // 发送结束标记
+    return send_response(conn, "\r\n", 2);
 }
