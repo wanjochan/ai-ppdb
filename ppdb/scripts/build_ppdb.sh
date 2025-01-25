@@ -21,7 +21,7 @@ set -x  # 启用调试输出
     "${SRC_DIR}/ppdb/ppdb.c" \
     "${SRC_DIR}/internal/poly/poly_cmdline.c" \
     "${SRC_DIR}/internal/poly/poly_hashtable.c" \
-    "${SRC_DIR}/internal/poly_atomic/poly_atomic.c" \
+    "${SRC_DIR}/internal/poly/poly_atomic.c" \
     "${SRC_DIR}/internal/peer/peer_rinetd.c" \
     "${SRC_DIR}/internal/peer/peer_memkv.c" \
     "${SRC_DIR}/internal/peer/peer_memkv_cmd.c" \

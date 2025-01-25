@@ -1,5 +1,4 @@
 #include "poly_atomic.h"
-#include <stdatomic.h>
 
 int32_t poly_atomic_get(poly_atomic_t* v) {
     return atomic_load((atomic_int*)v);

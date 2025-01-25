@@ -102,25 +102,42 @@ static infra_error_t delete_with_lock(const char* key) {
 
 // 发送值响应
 static infra_error_t send_value_response(memkv_conn_t* conn, const memkv_item_t* item) {
+    // 发送头部
     char header[256];
-    size_t header_len = snprintf(header, sizeof(header), "VALUE %s %u %zu %lu\r\n", 
-        item->key, item->flags, item->value_size, item->cas);
-
+    size_t header_len = snprintf(header, sizeof(header), "VALUE %s %u %zu\r\n", 
+        item->key, item->flags, item->value_size);
     infra_error_t err = send_response(conn, header, header_len);
-    if (err == INFRA_OK) {
-        size_t bytes_sent;
-        err = infra_net_send(conn->sock, item->value, item->value_size, &bytes_sent);
-        if (err == INFRA_OK) {
-            err = send_response(conn, "\r\n", 2);
-        }
+    if (err != INFRA_OK) {
+        return err;
     }
-    return err;
+
+    // 发送值
+    err = send_response(conn, item->value, item->value_size);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // 发送值结束标记
+    return send_response(conn, "\r\n", 2);
 }
 
 // SET 命令处理
 static infra_error_t handle_set(memkv_conn_t* conn) {
-    return store_with_lock(conn->current_cmd.key, conn->current_cmd.data, 
-        conn->current_cmd.bytes, conn->current_cmd.flags, conn->current_cmd.exptime);
+    infra_error_t err = store_with_lock(conn->current_cmd.key, 
+        conn->current_cmd.data, conn->current_cmd.bytes,
+        conn->current_cmd.flags, conn->current_cmd.exptime);
+    
+    if (err != INFRA_OK) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "NOT_STORED\r\n", 11);
+        }
+        return err;
+    }
+
+    if (!conn->current_cmd.noreply) {
+        return send_response(conn, "STORED\r\n", 8);
+    }
+    return INFRA_OK;
 }
 
 // ADD 命令处理
@@ -211,9 +228,26 @@ static infra_error_t handle_get(memkv_conn_t* conn) {
     memkv_item_t* item = NULL;
     infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
     if (err == INFRA_OK && item) {
-        err = send_value_response(conn, item);
+        if (is_item_expired(item)) {
+            // 删除过期项
+            err = delete_with_lock(conn->current_cmd.key);
+            update_stats_get(false);
+            return send_response(conn, "END\r\n", 5);
+        }
+
+        // 发送值
+        char header[256];
+        size_t header_len = snprintf(header, sizeof(header), "VALUE %s %u %zu\r\n", 
+            item->key, item->flags, item->value_size);
+        err = send_response(conn, header, header_len);
         if (err == INFRA_OK) {
-            err = send_response(conn, "END\r\n", 5);
+            err = send_response(conn, item->value, item->value_size);
+            if (err == INFRA_OK) {
+                err = send_response(conn, "\r\n", 2);
+                if (err == INFRA_OK) {
+                    err = send_response(conn, "END\r\n", 5);
+                }
+            }
         }
         update_stats_get(true);
     } else {
@@ -247,54 +281,138 @@ static infra_error_t handle_delete(memkv_conn_t* conn) {
 
 // INCR 命令处理
 static infra_error_t handle_incr(memkv_conn_t* conn) {
-    memkv_item_t* old_item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
-    if (err == INFRA_OK && old_item) {
-        char* end;
-        uint64_t current = strtoull(old_item->value, &end, 10);
-        if (*end != '\0') {
-            return MEMKV_ERROR_CLIENT_ERROR;
+    memkv_item_t* item = NULL;
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    if (err != INFRA_OK || !item) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "NOT_FOUND\r\n", 10);
         }
-
-        uint64_t delta = strtoull(conn->current_cmd.key, NULL, 10);
-        uint64_t new_value = current + delta;
-
-        char value_str[32];
-        size_t len = snprintf(value_str, sizeof(value_str), "%lu", new_value);
-        if (len >= sizeof(value_str)) {
-            return MEMKV_ERROR_BUFFER_FULL;
-        }
-
-        err = store_with_lock(conn->current_cmd.key, value_str, len,
-            old_item->flags, old_item->exptime ? old_item->exptime - time(NULL) : 0);
+        return err;
     }
-    return err;
+
+    // 检查是否过期
+    if (is_item_expired(item)) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "NOT_FOUND\r\n", 10);
+        }
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // 解析当前值
+    char* end;
+    uint64_t current = strtoull(item->value, &end, 10);
+    if (*end != '\0') {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "CLIENT_ERROR cannot increment non-numeric value\r\n", 46);
+        }
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 解析增量
+    uint64_t delta = strtoull(conn->current_cmd.data, &end, 10);
+    if (*end != '\0') {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "CLIENT_ERROR invalid increment value\r\n", 36);
+        }
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 计算新值
+    uint64_t new_value = current + delta;
+    char value_str[32];
+    int len = snprintf(value_str, sizeof(value_str), "%lu", new_value);
+    if (len < 0 || len >= (int)sizeof(value_str)) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "SERVER_ERROR value too large\r\n", 28);
+        }
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 存储新值
+    err = store_with_lock(conn->current_cmd.key, value_str, len,
+        item->flags, item->exptime);
+    if (err != INFRA_OK) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "NOT_STORED\r\n", 11);
+        }
+        return err;
+    }
+
+    // 发送响应
+    if (!conn->current_cmd.noreply) {
+        char response[32];
+        len = snprintf(response, sizeof(response), "%lu\r\n", new_value);
+        return send_response(conn, response, len);
+    }
+    return INFRA_OK;
 }
 
 // DECR 命令处理
 static infra_error_t handle_decr(memkv_conn_t* conn) {
-    memkv_item_t* old_item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
-    if (err == INFRA_OK && old_item) {
-        char* end;
-        uint64_t current = strtoull(old_item->value, &end, 10);
-        if (*end != '\0') {
-            return MEMKV_ERROR_CLIENT_ERROR;
+    memkv_item_t* item = NULL;
+    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    if (err != INFRA_OK || !item) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "NOT_FOUND\r\n", 10);
         }
-
-        uint64_t delta = strtoull(conn->current_cmd.key, NULL, 10);
-        uint64_t new_value = current > delta ? current - delta : 0;
-
-        char value_str[32];
-        size_t len = snprintf(value_str, sizeof(value_str), "%lu", new_value);
-        if (len >= sizeof(value_str)) {
-            return MEMKV_ERROR_BUFFER_FULL;
-        }
-
-        err = store_with_lock(conn->current_cmd.key, value_str, len,
-            old_item->flags, old_item->exptime ? old_item->exptime - time(NULL) : 0);
+        return err;
     }
-    return err;
+
+    // 检查是否过期
+    if (is_item_expired(item)) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "NOT_FOUND\r\n", 10);
+        }
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // 解析当前值
+    char* end;
+    uint64_t current = strtoull(item->value, &end, 10);
+    if (*end != '\0') {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "CLIENT_ERROR cannot decrement non-numeric value\r\n", 46);
+        }
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 解析减量
+    uint64_t delta = strtoull(conn->current_cmd.data, &end, 10);
+    if (*end != '\0') {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "CLIENT_ERROR invalid decrement value\r\n", 36);
+        }
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 计算新值
+    uint64_t new_value = (current > delta) ? (current - delta) : 0;
+    char value_str[32];
+    int len = snprintf(value_str, sizeof(value_str), "%lu", new_value);
+    if (len < 0 || len >= (int)sizeof(value_str)) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "SERVER_ERROR value too large\r\n", 28);
+        }
+        return INFRA_ERROR_INVALID;
+    }
+
+    // 存储新值
+    err = store_with_lock(conn->current_cmd.key, value_str, len,
+        item->flags, item->exptime);
+    if (err != INFRA_OK) {
+        if (!conn->current_cmd.noreply) {
+            return send_response(conn, "NOT_STORED\r\n", 11);
+        }
+        return err;
+    }
+
+    // 发送响应
+    if (!conn->current_cmd.noreply) {
+        char response[32];
+        len = snprintf(response, sizeof(response), "%lu\r\n", new_value);
+        return send_response(conn, response, len);
+    }
+    return INFRA_OK;
 }
 
 // TOUCH 命令处理

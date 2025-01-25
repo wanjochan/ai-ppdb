@@ -7,7 +7,7 @@
 #include "internal/infra/infra_platform.h"
 #include "internal/poly/poly_hashtable.h"
 #include "internal/poly/poly_cmdline.h"
-#include "../poly_atomic/poly_atomic.h"
+#include "../poly/poly_atomic.h"
 
 // 常量定义
 #define MEMKV_VERSION          "1.0.0"

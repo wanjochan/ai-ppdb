@@ -1,7 +1,9 @@
 #ifndef PPDB_POLY_ATOMIC_H
 #define PPDB_POLY_ATOMIC_H
 
-//#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_core.h"
+
+//TODO later will migrate to infra_atomic.h/c
 
 // 原子类型
 typedef int32_t poly_atomic_t;
