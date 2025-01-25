@@ -1,9 +1,15 @@
 #include "internal/poly/poly_cmdline.h"
 #include "internal/infra/infra_core.h"
 #include "internal/peer/peer_service.h"
-#include "internal/peer/peer_rinetd.h"
+
+#ifdef DEV_RINETD
+// #include "internal/peer/peer_rinetd.h"
+extern peer_service_t g_rinetd_service;
+#endif
+
+#ifdef DEV_MEMKV
 #include "internal/peer/peer_memkv.h"
-// #include "internal/peer/peer_tccrun.h"
+#endif
 
 //-----------------------------------------------------------------------------
 // Global Options
@@ -20,14 +26,18 @@ static const int global_option_count = sizeof(global_options) / sizeof(global_op
 //-----------------------------------------------------------------------------
 
 static infra_error_t register_services(void) {
+    infra_error_t err=INFRA_OK;
+#ifdef DEV_MEMKV
     // Register MemKV service
-    infra_error_t err = peer_service_register(&g_memkv_service);
+    err = peer_service_register(&g_memkv_service);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to register memkv service: %d", err);
         return err;
     }
     INFRA_LOG_INFO("Registered memkv service");
+#endif
 
+#ifdef DEV_RINETD
     // Register Rinetd service
     err = peer_service_register(&g_rinetd_service);
     if (err != INFRA_OK) {
@@ -35,6 +45,7 @@ static infra_error_t register_services(void) {
         return err;
     }
     INFRA_LOG_INFO("Registered rinetd service");
+#endif
 
     return INFRA_OK;
 }
@@ -57,18 +68,24 @@ static void print_usage(const char* program) {
     // Print available commands
     infra_printf("\nAvailable commands:\n");
     infra_printf("  help    - Show help information\n");
+
+#ifdef DEV_MEMKV
     infra_printf("  memkv   - MemKV service management\n");
     infra_printf("    Options:\n");
     infra_printf("      --port=<value>  Port to listen on (default: 11211)\n");
     infra_printf("      --start         Start the service\n");
     infra_printf("      --stop          Stop the service\n");
     infra_printf("      --status        Show service status\n");
+#endif
+
+#ifdef DEV_RINETD
     infra_printf("  rinetd  - Rinetd service management\n");
     infra_printf("    Options:\n");
     infra_printf("      --config=<value>  Configuration file path\n");
     infra_printf("      --start           Start the service\n");
     infra_printf("      --stop            Stop the service\n");
     infra_printf("      --status          Show service status\n");
+#endif
 }
 
 static infra_error_t process_global_options(int argc, char** argv, infra_config_t* config) {

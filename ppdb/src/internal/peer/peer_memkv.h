@@ -6,17 +6,15 @@
 #include "internal/infra/infra_net.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/poly/poly_hashtable.h"
-#include "internal/poly/poly_cmdline.h"
 #include "internal/poly/poly_atomic.h"
 #include "internal/peer/peer_service.h"
 
-// 前向声明
-struct memkv_conn;
-typedef struct memkv_conn memkv_conn_t;
+//-----------------------------------------------------------------------------
+// Constants
+//-----------------------------------------------------------------------------
 
-// 常量定义
 #define MEMKV_VERSION          "1.0.0"
-#define MEMKV_BUFFER_SIZE      16384
+#define MEMKV_BUFFER_SIZE      8192
 #define MEMKV_MAX_KEY_SIZE     250
 #define MEMKV_MAX_VALUE_SIZE   (1024 * 1024)  // 1MB
 #define MEMKV_MAX_CONNECTIONS  10000
@@ -26,73 +24,54 @@ typedef struct memkv_conn memkv_conn_t;
 #define MEMKV_MIN_THREADS      4
 #define MEMKV_MAX_THREADS      32
 #define MEMKV_QUEUE_SIZE       1000
-#define MEMKV_IDLE_TIMEOUT     60000  // 60秒
+#define MEMKV_IDLE_TIMEOUT     60
 
-// 错误码定义
-#define MEMKV_OK                  0
-#define MEMKV_ERROR_NO_MEMORY    -1
-#define MEMKV_ERROR_NOT_FOUND    -2
-#define MEMKV_ERROR_EXISTS       -3
-#define MEMKV_ERROR_INVALID      -4
-#define MEMKV_ERROR_BUSY         -5
-#define MEMKV_ERROR_CLIENT_ERROR -6
-#define MEMKV_ERROR_BUFFER_FULL  -7
+//-----------------------------------------------------------------------------
+// Types
+//-----------------------------------------------------------------------------
 
-// 存储项
+// Item structure
 typedef struct memkv_item {
-    char* key;                // 键
-    void* value;             // 值
-    size_t value_size;       // 值大小
-    uint32_t flags;          // 标志位
-    uint32_t exptime;        // 过期时间
-    uint64_t cas;            // CAS值
-    time_t ctime;            // 创建时间
-    time_t atime;            // 最后访问时间
+    char* key;                  // Key
+    void* value;                // Value
+    size_t value_size;          // Value size
+    uint32_t flags;             // Flags
+    uint32_t exptime;           // Expiration time
+    uint64_t cas;               // CAS value
+    struct memkv_item* next;    // Next item in chain
 } memkv_item_t;
 
-// 统计信息
+// Statistics structure
 typedef struct memkv_stats {
-    poly_atomic_t cmd_get;        // GET命令次数
-    poly_atomic_t cmd_set;        // SET命令次数
-    poly_atomic_t cmd_delete;     // DELETE命令次数
-    poly_atomic_t hits;           // 缓存命中次数
-    poly_atomic_t misses;         // 缓存未命中次数
-    poly_atomic_t curr_items;     // 当前项数量
-    poly_atomic_t total_items;    // 总项数量
-    poly_atomic_t bytes;          // 总字节数
+    poly_atomic_t cmd_get;      // Get commands
+    poly_atomic_t cmd_set;      // Set commands
+    poly_atomic_t cmd_delete;   // Delete commands
+    poly_atomic_t hits;         // Cache hits
+    poly_atomic_t misses;       // Cache misses
+    poly_atomic_t curr_items;   // Current items
+    poly_atomic_t total_items;  // Total items
+    poly_atomic_t bytes;        // Current bytes used
 } memkv_stats_t;
 
-// 全局上下文
+// Context structure
 typedef struct memkv_context {
-    bool is_running;                // 服务运行状态
-    uint16_t port;                 // 监听端口
-    infra_socket_t listen_sock;    // 监听套接字
-    infra_thread_pool_t* pool;     // 线程池
-    infra_mutex_t store_mutex;     // 存储互斥锁
-    poly_hashtable_t* store;       // 存储哈希表
-    memkv_stats_t stats;           // 统计信息
-    time_t start_time;             // 启动时间
-    infra_thread_t* accept_thread;  // 接受连接的线程
-    uint64_t next_cas;             // 用于生成唯一的 CAS 值
+    bool is_running;                // Service running flag
+    uint16_t port;                  // Listening port
+    infra_socket_t sock;           // Listening socket
+    infra_mutex_t mutex;           // Global mutex
+    poly_hashtable_t* store;       // Key-value store
+    poly_atomic_t cas_counter;     // CAS counter
+    memkv_stats_t stats;           // Statistics
 } memkv_context_t;
 
-// 声明全局上下文
+//-----------------------------------------------------------------------------
+// Globals
+//-----------------------------------------------------------------------------
+
+// Global context
 extern memkv_context_t g_memkv_context;
 
-// 声明服务实例
+// Service instance
 extern peer_service_t g_memkv_service;
-
-// 命令行选项
-extern const poly_cmd_option_t memkv_options[];
-extern const int memkv_option_count;
-
-// 公共接口函数
-infra_error_t memkv_init(const infra_config_t* config);
-infra_error_t memkv_cleanup(void);
-infra_error_t memkv_start(void);
-infra_error_t memkv_stop(void);
-bool memkv_is_running(void);
-const memkv_stats_t* memkv_get_stats(void);
-infra_error_t memkv_cmd_handler(int argc, char** argv);
 
 #endif // PEER_MEMKV_H

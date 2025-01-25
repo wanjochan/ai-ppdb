@@ -1,6 +1,95 @@
-#include "internal/peer/peer_rinetd.h"
+// #include "internal/peer/peer_rinetd.h"
+
+//rinet: tiny ports forwarding
+
+#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_sync.h"
+#include "internal/infra/infra_net.h"
+#include "internal/peer/peer_service.h"
+
+//-----------------------------------------------------------------------------
+// Constants
+//-----------------------------------------------------------------------------
+
+#define RINETD_BUFFER_SIZE 16384        // 转发缓冲区大小
+#define RINETD_MAX_ADDR_LEN 256        // 地址最大长度
+#define RINETD_MAX_PATH_LEN 256        // 路径最大长度
+#define RINETD_MIN_THREADS 32           // 最小线程数
+#define RINETD_MAX_THREADS 512         // 最大线程数
+#define RINETD_MAX_RULES 128           // 最大规则数
+
+//-----------------------------------------------------------------------------
+// Types
+//-----------------------------------------------------------------------------
+
+// 转发规则
+typedef struct {
+    char src_addr[RINETD_MAX_ADDR_LEN];  // 源地址
+    int src_port;                        // 源端口
+    char dst_addr[RINETD_MAX_ADDR_LEN];  // 目标地址
+    int dst_port;                        // 目标端口
+} rinetd_rule_t;
+
+// 监听线程参数
+typedef struct {
+    rinetd_rule_t* rule;                // 关联的规则
+    infra_socket_t listener;            // 监听socket
+} listener_thread_param_t;
+
+// 转发连接
+typedef struct {
+    infra_socket_t client;              // 客户端socket
+    infra_socket_t server;              // 服务端socket
+    rinetd_rule_t* rule;                // 关联的规则
+    char buffer[RINETD_BUFFER_SIZE];    // 转发缓冲区
+} rinetd_conn_t;
+
+// 连接会话
+typedef struct {
+    infra_socket_t client;              // 客户端socket
+    infra_socket_t server;              // 服务器socket
+    volatile bool c2s_failed;           // 客户端到服务器方向是否失败
+    volatile bool s2c_failed;           // 服务器到客户端方向是否失败
+} rinetd_session_t;
+
+// 服务上下文
+typedef struct {
+    bool running;                        // 服务是否运行
+    char config_path[RINETD_MAX_PATH_LEN]; // 配置文件路径
+    rinetd_rule_t* rules;               // 转发规则数组
+    int rule_count;                      // 规则数量
+    infra_thread_pool_t* pool;          // 线程池
+    infra_socket_t* listeners;          // 监听socket数组
+    infra_thread_t* listener_threads;    // 监听线程数组
+    infra_mutex_t* mutex;               // 全局互斥锁
+    rinetd_session_t* active_sessions;  // 活跃会话数组
+    int session_count;                  // 会话数量
+} rinetd_context_t;
+
+//-----------------------------------------------------------------------------
+// Globals
+//-----------------------------------------------------------------------------
+
+// 声明服务实例
+// extern peer_service_t g_rinetd_service;
 
 extern void bzero(void* s, size_t n);
+
+//-----------------------------------------------------------------------------
+// Forward Declarations
+//-----------------------------------------------------------------------------
+
+// Service interface functions
+static infra_error_t rinetd_init(const infra_config_t* config);
+static infra_error_t rinetd_cleanup(void);
+static infra_error_t rinetd_start(void);
+static infra_error_t rinetd_stop(void);
+static bool rinetd_is_running(void);
+static infra_error_t rinetd_cmd_handler(int argc, char** argv);
+
+// Configuration functions
+static infra_error_t rinetd_load_config(const char* path);
+static infra_error_t rinetd_save_config(const char* path);
 
 //-----------------------------------------------------------------------------
 // Command Line Options
@@ -45,13 +134,6 @@ static struct {
     infra_socket_t listeners[RINETD_MAX_RULES];  // 每个规则对应一个监听器
     infra_thread_pool_t* pool;
 } g_context = {0};
-
-//-----------------------------------------------------------------------------
-// Forward Declarations
-//-----------------------------------------------------------------------------
-
-static void* handle_connection(void* arg);
-static infra_error_t create_listener(int rule_index);
 
 //-----------------------------------------------------------------------------
 // Helper Functions
@@ -622,6 +704,33 @@ infra_error_t rinetd_load_config(const char* path) {
     }
 
     INFRA_LOG_INFO("Loaded %d rules from %s", g_context.rule_count, path);
+    return INFRA_OK;
+}
+
+infra_error_t rinetd_save_config(const char* path) {
+    if (!path) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 尝试打开配置文件
+    FILE* fp = fopen(path, "w");
+    if (fp == NULL) {
+        INFRA_LOG_ERROR("Failed to open config file: %s", path);
+        return INFRA_ERROR_IO;
+    }
+
+    // 保存规则
+    for (int i = 0; i < g_context.rule_count; i++) {
+        fprintf(fp, "%s %d %s %d\n",
+            g_context.rules[i].src_addr,
+            g_context.rules[i].src_port,
+            g_context.rules[i].dst_addr,
+            g_context.rules[i].dst_port);
+    }
+
+    fclose(fp);
+
+    INFRA_LOG_INFO("Saved %d rules to %s", g_context.rule_count, path);
     return INFRA_OK;
 } 
 
