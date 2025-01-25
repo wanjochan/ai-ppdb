@@ -5,6 +5,74 @@
 #include "internal/poly/poly_cmdline.h"
 
 //-----------------------------------------------------------------------------
+// Internal Types
+//-----------------------------------------------------------------------------
+
+// 命令类型
+typedef enum {
+    CMD_UNKNOWN = 0,
+    CMD_SET,
+    CMD_ADD,
+    CMD_REPLACE,
+    CMD_APPEND,
+    CMD_PREPEND,
+    CMD_CAS,
+    CMD_GET,
+    CMD_GETS,
+    CMD_DELETE,
+    CMD_INCR,
+    CMD_DECR,
+    CMD_TOUCH,
+    CMD_GAT,
+    CMD_FLUSH,
+    CMD_STATS,
+    CMD_VERSION,
+    CMD_QUIT
+} memkv_cmd_type_t;
+
+// 命令状态
+typedef enum {
+    CMD_STATE_INIT = 0,
+    CMD_STATE_READING_DATA,
+    CMD_STATE_COMPLETE
+} memkv_cmd_state_t;
+
+// 命令结构
+typedef struct {
+    memkv_cmd_type_t type;
+    memkv_cmd_state_t state;
+    char* key;
+    void* data;
+    size_t bytes;
+    uint32_t flags;
+    uint32_t exptime;
+    uint64_t cas;
+    bool noreply;
+} memkv_cmd_t;
+
+// 连接结构
+struct memkv_conn {
+    infra_socket_t sock;              // 套接字
+    bool is_active;                   // 连接是否活跃
+    char* buffer;                     // 命令缓冲区
+    size_t buffer_used;               // 已使用的缓冲区大小
+    size_t buffer_read;               // 已读取的缓冲区大小
+    memkv_cmd_t current_cmd;          // 当前命令
+    char response[MEMKV_BUFFER_SIZE];  // Response buffer
+    size_t response_len;               // Response length
+};
+
+// 命令处理器
+typedef struct {
+    const char* name;
+    memkv_cmd_type_t type;
+    infra_error_t (*fn)(memkv_conn_t* conn);
+    int min_args;
+    int max_args;
+    bool has_value;
+} memkv_cmd_handler_t;
+
+//-----------------------------------------------------------------------------
 // Forward Declarations
 //-----------------------------------------------------------------------------
 
@@ -27,11 +95,36 @@ static infra_error_t handle_stats(memkv_conn_t* conn);
 static infra_error_t handle_version(memkv_conn_t* conn);
 static infra_error_t handle_quit(memkv_conn_t* conn);
 
+// Connection management
 static infra_error_t create_listener(void);
 static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn);
 static void destroy_connection(memkv_conn_t* conn);
 static void* handle_connection(void* arg);
+
+// Command processing
+static infra_error_t memkv_cmd_init(void);
+static infra_error_t memkv_cmd_cleanup(void);
+static infra_error_t memkv_cmd_process(memkv_conn_t* conn);
 static infra_error_t memkv_parse_command(memkv_conn_t* conn);
+
+// Item management
+static memkv_item_t* create_item(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime);
+static void destroy_item(memkv_item_t* item);
+static bool is_item_expired(const memkv_item_t* item);
+
+// Storage operations
+static infra_error_t store_with_lock(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime);
+static infra_error_t get_with_lock(const char* key, memkv_item_t** item);
+static infra_error_t delete_with_lock(const char* key);
+
+// Statistics
+static void update_stats_set(size_t bytes);
+static void update_stats_delete(size_t bytes);
+static void update_stats_get(bool hit);
+
+// Communication
+static infra_error_t send_response(memkv_conn_t* conn, const char* response, size_t len);
+static infra_error_t send_value_response(memkv_conn_t* conn, const memkv_item_t* item);
 
 //-----------------------------------------------------------------------------
 // Command Line Options
@@ -67,15 +160,6 @@ const int memkv_option_count = sizeof(memkv_options) / sizeof(memkv_options[0]);
 //-----------------------------------------------------------------------------
 
 memkv_context_t g_context = {0};
-
-//-----------------------------------------------------------------------------
-// Forward Declarations
-//-----------------------------------------------------------------------------
-
-static infra_error_t create_listener(void);
-static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn);
-static void destroy_connection(memkv_conn_t* conn);
-static void* handle_connection(void* arg);
 
 //-----------------------------------------------------------------------------
 // Service Management

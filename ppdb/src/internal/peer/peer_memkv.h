@@ -37,58 +37,6 @@ typedef struct memkv_conn memkv_conn_t;
 #define MEMKV_ERROR_CLIENT_ERROR -6
 #define MEMKV_ERROR_BUFFER_FULL  -7
 
-// 命令类型
-typedef enum {
-    CMD_UNKNOWN = 0,
-    CMD_SET,
-    CMD_ADD,
-    CMD_REPLACE,
-    CMD_APPEND,
-    CMD_PREPEND,
-    CMD_CAS,
-    CMD_GET,
-    CMD_GETS,
-    CMD_DELETE,
-    CMD_INCR,
-    CMD_DECR,
-    CMD_TOUCH,
-    CMD_GAT,
-    CMD_FLUSH,
-    CMD_STATS,
-    CMD_VERSION,
-    CMD_QUIT
-} memkv_cmd_type_t;
-
-// 命令状态
-typedef enum {
-    CMD_STATE_INIT = 0,
-    CMD_STATE_READING_DATA,
-    CMD_STATE_COMPLETE
-} memkv_cmd_state_t;
-
-// 命令结构
-typedef struct {
-    memkv_cmd_type_t type;
-    memkv_cmd_state_t state;
-    char* key;
-    void* data;
-    size_t bytes;
-    uint32_t flags;
-    uint32_t exptime;
-    uint64_t cas;
-    bool noreply;
-} memkv_cmd_t;
-
-// 命令处理器
-typedef struct {
-    const char* name;
-    memkv_cmd_type_t type;
-    infra_error_t (*fn)(memkv_conn_t* conn);
-    int min_args;
-    int max_args;
-    bool has_value;
-} memkv_cmd_handler_t;
-
 // 存储项
 typedef struct memkv_item {
     char* key;                // 键
@@ -100,18 +48,6 @@ typedef struct memkv_item {
     time_t ctime;            // 创建时间
     time_t atime;            // 最后访问时间
 } memkv_item_t;
-
-// 连接结构
-typedef struct memkv_conn {
-    infra_socket_t sock;              // 套接字
-    bool is_active;                   // 连接是否活跃
-    char* buffer;                     // 命令缓冲区
-    size_t buffer_used;               // 已使用的缓冲区大小
-    size_t buffer_read;               // 已读取的缓冲区大小
-    memkv_cmd_t current_cmd;          // 当前命令
-    char response[MEMKV_BUFFER_SIZE];  // Response buffer
-    size_t response_len;               // Response length
-} memkv_conn_t;
 
 // 统计信息
 typedef struct memkv_stats {
@@ -136,34 +72,18 @@ typedef struct memkv_context {
     memkv_stats_t stats;           // 统计信息
     time_t start_time;             // 启动时间
     infra_thread_t* accept_thread;  // 接受连接的线程
-    uint64_t next_cas;  // 用于生成唯一的 CAS 值
+    uint64_t next_cas;             // 用于生成唯一的 CAS 值
 } memkv_context_t;
 
 // 声明全局上下文
 extern memkv_context_t g_context;
 
-// 函数声明
-infra_error_t send_response(memkv_conn_t* conn, const char* response, size_t len);
-
-// 接口函数
+// 公共接口函数
 infra_error_t memkv_init(uint16_t port, const infra_config_t* config);
 infra_error_t memkv_cleanup(void);
 infra_error_t memkv_start(void);
 infra_error_t memkv_stop(void);
 bool memkv_is_running(void);
 const memkv_stats_t* memkv_get_stats(void);
-
-// 命令处理函数
-infra_error_t memkv_cmd_init(void);
-infra_error_t memkv_cmd_cleanup(void);
-infra_error_t memkv_cmd_process(memkv_conn_t* conn);
-
-// Helper functions
-memkv_item_t* create_item(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime);
-void destroy_item(memkv_item_t* item);
-bool is_item_expired(const memkv_item_t* item);
-void update_stats_set(size_t value_size);
-void update_stats_get(bool hit);
-void update_stats_delete(size_t value_size);
 
 #endif // PEER_MEMKV_H
