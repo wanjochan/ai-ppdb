@@ -80,4 +80,31 @@ infra_error_t handle_get(memkv_conn_t* conn);
 infra_error_t handle_delete(memkv_conn_t* conn);
 infra_error_t handle_flush_all(memkv_conn_t* conn);
 
+//-----------------------------------------------------------------------------
+// Command Processing
+//-----------------------------------------------------------------------------
+
+/**
+ * Initialize the command processing module.
+ * 
+ * @return INFRA_OK on success, error code otherwise.
+ */
+infra_error_t memkv_cmd_init(void);
+
+/**
+ * Clean up the command processing module.
+ * 
+ * @return INFRA_OK on success, error code otherwise.
+ */
+infra_error_t memkv_cmd_cleanup(void);
+
+/**
+ * Process commands from a connection.
+ * 
+ * @param conn The connection to process commands from.
+ * @return INFRA_OK on success, INFRA_ERROR_WOULD_BLOCK if more data is needed,
+ *         or error code on failure.
+ */
+infra_error_t memkv_cmd_process(memkv_conn_t* conn);
+
 #endif // PEER_MEMKV_CMD_H

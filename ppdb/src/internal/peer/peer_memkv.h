@@ -125,6 +125,7 @@ typedef struct memkv_context {
     memkv_stats_t stats;           // 统计信息
     time_t start_time;             // 启动时间
     infra_thread_t* accept_thread;  // 接受连接的线程
+    uint64_t next_cas;  // 用于生成唯一的 CAS 值
 } memkv_context_t;
 
 // 声明全局上下文

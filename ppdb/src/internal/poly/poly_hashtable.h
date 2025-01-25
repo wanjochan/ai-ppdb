@@ -2,6 +2,7 @@
 #define POLY_HASHTABLE_H
 
 #include "internal/infra/infra_core.h"
+#include "internal/infra/infra_error.h"
 
 //-----------------------------------------------------------------------------
 // Types

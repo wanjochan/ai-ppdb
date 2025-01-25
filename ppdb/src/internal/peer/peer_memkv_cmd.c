@@ -62,7 +62,7 @@ static infra_error_t store_with_lock(const char* key, const void* value, size_t 
     // 存储数据
     infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
     if (err == INFRA_OK) {
-        update_stats_set(item->value_size);
+        update_stats_set(value_size);
     } else {
         destroy_item(item);
     }
@@ -171,7 +171,7 @@ infra_error_t handle_add(memkv_conn_t* conn) {
 // REPLACE 命令处理
 infra_error_t handle_replace(memkv_conn_t* conn) {
     memkv_item_t* old_item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&old_item);
     if (err != INFRA_OK || !old_item) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_STORED\r\n", 11);
@@ -198,7 +198,7 @@ infra_error_t handle_replace(memkv_conn_t* conn) {
 // APPEND 命令处理
 infra_error_t handle_append(memkv_conn_t* conn) {
     memkv_item_t* old_item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&old_item);
     if (err != INFRA_OK || !old_item) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_STORED\r\n", 11);
@@ -206,7 +206,7 @@ infra_error_t handle_append(memkv_conn_t* conn) {
         return err;
     }
 
-    size_t new_size = old_item->value_size + conn->current_cmd.bytes;
+    size_t new_size = ((memkv_item_t*)old_item)->value_size + conn->current_cmd.bytes;
     if (new_size > MEMKV_MAX_VALUE_SIZE) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "SERVER_ERROR value too large\r\n", 28);
@@ -222,11 +222,11 @@ infra_error_t handle_append(memkv_conn_t* conn) {
         return MEMKV_ERROR_NO_MEMORY;
     }
 
-    memcpy(new_value, old_item->value, old_item->value_size);
-    memcpy((char*)new_value + old_item->value_size, conn->current_cmd.data, conn->current_cmd.bytes);
+    memcpy(new_value, ((memkv_item_t*)old_item)->value, ((memkv_item_t*)old_item)->value_size);
+    memcpy((char*)new_value + ((memkv_item_t*)old_item)->value_size, conn->current_cmd.data, conn->current_cmd.bytes);
 
     err = store_with_lock(conn->current_cmd.key, new_value, new_size,
-        old_item->flags, old_item->exptime ? old_item->exptime - time(NULL) : 0);
+        ((memkv_item_t*)old_item)->flags, ((memkv_item_t*)old_item)->exptime ? ((memkv_item_t*)old_item)->exptime - time(NULL) : 0);
 
     free(new_value);
 
@@ -246,7 +246,7 @@ infra_error_t handle_append(memkv_conn_t* conn) {
 // PREPEND 命令处理
 infra_error_t handle_prepend(memkv_conn_t* conn) {
     memkv_item_t* old_item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&old_item);
     if (err != INFRA_OK || !old_item) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_STORED\r\n", 11);
@@ -254,7 +254,7 @@ infra_error_t handle_prepend(memkv_conn_t* conn) {
         return err;
     }
 
-    size_t new_size = old_item->value_size + conn->current_cmd.bytes;
+    size_t new_size = ((memkv_item_t*)old_item)->value_size + conn->current_cmd.bytes;
     if (new_size > MEMKV_MAX_VALUE_SIZE) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "SERVER_ERROR value too large\r\n", 28);
@@ -271,10 +271,10 @@ infra_error_t handle_prepend(memkv_conn_t* conn) {
     }
 
     memcpy(new_value, conn->current_cmd.data, conn->current_cmd.bytes);
-    memcpy((char*)new_value + conn->current_cmd.bytes, old_item->value, old_item->value_size);
+    memcpy((char*)new_value + conn->current_cmd.bytes, ((memkv_item_t*)old_item)->value, ((memkv_item_t*)old_item)->value_size);
 
     err = store_with_lock(conn->current_cmd.key, new_value, new_size,
-        old_item->flags, old_item->exptime ? old_item->exptime - time(NULL) : 0);
+        ((memkv_item_t*)old_item)->flags, ((memkv_item_t*)old_item)->exptime ? ((memkv_item_t*)old_item)->exptime - time(NULL) : 0);
 
     free(new_value);
 
@@ -294,7 +294,7 @@ infra_error_t handle_prepend(memkv_conn_t* conn) {
 // CAS 命令处理
 infra_error_t handle_cas(memkv_conn_t* conn) {
     memkv_item_t* old_item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&old_item);
     if (err != INFRA_OK || !old_item) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_FOUND\r\n", 10);
@@ -302,7 +302,7 @@ infra_error_t handle_cas(memkv_conn_t* conn) {
         return err;
     }
 
-    if (old_item->cas != conn->current_cmd.cas) {
+    if (((memkv_item_t*)old_item)->cas != conn->current_cmd.cas) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "EXISTS\r\n", 8);
         }
@@ -328,16 +328,20 @@ infra_error_t handle_cas(memkv_conn_t* conn) {
 // GET 命令处理
 infra_error_t handle_get(memkv_conn_t* conn) {
     memkv_item_t* item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&item);
     if (err == INFRA_OK && item) {
         err = send_value_response(conn, item);
         if (err == INFRA_OK) {
             err = send_response(conn, "END\r\n", 5);
+            if (err == INFRA_OK) {
+                update_stats_get(true);
+            }
         }
-        update_stats_get(true);
     } else {
         err = send_response(conn, "END\r\n", 5);
-        update_stats_get(false);
+        if (err == INFRA_OK) {
+            update_stats_get(false);
+        }
     }
     return err;
 }
@@ -345,16 +349,20 @@ infra_error_t handle_get(memkv_conn_t* conn) {
 // GETS 命令处理
 infra_error_t handle_gets(memkv_conn_t* conn) {
     memkv_item_t* item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&item);
     if (err == INFRA_OK && item) {
         err = send_value_response(conn, item);
         if (err == INFRA_OK) {
             err = send_response(conn, "END\r\n", 5);
+            if (err == INFRA_OK) {
+                update_stats_get(true);
+            }
         }
-        update_stats_get(true);
     } else {
         err = send_response(conn, "END\r\n", 5);
-        update_stats_get(false);
+        if (err == INFRA_OK) {
+            update_stats_get(false);
+        }
     }
     return err;
 }
@@ -378,7 +386,7 @@ infra_error_t handle_delete(memkv_conn_t* conn) {
 // INCR 命令处理
 infra_error_t handle_incr(memkv_conn_t* conn) {
     memkv_item_t* item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&item);
     if (err != INFRA_OK || !item) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_FOUND\r\n", 10);
@@ -391,12 +399,12 @@ infra_error_t handle_incr(memkv_conn_t* conn) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_FOUND\r\n", 10);
         }
-        return INFRA_ERROR_NOT_FOUND;
+        return MEMKV_ERROR_NOT_FOUND;
     }
 
     // 解析当前值
     char* end;
-    uint64_t current = strtoull(item->value, &end, 10);
+    uint64_t current = strtoull(((memkv_item_t*)item)->value, &end, 10);
     if (*end != '\0') {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "CLIENT_ERROR cannot increment non-numeric value\r\n", 46);
@@ -426,7 +434,7 @@ infra_error_t handle_incr(memkv_conn_t* conn) {
 
     // 存储新值
     err = store_with_lock(conn->current_cmd.key, value_str, len,
-        item->flags, item->exptime);
+        ((memkv_item_t*)item)->flags, ((memkv_item_t*)item)->exptime);
     if (err != INFRA_OK) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_STORED\r\n", 11);
@@ -446,7 +454,7 @@ infra_error_t handle_incr(memkv_conn_t* conn) {
 // DECR 命令处理
 infra_error_t handle_decr(memkv_conn_t* conn) {
     memkv_item_t* item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&item);
     if (err != INFRA_OK || !item) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_FOUND\r\n", 10);
@@ -459,12 +467,12 @@ infra_error_t handle_decr(memkv_conn_t* conn) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_FOUND\r\n", 10);
         }
-        return INFRA_ERROR_NOT_FOUND;
+        return MEMKV_ERROR_NOT_FOUND;
     }
 
     // 解析当前值
     char* end;
-    uint64_t current = strtoull(item->value, &end, 10);
+    uint64_t current = strtoull(((memkv_item_t*)item)->value, &end, 10);
     if (*end != '\0') {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "CLIENT_ERROR cannot decrement non-numeric value\r\n", 46);
@@ -494,7 +502,7 @@ infra_error_t handle_decr(memkv_conn_t* conn) {
 
     // 存储新值
     err = store_with_lock(conn->current_cmd.key, value_str, len,
-        item->flags, item->exptime);
+        ((memkv_item_t*)item)->flags, ((memkv_item_t*)item)->exptime);
     if (err != INFRA_OK) {
         if (!conn->current_cmd.noreply) {
             return send_response(conn, "NOT_STORED\r\n", 11);
@@ -514,9 +522,9 @@ infra_error_t handle_decr(memkv_conn_t* conn) {
 // TOUCH 命令处理
 infra_error_t handle_touch(memkv_conn_t* conn) {
     memkv_item_t* old_item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &old_item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&old_item);
     if (err == INFRA_OK && old_item) {
-        old_item->exptime = conn->current_cmd.exptime ? time(NULL) + conn->current_cmd.exptime : 0;
+        ((memkv_item_t*)old_item)->exptime = conn->current_cmd.exptime ? time(NULL) + conn->current_cmd.exptime : 0;
     }
     return err;
 }
@@ -524,10 +532,10 @@ infra_error_t handle_touch(memkv_conn_t* conn) {
 // GAT 命令处理
 infra_error_t handle_gat(memkv_conn_t* conn) {
     memkv_item_t* item = NULL;
-    infra_error_t err = get_with_lock(conn->current_cmd.key, &item);
+    infra_error_t err = get_with_lock(conn->current_cmd.key, (memkv_item_t**)&item);
     if (err == INFRA_OK && item) {
-        item->exptime = conn->current_cmd.exptime ? time(NULL) + conn->current_cmd.exptime : 0;
-        err = send_value_response(conn, item);
+        ((memkv_item_t*)item)->exptime = conn->current_cmd.exptime ? time(NULL) + conn->current_cmd.exptime : 0;
+        err = send_value_response(conn, (memkv_item_t*)item);
         update_stats_get(true);
     } else {
         update_stats_get(false);
@@ -590,4 +598,221 @@ infra_error_t handle_version(memkv_conn_t* conn) {
 // QUIT 命令处理
 infra_error_t handle_quit(memkv_conn_t* conn) {
     return INFRA_ERROR_CLOSED;
+}
+
+//-----------------------------------------------------------------------------
+// Command Processing
+//-----------------------------------------------------------------------------
+
+infra_error_t memkv_cmd_init(void) {
+    // Initialize hash table
+    infra_error_t err = poly_hashtable_create(1024, NULL, NULL, &g_context.store);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // Initialize mutex
+    err = infra_mutex_create(&g_context.store_mutex);
+    if (err != INFRA_OK) {
+        poly_hashtable_destroy(g_context.store);
+        g_context.store = NULL;
+        return err;
+    }
+
+    return INFRA_OK;
+}
+
+infra_error_t memkv_cmd_cleanup(void) {
+    if (g_context.store) {
+        infra_mutex_lock(&g_context.store_mutex);
+        poly_hashtable_clear(g_context.store);
+        poly_hashtable_destroy(g_context.store);
+        g_context.store = NULL;
+        infra_mutex_unlock(&g_context.store_mutex);
+    }
+
+    if (g_context.store_mutex) {
+        infra_mutex_destroy(&g_context.store_mutex);
+        g_context.store_mutex = NULL;
+    }
+
+    return INFRA_OK;
+}
+
+infra_error_t memkv_cmd_process(memkv_conn_t* conn) {
+    if (!conn) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // Parse command
+    infra_error_t err = memkv_parse_command(conn);
+    if (err != INFRA_OK) {
+        if (err == INFRA_ERROR_WOULD_BLOCK) {
+            return err; // Need more data
+        }
+        send_response(conn, "ERROR\r\n", 7);
+        return err;
+    }
+
+    // Find command handler
+    const memkv_cmd_handler_t* handler = NULL;
+    for (int i = 0; g_handlers[i].name != NULL; i++) {
+        if (g_handlers[i].type == conn->current_cmd.type) {
+            handler = &g_handlers[i];
+            break;
+        }
+    }
+
+    if (!handler) {
+        send_response(conn, "ERROR\r\n", 7);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // Execute command
+    err = handler->fn(conn);
+    if (err != INFRA_OK) {
+        if (err != INFRA_ERROR_WOULD_BLOCK) {
+            send_response(conn, "ERROR\r\n", 7);
+        }
+        return err;
+    }
+
+    return INFRA_OK;
+}
+
+// 项目管理函数
+memkv_item_t* create_item(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime) {
+    if (!key || !value || value_size == 0) {
+        return NULL;
+    }
+
+    size_t key_len = strlen(key);
+    memkv_item_t* item = malloc(sizeof(memkv_item_t));
+    if (!item) {
+        return NULL;
+    }
+
+    item->key = strdup(key);
+    if (!item->key) {
+        free(item);
+        return NULL;
+    }
+
+    item->value = malloc(value_size);
+    if (!item->value) {
+        free(item->key);
+        free(item);
+        return NULL;
+    }
+
+    memcpy(item->value, value, value_size);
+    item->value_size = value_size;
+    item->flags = flags;
+    item->exptime = exptime ? time(NULL) + exptime : 0;
+    item->cas = g_context.next_cas++;
+
+    return item;
+}
+
+void destroy_item(memkv_item_t* item) {
+    if (!item) {
+        return;
+    }
+    if (item->key) {
+        free(item->key);
+    }
+    if (item->value) {
+        free(item->value);
+    }
+    free(item);
+}
+
+bool is_item_expired(const memkv_item_t* item) {
+    if (!item || !item->exptime) {
+        return false;
+    }
+    return time(NULL) > item->exptime;
+}
+
+// 统计函数
+void update_stats_set(size_t bytes) {
+    poly_atomic_inc((poly_atomic_t*)&g_context.stats.cmd_set);
+    poly_atomic_inc((poly_atomic_t*)&g_context.stats.total_items);
+    poly_atomic_inc((poly_atomic_t*)&g_context.stats.curr_items);
+    poly_atomic_add((poly_atomic_t*)&g_context.stats.bytes, bytes);
+}
+
+void update_stats_delete(size_t bytes) {
+    poly_atomic_inc((poly_atomic_t*)&g_context.stats.cmd_delete);
+    poly_atomic_dec((poly_atomic_t*)&g_context.stats.curr_items);
+    poly_atomic_sub((poly_atomic_t*)&g_context.stats.bytes, bytes);
+}
+
+void update_stats_get(bool hit) {
+    poly_atomic_inc((poly_atomic_t*)&g_context.stats.cmd_get);
+    if (hit) {
+        poly_atomic_inc((poly_atomic_t*)&g_context.stats.hits);
+    } else {
+        poly_atomic_inc((poly_atomic_t*)&g_context.stats.misses);
+    }
+}
+
+// 通信函数
+infra_error_t send_response(memkv_conn_t* conn, const char* response, size_t len) {
+    if (!conn || !response) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    size_t sent = 0;
+    while (sent < len) {
+        size_t bytes_sent = 0;
+        infra_error_t err = infra_net_send(conn->sock, conn->response + sent, len - sent, &bytes_sent);
+        if (err != INFRA_OK) {
+            return err;
+        }
+        sent += bytes_sent;
+    }
+    return INFRA_OK;
+}
+
+infra_error_t memkv_parse_command(memkv_conn_t* conn) {
+    if (!conn) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // Reset command state
+    memset(&conn->current_cmd, 0, sizeof(memkv_cmd_t));
+    conn->current_cmd.state = CMD_STATE_INIT;
+
+    // Read command line
+    char* line = conn->buffer;
+    char* end = strchr(line, '\r');
+    if (!end || end[1] != '\n') {
+        return INFRA_ERROR_WOULD_BLOCK;
+    }
+    *end = '\0';
+
+    // Parse command name
+    char* token = strtok(line, " ");
+    if (!token) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // Find command handler
+    const memkv_cmd_handler_t* handler = NULL;
+    for (int i = 0; g_handlers[i].name != NULL; i++) {
+        if (strcmp(token, g_handlers[i].name) == 0) {
+            handler = &g_handlers[i];
+            break;
+        }
+    }
+
+    if (!handler) {
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    conn->current_cmd.type = handler->type;
+    conn->current_cmd.state = CMD_STATE_COMPLETE;
+
+    return INFRA_OK;
 }
