@@ -9,6 +9,10 @@
 #include "internal/poly/poly_cmdline.h"
 #include "../poly/poly_atomic.h"
 
+// 前向声明
+struct memkv_conn;
+typedef struct memkv_conn memkv_conn_t;
+
 // 常量定义
 #define MEMKV_VERSION          "1.0.0"
 #define MEMKV_BUFFER_SIZE      16384
@@ -34,49 +38,56 @@
 #define MEMKV_ERROR_BUFFER_FULL  -7
 
 // 命令类型
-typedef enum memkv_cmd_type {
+typedef enum {
     CMD_UNKNOWN = 0,
-    CMD_SET,        // SET key flags exptime bytes [noreply]\r\n
-    CMD_GET,        // GET key [key...]\r\n
-    CMD_ADD,        // ADD key flags exptime bytes [noreply]\r\n
-    CMD_REPLACE,    // REPLACE key flags exptime bytes [noreply]\r\n
-    CMD_DELETE,     // DELETE key [noreply]\r\n
-    CMD_INCR,       // INCR key value [noreply]\r\n
-    CMD_DECR,       // DECR key value [noreply]\r\n
-    CMD_QUIT,       // QUIT\r\n
-    CMD_VERSION,    // VERSION\r\n
-    CMD_STATS,      // STATS\r\n
-    CMD_APPEND,     // APPEND key flags exptime bytes [noreply]\r\n
-    CMD_PREPEND,    // PREPEND key flags exptime bytes [noreply]\r\n
-    CMD_CAS,        // CAS key flags exptime bytes cas [noreply]\r\n
-    CMD_GETS,       // GETS key [key...]\r\n
-    CMD_TOUCH,      // TOUCH key exptime [noreply]\r\n
-    CMD_GAT,        // GAT exptime key\r\n
-    CMD_FLUSH       // FLUSH_ALL [exptime] [noreply]\r\n
+    CMD_SET,
+    CMD_ADD,
+    CMD_REPLACE,
+    CMD_APPEND,
+    CMD_PREPEND,
+    CMD_CAS,
+    CMD_GET,
+    CMD_GETS,
+    CMD_DELETE,
+    CMD_INCR,
+    CMD_DECR,
+    CMD_TOUCH,
+    CMD_GAT,
+    CMD_FLUSH,
+    CMD_STATS,
+    CMD_VERSION,
+    CMD_QUIT
 } memkv_cmd_type_t;
 
 // 命令状态
-typedef enum memkv_cmd_state {
-    CMD_STATE_INIT,         // 初始状态
-    CMD_STATE_READ_DATA,    // 读取数据
-    CMD_STATE_EXECUTING,    // 执行中
-    CMD_STATE_COMPLETE      // 完成
+typedef enum {
+    CMD_STATE_INIT = 0,
+    CMD_STATE_READING_DATA,
+    CMD_STATE_COMPLETE
 } memkv_cmd_state_t;
 
 // 命令结构
-typedef struct memkv_cmd {
-    memkv_cmd_type_t type;     // 命令类型
-    memkv_cmd_state_t state;   // 命令状态
-    char* key;                 // 键
-    size_t key_len;           // 键长度
-    void* data;               // 数据
-    size_t bytes;             // 数据长度
-    size_t bytes_read;        // 已读取的数据长度
-    uint32_t flags;           // 标志位
-    uint32_t exptime;         // 过期时间
-    uint64_t cas;             // CAS值
-    bool noreply;             // 是否不需要回复
+typedef struct {
+    memkv_cmd_type_t type;
+    memkv_cmd_state_t state;
+    char* key;
+    void* data;
+    size_t bytes;
+    uint32_t flags;
+    uint32_t exptime;
+    uint64_t cas;
+    bool noreply;
 } memkv_cmd_t;
+
+// 命令处理器
+typedef struct {
+    const char* name;
+    memkv_cmd_type_t type;
+    infra_error_t (*fn)(memkv_conn_t* conn);
+    int min_args;
+    int max_args;
+    bool has_value;
+} memkv_cmd_handler_t;
 
 // 存储项
 typedef struct memkv_item {
@@ -142,8 +153,14 @@ infra_error_t memkv_stop(void);
 bool memkv_is_running(void);
 const memkv_stats_t* memkv_get_stats(void);
 
+// 命令处理函数
+infra_error_t memkv_cmd_init(void);
+infra_error_t memkv_cmd_cleanup(void);
+infra_error_t memkv_cmd_process(memkv_conn_t* conn);
+
 // Helper functions
 memkv_item_t* create_item(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime);
+void destroy_item(memkv_item_t* item);
 bool is_item_expired(const memkv_item_t* item);
 void update_stats_set(size_t value_size);
 void update_stats_get(bool hit);
