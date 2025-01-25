@@ -19,6 +19,25 @@ const int rinetd_option_count = sizeof(rinetd_options) / sizeof(rinetd_options[0
 // Global Variables
 //-----------------------------------------------------------------------------
 
+// 服务实例
+peer_service_t g_rinetd_service = {
+    .config = {
+        .name = "rinetd",
+        .type = SERVICE_TYPE_RINETD,
+        .options = rinetd_options,
+        .option_count = rinetd_option_count,
+        .config = NULL
+    },
+    .state = SERVICE_STATE_STOPPED,
+    .init = rinetd_init,
+    .cleanup = rinetd_cleanup,
+    .start = rinetd_start,
+    .stop = rinetd_stop,
+    .is_running = rinetd_is_running,
+    .cmd_handler = rinetd_cmd_handler
+};
+
+// 服务上下文
 static struct {
     bool running;
     rinetd_rule_t rules[RINETD_MAX_RULES];  // 规则数组
@@ -538,10 +557,20 @@ infra_error_t rinetd_load_config(const char* path) {
 
     // 解析配置文件
     char line[256];
-    while (fgets(line, sizeof(line), fp) && g_context.rule_count < RINETD_MAX_RULES) {
+    int line_num = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        
         // 跳过注释和空行
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') {
             continue;
+        }
+
+        // 检查规则数量限制
+        if (g_context.rule_count >= RINETD_MAX_RULES) {
+            INFRA_LOG_ERROR("Too many rules (max: %d)", RINETD_MAX_RULES);
+            fclose(fp);
+            return INFRA_ERROR_NO_MEMORY;
         }
 
         // 解析规则
@@ -550,18 +579,39 @@ infra_error_t rinetd_load_config(const char* path) {
         int src_port = 0;
         int dst_port = 0;
 
-        if (sscanf(line, "%s %d %s %d", src_addr, &src_port, dst_addr, &dst_port) == 4) {
-            strncpy(g_context.rules[g_context.rule_count].src_addr, src_addr, RINETD_MAX_ADDR_LEN - 1);
-            g_context.rules[g_context.rule_count].src_port = src_port;
-            strncpy(g_context.rules[g_context.rule_count].dst_addr, dst_addr, RINETD_MAX_ADDR_LEN - 1);
-            g_context.rules[g_context.rule_count].dst_port = dst_port;
-            INFRA_LOG_INFO("Loaded rule %d: %s:%d -> %s:%d", 
-                g_context.rule_count,
-                src_addr, src_port, dst_addr, dst_port);
-            g_context.rule_count++;
-        } else {
-            INFRA_LOG_WARN("Invalid rule format: %s", line);
+        int matched = sscanf(line, "%s %d %s %d", src_addr, &src_port, dst_addr, &dst_port);
+        if (matched != 4) {
+            INFRA_LOG_WARN("Invalid rule format at line %d: %s", line_num, line);
+            continue;
         }
+
+        // 验证端口范围
+        if (src_port <= 0 || src_port > 65535 || dst_port <= 0 || dst_port > 65535) {
+            INFRA_LOG_WARN("Invalid port number at line %d", line_num);
+            continue;
+        }
+
+        // 验证地址长度
+        if (strlen(src_addr) >= RINETD_MAX_ADDR_LEN || strlen(dst_addr) >= RINETD_MAX_ADDR_LEN) {
+            INFRA_LOG_WARN("Address too long at line %d", line_num);
+            continue;
+        }
+
+        // 保存规则
+        bzero(&g_context.rules[g_context.rule_count], sizeof(rinetd_rule_t));
+        strncpy(g_context.rules[g_context.rule_count].src_addr, src_addr, RINETD_MAX_ADDR_LEN - 1);
+        g_context.rules[g_context.rule_count].src_port = (uint16_t)src_port;
+        strncpy(g_context.rules[g_context.rule_count].dst_addr, dst_addr, RINETD_MAX_ADDR_LEN - 1);
+        g_context.rules[g_context.rule_count].dst_port = (uint16_t)dst_port;
+
+        INFRA_LOG_INFO("Loaded rule %d: %s:%d -> %s:%d", 
+            g_context.rule_count,
+            g_context.rules[g_context.rule_count].src_addr,
+            g_context.rules[g_context.rule_count].src_port,
+            g_context.rules[g_context.rule_count].dst_addr,
+            g_context.rules[g_context.rule_count].dst_port);
+
+        g_context.rule_count++;
     }
 
     fclose(fp);

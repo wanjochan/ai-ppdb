@@ -24,6 +24,7 @@ set -x  # 启用调试输出
     "${SRC_DIR}/internal/poly/poly_atomic.c" \
     "${SRC_DIR}/internal/peer/peer_rinetd.c" \
     "${SRC_DIR}/internal/peer/peer_memkv.c" \
+    "${SRC_DIR}/internal/peer/peer_service.c" \
     "${SRC_DIR}/internal/infra/infra_core.c" \
     "${SRC_DIR}/internal/infra/infra_memory.c" \
     "${SRC_DIR}/internal/infra/infra_error.c" \

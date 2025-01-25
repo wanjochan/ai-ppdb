@@ -1,152 +1,130 @@
 #include "internal/poly/poly_cmdline.h"
 #include "internal/infra/infra_core.h"
+#include "internal/peer/peer_service.h"
 #include "internal/peer/peer_rinetd.h"
 #include "internal/peer/peer_memkv.h"
 // #include "internal/peer/peer_tccrun.h"
 
-// Global options
+//-----------------------------------------------------------------------------
+// Global Options
+//-----------------------------------------------------------------------------
+
 static const poly_cmd_option_t global_options[] = {
     {"log-level", "Log level (0:none, 1:error, 2:warn, 3:info, 4:debug, 5:trace)", true},
 };
 
 static const int global_option_count = sizeof(global_options) / sizeof(global_options[0]);
 
-// MemKV command options
-static const poly_cmd_option_t memkv_options[] = {
-    {"port", "Port to listen on (default: 11211)", true},
-    {"start", "Start the service", false},
-    {"stop", "Stop the service", false},
-    {"status", "Show service status", false},
-};
+//-----------------------------------------------------------------------------
+// Service Registry
+//-----------------------------------------------------------------------------
 
-static const int memkv_option_count = sizeof(memkv_options) / sizeof(memkv_options[0]);
-
-static infra_error_t memkv_cmd_handler(int argc, char** argv) {
-    uint16_t port = MEMKV_DEFAULT_PORT;
-
-    // Parse command line arguments
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "--port=", 7) == 0) {
-            port = (uint16_t)atoi(argv[i] + 7);
-        }
+static infra_error_t register_services(void) {
+    // Register MemKV service
+    infra_error_t err = peer_service_register(&g_memkv_service);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to register memkv service: %d", err);
+        return err;
     }
+    INFRA_LOG_INFO("Registered memkv service");
 
-    // Check for action flags
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--start") == 0) {
-            if (memkv_is_running()) {
-                infra_printf("MemKV service is already running\n");
-                return INFRA_ERROR_ALREADY_EXISTS;
-            }
-
-            infra_config_t config = INFRA_DEFAULT_CONFIG;
-            infra_error_t err = memkv_init(port, &config);
-            if (err != INFRA_OK) {
-                infra_printf("Failed to initialize MemKV service: %d\n", err);
-                return err;
-            }
-
-            err = memkv_start();
-            if (err != INFRA_OK) {
-                infra_printf("Failed to start MemKV service: %d\n", err);
-                memkv_cleanup();
-                return err;
-            }
-
-            infra_printf("MemKV service started on port %d\n", port);
-            return INFRA_OK;
-        }
-
-        if (strcmp(argv[i], "--stop") == 0) {
-            if (!memkv_is_running()) {
-                infra_printf("MemKV service is not running\n");
-                return INFRA_ERROR_NOT_FOUND;
-            }
-
-            infra_error_t err = memkv_stop();
-            if (err != INFRA_OK) {
-                infra_printf("Failed to stop MemKV service: %d\n", err);
-                return err;
-            }
-
-            err = memkv_cleanup();
-            if (err != INFRA_OK) {
-                infra_printf("Failed to cleanup MemKV service: %d\n", err);
-                return err;
-            }
-
-            infra_printf("MemKV service stopped\n");
-            return INFRA_OK;
-        }
-
-        if (strcmp(argv[i], "--status") == 0) {
-            if (memkv_is_running()) {
-                infra_printf("MemKV service is running on port %d\n", port);
-            } else {
-                infra_printf("MemKV service is not running\n");
-            }
-            return INFRA_OK;
-        }
+    // Register Rinetd service
+    err = peer_service_register(&g_rinetd_service);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to register rinetd service: %d", err);
+        return err;
     }
+    INFRA_LOG_INFO("Registered rinetd service");
 
-    infra_printf("Error: Please specify --start, --stop, or --status\n");
-    return INFRA_ERROR_INVALID_PARAM;
+    return INFRA_OK;
 }
 
-static infra_error_t help_cmd_handler(int argc, char** argv) {
-    (void)argc;
-    (void)argv;
+//-----------------------------------------------------------------------------
+// Command Line Processing
+//-----------------------------------------------------------------------------
 
-    INFRA_LOG_DEBUG("Showing help information");
-
-    infra_printf("Usage: ppdb [global options] <command> [options]\n");
+static void print_usage(const char* program) {
+    infra_printf("Usage: %s [global options] <command> [command_options]\n\n", program);
+    
+    // Print global options
     infra_printf("Global options:\n");
     for (int i = 0; i < global_option_count; i++) {
         infra_printf("  --%s=<value>  %s\n", 
             global_options[i].name,
             global_options[i].desc);
     }
-    infra_printf("\nAvailable commands:\n");
 
-    int cmd_count = 0;
-    const poly_cmd_t* commands = poly_cmdline_get_commands(&cmd_count);
-    if (commands == NULL) {
-        INFRA_LOG_ERROR("Failed to get commands");
-        return INFRA_ERROR_NOT_FOUND;
+    // Print available commands
+    infra_printf("\nAvailable commands:\n");
+    infra_printf("  help    - Show help information\n");
+    infra_printf("  memkv   - MemKV service management\n");
+    infra_printf("    Options:\n");
+    infra_printf("      --port=<value>  Port to listen on (default: 11211)\n");
+    infra_printf("      --start         Start the service\n");
+    infra_printf("      --stop          Stop the service\n");
+    infra_printf("      --status        Show service status\n");
+    infra_printf("  rinetd  - Rinetd service management\n");
+    infra_printf("    Options:\n");
+    infra_printf("      --config=<value>  Configuration file path\n");
+    infra_printf("      --start           Start the service\n");
+    infra_printf("      --stop            Stop the service\n");
+    infra_printf("      --status          Show service status\n");
+}
+
+static infra_error_t process_global_options(int argc, char** argv, infra_config_t* config) {
+    if (argc < 1 || !config) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    for (int i = 0; i < cmd_count; i++) {
-        infra_printf("  %-20s %s\n", commands[i].name, commands[i].desc);
-        if (commands[i].options && commands[i].option_count > 0) {
-            infra_printf("    Options:\n");
-            for (int j = 0; j < commands[i].option_count; j++) {
-                if (commands[i].options[j].has_value) {
-                    infra_printf("      --%s=<value>  %s\n",
-                        commands[i].options[j].name,
-                        commands[i].options[j].desc);
+    // Parse global options first
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-' || argv[i][1] != '-') {
+            continue;
+        }
+
+        const char* option = argv[i] + 2;  // Skip "--"
+        const char* value = strchr(option, '=');
+        if (value) {
+            size_t name_len = value - option;
+            value++;  // Skip '='
+            
+            if (strncmp(option, "log-level", name_len) == 0) {
+                if (*value == '\0') {  // Empty value
+                    INFRA_LOG_ERROR("--log-level requires a numeric value (0-5)");
+                    INFRA_LOG_ERROR("Example: ppdb --log-level=4 help");
+                    return INFRA_ERROR_INVALID_PARAM;
+                }
+
+                // Parse the numeric value
+                char* endptr;
+                long level = strtol(value, &endptr, 10);
+                
+                // Check for conversion errors
+                if (*endptr != '\0' || endptr == value) {
+                    INFRA_LOG_ERROR("Invalid log level: %s (must be a number)", value);
+                    return INFRA_ERROR_INVALID_PARAM;
+                }
+                
+                // Check value range
+                if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
+                    config->log.level = (int)level;
                 } else {
-                    infra_printf("      --%s   %s\n",
-                        commands[i].options[j].name,
-                        commands[i].options[j].desc);
+                    INFRA_LOG_ERROR("Invalid log level: %ld (valid range: 0-5)", level);
+                    return INFRA_ERROR_INVALID_PARAM;
                 }
             }
         }
     }
 
-    INFRA_LOG_DEBUG("Help information displayed");
     return INFRA_OK;
 }
 
+//-----------------------------------------------------------------------------
+// Main Entry
+//-----------------------------------------------------------------------------
+
 int main(int argc, char** argv) {
     infra_error_t err;
-    const char* log_level_str = NULL;
-
-    // Parse global options first
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "--log-level=", 12) == 0) {
-            log_level_str = argv[i] + 12;
-        }
-    }
 
     // Initialize infrastructure layer with custom log level
     infra_config_t config;
@@ -156,25 +134,10 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Set log level if specified
-    if (log_level_str) {
-        // Parse the numeric value
-        char* endptr;
-        long level = strtol(log_level_str, &endptr, 10);
-        
-        // Check for conversion errors
-        if (*endptr != '\0' || endptr == log_level_str) {
-            fprintf(stderr, "ERROR: Invalid log level: %s (must be a number)\n", log_level_str);
-            return 1;
-        }
-        
-        // Check value range
-        if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
-            config.log.level = (int)level;
-        } else {
-            fprintf(stderr, "ERROR: Invalid log level: %ld (valid range: 0-5)\n", level);
-            return 1;
-        }
+    // Process global options
+    err = process_global_options(argc, argv, &config);
+    if (err != INFRA_OK) {
+        return 1;
     }
 
     // Initialize infrastructure layer
@@ -186,112 +149,49 @@ int main(int argc, char** argv) {
 
     INFRA_LOG_DEBUG("Infrastructure layer initialized with log level %d", config.log.level);
 
-    // Initialize command line framework
-    err = poly_cmdline_init();
+    // Register services
+    err = register_services();
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to initialize command line framework");
+        INFRA_LOG_ERROR("Failed to register services: %d", err);
         return 1;
     }
 
-    INFRA_LOG_DEBUG("Command line framework initialized");
-
-    // Parse global options first (must be before command)
-    int i;
-    for (i = 1; i < argc; i++) {
-        if (argv[i][0] != '-' || argv[i][1] != '-') {
-            // Found command, stop parsing global options
+    // Find first non-option argument as command
+    const char* cmd_name = NULL;
+    int cmd_start = 1;
+    for (; cmd_start < argc; cmd_start++) {
+        if (argv[cmd_start][0] != '-') {
+            cmd_name = argv[cmd_start];
             break;
         }
-
-        const char* option = argv[i] + 2;  // Skip "--"
-        const char* value = strchr(option, '=');
-        if (value) {
-            size_t name_len = value - option;
-            value++;  // Skip '='
-            
-            if (strncmp(option, "log-level", name_len) == 0) {
-                if (*value == '\0') {  // Empty value
-                    fprintf(stderr, "ERROR: --log-level requires a numeric value (0-5)\n");
-                    fprintf(stderr, "Example: ppdb --log-level=4 help\n");
-                    help_cmd_handler(0, NULL);
-                    return 1;
-                }
-                log_level_str = value;
-            } else {
-                fprintf(stderr, "ERROR: Unknown global option: %s\n", argv[i]);
-                fprintf(stderr, "ERROR: Global options must come before command\n");
-                fprintf(stderr, "ERROR: Example: ppdb --log-level=4 help\n");
-                help_cmd_handler(0, NULL);
-                return 1;
-            }
-        } else {
-            fprintf(stderr, "ERROR: Invalid option format: %s\n", argv[i]);
-            fprintf(stderr, "ERROR: Global options must have a value\n");
-            fprintf(stderr, "ERROR: Example: ppdb --log-level=4 help\n");
-            help_cmd_handler(0, NULL);
-            return 1;
+        // Skip value of --log-level if specified without =
+        if (strcmp(argv[cmd_start], "--log-level") == 0 && cmd_start + 1 < argc) {
+            cmd_start++;
         }
     }
 
-    // Register commands (after infra_init)
-    poly_cmd_t help_cmd = {
-        .name = "help",
-        .desc = "Show help information",
-        .options = NULL,
-        .option_count = 0,
-        .handler = help_cmd_handler
-    };
-    err = poly_cmdline_register(&help_cmd);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register help command");
-        return 1;
+    // If no command specified or help requested, show help
+    if (!cmd_name || strcmp(cmd_name, "help") == 0) {
+        print_usage(argv[0]);
+        return !cmd_name ? 1 : 0;
     }
-    INFRA_LOG_DEBUG("Help command registered");
 
-    // Register memkv command
-    poly_cmd_t memkv_cmd = {
-        .name = "memkv",
-        .desc = "MemKV service management",
-        .options = memkv_options,
-        .option_count = memkv_option_count,
-        .handler = memkv_cmd_handler
-    };
-    err = poly_cmdline_register(&memkv_cmd);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register memkv command");
-        return 1;
-    }
-    INFRA_LOG_DEBUG("MemKV command registered");
-
-    poly_cmd_t rinetd_cmd = {
-        .name = "rinetd",
-        .desc = "Rinetd service management",
-        .options = rinetd_options,
-        .option_count = rinetd_option_count,
-        .handler = rinetd_cmd_handler
-    };
-    err = poly_cmdline_register(&rinetd_cmd);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register rinetd command: %d", err);
-        return 1;
-    }
-    INFRA_LOG_DEBUG("Rinetd command registered");
-
-    // If no command specified, show help
-    if (i >= argc) {
-        INFRA_LOG_ERROR("No command specified");
-        help_cmd_handler(0, NULL);
+    // Find service by name
+    peer_service_t* service = peer_service_get(cmd_name);
+    if (!service) {
+        INFRA_LOG_ERROR("Unknown command: %s", cmd_name);
         return 1;
     }
 
-    // Execute command (pass remaining arguments)
-    INFRA_LOG_DEBUG("Executing command: %s", argv[i]);
-    err = poly_cmdline_execute(argc - i, argv + i);
+    // Execute command
+    int cmd_argc = argc - cmd_start;
+    char** cmd_argv = argv + cmd_start;
+    err = service->cmd_handler(cmd_argc, cmd_argv);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Command execution failed: %s", infra_error_string(err));
+        INFRA_LOG_ERROR("Command failed: %d", err);
         return 1;
     }
+
     INFRA_LOG_DEBUG("Command executed successfully");
-
     return 0;
 } 

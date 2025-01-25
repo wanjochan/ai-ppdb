@@ -7,7 +7,8 @@
 #include "internal/infra/infra_platform.h"
 #include "internal/poly/poly_hashtable.h"
 #include "internal/poly/poly_cmdline.h"
-#include "../poly/poly_atomic.h"
+#include "internal/poly/poly_atomic.h"
+#include "internal/peer/peer_service.h"
 
 // 前向声明
 struct memkv_conn;
@@ -76,14 +77,22 @@ typedef struct memkv_context {
 } memkv_context_t;
 
 // 声明全局上下文
-extern memkv_context_t g_context;
+extern memkv_context_t g_memkv_context;
+
+// 声明服务实例
+extern peer_service_t g_memkv_service;
+
+// 命令行选项
+extern const poly_cmd_option_t memkv_options[];
+extern const int memkv_option_count;
 
 // 公共接口函数
-infra_error_t memkv_init(uint16_t port, const infra_config_t* config);
+infra_error_t memkv_init(const infra_config_t* config);
 infra_error_t memkv_cleanup(void);
 infra_error_t memkv_start(void);
 infra_error_t memkv_stop(void);
 bool memkv_is_running(void);
 const memkv_stats_t* memkv_get_stats(void);
+infra_error_t memkv_cmd_handler(int argc, char** argv);
 
 #endif // PEER_MEMKV_H

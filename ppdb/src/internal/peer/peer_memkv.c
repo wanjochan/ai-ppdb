@@ -5,78 +5,39 @@
 #include "internal/poly/poly_cmdline.h"
 
 //-----------------------------------------------------------------------------
-// Internal Types
+// Command Line Options
 //-----------------------------------------------------------------------------
 
-// 命令类型
-typedef enum {
-    CMD_UNKNOWN = 0,
-    CMD_SET,
-    CMD_ADD,
-    CMD_REPLACE,
-    CMD_APPEND,
-    CMD_PREPEND,
-    CMD_CAS,
-    CMD_GET,
-    CMD_GETS,
-    CMD_DELETE,
-    CMD_INCR,
-    CMD_DECR,
-    CMD_TOUCH,
-    CMD_GAT,
-    CMD_FLUSH,
-    CMD_STATS,
-    CMD_VERSION,
-    CMD_QUIT
-} memkv_cmd_type_t;
-
-// 命令状态
-typedef enum {
-    CMD_STATE_INIT = 0,
-    CMD_STATE_READING_DATA,
-    CMD_STATE_COMPLETE
-} memkv_cmd_state_t;
-
-// 命令结构
-typedef struct {
-    memkv_cmd_type_t type;
-    memkv_cmd_state_t state;
-    char* key;
-    void* data;
-    size_t bytes;
-    uint32_t flags;
-    uint32_t exptime;
-    uint64_t cas;
-    bool noreply;
-} memkv_cmd_t;
-
-// 连接结构
-struct memkv_conn {
-    infra_socket_t sock;              // 套接字
-    bool is_active;                   // 连接是否活跃
-    char* buffer;                     // 命令缓冲区
-    size_t buffer_used;               // 已使用的缓冲区大小
-    size_t buffer_read;               // 已读取的缓冲区大小
-    memkv_cmd_t current_cmd;          // 当前命令
-    char response[MEMKV_BUFFER_SIZE];  // Response buffer
-    size_t response_len;               // Response length
+const poly_cmd_option_t memkv_options[] = {
+    {
+        .name = "port",
+        .desc = "Port to listen on",
+        .has_value = true,
+    },
+    {
+        .name = "start",
+        .desc = "Start the service",
+        .has_value = false,
+    },
+    {
+        .name = "stop",
+        .desc = "Stop the service",
+        .has_value = false,
+    },
+    {
+        .name = "status",
+        .desc = "Show service status",
+        .has_value = false,
+    },
 };
 
-// 命令处理器
-typedef struct {
-    const char* name;
-    memkv_cmd_type_t type;
-    infra_error_t (*fn)(memkv_conn_t* conn);
-    int min_args;
-    int max_args;
-    bool has_value;
-} memkv_cmd_handler_t;
+const int memkv_option_count = sizeof(memkv_options) / sizeof(memkv_options[0]);
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
 //-----------------------------------------------------------------------------
 
-// Command processing functions
+// Command handlers
 static infra_error_t handle_set(memkv_conn_t* conn);
 static infra_error_t handle_add(memkv_conn_t* conn);
 static infra_error_t handle_replace(memkv_conn_t* conn);
@@ -127,95 +88,204 @@ static infra_error_t send_response(memkv_conn_t* conn, const char* response, siz
 static infra_error_t send_value_response(memkv_conn_t* conn, const memkv_item_t* item);
 
 //-----------------------------------------------------------------------------
-// Command Line Options
+// Command Types
 //-----------------------------------------------------------------------------
 
-const poly_cmd_option_t memkv_options[] = {
-    {
-        .name = "port",
-        .desc = "Port to listen on",
-        .has_value = true,
-    },
-    {
-        .name = "start",
-        .desc = "Start the service",
-        .has_value = false,
-    },
-    {
-        .name = "stop",
-        .desc = "Stop the service",
-        .has_value = false,
-    },
-    {
-        .name = "status",
-        .desc = "Show service status",
-        .has_value = false,
-    },
+// Command types
+typedef enum {
+    CMD_UNKNOWN = 0,
+    CMD_SET,
+    CMD_ADD,
+    CMD_REPLACE,
+    CMD_APPEND,
+    CMD_PREPEND,
+    CMD_CAS,
+    CMD_GET,
+    CMD_GETS,
+    CMD_DELETE,
+    CMD_INCR,
+    CMD_DECR,
+    CMD_TOUCH,
+    CMD_GAT,
+    CMD_FLUSH,
+    CMD_STATS,
+    CMD_VERSION,
+    CMD_QUIT
+} memkv_cmd_type_t;
+
+//-----------------------------------------------------------------------------
+// Command Handler Structure
+//-----------------------------------------------------------------------------
+
+// Command handler structure
+typedef struct {
+    const char* name;
+    memkv_cmd_type_t type;
+    infra_error_t (*handler)(memkv_conn_t* conn);
+    int min_args;
+    int max_args;
+    bool has_value;
+} memkv_cmd_handler_t;
+
+//-----------------------------------------------------------------------------
+// Command States
+//-----------------------------------------------------------------------------
+
+// Command states
+typedef enum {
+    CMD_STATE_INIT = 0,
+    CMD_STATE_READING_DATA,
+    CMD_STATE_COMPLETE
+} memkv_cmd_state_t;
+
+//-----------------------------------------------------------------------------
+// Command Structure
+//-----------------------------------------------------------------------------
+
+// Command structure
+typedef struct {
+    memkv_cmd_type_t type;
+    memkv_cmd_state_t state;
+    char* key;
+    void* data;
+    size_t bytes;
+    uint32_t flags;
+    uint32_t exptime;
+    uint64_t cas;
+    bool noreply;
+} memkv_cmd_t;
+
+//-----------------------------------------------------------------------------
+// Connection Structure
+//-----------------------------------------------------------------------------
+
+// Connection structure
+struct memkv_conn {
+    infra_socket_t sock;              // Socket
+    bool is_active;                   // Connection active
+    char* buffer;                     // Command buffer
+    size_t buffer_used;              // Used buffer size
+    size_t buffer_read;              // Read buffer size
+    memkv_cmd_t current_cmd;         // Current command
+    char response[MEMKV_BUFFER_SIZE]; // Response buffer
+    size_t response_len;             // Response length
 };
 
-const int memkv_option_count = sizeof(memkv_options) / sizeof(memkv_options[0]);
+//-----------------------------------------------------------------------------
+// Command Handlers
+//-----------------------------------------------------------------------------
+
+// Command handlers
+static const memkv_cmd_handler_t g_handlers[] = {
+    {"set",      CMD_SET,     handle_set,      2, 6, true},
+    {"add",      CMD_ADD,     handle_add,      2, 6, true},
+    {"replace",  CMD_REPLACE, handle_replace,  2, 6, true},
+    {"append",   CMD_APPEND,  handle_append,   2, 6, true},
+    {"prepend",  CMD_PREPEND, handle_prepend,  2, 6, true},
+    {"cas",      CMD_CAS,     handle_cas,      3, 7, true},
+    {"get",      CMD_GET,     handle_get,      1, -1, false},
+    {"gets",     CMD_GETS,    handle_gets,     1, -1, false},
+    {"delete",   CMD_DELETE,  handle_delete,   1, 3, false},
+    {"incr",     CMD_INCR,    handle_incr,     1, 3, false},
+    {"decr",     CMD_DECR,    handle_decr,     1, 3, false},
+    {"touch",    CMD_TOUCH,   handle_touch,    2, 3, false},
+    {"gat",      CMD_GAT,     handle_gat,      2, -1, false},
+    {"flush_all",CMD_FLUSH,   handle_flush_all,0, 2, false},
+    {"stats",    CMD_STATS,   handle_stats,    0, 1, false},
+    {"version",  CMD_VERSION, handle_version,  0, 1, false},
+    {"quit",     CMD_QUIT,    handle_quit,     0, 1, false},
+    {NULL,       CMD_UNKNOWN, NULL,            0, 0, false}
+};
+
+//-----------------------------------------------------------------------------
+// Service Implementation
+//-----------------------------------------------------------------------------
+
+// 服务实例
+peer_service_t g_memkv_service = {
+    .config = {
+        .name = "memkv",
+        .type = SERVICE_TYPE_MEMKV,
+        .options = memkv_options,
+        .option_count = sizeof(memkv_options) / sizeof(memkv_options[0]),
+        .config = NULL
+    },
+    .state = SERVICE_STATE_STOPPED,
+    .init = memkv_init,
+    .cleanup = memkv_cleanup,
+    .start = memkv_start,
+    .stop = memkv_stop,
+    .is_running = memkv_is_running,
+    .cmd_handler = memkv_cmd_handler
+};
 
 //-----------------------------------------------------------------------------
 // Global Variables
 //-----------------------------------------------------------------------------
 
-memkv_context_t g_context = {0};
+memkv_context_t g_memkv_context = {0};
 
 //-----------------------------------------------------------------------------
-// Service Management
+// Command Handlers
 //-----------------------------------------------------------------------------
 
-infra_error_t memkv_init(uint16_t port, const infra_config_t* config) {
-    if (!config) {
+infra_error_t memkv_cmd_handler(int argc, char** argv) {
+    if (argc < 1) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // Initialize global context
-    memset(&g_context, 0, sizeof(g_context));
-    g_context.port = port;
-
-    // Initialize storage
-    infra_error_t err = memkv_cmd_init();
+    // Initialize service
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
+    infra_error_t err = memkv_init(&config);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to initialize memkv service: %d", err);
         return err;
     }
 
-    // Create thread pool configuration
-    infra_thread_pool_config_t pool_config = {
-        .min_threads = MEMKV_MIN_THREADS,
-        .max_threads = MEMKV_MAX_THREADS,
-        .queue_size = MEMKV_QUEUE_SIZE,
-        .idle_timeout = MEMKV_IDLE_TIMEOUT
-    };
+    // Parse command line
+    bool should_start = false;
+    uint16_t port = MEMKV_DEFAULT_PORT;
 
-    // Create thread pool
-    err = infra_thread_pool_create(&pool_config, &g_context.pool);
-    if (err != INFRA_OK) {
-        memkv_cmd_cleanup();
-        return err;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--start") == 0) {
+            should_start = true;
+        } else if (strcmp(argv[i], "--stop") == 0) {
+            return memkv_stop();
+        } else if (strcmp(argv[i], "--status") == 0) {
+            infra_printf("Service is %s\n", 
+                memkv_is_running() ? "running" : "stopped");
+            return INFRA_OK;
+        } else if (strncmp(argv[i], "--port=", 7) == 0) {
+            port = (uint16_t)atoi(argv[i] + 7);
+        } else if (strcmp(argv[i], "--port") == 0) {
+            if (++i >= argc) {
+                INFRA_LOG_ERROR("Missing port number");
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+            port = (uint16_t)atoi(argv[i]);
+        }
     }
 
-    g_context.start_time = time(NULL);
+    // Set port
+    g_memkv_context.port = port;
+
+    // Start service
+    if (should_start) {
+        INFRA_LOG_DEBUG("Starting memkv service on port %d", port);
+        err = memkv_start();
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to start memkv service: %d", err);
+            return err;
+        }
+        INFRA_LOG_INFO("Memkv service started successfully");
+    }
+
     return INFRA_OK;
 }
 
-infra_error_t memkv_cleanup(void) {
-    if (g_context.is_running) {
-        memkv_stop();
-    }
-
-    if (g_context.pool) {
-        infra_thread_pool_destroy(g_context.pool);
-        g_context.pool = NULL;
-    }
-
-    if (g_context.listen_sock) {
-        infra_net_close(g_context.listen_sock);
-        g_context.listen_sock = NULL;
-    }
-
-    return memkv_cmd_cleanup();
-}
+//-----------------------------------------------------------------------------
+// Connection Management
+//-----------------------------------------------------------------------------
 
 static infra_error_t create_listener(void) {
     // Create listen socket
@@ -236,7 +306,7 @@ static infra_error_t create_listener(void) {
     // Bind address
     infra_net_addr_t addr = {
         .host = "127.0.0.1",
-        .port = g_context.port
+        .port = g_memkv_context.port
     };
     
     err = infra_net_bind(listener, &addr);
@@ -251,167 +321,53 @@ static infra_error_t create_listener(void) {
         return err;
     }
 
-    g_context.listen_sock = listener;
+    g_memkv_context.listen_sock = listener;
     return INFRA_OK;
 }
-
-infra_error_t memkv_start(void) {
-    if (g_context.is_running) {
-        return INFRA_ERROR_ALREADY_EXISTS;
-    }
-
-    // Create listener
-    infra_error_t err = create_listener();
-    if (err != INFRA_OK) {
-        return err;
-    }
-
-    // Set non-blocking mode
-    err = infra_net_set_nonblock(g_context.listen_sock, true);
-    if (err != INFRA_OK) {
-        infra_net_close(g_context.listen_sock);
-        g_context.listen_sock = NULL;
-        return err;
-    }
-
-    g_context.is_running = true;
-    infra_printf("MemKV service started on port %d\n", g_context.port);
-    
-    while (g_context.is_running) {
-        infra_socket_t client = NULL;
-        infra_net_addr_t client_addr = {0};
-        err = infra_net_accept(g_context.listen_sock, &client, &client_addr);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                continue;
-            }
-            break;
-        }
-
-        memkv_conn_t* conn = NULL;
-        err = create_connection(client, &conn);
-        if (err != INFRA_OK) {
-            infra_net_close(client);
-            continue;
-        }
-
-        err = infra_thread_pool_submit(g_context.pool, handle_connection, conn);
-        if (err != INFRA_OK) {
-            destroy_connection(conn);
-            continue;
-        }
-    }
-
-    return INFRA_OK;
-}
-
-infra_error_t memkv_stop(void) {
-    if (!g_context.is_running) {
-        return INFRA_ERROR_NOT_FOUND;
-    }
-
-    g_context.is_running = false;
-
-    if (g_context.accept_thread) {
-        infra_thread_join(g_context.accept_thread);
-        g_context.accept_thread = NULL;
-    }
-
-    if (g_context.listen_sock) {
-        infra_net_close(g_context.listen_sock);
-        g_context.listen_sock = NULL;
-    }
-
-    return INFRA_OK;
-}
-
-bool memkv_is_running(void) {
-    return g_context.is_running;
-}
-
-//-----------------------------------------------------------------------------
-// Connection Management
-//-----------------------------------------------------------------------------
 
 static infra_error_t create_connection(infra_socket_t sock, memkv_conn_t** conn) {
-    memkv_conn_t* new_conn = malloc(sizeof(memkv_conn_t));
+    if (!conn) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    memkv_conn_t* new_conn = (memkv_conn_t*)malloc(sizeof(memkv_conn_t));
     if (!new_conn) {
-        return MEMKV_ERROR_NO_MEMORY;
+        return INFRA_ERROR_NO_MEMORY;
     }
 
     memset(new_conn, 0, sizeof(memkv_conn_t));
     new_conn->sock = sock;
     new_conn->is_active = true;
 
-    // Allocate buffer
-    new_conn->buffer = malloc(MEMKV_BUFFER_SIZE);
-    if (!new_conn->buffer) {
-        free(new_conn);
-        return MEMKV_ERROR_NO_MEMORY;
-    }
-
-    // Set socket options
-    infra_error_t err;
-    
-    err = infra_net_set_nonblock(sock, true);
-    if (err != INFRA_OK) goto error;
-
-    err = infra_net_set_timeout(sock, 5000);
-    if (err != INFRA_OK) goto error;
-
-    err = infra_net_set_nodelay(sock, true);
-    if (err != INFRA_OK) goto error;
-
-    err = infra_net_set_keepalive(sock, true);
-    if (err != INFRA_OK) goto error;
-
     *conn = new_conn;
     return INFRA_OK;
-
-error:
-    destroy_connection(new_conn);
-    return err;
 }
 
 static void destroy_connection(memkv_conn_t* conn) {
-    if (!conn) return;
-    
-    conn->is_active = false;
-    
-    if (conn->buffer) {
-        free(conn->buffer);
-        conn->buffer = NULL;
+    if (!conn) {
+        return;
     }
-    
+
     if (conn->sock) {
         infra_net_close(conn->sock);
-        conn->sock = NULL;
     }
-    
+
+    if (conn->buffer) {
+        free(conn->buffer);
+    }
+
     free(conn);
 }
 
 static void* handle_connection(void* arg) {
     memkv_conn_t* conn = (memkv_conn_t*)arg;
-    if (!conn) return NULL;
+    if (!conn) {
+        return NULL;
+    }
 
-    while (conn->is_active) {
-        size_t bytes_read = 0;
-        infra_error_t err = infra_net_recv(conn->sock, 
-                                         conn->buffer + conn->buffer_used,
-                                         MEMKV_BUFFER_SIZE - conn->buffer_used,
-                                         &bytes_read);
-        
-        if (err == INFRA_ERROR_TIMEOUT) {
-            continue;
-        } else if (err != INFRA_OK || bytes_read == 0) {
-            break;
-        }
-
-        conn->buffer_used += bytes_read;
-
-        err = memkv_cmd_process(conn);
-        if (err != INFRA_OK && err != INFRA_ERROR_WOULD_BLOCK) {
+    while (conn->is_active && g_memkv_context.is_running) {
+        infra_error_t err = memkv_cmd_process(conn);
+        if (err != INFRA_OK) {
             break;
         }
     }
@@ -421,262 +377,154 @@ static void* handle_connection(void* arg) {
 }
 
 //-----------------------------------------------------------------------------
-// Command Handler
-//-----------------------------------------------------------------------------
-
-infra_error_t memkv_cmd_handler(int argc, char** argv) {
-    if (argc < 2) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    const char* port_str = NULL;
-    bool start = false;
-    bool stop = false;
-    bool status = false;
-
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "--port=", 7) == 0) {
-            port_str = argv[i] + 7;
-        } else if (strcmp(argv[i], "--start") == 0) {
-            start = true;
-        } else if (strcmp(argv[i], "--stop") == 0) {
-            stop = true;
-        } else if (strcmp(argv[i], "--status") == 0) {
-            status = true;
-        }
-    }
-
-    if (status) {
-        infra_printf("MemKV service is %s\n", 
-            memkv_is_running() ? "running" : "stopped");
-        return INFRA_OK;
-    }
-
-    if (stop) {
-        return memkv_stop();
-    }
-
-    if (start) {
-        uint16_t port = MEMKV_DEFAULT_PORT;
-        if (port_str) {
-            char* endptr;
-            long p = strtol(port_str, &endptr, 10);
-            if (*endptr != '\0' || p <= 0 || p > 65535) {
-                return INFRA_ERROR_INVALID_PARAM;
-            }
-            port = (uint16_t)p;
-        }
-
-        infra_config_t config = INFRA_DEFAULT_CONFIG;
-        infra_error_t err = memkv_init(port, &config);
-        if (err != INFRA_OK) {
-            return err;
-        }
-
-        err = memkv_start();
-        if (err != INFRA_OK) {
-            memkv_cleanup();
-            return err;
-        }
-
-        return INFRA_OK;
-    }
-
-    return INFRA_ERROR_INVALID_OPERATION;
-}
-
-// 命令处理器表
-static const memkv_cmd_handler_t g_handlers[] = {
-    {"set",     CMD_SET,     handle_set,     5, 5, true},
-    {"add",     CMD_ADD,     handle_add,     5, 5, true},
-    {"replace", CMD_REPLACE, handle_replace, 5, 5, true},
-    {"append",  CMD_APPEND,  handle_append,  5, 5, true},
-    {"prepend", CMD_PREPEND, handle_prepend, 5, 5, true},
-    {"cas",     CMD_CAS,     handle_cas,     6, 6, true},
-    {"get",     CMD_GET,     handle_get,     2, -1, false},
-    {"gets",    CMD_GETS,    handle_gets,    2, -1, false},
-    {"incr",     CMD_INCR,     handle_incr,     3, 3, false},
-    {"decr",     CMD_DECR,     handle_decr,     3, 3, false},
-    {"touch",    CMD_TOUCH,    handle_touch,    3, 3, false},
-    {"gat",      CMD_GAT,      handle_gat,      3, -1, false},
-    {"flush_all",CMD_FLUSH,    handle_flush_all,1, 2, false},
-    {"delete",  CMD_DELETE,  handle_delete,  2, 2, false},
-    {"stats",   CMD_STATS,   handle_stats,   1, 2, false},
-    {"version", CMD_VERSION, handle_version, 1, 1, false},
-    {"quit",    CMD_QUIT,    handle_quit,    1, 1, false},
-    {NULL,      CMD_UNKNOWN, NULL,          0, 0, false}
-};
-
-// 存储操作
-static infra_error_t store_with_lock(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime) {
-    memkv_item_t* item = create_item(key, value, value_size, flags, exptime);
-    if (!item) {
-        return MEMKV_ERROR_NO_MEMORY;
-    }
-
-    infra_mutex_lock(&g_context.store_mutex);
-    infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
-    if (err == INFRA_OK) {
-        update_stats_set(value_size);
-    } else {
-        destroy_item(item);
-    }
-    infra_mutex_unlock(&g_context.store_mutex);
-
-    return err;
-}
-
-// 获取操作
-static infra_error_t get_with_lock(const char* key, memkv_item_t** item) {
-    infra_mutex_lock(&g_context.store_mutex);
-    infra_error_t err = poly_hashtable_get(g_context.store, key, (void**)item);
-    if (err == INFRA_OK && *item) {
-        if (is_item_expired(*item)) {
-            err = poly_hashtable_remove(g_context.store, key);
-            if (err == INFRA_OK) {
-                update_stats_delete((*item)->value_size);
-                destroy_item(*item);
-                *item = NULL;
-            }
-            err = MEMKV_ERROR_NOT_FOUND;
-        }
-    }
-    infra_mutex_unlock(&g_context.store_mutex);
-    return err;
-}
-
-// 删除操作
-static infra_error_t delete_with_lock(const char* key) {
-    memkv_item_t* item = NULL;
-    infra_error_t err = get_with_lock(key, &item);
-    if (err == INFRA_OK) {
-        if (item) {
-            err = poly_hashtable_remove(g_context.store, key);
-            if (err == INFRA_OK) {
-                update_stats_delete(item->value_size);
-                destroy_item(item);
-            }
-        } else {
-            err = MEMKV_ERROR_NOT_FOUND;
-        }
-    }
-    return err;
-}
-
-// 发送值响应
-static infra_error_t send_value_response(memkv_conn_t* conn, const memkv_item_t* item) {
-    char header[256];
-    size_t header_len = snprintf(header, sizeof(header), "VALUE %s %u %zu\r\n", 
-        item->key, item->flags, item->value_size);
-    infra_error_t err = send_response(conn, header, header_len);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
-    err = send_response(conn, item->value, item->value_size);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
-    return send_response(conn, "\r\n", 2);
-}
-
-//-----------------------------------------------------------------------------
-// Command Handlers
+// Command Handler Implementation
 //-----------------------------------------------------------------------------
 
 static infra_error_t handle_set(memkv_conn_t* conn) {
-    // TODO: Implement set command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_add(memkv_conn_t* conn) {
-    // TODO: Implement add command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_replace(memkv_conn_t* conn) {
-    // TODO: Implement replace command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_append(memkv_conn_t* conn) {
-    // TODO: Implement append command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_prepend(memkv_conn_t* conn) {
-    // TODO: Implement prepend command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_cas(memkv_conn_t* conn) {
-    // TODO: Implement cas command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_get(memkv_conn_t* conn) {
-    // TODO: Implement get command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_gets(memkv_conn_t* conn) {
-    // TODO: Implement gets command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_delete(memkv_conn_t* conn) {
-    // TODO: Implement delete command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_incr(memkv_conn_t* conn) {
-    // TODO: Implement incr command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_decr(memkv_conn_t* conn) {
-    // TODO: Implement decr command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_touch(memkv_conn_t* conn) {
-    // TODO: Implement touch command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_gat(memkv_conn_t* conn) {
-    // TODO: Implement gat command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_flush_all(memkv_conn_t* conn) {
-    // TODO: Implement flush_all command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_stats(memkv_conn_t* conn) {
-    // TODO: Implement stats command
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 static infra_error_t handle_version(memkv_conn_t* conn) {
-    char response[64];
-    int len = snprintf(response, sizeof(response), "VERSION %s\r\n", MEMKV_VERSION);
-    return send_response(conn, response, len);
-}
-
-static infra_error_t handle_quit(memkv_conn_t* conn) {
-    conn->is_active = false;
-    return INFRA_OK;
-}
-
-static infra_error_t memkv_parse_command(memkv_conn_t* conn) {
-    // TODO: Implement command parsing
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
-// 项目管理函数
+static infra_error_t handle_quit(memkv_conn_t* conn) {
+    return INFRA_ERROR_NOT_SUPPORTED;
+}
+
+//-----------------------------------------------------------------------------
+// Service Management Implementation
+//-----------------------------------------------------------------------------
+
+infra_error_t memkv_init(const infra_config_t* config) {
+    if (g_memkv_service.state != SERVICE_STATE_STOPPED) {
+        return INFRA_ERROR_ALREADY_EXISTS;
+    }
+
+    // Initialize context
+    memset(&g_memkv_context, 0, sizeof(g_memkv_context));
+    g_memkv_context.port = MEMKV_DEFAULT_PORT;
+
+    // Initialize storage
+    infra_error_t err = memkv_cmd_init();
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    g_memkv_service.state = SERVICE_STATE_STOPPED;
+    return INFRA_OK;
+}
+
+infra_error_t memkv_cleanup(void) {
+    if (g_memkv_service.state != SERVICE_STATE_STOPPED) {
+        return INFRA_ERROR_BUSY;
+    }
+
+    // Clean up resources
+    memkv_cmd_cleanup();
+    memset(&g_memkv_context, 0, sizeof(g_memkv_context));
+
+    return INFRA_OK;
+}
+
+infra_error_t memkv_start(void) {
+    if (g_memkv_service.state != SERVICE_STATE_STOPPED) {
+        return INFRA_ERROR_BUSY;
+    }
+
+    g_memkv_service.state = SERVICE_STATE_STARTING;
+    
+    // Create listener
+    infra_error_t err = create_listener();
+    if (err != INFRA_OK) {
+        g_memkv_service.state = SERVICE_STATE_STOPPED;
+        return err;
+    }
+
+    g_memkv_context.is_running = true;
+    g_memkv_service.state = SERVICE_STATE_RUNNING;
+    return INFRA_OK;
+}
+
+infra_error_t memkv_stop(void) {
+    if (g_memkv_service.state != SERVICE_STATE_RUNNING) {
+        return INFRA_ERROR_NOT_SUPPORTED;
+    }
+
+    g_memkv_service.state = SERVICE_STATE_STOPPING;
+    g_memkv_context.is_running = false;
+
+    // Close listener
+    if (g_memkv_context.listen_sock) {
+        infra_net_close(g_memkv_context.listen_sock);
+        g_memkv_context.listen_sock = NULL;
+    }
+
+    g_memkv_service.state = SERVICE_STATE_STOPPED;
+    return INFRA_OK;
+}
+
+bool memkv_is_running(void) {
+    return g_memkv_service.state == SERVICE_STATE_RUNNING;
+}
+
+// Item management functions
 memkv_item_t* create_item(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime) {
     if (!key || !value || value_size == 0) {
         return NULL;
@@ -704,7 +552,7 @@ memkv_item_t* create_item(const char* key, const void* value, size_t value_size,
     item->value_size = value_size;
     item->flags = flags;
     item->exptime = exptime ? time(NULL) + exptime : 0;
-    item->cas = g_context.next_cas++;
+    item->cas = g_memkv_context.next_cas++;
 
     return item;
 }
@@ -729,120 +577,71 @@ bool is_item_expired(const memkv_item_t* item) {
     return time(NULL) > item->exptime;
 }
 
-// 统计函数
+// Statistics functions
 void update_stats_set(size_t bytes) {
-    poly_atomic_inc((poly_atomic_t*)&g_context.stats.cmd_set);
-    poly_atomic_inc((poly_atomic_t*)&g_context.stats.total_items);
-    poly_atomic_inc((poly_atomic_t*)&g_context.stats.curr_items);
-    poly_atomic_add((poly_atomic_t*)&g_context.stats.bytes, bytes);
+    poly_atomic_inc((poly_atomic_t*)&g_memkv_context.stats.cmd_set);
+    poly_atomic_inc((poly_atomic_t*)&g_memkv_context.stats.total_items);
+    poly_atomic_inc((poly_atomic_t*)&g_memkv_context.stats.curr_items);
+    poly_atomic_add((poly_atomic_t*)&g_memkv_context.stats.bytes, bytes);
 }
 
 void update_stats_delete(size_t bytes) {
-    poly_atomic_inc((poly_atomic_t*)&g_context.stats.cmd_delete);
-    poly_atomic_dec((poly_atomic_t*)&g_context.stats.curr_items);
-    poly_atomic_sub((poly_atomic_t*)&g_context.stats.bytes, bytes);
+    poly_atomic_inc((poly_atomic_t*)&g_memkv_context.stats.cmd_delete);
+    poly_atomic_dec((poly_atomic_t*)&g_memkv_context.stats.curr_items);
+    poly_atomic_sub((poly_atomic_t*)&g_memkv_context.stats.bytes, bytes);
 }
 
 void update_stats_get(bool hit) {
-    poly_atomic_inc((poly_atomic_t*)&g_context.stats.cmd_get);
+    poly_atomic_inc((poly_atomic_t*)&g_memkv_context.stats.cmd_get);
     if (hit) {
-        poly_atomic_inc((poly_atomic_t*)&g_context.stats.hits);
+        poly_atomic_inc((poly_atomic_t*)&g_memkv_context.stats.hits);
     } else {
-        poly_atomic_inc((poly_atomic_t*)&g_context.stats.misses);
+        poly_atomic_inc((poly_atomic_t*)&g_memkv_context.stats.misses);
     }
 }
 
-// 通信函数
+// Communication functions
 infra_error_t send_response(memkv_conn_t* conn, const char* response, size_t len) {
-    if (!conn || !response) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    size_t sent = 0;
-    while (sent < len) {
-        size_t bytes_sent = 0;
-        infra_error_t err = infra_net_send(conn->sock, conn->response + sent, len - sent, &bytes_sent);
-        if (err != INFRA_OK) {
-            return err;
-        }
-        sent += bytes_sent;
-    }
-    return INFRA_OK;
+    return INFRA_ERROR_NOT_SUPPORTED;
 }
 
-// 命令处理初始化和清理
+// Command processing initialization and cleanup
 infra_error_t memkv_cmd_init(void) {
-    infra_error_t err = poly_hashtable_create(1024, poly_hashtable_string_hash, 
-        poly_hashtable_string_compare, &g_context.store);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
-    err = infra_mutex_create(&g_context.store_mutex);
-    if (err != INFRA_OK) {
-        poly_hashtable_destroy(g_context.store);
-        g_context.store = NULL;
-        return err;
-    }
-
     return INFRA_OK;
 }
 
 infra_error_t memkv_cmd_cleanup(void) {
-    if (g_context.store) {
-        infra_mutex_lock(&g_context.store_mutex);
-        poly_hashtable_clear(g_context.store);
-        poly_hashtable_destroy(g_context.store);
-        g_context.store = NULL;
-        infra_mutex_unlock(&g_context.store_mutex);
-    }
-
-    if (g_context.store_mutex) {
-        infra_mutex_destroy(&g_context.store_mutex);
-        g_context.store_mutex = NULL;
-    }
-
     return INFRA_OK;
 }
 
-// 命令处理
+// Command processing
 infra_error_t memkv_cmd_process(memkv_conn_t* conn) {
     if (!conn) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // Parse command
     infra_error_t err = memkv_parse_command(conn);
     if (err != INFRA_OK) {
-        if (err == INFRA_ERROR_WOULD_BLOCK) {
-            return err; // Need more data
-        }
-        send_response(conn, "ERROR\r\n", 7);
         return err;
     }
 
     // Find command handler
     const memkv_cmd_handler_t* handler = NULL;
-    for (int i = 0; g_handlers[i].name != NULL; i++) {
-        if (g_handlers[i].type == conn->current_cmd.type) {
+    for (size_t i = 0; g_handlers[i].name != NULL; i++) {
+        if (strcmp(g_handlers[i].name, conn->buffer) == 0) {
             handler = &g_handlers[i];
             break;
         }
     }
 
     if (!handler) {
-        send_response(conn, "ERROR\r\n", 7);
         return INFRA_ERROR_NOT_FOUND;
     }
 
     // Execute command
-    err = handler->fn(conn);
-    if (err != INFRA_OK) {
-        if (err != INFRA_ERROR_WOULD_BLOCK) {
-            send_response(conn, "ERROR\r\n", 7);
-        }
-        return err;
-    }
+    return handler->handler(conn);
+}
 
-    return INFRA_OK;
+static infra_error_t memkv_parse_command(memkv_conn_t* conn) {
+    return INFRA_ERROR_NOT_SUPPORTED;
 }

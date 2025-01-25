@@ -7,6 +7,7 @@
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_net.h"
 #include "internal/poly/poly_cmdline.h"
+#include "internal/peer/peer_service.h"
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -102,5 +103,8 @@ bool rinetd_is_running(void);
 extern const poly_cmd_option_t rinetd_options[];
 extern const int rinetd_option_count;
 infra_error_t rinetd_cmd_handler(int argc, char** argv);
+
+// 服务实例
+extern peer_service_t g_rinetd_service;
 
 #endif // PEER_RINETD_H 
