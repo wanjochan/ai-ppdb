@@ -202,14 +202,6 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
     return INFRA_OK;
 }
 
-// 单向缓冲区
-typedef struct {
-    char buffer[RINETD_BUFFER_SIZE];    // 数据缓冲区
-    size_t write_pos;                   // 当前写入位置
-    size_t write_len;                   // 待写入长度
-    bool has_pending_data;              // 是否有待发送数据
-} buffer_state_t;
-
 // 处理单个连接
 static void* handle_connection(void* arg) {
     rinetd_conn_t* conn = (rinetd_conn_t*)arg;
@@ -229,10 +221,6 @@ static void* handle_connection(void* arg) {
     infra_net_set_timeout(conn->client, 30000);  // 30秒 = 30000毫秒
     infra_net_set_timeout(conn->server, 30000);
 
-    // 初始化缓冲区状态
-    buffer_state_t c2s = {0};  // 客户端到服务器
-    buffer_state_t s2c = {0};  // 服务器到客户端
-    
     // 连接状态
     bool client_closed = false;
     bool server_closed = false;
@@ -240,32 +228,25 @@ static void* handle_connection(void* arg) {
     const int MAX_IDLE = 600;  // 最大空闲次数（约60秒）
 
     while (g_context.running && !client_closed && !server_closed && idle_count < MAX_IDLE) {
-        fd_set readfds, writefds;
+        fd_set readfds;
         FD_ZERO(&readfds);
-        FD_ZERO(&writefds);
 
-        // 根据缓冲区状态设置fd
-        if (!client_closed && !c2s.has_pending_data) {
-            FD_SET(infra_net_get_fd(conn->client), &readfds);
+        // 设置文件描述符
+        int client_fd = infra_net_get_fd(conn->client);
+        int server_fd = infra_net_get_fd(conn->server);
+        
+        if (!client_closed) {
+            FD_SET(client_fd, &readfds);
         }
-        if (!server_closed && !s2c.has_pending_data) {
-            FD_SET(infra_net_get_fd(conn->server), &readfds);
-        }
-        if (!server_closed && c2s.has_pending_data) {
-            FD_SET(infra_net_get_fd(conn->server), &writefds);
-        }
-        if (!client_closed && s2c.has_pending_data) {
-            FD_SET(infra_net_get_fd(conn->client), &writefds);
+        if (!server_closed) {
+            FD_SET(server_fd, &readfds);
         }
 
         // 设置超时
         struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};  // 100ms
-        int max_fd = infra_net_get_fd(conn->client);
-        if (infra_net_get_fd(conn->server) > max_fd) {
-            max_fd = infra_net_get_fd(conn->server);
-        }
+        int max_fd = (client_fd > server_fd) ? client_fd : server_fd;
 
-        int ready = select(max_fd + 1, &readfds, &writefds, NULL, &tv);
+        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
         if (ready < 0) {
             if (errno == EINTR) continue;
             INFRA_LOG_ERROR("Select failed: %d", errno);
@@ -280,9 +261,10 @@ static void* handle_connection(void* arg) {
         idle_count = 0;  // 重置空闲计数
 
         // 处理客户端到服务器的数据
-        if (!client_closed && FD_ISSET(infra_net_get_fd(conn->client), &readfds)) {
-            infra_error_t err = forward_data(conn->client, conn->server, c2s.buffer, "C->S");
+        if (!client_closed && FD_ISSET(client_fd, &readfds)) {
+            infra_error_t err = forward_data(conn->client, conn->server, conn->buffer, "C->S");
             if (err == INFRA_ERROR_CLOSED) {
+                INFRA_LOG_DEBUG("Client closed connection");
                 client_closed = true;
             } else if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
                 INFRA_LOG_ERROR("Forward C->S failed: %d", err);
@@ -291,9 +273,10 @@ static void* handle_connection(void* arg) {
         }
 
         // 处理服务器到客户端的数据
-        if (!server_closed && FD_ISSET(infra_net_get_fd(conn->server), &readfds)) {
-            infra_error_t err = forward_data(conn->server, conn->client, s2c.buffer, "S->C");
+        if (!server_closed && FD_ISSET(server_fd, &readfds)) {
+            infra_error_t err = forward_data(conn->server, conn->client, conn->buffer, "S->C");
             if (err == INFRA_ERROR_CLOSED) {
+                INFRA_LOG_DEBUG("Server closed connection");
                 server_closed = true;
             } else if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
                 INFRA_LOG_ERROR("Forward S->C failed: %d", err);

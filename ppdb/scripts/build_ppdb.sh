@@ -11,7 +11,7 @@ mkdir -p "${BUILD_DIR}"
 
 # 设置条件编译选项
 ENABLE_RINETD=1
-ENABLE_MEMKV=1
+ENABLE_MEMKV=0
 
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
@@ -37,6 +37,7 @@ SOURCES=(
     "${SRC_DIR}/internal/poly/poly_cmdline.c"
     "${SRC_DIR}/internal/poly/poly_hashtable.c"
     "${SRC_DIR}/internal/poly/poly_atomic.c"
+    "${SRC_DIR}/internal/poly/poly_mux.c"
     "${SRC_DIR}/internal/peer/peer_service.c"
     "${SRC_DIR}/internal/infra/infra_core.c"
     "${SRC_DIR}/internal/infra/infra_memory.c"

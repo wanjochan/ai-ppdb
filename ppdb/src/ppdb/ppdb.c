@@ -211,5 +211,35 @@ int main(int argc, char** argv) {
     }
 
     INFRA_LOG_DEBUG("Command executed successfully");
+
+    // 如果是启动服务的命令，等待
+    if (cmd_argc >= 2) {
+        // 查找 --start 参数
+        bool is_start = false;
+        for (int i = 1; i < cmd_argc; i++) {
+            if (strcmp(cmd_argv[i], "--start") == 0) {
+                is_start = true;
+                break;
+            }
+        }
+        
+        if (is_start) {
+            INFRA_LOG_INFO("Service is running. Press Ctrl+C to stop...");
+            
+            // 简单循环等待
+            while (1) {
+                infra_sleep(1000);  // 睡眠1秒
+            }
+            
+            // 停止服务
+            char* stop_argv[] = {cmd_argv[0], "--stop"};
+            err = service->cmd_handler(2, stop_argv);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to stop service: %d", err);
+                return 1;
+            }
+        }
+    }
+
     return 0;
 } 
