@@ -1,6 +1,6 @@
 # ai-ppdb
 
-[ppdb](ppdb/docs/INDEX.md)
+[ppdb](ppdb/docs/ARCH.md)
 
 AI编写的分布式数据库，欢迎使用，风险自担。A distributed database written by artificial intelligence. Use freely at your own risk.
 
