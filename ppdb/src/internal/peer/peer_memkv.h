@@ -93,11 +93,13 @@ typedef struct memkv_item {
 // 连接结构
 typedef struct memkv_conn {
     infra_socket_t sock;              // 套接字
+    bool is_active;                   // 连接是否活跃
     char* buffer;                     // 命令缓冲区
     size_t buffer_used;               // 已使用的缓冲区大小
     size_t buffer_read;               // 已读取的缓冲区大小
     memkv_cmd_t current_cmd;          // 当前命令
-    bool is_active;                   // 连接是否活跃
+    char response[MEMKV_BUFFER_SIZE];  // Response buffer
+    size_t response_len;               // Response length
 } memkv_conn_t;
 
 // 统计信息
@@ -129,8 +131,7 @@ typedef struct memkv_context {
 extern memkv_context_t g_context;
 
 // 函数声明
-infra_error_t send_response(memkv_conn_t* conn, const char* data, size_t len);
-infra_error_t poly_hashtable_delete(poly_hashtable_t* table, const char* key);
+infra_error_t send_response(memkv_conn_t* conn, const char* response, size_t len);
 
 // 接口函数
 infra_error_t memkv_init(uint16_t port, const infra_config_t* config);
@@ -142,7 +143,6 @@ const memkv_stats_t* memkv_get_stats(void);
 
 // Helper functions
 memkv_item_t* create_item(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime);
-void destroy_item(memkv_item_t* item);
 bool is_item_expired(const memkv_item_t* item);
 void update_stats_set(size_t value_size);
 void update_stats_get(bool hit);

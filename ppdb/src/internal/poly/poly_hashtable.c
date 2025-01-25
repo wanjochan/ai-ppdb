@@ -27,6 +27,7 @@ struct poly_hashtable {
     double load_factor;
     poly_hash_fn hash_fn;
     poly_key_compare_fn key_compare_fn;
+    bool is_iterating;  // 添加遍历标志
 };
 
 //-----------------------------------------------------------------------------
@@ -138,6 +139,10 @@ infra_error_t poly_hashtable_put(
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    if (hashtable->is_iterating) {
+        return INFRA_ERROR_BUSY;
+    }
+
     // Check if resize is needed
     if ((double)(hashtable->size + 1) / hashtable->bucket_count > hashtable->load_factor) {
         infra_error_t err = resize_hashtable(hashtable, hashtable->bucket_count * POLY_HASHTABLE_GROWTH_FACTOR);
@@ -204,6 +209,10 @@ infra_error_t poly_hashtable_remove(
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    if (hashtable->is_iterating) {
+        return INFRA_ERROR_BUSY;
+    }
+
     size_t index = hashtable->hash_fn(key) % hashtable->bucket_count;
     poly_hashtable_node_t* node = hashtable->buckets[index];
     poly_hashtable_node_t* prev = NULL;
@@ -215,6 +224,7 @@ infra_error_t poly_hashtable_remove(
             } else {
                 hashtable->buckets[index] = node->next;
             }
+            // 注意：不释放 key 和 value，因为它们由调用者管理
             free(node);
             hashtable->size--;
             return INFRA_OK;
@@ -227,7 +237,7 @@ infra_error_t poly_hashtable_remove(
 }
 
 void poly_hashtable_foreach(
-    const poly_hashtable_t* hashtable,
+    poly_hashtable_t* hashtable,
     poly_hashtable_iter_fn iter_fn,
     void* user_data
 ) {
@@ -235,13 +245,22 @@ void poly_hashtable_foreach(
         return;
     }
 
+    hashtable->is_iterating = true;
+
     for (size_t i = 0; i < hashtable->bucket_count; i++) {
         poly_hashtable_node_t* node = hashtable->buckets[i];
         while (node) {
+            poly_hashtable_node_t* next = node->next;
             iter_fn(&node->entry, user_data);
-            node = node->next;
+            node = next;
         }
     }
+
+    hashtable->is_iterating = false;
+}
+
+bool poly_hashtable_is_iterating(const poly_hashtable_t* hashtable) {
+    return hashtable ? hashtable->is_iterating : false;
 }
 
 size_t poly_hashtable_size(const poly_hashtable_t* hashtable) {
@@ -257,10 +276,15 @@ void poly_hashtable_clear(poly_hashtable_t* hashtable) {
         return;
     }
 
+    if (hashtable->is_iterating) {
+        return;
+    }
+
     for (size_t i = 0; i < hashtable->bucket_count; i++) {
         poly_hashtable_node_t* node = hashtable->buckets[i];
         while (node) {
             poly_hashtable_node_t* next = node->next;
+            // 注意：不释放 key 和 value，因为它们由调用者管理
             free(node);
             node = next;
         }

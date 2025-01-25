@@ -1,6 +1,7 @@
 #ifndef PEER_MEMKV_CMD_H
 #define PEER_MEMKV_CMD_H
 
+#include "internal/infra/infra_core.h"
 #include "internal/peer/peer_memkv.h"
 
 //-----------------------------------------------------------------------------
@@ -69,5 +70,14 @@ infra_error_t memkv_execute_command(memkv_conn_t* conn);
 
 // 发送响应
 infra_error_t memkv_send_response(memkv_conn_t* conn, const char* fmt, ...);
+
+// Helper functions
+void destroy_item(memkv_item_t* item);
+
+// Command handlers
+infra_error_t handle_set(memkv_conn_t* conn);
+infra_error_t handle_get(memkv_conn_t* conn);
+infra_error_t handle_delete(memkv_conn_t* conn);
+infra_error_t handle_flush_all(memkv_conn_t* conn);
 
 #endif // PEER_MEMKV_CMD_H

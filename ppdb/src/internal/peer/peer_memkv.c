@@ -187,6 +187,7 @@ memkv_item_t* create_item(const char* key, const void* value, size_t value_size,
 // Destroy item
 void destroy_item(memkv_item_t* item) {
     if (item) {
+        INFRA_LOG_DEBUG("Destroying item with key: %s", item->key);
         free(item->key);
         free(item->value);
         free(item);
@@ -602,9 +603,12 @@ static infra_error_t parse_command(memkv_conn_t* conn) {
 
     // 移动缓冲区指针
     cmd_len = cmd_end - conn->buffer + 2;  // +2 for \r\n
+    INFRA_LOG_DEBUG("Command length: %zu, moving buffer pointer", cmd_len);
     memmove(conn->buffer, conn->buffer + cmd_len, 
             conn->buffer_used - cmd_len);
     conn->buffer_used -= cmd_len;
+    INFRA_LOG_DEBUG("After move: buffer_used=%zu, buffer=[%.*s]", 
+                   conn->buffer_used, (int)conn->buffer_used, conn->buffer);
 
     free(cmd_str);
     return INFRA_OK;
@@ -654,19 +658,30 @@ static infra_error_t execute_command(memkv_conn_t* conn) {
                 return INFRA_ERROR_INVALID_PARAM;
             }
 
+            INFRA_LOG_DEBUG("Executing GET command for key: %s", conn->current_cmd.key);
+
             err = get_with_lock(conn->current_cmd.key, &item);
+            INFRA_LOG_DEBUG("get_with_lock result: %d", err);
+            
             if (err != INFRA_OK || !item) {
+                INFRA_LOG_DEBUG("Key not found: %s", conn->current_cmd.key);
                 err = send_response(conn, "END\r\n", 5);
                 update_stats_get(false);
                 return err;
             }
 
             if (is_item_expired(item)) {
+                INFRA_LOG_DEBUG("Key expired: %s", conn->current_cmd.key);
                 delete_with_lock(conn->current_cmd.key);
                 err = send_response(conn, "END\r\n", 5);
                 update_stats_get(false);
                 return err;
             }
+
+            INFRA_LOG_DEBUG("Found value for key %s: [%.*s]", 
+                          conn->current_cmd.key,
+                          (int)item->value_size,
+                          (char*)item->value);
 
             err = send_value_response(conn, item);
             if (err == INFRA_OK) {
@@ -681,31 +696,55 @@ static infra_error_t execute_command(memkv_conn_t* conn) {
                 return INFRA_ERROR_INVALID_PARAM;
             }
 
+            INFRA_LOG_DEBUG("Executing DELETE command for key: %s", conn->current_cmd.key);
+
             err = delete_with_lock(conn->current_cmd.key);
+            INFRA_LOG_DEBUG("delete_with_lock result: %d", err);
+
             if (err != INFRA_OK) {
                 if (!conn->current_cmd.noreply) {
+                    INFRA_LOG_DEBUG("Sending NOT_FOUND response");
                     return send_response(conn, "NOT_FOUND\r\n", 11);
                 }
                 return err;
             }
 
             if (!conn->current_cmd.noreply) {
+                INFRA_LOG_DEBUG("Sending DELETED response");
                 return send_response(conn, "DELETED\r\n", 9);
             }
             break;
         }
 
-        case CMD_FLUSH: {
+        case CMD_FLUSH:
+            INFRA_LOG_DEBUG("Executing FLUSH command");
             infra_mutex_lock(&g_context.store_mutex);
-            poly_hashtable_foreach(g_context.store, (poly_hashtable_iter_fn)destroy_item, NULL);
+            
+            if (poly_hashtable_is_iterating(g_context.store)) {
+                INFRA_LOG_ERROR("Cannot flush: hashtable is being iterated");
+                infra_mutex_unlock(&g_context.store_mutex);
+                return send_response(conn, "SERVER_ERROR hashtable is busy\r\n", 30);
+            }
+            
+            INFRA_LOG_DEBUG("Clearing hashtable");
             poly_hashtable_clear(g_context.store);
+            
+            INFRA_LOG_DEBUG("Resetting statistics");
+            g_context.stats.curr_items = 0;
+            g_context.stats.bytes = 0;
+            
             infra_mutex_unlock(&g_context.store_mutex);
+            INFRA_LOG_DEBUG("FLUSH command completed successfully");
             
             if (!conn->current_cmd.noreply) {
-                return send_response(conn, "OK\r\n", 4);
+                infra_error_t err = send_response(conn, "OK\r\n", 4);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send response: %d", err);
+                    return err;
+                }
             }
-            break;
-        }
+            
+            return INFRA_OK;
 
         default:
             INFRA_LOG_ERROR("Unknown command type: %d", conn->current_cmd.type);
@@ -739,12 +778,24 @@ static infra_error_t process_command(memkv_conn_t* conn) {
                 return err;
             }
             
+            INFRA_LOG_DEBUG("Command parsed, transitioning to next state");
+            
             // 根据命令类型决定下一个状态
             if (conn->current_cmd.type == CMD_GET || 
                 conn->current_cmd.type == CMD_DELETE ||
                 conn->current_cmd.type == CMD_FLUSH) {
+                INFRA_LOG_DEBUG("Command requires no data, executing directly");
                 conn->current_cmd.state = CMD_STATE_EXECUTING;
+                // 立即执行命令
+                err = execute_command(conn);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Command execution error: %d", err);
+                    return err;
+                }
+                INFRA_LOG_DEBUG("Command executed successfully, transitioning to complete state");
+                conn->current_cmd.state = CMD_STATE_COMPLETE;
             } else if (conn->current_cmd.type == CMD_SET) {
+                INFRA_LOG_DEBUG("SET command, waiting for data");
                 conn->current_cmd.state = CMD_STATE_READ_DATA;
             } else {
                 INFRA_LOG_ERROR("Invalid command type: %d", conn->current_cmd.type);
@@ -757,7 +808,7 @@ static infra_error_t process_command(memkv_conn_t* conn) {
         case CMD_STATE_READ_DATA: {
             // 检查是否有足够的数据
             if (conn->buffer_used < conn->current_cmd.bytes + 2) {
-                INFRA_LOG_DEBUG("Need more data for value: %zu < %zu", 
+                INFRA_LOG_DEBUG("Need more data for value: have %zu bytes, need %zu bytes", 
                               conn->buffer_used, conn->current_cmd.bytes + 2);
                 return INFRA_OK; // 需要更多数据
             }
@@ -765,22 +816,30 @@ static infra_error_t process_command(memkv_conn_t* conn) {
             // 检查结束标记
             if (conn->buffer[conn->current_cmd.bytes] != '\r' ||
                 conn->buffer[conn->current_cmd.bytes + 1] != '\n') {
-                INFRA_LOG_ERROR("Bad data chunk terminator");
+                INFRA_LOG_ERROR("Bad data chunk terminator: [%.*s]", 
+                              (int)conn->buffer_used, conn->buffer);
                 send_response(conn, "CLIENT_ERROR bad data chunk\r\n", 28);
                 return INFRA_ERROR_INVALID;
             }
 
             // 保存数据
-            conn->current_cmd.data = malloc(conn->current_cmd.bytes);
+            conn->current_cmd.data = malloc(conn->current_cmd.bytes + 1);  // +1 for null terminator
             if (!conn->current_cmd.data) {
                 INFRA_LOG_ERROR("Failed to allocate memory for data");
                 send_response(conn, "SERVER_ERROR out of memory\r\n", 26);
                 return MEMKV_ERROR_NO_MEMORY;
             }
             memcpy(conn->current_cmd.data, conn->buffer, conn->current_cmd.bytes);
+            ((char*)conn->current_cmd.data)[conn->current_cmd.bytes] = '\0';  // Add null terminator
+            
+            INFRA_LOG_DEBUG("Data chunk received: [%.*s], size=%zu", 
+                          (int)conn->current_cmd.bytes, 
+                          (char*)conn->current_cmd.data,
+                          conn->current_cmd.bytes);
             
             // 更新读取位置
-            conn->buffer_read = conn->current_cmd.bytes + 2;
+            conn->buffer_read = conn->current_cmd.bytes + 2;  // +2 for \r\n
+            INFRA_LOG_DEBUG("Updated buffer_read to %zu", conn->buffer_read);
             conn->current_cmd.state = CMD_STATE_EXECUTING;
             break;
         }
@@ -792,11 +851,13 @@ static infra_error_t process_command(memkv_conn_t* conn) {
                 INFRA_LOG_ERROR("Command execution error: %d", err);
                 return err;
             }
+            INFRA_LOG_DEBUG("Command executed successfully, transitioning to complete state");
             conn->current_cmd.state = CMD_STATE_COMPLETE;
             break;
         }
 
         case CMD_STATE_COMPLETE:
+            INFRA_LOG_DEBUG("Command already completed");
             return INFRA_OK;
 
         default:
@@ -863,8 +924,11 @@ static void* handle_connection(void* arg) {
             break;
         }
 
-        INFRA_LOG_DEBUG("Received %zu bytes", bytes_read);
+        INFRA_LOG_DEBUG("Received %zu bytes, buffer_used=%zu", bytes_read, conn->buffer_used);
         conn->buffer_used += bytes_read;
+
+        // 打印接收到的数据（调试用）
+        INFRA_LOG_DEBUG("Received data: [%.*s]", (int)bytes_read, conn->buffer + conn->buffer_used - bytes_read);
 
         // 处理命令
         do {
@@ -876,20 +940,37 @@ static void* handle_connection(void* arg) {
 
             // 如果命令已完成，重置缓冲区
             if (conn->current_cmd.state == CMD_STATE_COMPLETE) {
+                INFRA_LOG_DEBUG("Command completed, buffer_used=%zu, buffer_read=%zu, buffer=[%.*s]", 
+                              conn->buffer_used, conn->buffer_read,
+                              (int)conn->buffer_used, conn->buffer);
+                
                 // 移动未处理的数据到缓冲区开始
                 if (conn->buffer_used > conn->buffer_read) {
+                    size_t remaining = conn->buffer_used - conn->buffer_read;
+                    INFRA_LOG_DEBUG("Moving remaining %zu bytes to buffer start", remaining);
                     memmove(conn->buffer, 
                            conn->buffer + conn->buffer_read,
-                           conn->buffer_used - conn->buffer_read);
-                    conn->buffer_used -= conn->buffer_read;
+                           remaining);
+                    conn->buffer_used = remaining;
+                    INFRA_LOG_DEBUG("After move: buffer=[%.*s]", (int)conn->buffer_used, conn->buffer);
                 } else {
                     conn->buffer_used = 0;
+                    INFRA_LOG_DEBUG("Buffer cleared");
                 }
                 conn->buffer_read = 0;
                 
                 // 重置命令状态
+                if (conn->current_cmd.data) {
+                    free(conn->current_cmd.data);
+                    conn->current_cmd.data = NULL;
+                }
+                if (conn->current_cmd.key) {
+                    free(conn->current_cmd.key);
+                    conn->current_cmd.key = NULL;
+                }
                 memset(&conn->current_cmd, 0, sizeof(memkv_cmd_t));
                 conn->current_cmd.state = CMD_STATE_INIT;
+                INFRA_LOG_DEBUG("Command state reset to INIT");
             }
         } while (err == INFRA_OK && conn->buffer_used > 0);
     }
@@ -989,28 +1070,38 @@ static infra_error_t send_value_response(memkv_conn_t* conn, const memkv_item_t*
     size_t header_len = snprintf(header, sizeof(header), "VALUE %s %u %zu\r\n", 
         item->key, item->flags, item->value_size);
 
+    INFRA_LOG_DEBUG("Sending value response header: [%.*s]", (int)header_len, header);
+
     // 发送头部
     infra_error_t err = send_response(conn, header, header_len);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to send response header: %d", err);
         return err;
     }
 
     // 发送值
     size_t sent;
+    INFRA_LOG_DEBUG("Sending value: [%.*s]", (int)item->value_size, (char*)item->value);
     err = infra_net_send(conn->sock, item->value, item->value_size, &sent);
     if (err != INFRA_OK || sent != item->value_size) {
+        INFRA_LOG_ERROR("Failed to send value: %d, sent=%zu, expected=%zu", 
+                       err, sent, item->value_size);
         conn->is_active = false;
         return err;
     }
 
     // 发送结束标记
+    INFRA_LOG_DEBUG("Sending value terminator");
     return send_response(conn, "\r\n", 2);
 }
 
 // Storage operations
 static infra_error_t store_with_lock(const char* key, const void* value, size_t value_size, uint32_t flags, uint32_t exptime) {
+    INFRA_LOG_DEBUG("Storing key: %s, value_size: %zu", key, value_size);
+
     memkv_item_t* item = create_item(key, value, value_size, flags, exptime);
     if (!item) {
+        INFRA_LOG_ERROR("Failed to create item for key: %s", key);
         return MEMKV_ERROR_NO_MEMORY;
     }
 
@@ -1019,9 +1110,13 @@ static infra_error_t store_with_lock(const char* key, const void* value, size_t 
 
     // 存储数据
     infra_error_t err = poly_hashtable_put(g_context.store, item->key, item);
+    INFRA_LOG_DEBUG("poly_hashtable_put result: %d", err);
+    
     if (err == INFRA_OK) {
         update_stats_set(item->value_size);
+        INFRA_LOG_DEBUG("Successfully stored key: %s", key);
     } else {
+        INFRA_LOG_ERROR("Failed to store key: %s, error: %d", key, err);
         destroy_item(item);
     }
 
@@ -1033,18 +1128,28 @@ static infra_error_t store_with_lock(const char* key, const void* value, size_t 
 
 // 获取操作
 static infra_error_t get_with_lock(const char* key, memkv_item_t** item) {
+    INFRA_LOG_DEBUG("Getting key: %s", key);
+
     // 获取锁
     infra_mutex_lock(&g_context.store_mutex);
 
     infra_error_t err = poly_hashtable_get(g_context.store, key, (void**)item);
-    if (err == INFRA_OK && *item && is_item_expired(*item)) {
-        err = poly_hashtable_remove(g_context.store, key);
-        if (err == INFRA_OK) {
-            update_stats_delete((*item)->value_size);
-            destroy_item(*item);
-            *item = NULL;
+    INFRA_LOG_DEBUG("poly_hashtable_get result: %d", err);
+
+    if (err == INFRA_OK && *item) {
+        INFRA_LOG_DEBUG("Found item for key: %s", key);
+        if (is_item_expired(*item)) {
+            INFRA_LOG_DEBUG("Item expired for key: %s", key);
+            err = poly_hashtable_remove(g_context.store, key);
+            if (err == INFRA_OK) {
+                update_stats_delete((*item)->value_size);
+                destroy_item(*item);
+                *item = NULL;
+            }
+            err = MEMKV_ERROR_NOT_FOUND;
         }
-        err = MEMKV_ERROR_NOT_FOUND;
+    } else {
+        INFRA_LOG_DEBUG("Item not found for key: %s", key);
     }
 
     // 释放锁
@@ -1055,18 +1160,27 @@ static infra_error_t get_with_lock(const char* key, memkv_item_t** item) {
 
 // 删除操作
 static infra_error_t delete_with_lock(const char* key) {
+    INFRA_LOG_DEBUG("Deleting key: %s", key);
+
     // 获取锁
     infra_mutex_lock(&g_context.store_mutex);
 
     memkv_item_t* item = NULL;
     infra_error_t err = poly_hashtable_get(g_context.store, key, (void**)&item);
+    INFRA_LOG_DEBUG("poly_hashtable_get result: %d", err);
+    
     if (err == INFRA_OK && item) {
+        INFRA_LOG_DEBUG("Found item for key: %s, deleting", key);
         err = poly_hashtable_remove(g_context.store, key);
         if (err == INFRA_OK) {
+            INFRA_LOG_DEBUG("Successfully deleted key: %s", key);
             update_stats_delete(item->value_size);
             destroy_item(item);
+        } else {
+            INFRA_LOG_ERROR("Failed to delete key: %s, error: %d", key, err);
         }
     } else {
+        INFRA_LOG_DEBUG("Item not found for key: %s", key);
         err = MEMKV_ERROR_NOT_FOUND;
     }
 

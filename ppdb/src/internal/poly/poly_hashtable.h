@@ -62,7 +62,7 @@ infra_error_t poly_hashtable_remove(
 
 // Iterate over all entries
 void poly_hashtable_foreach(
-    const poly_hashtable_t* hashtable,
+    poly_hashtable_t* hashtable,
     poly_hashtable_iter_fn iter_fn,
     void* user_data
 );
@@ -75,6 +75,9 @@ size_t poly_hashtable_capacity(const poly_hashtable_t* hashtable);
 
 // Clear all entries
 void poly_hashtable_clear(poly_hashtable_t* hashtable);
+
+// Check if hashtable is being iterated
+bool poly_hashtable_is_iterating(const poly_hashtable_t* hashtable);
 
 //-----------------------------------------------------------------------------
 // Utility Functions
