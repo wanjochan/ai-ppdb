@@ -30,6 +30,8 @@ typedef struct poly_memkv_stats {
     poly_atomic_t curr_items;   // 当前项目数
     poly_atomic_t total_items;  // 总项目数
     poly_atomic_t bytes;        // 当前使用字节数
+    poly_atomic_t curr_connections;  // 当前连接数
+    poly_atomic_t total_connections; // 总连接数
 } poly_memkv_stats_t;
 
 // 内存KV存储配置
@@ -95,5 +97,13 @@ bool poly_memkv_is_expired(const poly_memkv_item_t* item);
 
 // 释放项目
 void poly_memkv_free_item(poly_memkv_item_t* item);
+
+// 增加值
+infra_error_t poly_memkv_incr(poly_memkv_t* store, const char* key,
+    uint64_t delta, uint64_t* new_value);
+
+// 减少值
+infra_error_t poly_memkv_decr(poly_memkv_t* store, const char* key,
+    uint64_t delta, uint64_t* new_value);
 
 #endif // POLY_MEMKV_H 

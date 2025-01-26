@@ -1,225 +1,355 @@
 #include "internal/poly/poly_mux.h"
 #include "internal/infra/infra_core.h"
-#include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_net.h"
-#include "internal/infra/infra_platform.h"
+#include "internal/infra/infra_sync.h"
 
 //-----------------------------------------------------------------------------
 // Types
 //-----------------------------------------------------------------------------
 
-// 连接结构
-typedef struct poly_mux_conn {
-    infra_socket_t sock;           // 客户端socket
-    struct poly_mux* mux;          // 所属多路复用器
-    infra_time_t last_active;      // 最后活跃时间
-    struct poly_mux_conn* next;    // 链表下一项
-} poly_mux_conn_t;
-
-// 多路复用器实现
+// 复用器结构
 struct poly_mux {
-    bool running;                  // 运行标志
-    infra_socket_t listener;       // 监听socket
-    poly_mux_config_t config;      // 配置信息
-    infra_thread_pool_t* pool;     // 线程池
-    infra_mutex_t mutex;           // 全局互斥锁
-    poly_mux_handler_t handler;    // 连接处理回调
-    void* handler_ctx;             // 回调上下文
-    poly_mux_conn_t* conns;        // 活跃连接链表
-    size_t curr_conns;             // 当前连接数
-    size_t total_conns;            // 总连接数
+    bool running;                    // 运行状态
+    infra_thread_pool_t* pool;       // 线程池
+    infra_mutex_t mutex;             // 互斥锁
+    poly_mux_events_t events;        // 事件处理器
+    void* event_ctx;                 // 事件上下文
+    poly_mux_conn_t* conns;         // 连接列表
+    uint32_t curr_conns;            // 当前连接数
+    uint32_t total_conns;           // 总连接数
+    poly_mux_config_t config;        // 配置
 };
 
 //-----------------------------------------------------------------------------
 // Helper Functions
 //-----------------------------------------------------------------------------
 
-// 创建连接
-static poly_mux_conn_t* create_conn(poly_mux_t* mux, infra_socket_t sock) {
+// 创建连接对象
+static poly_mux_conn_t* create_conn(poly_mux_t* mux, infra_socket_t sock, poly_mux_conn_type_t type) {
+    if (!mux || !sock) return NULL;
+
+    // 分配内存
     poly_mux_conn_t* conn = malloc(sizeof(poly_mux_conn_t));
     if (!conn) {
+        INFRA_LOG_ERROR("Failed to allocate connection");
+        return NULL;
+    }
+    memset(conn, 0, sizeof(poly_mux_conn_t));
+
+    // 初始化连接
+    conn->type = type;
+    conn->state = POLY_MUX_CONN_STATE_NONE;
+    conn->sock = sock;
+    conn->mux = mux;
+    conn->last_active = infra_time_ms();
+
+    // 分配缓冲区
+    conn->read_buffer = malloc(mux->config.conn_config.read_buffer_size);
+    if (!conn->read_buffer) {
+        INFRA_LOG_ERROR("Failed to allocate read buffer");
+        free(conn);
         return NULL;
     }
 
-    conn->sock = sock;
-    conn->mux = mux;
-    conn->last_active = infra_time_monotonic();  // 使用单调时间
-    conn->next = NULL;
+    conn->write_buffer = malloc(mux->config.conn_config.write_buffer_size);
+    if (!conn->write_buffer) {
+        INFRA_LOG_ERROR("Failed to allocate write buffer");
+        free(conn->read_buffer);
+        free(conn);
+        return NULL;
+    }
+
+    // 设置非阻塞
+    if (mux->config.conn_config.nonblocking) {
+        infra_error_t err = infra_net_set_nonblock(sock, true);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to set nonblock: %d", err);
+            free(conn->write_buffer);
+            free(conn->read_buffer);
+            free(conn);
+            return NULL;
+        }
+    }
 
     return conn;
 }
 
-// 销毁连接
-static void destroy_conn(poly_mux_conn_t* conn) {
-    if (!conn) {
-        return;
-    }
+// 释放连接资源
+static void free_conn(poly_mux_conn_t* conn) {
+    if (!conn) return;
 
     if (conn->sock) {
-        infra_net_shutdown(conn->sock, INFRA_NET_SHUTDOWN_BOTH);
         infra_net_close(conn->sock);
+        conn->sock = NULL;
+    }
+
+    if (conn->read_buffer) {
+        free(conn->read_buffer);
+        conn->read_buffer = NULL;
+    }
+
+    if (conn->write_buffer) {
+        free(conn->write_buffer);
+        conn->write_buffer = NULL;
     }
 
     free(conn);
 }
 
-// 添加连接
-static infra_error_t add_conn(poly_mux_t* mux, poly_mux_conn_t* conn) {
-    infra_mutex_lock(&mux->mutex);
-
-    // 检查连接数限制
-    if (mux->curr_conns >= mux->config.max_connections) {
-        infra_mutex_unlock(&mux->mutex);
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    // 添加到链表头部
-    conn->next = mux->conns;
-    mux->conns = conn;
-    mux->curr_conns++;
-    mux->total_conns++;
-
-    infra_mutex_unlock(&mux->mutex);
-    return INFRA_OK;
-}
-
-// 移除连接
+// 从连接列表中移除连接
 static void remove_conn(poly_mux_t* mux, poly_mux_conn_t* conn) {
+    if (!mux || !conn) return;
+
     infra_mutex_lock(&mux->mutex);
 
-    if (mux->conns == conn) {
-        mux->conns = conn->next;
-    } else {
-        poly_mux_conn_t* prev = mux->conns;
-        while (prev && prev->next != conn) {
-            prev = prev->next;
-        }
-        if (prev) {
-            prev->next = conn->next;
-        }
-    }
-
-    mux->curr_conns--;
-
-    infra_mutex_unlock(&mux->mutex);
-}
-
-// 清理超时连接
-static void cleanup_idle_conns(poly_mux_t* mux) {
-    infra_mutex_lock(&mux->mutex);
-
-    infra_time_t now = infra_time_monotonic();  // 使用单调时间
-    poly_mux_conn_t* curr = mux->conns;
-    poly_mux_conn_t* prev = NULL;
-
-    while (curr) {
-        if (now - curr->last_active > mux->config.idle_timeout) {
-            poly_mux_conn_t* to_remove = curr;
-            curr = curr->next;
-
-            if (prev) {
-                prev->next = curr;
-            } else {
-                mux->conns = curr;
-            }
-
+    // 从链表中移除
+    poly_mux_conn_t** pp = &mux->conns;
+    while (*pp) {
+        if (*pp == conn) {
+            *pp = conn->next;
             mux->curr_conns--;
-            destroy_conn(to_remove);
-        } else {
-            prev = curr;
-            curr = curr->next;
+            break;
         }
+        pp = &(*pp)->next;
     }
 
     infra_mutex_unlock(&mux->mutex);
-}
 
-// 连接处理任务
-static void* handle_conn_task(void* arg) {
-    poly_mux_conn_t* conn = (poly_mux_conn_t*)arg;
-    if (!conn || !conn->mux) {
-        return NULL;
+    // 通知关闭
+    if (mux->events.on_close) {
+        mux->events.on_close(mux->event_ctx, conn);
     }
 
-    poly_mux_t* mux = conn->mux;
+    // 释放资源
+    free_conn(conn);
+}
 
-    // 处理连接
-    infra_error_t err = mux->handler(mux->handler_ctx, conn->sock);
+// 处理可读事件
+static void handle_readable(poly_mux_conn_t* conn) {
+    if (!conn || !conn->sock) return;
+
+    // 读取数据
+    size_t space = conn->mux->config.conn_config.read_buffer_size - conn->read_pos;
+    if (space == 0) {
+        INFRA_LOG_ERROR("Read buffer full");
+        conn->state = POLY_MUX_CONN_STATE_CLOSING;
+        return;
+    }
+
+    size_t bytes_read = 0;
+    infra_error_t err = infra_net_recv(conn->sock,
+        conn->read_buffer + conn->read_pos,
+        space,
+        &bytes_read);
+
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to handle connection: %d", err);
-        // 只在处理失败时移除并销毁连接
-        remove_conn(mux, conn);
-        destroy_conn(conn);
+        if (err != INFRA_ERROR_WOULD_BLOCK) {
+            INFRA_LOG_ERROR("Failed to read from socket: %d", err);
+            conn->state = POLY_MUX_CONN_STATE_CLOSING;
+        }
+        return;
     }
 
-    return NULL;
+    if (bytes_read == 0) {
+        // 连接关闭
+        conn->state = POLY_MUX_CONN_STATE_CLOSING;
+        return;
+    }
+
+    conn->read_pos += bytes_read;
+    conn->last_active = infra_time_ms();
+
+    // 通知数据就绪
+    if (conn->mux->events.on_data) {
+        conn->mux->events.on_data(conn->mux->event_ctx, conn);
+    }
 }
 
-// 接受连接任务
-static void* accept_conn_task(void* arg) {
-    poly_mux_t* mux = (poly_mux_t*)arg;
-    if (!mux) {
-        return NULL;
+// 处理可写事件
+static void handle_writable(poly_mux_conn_t* conn) {
+    if (!conn || !conn->sock || conn->write_pos == 0) return;
+
+    // 发送数据
+    size_t bytes_written = 0;
+    infra_error_t err = infra_net_send(conn->sock,
+        conn->write_buffer,
+        conn->write_pos,
+        &bytes_written);
+
+    if (err != INFRA_OK) {
+        if (err != INFRA_ERROR_WOULD_BLOCK) {
+            INFRA_LOG_ERROR("Failed to write to socket: %d", err);
+            conn->state = POLY_MUX_CONN_STATE_CLOSING;
+        }
+        return;
     }
+
+    if (bytes_written > 0) {
+        // 移动剩余数据
+        if (bytes_written < conn->write_pos) {
+            memmove(conn->write_buffer,
+                conn->write_buffer + bytes_written,
+                conn->write_pos - bytes_written);
+        }
+        conn->write_pos -= bytes_written;
+        conn->last_active = infra_time_ms();
+
+        // 通知可写就绪
+        if (conn->write_pos == 0 && conn->mux->events.on_writable) {
+            conn->mux->events.on_writable(conn->mux->event_ctx, conn);
+        }
+    }
+}
+
+// 处理连接完成
+static void handle_connect_complete(poly_mux_conn_t* conn) {
+    if (!conn || !conn->sock) return;
+
+    // 检查连接结果
+    int error = 0;
+    socklen_t len = sizeof(error);
+    if (getsockopt(infra_net_get_fd(conn->sock), SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
+        error = errno;
+    }
+
+    if (error) {
+        INFRA_LOG_ERROR("Connect failed: %d", error);
+        conn->state = POLY_MUX_CONN_STATE_CLOSING;
+        if (conn->mux->events.on_connect) {
+            conn->mux->events.on_connect(conn->mux->event_ctx, conn, INFRA_ERROR_CONNECT_FAILED);
+        }
+        return;
+    }
+
+    // 连接成功
+    conn->state = POLY_MUX_CONN_STATE_CONNECTED;
+    if (conn->mux->events.on_connect) {
+        conn->mux->events.on_connect(conn->mux->event_ctx, conn, INFRA_OK);
+    }
+}
+
+// IO处理任务
+static void* io_task(void* arg) {
+    poly_mux_t* mux = (poly_mux_t*)arg;
+    if (!mux) return NULL;
 
     while (mux->running) {
-        // 接受新连接
-        infra_socket_t client = NULL;
-        infra_net_addr_t addr = {0};
-        infra_error_t err = infra_net_accept(mux->listener, &client, &addr);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                infra_sleep(10);  // 10ms
+        fd_set readfds, writefds;
+        FD_ZERO(&readfds);
+        FD_ZERO(&writefds);
+        int max_fd = -1;
+
+        // 设置文件描述符
+        infra_mutex_lock(&mux->mutex);
+        poly_mux_conn_t* conn = mux->conns;
+        while (conn) {
+            if (!conn->sock) {
+                conn = conn->next;
                 continue;
             }
-            INFRA_LOG_ERROR("Failed to accept connection: %d", err);
+
+            int fd = infra_net_get_fd(conn->sock);
+            if (fd > max_fd) max_fd = fd;
+
+            // 监听器总是可读
+            if (conn->type == POLY_MUX_CONN_ACCEPT) {
+                FD_SET(fd, &readfds);
+            }
+            // 正在连接的socket监听可写
+            else if (conn->state == POLY_MUX_CONN_STATE_CONNECTING) {
+                FD_SET(fd, &writefds);
+            }
+            // 已连接的socket根据状态监听
+            else if (conn->state == POLY_MUX_CONN_STATE_CONNECTED) {
+                FD_SET(fd, &readfds);
+                if (conn->write_pos > 0) {
+                    FD_SET(fd, &writefds);
+                }
+            }
+
+            conn = conn->next;
+        }
+        infra_mutex_unlock(&mux->mutex);
+
+        if (max_fd == -1) {
+            infra_sleep(100);  // 100ms
+            continue;
+        }
+
+        // 等待事件
+        struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};  // 100ms
+        int ready = select(max_fd + 1, &readfds, &writefds, NULL, &tv);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            INFRA_LOG_ERROR("Select failed: %d", errno);
             break;
         }
 
-        INFRA_LOG_INFO("Accepted connection from %s:%d", addr.host, addr.port);
+        if (ready == 0) continue;
 
-        // 设置客户端socket为非阻塞模式
-        err = infra_net_set_nonblock(client, true);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to set client socket non-blocking: %d", err);
-            infra_net_close(client);
-            continue;
+        // 处理事件
+        uint64_t now = infra_time_ms();
+        infra_mutex_lock(&mux->mutex);
+        conn = mux->conns;
+        poly_mux_conn_t* prev = NULL;
+        while (conn) {
+            poly_mux_conn_t* curr = conn;
+            conn = conn->next;
+
+            if (!curr->sock) {
+                continue;
+            }
+
+            int fd = infra_net_get_fd(curr->sock);
+            bool is_timeout = (now - curr->last_active) >= 
+                (uint64_t)mux->config.conn_config.idle_timeout;
+
+            // 检查超时
+            if (is_timeout && curr->type != POLY_MUX_CONN_ACCEPT) {
+                curr->state = POLY_MUX_CONN_STATE_CLOSING;
+            }
+
+            // 处理事件
+            if (curr->state == POLY_MUX_CONN_STATE_CONNECTING && FD_ISSET(fd, &writefds)) {
+                handle_connect_complete(curr);
+            }
+            else if (curr->state == POLY_MUX_CONN_STATE_CONNECTED) {
+                if (FD_ISSET(fd, &readfds)) {
+                    handle_readable(curr);
+                }
+                if (FD_ISSET(fd, &writefds)) {
+                    handle_writable(curr);
+                }
+            }
+            else if (curr->type == POLY_MUX_CONN_ACCEPT && FD_ISSET(fd, &readfds)) {
+                // 接受新连接
+                infra_socket_t client = NULL;
+                infra_net_addr_t addr = {0};
+                infra_error_t err = infra_net_accept(curr->sock, &client, &addr);
+                if (err == INFRA_OK) {
+                    if (mux->events.on_accept) {
+                        mux->events.on_accept(mux->event_ctx, curr, &addr);
+                    }
+                } else if (err != INFRA_ERROR_WOULD_BLOCK) {
+                    INFRA_LOG_ERROR("Failed to accept connection: %d", err);
+                }
+            }
+
+            // 处理关闭状态
+            if (curr->state == POLY_MUX_CONN_STATE_CLOSING) {
+                remove_conn(mux, curr);
+            } else {
+                prev = curr;
+            }
         }
-
-        // 创建连接结构
-        poly_mux_conn_t* conn = create_conn(mux, client);
-        if (!conn) {
-            INFRA_LOG_ERROR("Failed to create connection");
-            infra_net_close(client);
-            continue;
-        }
-
-        // 添加到连接列表
-        err = add_conn(mux, conn);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to add connection: %d", err);
-            destroy_conn(conn);
-            continue;
-        }
-
-        // 提交到线程池处理
-        err = infra_thread_pool_submit(mux->pool, handle_conn_task, conn);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to submit connection task: %d", err);
-            remove_conn(mux, conn);
-            destroy_conn(conn);
-            continue;
-        }
-
-        // 清理空闲连接
-        cleanup_idle_conns(mux);
+        infra_mutex_unlock(&mux->mutex);
     }
 
     return NULL;
 }
 
 //-----------------------------------------------------------------------------
-// Interface Implementation
+// Public Functions
 //-----------------------------------------------------------------------------
 
 infra_error_t poly_mux_create(const poly_mux_config_t* config, poly_mux_t** mux) {
@@ -227,15 +357,15 @@ infra_error_t poly_mux_create(const poly_mux_config_t* config, poly_mux_t** mux)
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 创建多路复用器
-    poly_mux_t* m = malloc(sizeof(poly_mux_t));
-    if (!m) {
+    // 分配内存
+    *mux = malloc(sizeof(poly_mux_t));
+    if (!*mux) {
         return INFRA_ERROR_NO_MEMORY;
     }
+    memset(*mux, 0, sizeof(poly_mux_t));
 
-    // 初始化字段
-    memset(m, 0, sizeof(poly_mux_t));
-    memcpy(&m->config, config, sizeof(poly_mux_config_t));
+    // 保存配置
+    memcpy(&(*mux)->config, config, sizeof(poly_mux_config_t));
 
     // 创建线程池
     infra_thread_pool_config_t pool_config = {
@@ -244,152 +374,274 @@ infra_error_t poly_mux_create(const poly_mux_config_t* config, poly_mux_t** mux)
         .queue_size = config->queue_size
     };
 
-    infra_error_t err = infra_thread_pool_create(&pool_config, &m->pool);
+    infra_error_t err = infra_thread_pool_create(&pool_config, &(*mux)->pool);
     if (err != INFRA_OK) {
-        free(m);
+        free(*mux);
+        *mux = NULL;
         return err;
     }
 
-    // 创建互斥锁
-    err = infra_mutex_create(&m->mutex);
+    // 初始化互斥锁
+    err = infra_mutex_create(&(*mux)->mutex);
     if (err != INFRA_OK) {
-        infra_thread_pool_destroy(m->pool);
-        free(m);
+        infra_thread_pool_destroy((*mux)->pool);
+        free(*mux);
+        *mux = NULL;
         return err;
     }
 
-    *mux = m;
     return INFRA_OK;
 }
 
 void poly_mux_destroy(poly_mux_t* mux) {
-    if (!mux) {
-        return;
-    }
+    if (!mux) return;
 
     // 停止服务
-    if (mux->running) {
-        poly_mux_stop(mux);
+    poly_mux_stop(mux);
+
+    // 等待任务完成
+    while (true) {
+        size_t active_threads, queued_tasks;
+        infra_thread_pool_get_stats(mux->pool, &active_threads, &queued_tasks);
+        if (active_threads == 0 && queued_tasks == 0) {
+            break;
+        }
+        infra_sleep(10);  // 10ms
     }
 
     // 清理连接
-    while (mux->conns) {
-        poly_mux_conn_t* conn = mux->conns;
-        mux->conns = conn->next;
-        destroy_conn(conn);
+    infra_mutex_lock(&mux->mutex);
+    poly_mux_conn_t* conn = mux->conns;
+    while (conn) {
+        poly_mux_conn_t* next = conn->next;
+        free_conn(conn);
+        conn = next;
     }
+    mux->conns = NULL;
+    mux->curr_conns = 0;
+    mux->total_conns = 0;
+    infra_mutex_unlock(&mux->mutex);
 
     // 清理资源
-    if (mux->pool) {
-        infra_thread_pool_destroy(mux->pool);
-    }
     infra_mutex_destroy(&mux->mutex);
+    infra_thread_pool_destroy(mux->pool);
+
+    // 清理自身
+    memset(mux, 0, sizeof(poly_mux_t));
     free(mux);
 }
 
-infra_error_t poly_mux_start(poly_mux_t* mux, poly_mux_handler_t handler, void* ctx) {
-    if (!mux || !handler) {
+infra_error_t poly_mux_start(poly_mux_t* mux, const poly_mux_events_t* events, void* ctx) {
+    if (!mux || !events) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
     if (mux->running) {
-        return INFRA_ERROR_BUSY;
+        return INFRA_ERROR_ALREADY_EXISTS;
+    }
+
+    // 保存事件处理器
+    memcpy(&mux->events, events, sizeof(poly_mux_events_t));
+    mux->event_ctx = ctx;
+
+    // 启动IO处理任务
+    mux->running = true;
+    infra_error_t err = infra_thread_pool_submit(mux->pool, io_task, mux);
+    if (err != INFRA_OK) {
+        mux->running = false;
+        return err;
+    }
+
+    return INFRA_OK;
+}
+
+void poly_mux_stop(poly_mux_t* mux) {
+    if (!mux || !mux->running) return;
+
+    mux->running = false;
+
+    // 等待任务完成
+    while (true) {
+        size_t active_threads, queued_tasks;
+        infra_thread_pool_get_stats(mux->pool, &active_threads, &queued_tasks);
+        if (active_threads == 0 && queued_tasks == 0) {
+            break;
+        }
+        infra_sleep(10);  // 10ms
+    }
+}
+
+infra_error_t poly_mux_listen(poly_mux_t* mux, const char* host, int port, poly_mux_conn_t** conn) {
+    if (!mux || !host || !conn) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
     // 创建监听socket
-    infra_socket_t listener = NULL;
+    infra_socket_t sock = NULL;
     infra_config_t config = {0};
-    infra_error_t err = infra_net_create(&listener, false, &config);
+    infra_error_t err = infra_net_create(&sock, false, &config);
     if (err != INFRA_OK) {
         return err;
     }
 
     // 设置地址重用
-    err = infra_net_set_reuseaddr(listener, true);
+    err = infra_net_set_reuseaddr(sock, true);
     if (err != INFRA_OK) {
-        infra_net_close(listener);
-        return err;
-    }
-
-    // 设置非阻塞
-    err = infra_net_set_nonblock(listener, true);
-    if (err != INFRA_OK) {
-        infra_net_close(listener);
+        infra_net_close(sock);
         return err;
     }
 
     // 绑定地址
-    infra_net_addr_t addr = {0};
-    addr.host = mux->config.host;
-    addr.port = mux->config.port > 0 ? mux->config.port : 11211;  // 使用默认端口11211
-    err = infra_net_bind(listener, &addr);
+    infra_net_addr_t addr = {
+        .host = host,
+        .port = port
+    };
+    err = infra_net_bind(sock, &addr);
     if (err != INFRA_OK) {
-        infra_net_close(listener);
+        infra_net_close(sock);
         return err;
     }
-
-    // 获取实际绑定的端口号
-    infra_net_addr_t bound_addr = {0};
-    err = infra_net_getsockname(listener, &bound_addr);
-    if (err != INFRA_OK) {
-        infra_net_close(listener);
-        return err;
-    }
-    mux->config.port = bound_addr.port;
 
     // 开始监听
-    err = infra_net_listen(listener);
+    err = infra_net_listen(sock);
     if (err != INFRA_OK) {
-        infra_net_close(listener);
+        infra_net_close(sock);
         return err;
     }
 
-    // 保存状态
-    mux->listener = listener;
-    mux->handler = handler;
-    mux->handler_ctx = ctx;
-    mux->running = true;
-
-    // 启动接受连接任务
-    err = infra_thread_pool_submit(mux->pool, accept_conn_task, mux);
-    if (err != INFRA_OK) {
-        infra_net_close(listener);
-        mux->listener = NULL;
-        mux->running = false;
-        return err;
+    // 创建连接对象
+    poly_mux_conn_t* new_conn = create_conn(mux, sock, POLY_MUX_CONN_ACCEPT);
+    if (!new_conn) {
+        infra_net_close(sock);
+        return INFRA_ERROR_NO_MEMORY;
     }
 
-    INFRA_LOG_INFO("Multiplexer started on %s:%d", bound_addr.host, bound_addr.port);
+    // 添加到连接列表
+    infra_mutex_lock(&mux->mutex);
+    new_conn->next = mux->conns;
+    mux->conns = new_conn;
+    mux->curr_conns++;
+    mux->total_conns++;
+    infra_mutex_unlock(&mux->mutex);
+
+    *conn = new_conn;
     return INFRA_OK;
 }
 
-infra_error_t poly_mux_stop(poly_mux_t* mux) {
-    if (!mux) {
+infra_error_t poly_mux_connect(poly_mux_t* mux, const char* host, int port, poly_mux_conn_t** conn) {
+    if (!mux || !host || !conn) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (!mux->running) {
-        return INFRA_OK;
+    // 创建socket
+    infra_socket_t sock = NULL;
+    infra_config_t config = {0};
+    infra_error_t err = infra_net_create(&sock, false, &config);
+    if (err != INFRA_OK) {
+        return err;
     }
 
-    // 停止服务
-    mux->running = false;
-
-    // 关闭监听socket
-    if (mux->listener) {
-        infra_net_close(mux->listener);
-        mux->listener = NULL;
+    // 创建连接对象
+    poly_mux_conn_t* new_conn = create_conn(mux, sock, POLY_MUX_CONN_CONNECT);
+    if (!new_conn) {
+        infra_net_close(sock);
+        return INFRA_ERROR_NO_MEMORY;
     }
 
-    // 等待所有任务完成
-    infra_thread_pool_destroy(mux->pool);
-    mux->pool = NULL;
+    // 设置连接状态
+    new_conn->state = POLY_MUX_CONN_STATE_CONNECTING;
 
-    INFRA_LOG_INFO("Multiplexer stopped");
+    // 添加到连接列表
+    infra_mutex_lock(&mux->mutex);
+    new_conn->next = mux->conns;
+    mux->conns = new_conn;
+    mux->curr_conns++;
+    mux->total_conns++;
+    infra_mutex_unlock(&mux->mutex);
+
+    // 开始连接
+    infra_net_addr_t addr = {
+        .host = host,
+        .port = port
+    };
+    err = infra_net_connect(&addr, &sock, &config);
+    if (err != INFRA_OK && err != INFRA_ERROR_WOULD_BLOCK) {
+        remove_conn(mux, new_conn);
+        return err;
+    }
+
+    *conn = new_conn;
     return INFRA_OK;
 }
 
-infra_error_t poly_mux_get_stats(poly_mux_t* mux, size_t* curr_conns, size_t* total_conns) {
+void poly_mux_conn_close(poly_mux_conn_t* conn) {
+    if (!conn) return;
+    conn->state = POLY_MUX_CONN_STATE_CLOSING;
+}
+
+ssize_t poly_mux_conn_read(poly_mux_conn_t* conn, void* buf, size_t size) {
+    if (!conn || !buf || size == 0) return -1;
+
+    // 检查是否有数据可读
+    if (conn->read_pos == 0) return 0;
+
+    // 确定实际读取大小
+    size_t bytes = size;
+    if (bytes > conn->read_pos) {
+        bytes = conn->read_pos;
+    }
+
+    // 复制数据
+    memcpy(buf, conn->read_buffer, bytes);
+
+    // 移动剩余数据
+    if (bytes < conn->read_pos) {
+        memmove(conn->read_buffer,
+            conn->read_buffer + bytes,
+            conn->read_pos - bytes);
+    }
+    conn->read_pos -= bytes;
+
+    return bytes;
+}
+
+ssize_t poly_mux_conn_write(poly_mux_conn_t* conn, const void* data, size_t size) {
+    if (!conn || !data || size == 0) return -1;
+
+    // 检查缓冲区空间
+    size_t space = conn->mux->config.conn_config.write_buffer_size - conn->write_pos;
+    if (space == 0) return 0;
+
+    // 确定实际写入大小
+    size_t bytes = size;
+    if (bytes > space) {
+        bytes = space;
+    }
+
+    // 复制数据
+    memcpy(conn->write_buffer + conn->write_pos, data, bytes);
+    conn->write_pos += bytes;
+
+    return bytes;
+}
+
+poly_mux_conn_state_t poly_mux_conn_get_state(poly_mux_conn_t* conn) {
+    return conn ? conn->state : POLY_MUX_CONN_STATE_NONE;
+}
+
+poly_mux_conn_type_t poly_mux_conn_get_type(poly_mux_conn_t* conn) {
+    return conn ? conn->type : POLY_MUX_CONN_UNKNOWN;
+}
+
+void* poly_mux_conn_get_user_data(poly_mux_conn_t* conn) {
+    return conn ? conn->user_data : NULL;
+}
+
+void poly_mux_conn_set_user_data(poly_mux_conn_t* conn, void* data) {
+    if (conn) conn->user_data = data;
+}
+
+infra_error_t poly_mux_get_stats(poly_mux_t* mux, uint32_t* curr_conns, uint32_t* total_conns) {
     if (!mux || !curr_conns || !total_conns) {
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -400,12 +652,5 @@ infra_error_t poly_mux_get_stats(poly_mux_t* mux, size_t* curr_conns, size_t* to
     infra_mutex_unlock(&mux->mutex);
 
     return INFRA_OK;
-}
-
-bool poly_mux_is_running(const poly_mux_t* mux) {
-    return mux ? mux->running : false;
-}
-
-infra_socket_t poly_mux_get_listener(const poly_mux_t* mux) {
-    return mux ? mux->listener : NULL;
 } 
+

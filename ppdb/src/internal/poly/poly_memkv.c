@@ -693,4 +693,138 @@ infra_error_t poly_memkv_flush(poly_memkv_t* store) {
     return INFRA_OK;
 }
 
+// 增加值
+infra_error_t poly_memkv_incr(poly_memkv_t* store, const char* key,
+    uint64_t delta, uint64_t* new_value) {
+    if (!store || !key || !new_value) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 加锁
+    infra_mutex_lock(&store->mutex);
+
+    // 获取项目
+    void* value = NULL;
+    infra_error_t err = poly_hashtable_get(store->store, key, &value);
+    if (err != INFRA_OK) {
+        infra_mutex_unlock(&store->mutex);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    poly_memkv_item_t* item = (poly_memkv_item_t*)value;
+    
+    // 检查是否过期
+    if (poly_memkv_is_expired(item)) {
+        // 移除过期项目
+        poly_hashtable_remove(store->store, key);
+        poly_atomic_dec(&store->stats.curr_items);
+        poly_atomic_sub(&store->stats.bytes, item->value_size);
+        poly_memkv_free_item(item);
+        
+        infra_mutex_unlock(&store->mutex);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // 检查值是否为数字
+    char* endptr;
+    uint64_t curr_value = strtoull(item->value, &endptr, 10);
+    if (*endptr != '\0') {
+        infra_mutex_unlock(&store->mutex);
+        return INFRA_ERROR_INVALID_TYPE;
+    }
+
+    // 计算新值
+    uint64_t value_new = curr_value + delta;
+    
+    // 转换为字符串
+    char value_str[32];
+    size_t value_len = snprintf(value_str, sizeof(value_str), "%lu", value_new);
+    
+    // 分配新内存
+    void* new_data = malloc(value_len + 1);
+    if (!new_data) {
+        infra_mutex_unlock(&store->mutex);
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    
+    // 更新数据
+    memcpy(new_data, value_str, value_len + 1);
+    free(item->value);
+    item->value = new_data;
+    item->value_size = value_len;
+    item->cas = get_next_cas(store);
+    
+    *new_value = value_new;
+    
+    infra_mutex_unlock(&store->mutex);
+    return INFRA_OK;
+}
+
+// 减少值
+infra_error_t poly_memkv_decr(poly_memkv_t* store, const char* key,
+    uint64_t delta, uint64_t* new_value) {
+    if (!store || !key || !new_value) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 加锁
+    infra_mutex_lock(&store->mutex);
+
+    // 获取项目
+    void* value = NULL;
+    infra_error_t err = poly_hashtable_get(store->store, key, &value);
+    if (err != INFRA_OK) {
+        infra_mutex_unlock(&store->mutex);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    poly_memkv_item_t* item = (poly_memkv_item_t*)value;
+    
+    // 检查是否过期
+    if (poly_memkv_is_expired(item)) {
+        // 移除过期项目
+        poly_hashtable_remove(store->store, key);
+        poly_atomic_dec(&store->stats.curr_items);
+        poly_atomic_sub(&store->stats.bytes, item->value_size);
+        poly_memkv_free_item(item);
+        
+        infra_mutex_unlock(&store->mutex);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // 检查值是否为数字
+    char* endptr;
+    uint64_t curr_value = strtoull(item->value, &endptr, 10);
+    if (*endptr != '\0') {
+        infra_mutex_unlock(&store->mutex);
+        return INFRA_ERROR_INVALID_TYPE;
+    }
+
+    // 计算新值（不能小于0）
+    uint64_t value_new = (curr_value > delta) ? (curr_value - delta) : 0;
+    
+    // 转换为字符串
+    char value_str[32];
+    size_t value_len = snprintf(value_str, sizeof(value_str), "%lu", value_new);
+    
+    // 分配新内存
+    void* new_data = malloc(value_len + 1);
+    if (!new_data) {
+        infra_mutex_unlock(&store->mutex);
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    
+    // 更新数据
+    memcpy(new_data, value_str, value_len + 1);
+    free(item->value);
+    item->value = new_data;
+    item->value_size = value_len;
+    item->cas = get_next_cas(store);
+    
+    *new_value = value_new;
+    
+    infra_mutex_unlock(&store->mutex);
+    return INFRA_OK;
+}
+
 // ... 其他函数的实现 ...

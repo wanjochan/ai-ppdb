@@ -86,10 +86,16 @@ static infra_error_t read_value(infra_socket_t sock, void** value, size_t bytes)
         return err != INFRA_OK ? err : INFRA_ERROR_INVALID_STATE;
     }
 
-    // 尝试读取可能存在的结束标记 "\r\n"
+    // 读取结束标记 "\r\n"
     char end_mark[2];
-    err = infra_net_recv(sock, end_mark, 2, &read_bytes);
-    // 即使没有读到结束标记也继续执行
+    size_t end_bytes = 0;
+    err = infra_net_recv(sock, end_mark, 2, &end_bytes);
+    if (err != INFRA_OK || end_bytes != 2 || end_mark[0] != '\r' || end_mark[1] != '\n') {
+        free(*value);
+        *value = NULL;
+        INFRA_LOG_ERROR("Invalid value terminator: expected \\r\\n");
+        return INFRA_ERROR_PROTOCOL;
+    }
     
     return INFRA_OK;
 }
@@ -102,8 +108,6 @@ static infra_error_t read_command(infra_socket_t sock, char* cmd, size_t cmd_siz
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    INFRA_LOG_DEBUG("Starting to read command");
-
     // 读取一行
     char line[1024];
     size_t pos = 0;
@@ -112,14 +116,12 @@ static infra_error_t read_command(infra_socket_t sock, char* cmd, size_t cmd_siz
     while (pos < sizeof(line) - 1) {
         infra_error_t err = infra_net_recv(sock, &line[pos], 1, &read_bytes);
         if (err != INFRA_OK || read_bytes != 1) {
-            INFRA_LOG_ERROR("Failed to read command: err=%d, read_bytes=%zu", err, read_bytes);
             return err != INFRA_OK ? err : INFRA_ERROR_INVALID_STATE;
         }
 
         if (line[pos] == '\n') {
             if (pos > 0 && line[pos - 1] == '\r') {
                 line[pos - 1] = '\0';
-                INFRA_LOG_DEBUG("Command line read: %s", line);
                 break;
             }
         }
@@ -578,14 +580,26 @@ static infra_error_t handle_connection(void* ctx, infra_socket_t sock) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    // 设置socket超时（30秒）
+    infra_error_t err = infra_net_set_timeout(sock, 30000);  // 30秒 = 30000毫秒
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set socket timeout: %d", err);
+        return err;
+    }
+
+    // 更新连接统计
+    poly_atomic_inc(&memkv->store->stats.curr_connections);
+    poly_atomic_inc(&memkv->store->stats.total_connections);
+
     // 读取命令
     char cmd[32];
     const char* args[16];
     size_t arg_count = 0;
 
-    infra_error_t err = read_command(sock, cmd, sizeof(cmd),
-        args, 16, &arg_count);
+    err = read_command(sock, cmd, sizeof(cmd), args, 16, &arg_count);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to read command: %d", err);
+        poly_atomic_dec(&memkv->store->stats.curr_connections);
         return err;
     }
 
