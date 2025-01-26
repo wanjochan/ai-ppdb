@@ -1,6 +1,8 @@
 #ifndef POLY_ASYNC_H_
 #define POLY_ASYNC_H_
 
+//占位，还没完善
+
 #include "libc/integral/integral.h"
 #include "libc/runtime/runtime.h"
 #include "libc/sysv/consts/poll.h"

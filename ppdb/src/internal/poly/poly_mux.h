@@ -75,4 +75,11 @@ infra_error_t poly_mux_get_stats(poly_mux_t* mux, size_t* curr_conns, size_t* to
  */
 bool poly_mux_is_running(const poly_mux_t* mux);
 
+/**
+ * @brief 获取监听器socket
+ * @param mux 多路复用器
+ * @return 监听器socket，如果未启动则返回NULL
+ */
+infra_socket_t poly_mux_get_listener(const poly_mux_t* mux);
+
 #endif // POLY_MUX_H 

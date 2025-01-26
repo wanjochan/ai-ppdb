@@ -1,4 +1,3 @@
-#include "internal/peer/peer_memkv.h"
 #include "internal/peer/peer_service.h"
 #include "internal/poly/poly_memkv.h"
 #include "internal/poly/poly_mux.h"
@@ -27,6 +26,43 @@ typedef struct peer_memkv {
 } peer_memkv_t;
 
 //-----------------------------------------------------------------------------
+// Forward Declarations
+//-----------------------------------------------------------------------------
+
+// Service interface functions
+static infra_error_t init(const infra_config_t* config);
+static infra_error_t cleanup(void);
+static infra_error_t start(void);
+static infra_error_t stop(void);
+static bool is_running(void);
+static infra_error_t cmd_handler(int argc, char** argv);
+
+//-----------------------------------------------------------------------------
+// Command Line Options
+//-----------------------------------------------------------------------------
+
+static const poly_cmd_option_t g_memkv_options[] = {
+    {
+        .name = "port",
+        .desc = "Memcached server port",
+        .has_value = true
+    }
+};
+
+//-----------------------------------------------------------------------------
+// Global Variables
+//-----------------------------------------------------------------------------
+
+// 服务上下文
+static struct {
+    bool running;                // 服务是否运行
+    poly_memkv_t* store;        // 存储实例
+    poly_mux_t* mux;            // 多路复用器
+    uint16_t port;              // 监听端口
+    infra_mutex_t mutex;        // 全局互斥锁
+} g_context = {0};
+
+//-----------------------------------------------------------------------------
 // Helper Functions
 //-----------------------------------------------------------------------------
 
@@ -47,19 +83,14 @@ static infra_error_t read_value(infra_socket_t sock, void** value, size_t bytes)
     if (err != INFRA_OK || read_bytes != bytes) {
         free(*value);
         *value = NULL;
-        return err != INFRA_OK ? err : INFRA_ERROR_INVALID_DATA;
+        return err != INFRA_OK ? err : INFRA_ERROR_INVALID_STATE;
     }
 
-    // 读取结束标记 "\r\n"
+    // 尝试读取可能存在的结束标记 "\r\n"
     char end_mark[2];
     err = infra_net_recv(sock, end_mark, 2, &read_bytes);
-    if (err != INFRA_OK || read_bytes != 2 || 
-        end_mark[0] != '\r' || end_mark[1] != '\n') {
-        free(*value);
-        *value = NULL;
-        return INFRA_ERROR_INVALID_DATA;
-    }
-
+    // 即使没有读到结束标记也继续执行
+    
     return INFRA_OK;
 }
 
@@ -71,6 +102,8 @@ static infra_error_t read_command(infra_socket_t sock, char* cmd, size_t cmd_siz
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    INFRA_LOG_DEBUG("Starting to read command");
+
     // 读取一行
     char line[1024];
     size_t pos = 0;
@@ -79,12 +112,14 @@ static infra_error_t read_command(infra_socket_t sock, char* cmd, size_t cmd_siz
     while (pos < sizeof(line) - 1) {
         infra_error_t err = infra_net_recv(sock, &line[pos], 1, &read_bytes);
         if (err != INFRA_OK || read_bytes != 1) {
-            return err != INFRA_OK ? err : INFRA_ERROR_INVALID_DATA;
+            INFRA_LOG_ERROR("Failed to read command: err=%d, read_bytes=%zu", err, read_bytes);
+            return err != INFRA_OK ? err : INFRA_ERROR_INVALID_STATE;
         }
 
         if (line[pos] == '\n') {
             if (pos > 0 && line[pos - 1] == '\r') {
                 line[pos - 1] = '\0';
+                INFRA_LOG_DEBUG("Command line read: %s", line);
                 break;
             }
         }
@@ -92,13 +127,13 @@ static infra_error_t read_command(infra_socket_t sock, char* cmd, size_t cmd_siz
     }
 
     if (pos >= sizeof(line) - 1) {
-        return INFRA_ERROR_INVALID_DATA;
+        return INFRA_ERROR_INVALID_STATE;
     }
 
     // 解析命令和参数
     char* token = strtok(line, " ");
     if (!token) {
-        return INFRA_ERROR_INVALID_DATA;
+        return INFRA_ERROR_INVALID_STATE;
     }
 
     // 复制命令
@@ -419,6 +454,119 @@ static infra_error_t handle_flush_all(infra_socket_t sock, peer_memkv_t* memkv,
     return INFRA_OK;
 }
 
+// 处理incr命令
+static infra_error_t handle_incr(infra_socket_t sock, peer_memkv_t* memkv,
+    const char* key, uint64_t delta, bool noreply) {
+    
+    uint64_t new_value = 0;
+    infra_error_t err = poly_memkv_incr(memkv->store, key, delta, &new_value);
+
+    if (err == INFRA_ERROR_NOT_FOUND) {
+        if (!noreply) {
+            return send_response(sock, "NOT_FOUND\r\n");
+        }
+        return INFRA_OK;
+    }
+
+    if (err == INFRA_ERROR_INVALID_TYPE) {
+        if (!noreply) {
+            return send_response(sock, "CLIENT_ERROR cannot increment non-numeric value\r\n");
+        }
+        return INFRA_OK;
+    }
+
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // 发送响应
+    if (!noreply) {
+        char response[32];
+        snprintf(response, sizeof(response), "%lu\r\n", new_value);
+        return send_response(sock, response);
+    }
+
+    return INFRA_OK;
+}
+
+// 处理decr命令
+static infra_error_t handle_decr(infra_socket_t sock, peer_memkv_t* memkv,
+    const char* key, uint64_t delta, bool noreply) {
+    
+    uint64_t new_value = 0;
+    infra_error_t err = poly_memkv_decr(memkv->store, key, delta, &new_value);
+
+    if (err == INFRA_ERROR_NOT_FOUND) {
+        if (!noreply) {
+            return send_response(sock, "NOT_FOUND\r\n");
+        }
+        return INFRA_OK;
+    }
+
+    if (err == INFRA_ERROR_INVALID_TYPE) {
+        if (!noreply) {
+            return send_response(sock, "CLIENT_ERROR cannot decrement non-numeric value\r\n");
+        }
+        return INFRA_OK;
+    }
+
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // 发送响应
+    if (!noreply) {
+        char response[32];
+        snprintf(response, sizeof(response), "%lu\r\n", new_value);
+        return send_response(sock, response);
+    }
+
+    return INFRA_OK;
+}
+
+// 处理version命令
+static infra_error_t handle_version(infra_socket_t sock) {
+    char response[32];
+    snprintf(response, sizeof(response), "VERSION %s\r\n", MEMKV_VERSION);
+    return send_response(sock, response);
+}
+
+// 处理stats命令
+static infra_error_t handle_stats(infra_socket_t sock, peer_memkv_t* memkv) {
+    char buf[256];
+    const poly_memkv_stats_t* stats = poly_memkv_get_stats(memkv->store);
+    
+    // 发送基本统计信息
+    snprintf(buf, sizeof(buf), "STAT pid %d\r\n", getpid());
+    send_response(sock, buf);
+    
+    snprintf(buf, sizeof(buf), "STAT version %s\r\n", MEMKV_VERSION);
+    send_response(sock, buf);
+    
+    snprintf(buf, sizeof(buf), "STAT curr_items %zu\r\n", stats->curr_items);
+    send_response(sock, buf);
+    
+    snprintf(buf, sizeof(buf), "STAT total_items %zu\r\n", stats->total_items);
+    send_response(sock, buf);
+    
+    snprintf(buf, sizeof(buf), "STAT bytes %zu\r\n", stats->bytes);
+    send_response(sock, buf);
+    
+    snprintf(buf, sizeof(buf), "STAT curr_connections %zu\r\n", stats->curr_connections);
+    send_response(sock, buf);
+    
+    snprintf(buf, sizeof(buf), "STAT total_connections %zu\r\n", stats->total_connections);
+    send_response(sock, buf);
+    
+    snprintf(buf, sizeof(buf), "STAT get_hits %zu\r\n", stats->hits);
+    send_response(sock, buf);
+    
+    snprintf(buf, sizeof(buf), "STAT get_misses %zu\r\n", stats->misses);
+    send_response(sock, buf);
+    
+    return send_response(sock, "END\r\n");
+}
+
 //-----------------------------------------------------------------------------
 // Connection Handler
 //-----------------------------------------------------------------------------
@@ -547,26 +695,166 @@ static infra_error_t handle_connection(void* ctx, infra_socket_t sock) {
         return handle_flush_all(sock, memkv, noreply);
     }
 
+    if (strcmp(cmd, "incr") == 0) {
+        if (arg_count < 2) {
+            return INFRA_ERROR_INVALID_PARAM;
+        }
+
+        const char* key = args[0];
+        uint64_t delta = strtoull(args[1], NULL, 10);
+        bool noreply = (arg_count > 2 && strcmp(args[2], "noreply") == 0);
+
+        return handle_incr(sock, memkv, key, delta, noreply);
+    }
+
+    if (strcmp(cmd, "decr") == 0) {
+        if (arg_count < 2) {
+            return INFRA_ERROR_INVALID_PARAM;
+        }
+
+        const char* key = args[0];
+        uint64_t delta = strtoull(args[1], NULL, 10);
+        bool noreply = (arg_count > 2 && strcmp(args[2], "noreply") == 0);
+
+        return handle_decr(sock, memkv, key, delta, noreply);
+    }
+
+    if (strcmp(cmd, "version") == 0) {
+        return handle_version(sock);
+    }
+
+    if (strcmp(cmd, "stats") == 0) {
+        return handle_stats(sock, memkv);
+    }
+
     return INFRA_ERROR_NOT_SUPPORTED;
 }
 
 //-----------------------------------------------------------------------------
-// Service Interface
+// Service Implementation
 //-----------------------------------------------------------------------------
 
-// 处理命令
+static infra_error_t init(const infra_config_t* config) {
+    if (!config) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 初始化存储实例
+    poly_memkv_config_t store_config = {
+        .initial_size = 1024,
+        .max_key_size = MEMKV_MAX_KEY_SIZE,
+        .max_value_size = MEMKV_MAX_VALUE_SIZE
+    };
+
+    infra_error_t err = poly_memkv_create(&store_config, &g_context.store);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // 初始化互斥锁
+    err = infra_mutex_create(&g_context.mutex);
+    if (err != INFRA_OK) {
+        poly_memkv_destroy(g_context.store);
+        g_context.store = NULL;
+        return err;
+    }
+
+    g_context.port = 11211;  // 默认端口
+    return INFRA_OK;
+}
+
+static infra_error_t cleanup(void) {
+    if (g_context.mux) {
+        poly_mux_stop(g_context.mux);
+        poly_mux_destroy(g_context.mux);
+        g_context.mux = NULL;
+    }
+    
+    if (g_context.store) {
+        poly_memkv_destroy(g_context.store);
+        g_context.store = NULL;
+    }
+
+    infra_mutex_destroy(&g_context.mutex);
+    return INFRA_OK;
+}
+
+// 获取实际绑定的端口号
+static uint16_t get_bound_port(poly_mux_t* mux) {
+    if (!mux) return 0;
+    
+    infra_socket_t listener = poly_mux_get_listener(mux);
+    if (!listener) return 0;
+
+    infra_net_addr_t addr = {0};
+    infra_error_t err = infra_net_getsockname(listener, &addr);
+    if (err != INFRA_OK) return 0;
+
+    return addr.port;
+}
+
+static infra_error_t start(void) {
+    if (g_context.running) {
+        return INFRA_ERROR_ALREADY_EXISTS;
+    }
+
+    // 创建多路复用器
+    poly_mux_config_t config = {
+        .port = g_context.port,
+        .host = "0.0.0.0",
+        .max_connections = 1000,
+        .min_threads = 4,
+        .max_threads = 16,
+        .queue_size = 1000,
+        .idle_timeout = 60
+    };
+
+    infra_error_t err = poly_mux_create(&config, &g_context.mux);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // 启动服务
+    err = poly_mux_start(g_context.mux, handle_connection, &g_context);
+    if (err != INFRA_OK) {
+        poly_mux_destroy(g_context.mux);
+        g_context.mux = NULL;
+        g_context.running = false;
+        return err;
+    }
+
+    g_context.running = true;
+    g_context.port = get_bound_port(g_context.mux);
+    INFRA_LOG_INFO("MemKV service started on port %d", g_context.port);
+    return INFRA_OK;
+}
+
+static infra_error_t stop(void) {
+    if (!g_context.running) {
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // 停止服务
+    infra_error_t err = poly_mux_stop(g_context.mux);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    poly_mux_destroy(g_context.mux);
+    g_context.mux = NULL;
+    g_context.running = false;
+    INFRA_LOG_INFO("MemKV service stopped");
+    return INFRA_OK;
+}
+
+static bool is_running(void) {
+    return g_context.running;
+}
+
 static infra_error_t cmd_handler(int argc, char** argv) {
     if (argc < 2) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-
-    // 获取服务实例
-    peer_service_t* service = peer_service_get("memkv");
-    if (!service) {
-        return INFRA_ERROR_NOT_FOUND;
-    }
-
-    peer_memkv_t* memkv = (peer_memkv_t*)service;
 
     // 解析命令行选项
     for (int i = 1; i < argc; i++) {
@@ -575,63 +863,17 @@ static infra_error_t cmd_handler(int argc, char** argv) {
             if (i + 1 >= argc) {
                 return INFRA_ERROR_INVALID_PARAM;
             }
-            memkv->port = atoi(argv[++i]);
+            g_context.port = atoi(argv[++i]);
         } else if (strcmp(arg, "--start") == 0) {
-            if (memkv->is_running) {
-                return INFRA_ERROR_ALREADY_EXISTS;
-            }
-
-            // 创建多路复用器
-            poly_mux_config_t config = {
-                .port = memkv->port,
-                .host = "0.0.0.0",
-                .max_connections = 1000,
-                .min_threads = 4,
-                .max_threads = 16,
-                .queue_size = 1000,
-                .idle_timeout = 60
-            };
-
-            infra_error_t err = poly_mux_create(&config, &memkv->mux);
-            if (err != INFRA_OK) {
-                return err;
-            }
-
-            // 启动服务
-            err = poly_mux_start(memkv->mux, handle_connection, memkv);
-            if (err != INFRA_OK) {
-                poly_mux_destroy(memkv->mux);
-                memkv->mux = NULL;
-                return err;
-            }
-
-            memkv->is_running = true;
-            INFRA_LOG_INFO("MemKV service started on port %d", memkv->port);
-            return INFRA_OK;
-
+            return start();
         } else if (strcmp(arg, "--stop") == 0) {
-            if (!memkv->is_running) {
-                return INFRA_ERROR_NOT_FOUND;
-            }
-
-            // 停止服务
-            infra_error_t err = poly_mux_stop(memkv->mux);
-            if (err != INFRA_OK) {
-                return err;
-            }
-
-            poly_mux_destroy(memkv->mux);
-            memkv->mux = NULL;
-            memkv->is_running = false;
-            INFRA_LOG_INFO("MemKV service stopped");
-            return INFRA_OK;
-
+            return stop();
         } else if (strcmp(arg, "--status") == 0) {
             size_t curr_conns = 0, total_conns = 0;
-            if (memkv->mux) {
-                poly_mux_get_stats(memkv->mux, &curr_conns, &total_conns);
+            if (g_context.mux) {
+                poly_mux_get_stats(g_context.mux, &curr_conns, &total_conns);
             }
-            printf("MemKV service is %s\n", memkv->is_running ? "running" : "stopped");
+            printf("MemKV service is %s\n", g_context.running ? "running" : "stopped");
             printf("Current connections: %zu\n", curr_conns);
             printf("Total connections: %zu\n", total_conns);
             return INFRA_OK;
@@ -641,51 +883,20 @@ static infra_error_t cmd_handler(int argc, char** argv) {
     return INFRA_ERROR_INVALID_PARAM;
 }
 
-// 创建服务
-static infra_error_t on_create(peer_service_t* service) {
-    if (!service) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    peer_memkv_t* memkv = (peer_memkv_t*)service;
-
-    // 创建存储实例
-    poly_memkv_config_t config = {
-        .initial_size = 1024,
-        .max_key_size = 250,
-        .max_value_size = 1024 * 1024
-    };
-
-    infra_error_t err = poly_memkv_create(&config, &memkv->store);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
-    memkv->port = 11211;  // 默认端口
-    return INFRA_OK;
-}
-
-// 销毁服务
-static void on_destroy(peer_service_t* service) {
-    if (!service) {
-        return;
-    }
-
-    peer_memkv_t* memkv = (peer_memkv_t*)service;
-    if (memkv->mux) {
-        poly_mux_stop(memkv->mux);
-        poly_mux_destroy(memkv->mux);
-    }
-    if (memkv->store) {
-        poly_memkv_destroy(memkv->store);
-    }
-    free(service);
-}
-
 // 服务实例
 peer_service_t g_memkv_service = {
-    .name = "memkv",
-    .cmd_handler = cmd_handler,
-    .on_create = on_create,
-    .on_destroy = on_destroy
+    .config = {
+        .name = "memkv",
+        .type = SERVICE_TYPE_MEMKV,
+        .options = g_memkv_options,
+        .option_count = sizeof(g_memkv_options) / sizeof(g_memkv_options[0]),
+        .config = NULL
+    },
+    .state = SERVICE_STATE_STOPPED,
+    .init = init,
+    .cleanup = cleanup,
+    .start = start,
+    .stop = stop,
+    .is_running = is_running,
+    .cmd_handler = cmd_handler
 };

@@ -681,4 +681,34 @@ infra_error_t infra_net_shutdown(infra_socket_t socket, infra_net_shutdown_how_t
     }
 
     return INFRA_OK;
-} 
+}
+
+infra_error_t infra_net_getsockname(infra_socket_t sock, infra_net_addr_t* addr) {
+    if (!sock || !addr) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    struct sockaddr_in local_addr = {0};
+    socklen_t addr_len = sizeof(local_addr);
+    
+    if (getsockname(sock->fd, (struct sockaddr*)&local_addr, &addr_len) == -1) {
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    // 分配内存存储IP地址字符串
+    char* ip_str = (char*)infra_malloc(INET_ADDRSTRLEN);
+    if (!ip_str) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    // 转换IP地址为字符串
+    if (inet_ntop(AF_INET, &local_addr.sin_addr, ip_str, INET_ADDRSTRLEN) == NULL) {
+        infra_free(ip_str);
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    addr->host = ip_str;
+    addr->port = ntohs(local_addr.sin_port);
+
+    return INFRA_OK;
+}

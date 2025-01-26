@@ -147,11 +147,10 @@ static void* handle_conn_task(void* arg) {
     infra_error_t err = mux->handler(mux->handler_ctx, conn->sock);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to handle connection: %d", err);
+        // 只在处理失败时移除并销毁连接
+        remove_conn(mux, conn);
+        destroy_conn(conn);
     }
-
-    // 移除并销毁连接
-    remove_conn(mux, conn);
-    destroy_conn(conn);
 
     return NULL;
 }
@@ -178,6 +177,14 @@ static void* accept_conn_task(void* arg) {
         }
 
         INFRA_LOG_INFO("Accepted connection from %s:%d", addr.host, addr.port);
+
+        // 设置客户端socket为非阻塞模式
+        err = infra_net_set_nonblock(client, true);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to set client socket non-blocking: %d", err);
+            infra_net_close(client);
+            continue;
+        }
 
         // 创建连接结构
         poly_mux_conn_t* conn = create_conn(mux, client);
@@ -314,12 +321,21 @@ infra_error_t poly_mux_start(poly_mux_t* mux, poly_mux_handler_t handler, void* 
     // 绑定地址
     infra_net_addr_t addr = {0};
     addr.host = mux->config.host;
-    addr.port = mux->config.port;
+    addr.port = mux->config.port > 0 ? mux->config.port : 11211;  // 使用默认端口11211
     err = infra_net_bind(listener, &addr);
     if (err != INFRA_OK) {
         infra_net_close(listener);
         return err;
     }
+
+    // 获取实际绑定的端口号
+    infra_net_addr_t bound_addr = {0};
+    err = infra_net_getsockname(listener, &bound_addr);
+    if (err != INFRA_OK) {
+        infra_net_close(listener);
+        return err;
+    }
+    mux->config.port = bound_addr.port;
 
     // 开始监听
     err = infra_net_listen(listener);
@@ -343,7 +359,7 @@ infra_error_t poly_mux_start(poly_mux_t* mux, poly_mux_handler_t handler, void* 
         return err;
     }
 
-    INFRA_LOG_INFO("Multiplexer started on %s:%d", addr.host, addr.port);
+    INFRA_LOG_INFO("Multiplexer started on %s:%d", bound_addr.host, bound_addr.port);
     return INFRA_OK;
 }
 
@@ -388,4 +404,8 @@ infra_error_t poly_mux_get_stats(poly_mux_t* mux, size_t* curr_conns, size_t* to
 
 bool poly_mux_is_running(const poly_mux_t* mux) {
     return mux ? mux->running : false;
+}
+
+infra_socket_t poly_mux_get_listener(const poly_mux_t* mux) {
+    return mux ? mux->listener : NULL;
 } 

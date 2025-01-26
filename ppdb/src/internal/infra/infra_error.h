@@ -30,6 +30,7 @@ typedef enum {
     INFRA_ERROR_RUNTIME = -17,  // 运行时错误
     INFRA_ERROR_INVALID_STATE = -18,   // 添加：无效状态错误
     INFRA_ERROR_INVALID_CONFIG = -19,  // 添加：无效配置错误
+    INFRA_ERROR_CAS_MISMATCH = -20,    // 添加：CAS不匹配错误
     INFRA_ERROR_MAX
 } infra_error_t;
 
