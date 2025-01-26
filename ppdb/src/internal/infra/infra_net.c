@@ -79,6 +79,8 @@ infra_error_t infra_net_bind(infra_socket_t sock, const infra_net_addr_t* addr) 
     int optval = 1;
     if (setsockopt(sock->fd, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval)) == -1) {
         infra_printf("setsockopt SO_REUSEADDR failed with errno: %d\n", errno);
+        close(sock->fd);
+        sock->fd = -1;
         return INFRA_ERROR_SYSTEM;
     }
     infra_printf("SO_REUSEADDR set successfully\n");
@@ -107,6 +109,8 @@ infra_error_t infra_net_bind(infra_socket_t sock, const infra_net_addr_t* addr) 
     if (bind(sock->fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == -1) {
         int bind_errno = errno;
         infra_printf("bind failed with errno: %d, fd: %d\n", bind_errno, sock->fd);
+        close(sock->fd);
+        sock->fd = -1;
         return INFRA_ERROR_SYSTEM;
     }
 
