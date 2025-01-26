@@ -98,7 +98,23 @@ int main(int argc, char *argv[]) {
     long input_size = ftell(fin);
     fseek(fin, 0, SEEK_SET);
 
-    // 1. Write PE .dll header
+    // 1. Write ELF .so header
+    struct Elf64_Ehdr elf = {0};
+    memcpy(elf.e_ident, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0", 16);
+    elf.e_type = 3;        // ET_DYN
+    elf.e_machine = 183;   // EM_AARCH64
+    elf.e_version = 1;
+    elf.e_ehsize = sizeof(struct Elf64_Ehdr);
+    // 设置程序头表偏移
+    elf.e_phoff = sizeof(struct Elf64_Ehdr);
+    elf.e_phentsize = 56;  // sizeof(Elf64_Phdr)
+    elf.e_phnum = 1;       // 一个程序头
+    fwrite(&elf, sizeof(elf), 1, fout);
+
+    // Align to 64 bytes
+    write_padding(fout, sizeof(elf), 64);
+
+    // 2. Write PE .dll header
     struct Pe_Header pe = {0};
     pe.magic = 0x5A4D;      // MZ
     pe.pe_offset = 0x40;    // PE header offset
@@ -110,7 +126,7 @@ int main(int argc, char *argv[]) {
     // Align to 64 bytes
     write_padding(fout, sizeof(pe), 64);
 
-    // 2. Copy the original dylib file
+    // 3. Copy the original dylib file
     char *buf = malloc(4096);
     if (!buf) {
         perror("Memory allocation failed");
