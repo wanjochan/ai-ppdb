@@ -248,6 +248,11 @@ static infra_error_t send_response(memkv_conn_t* conn, const char* fmt, ...) {
             continue;
         }
         
+        if (err == INFRA_ERROR_CLOSED) {
+            INFRA_LOG_INFO("Connection closed by peer during send");
+            return INFRA_ERROR_CLOSED;
+        }
+        
         if (err != INFRA_OK) {
             INFRA_LOG_ERROR("Failed to send data: %d", err);
             return err;
@@ -360,86 +365,110 @@ static void* handle_connection(void* arg) {
 
         // 处理命令
         if (strcasecmp(cmd, "get") == 0) {
-            void* data = NULL;
+            char data_buffer[MEMKV_BUFFER_SIZE];
+            void* data = data_buffer;
             size_t data_len;
             err = poly_memkv_get(g_context.store, key, &data, &data_len);
             if (err == INFRA_OK && data != NULL) {
-                // 发送 VALUE 行
-                INFRA_LOG_DEBUG("Sending VALUE line for key: %s", key);
-                err = send_response(conn, "VALUE %s %u %zu", key, flags, data_len);
-                if (err == INFRA_OK) {
-                    // 发送数据
-                    size_t total_sent = 0;
-                    int retry_count = 0;
-                    const int MAX_RETRIES = 3;
-
-                    while (total_sent < data_len && retry_count < MAX_RETRIES) {
-                        size_t sent = 0;
-                        err = infra_net_send(conn->sock, (char*)data + total_sent, data_len - total_sent, &sent);
-                        
-                        if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                            retry_count++;
-                            infra_sleep(10);  // 等待10ms后重试
-                            continue;
-                        }
-                        
-                        if (err != INFRA_OK) {
-                            INFRA_LOG_ERROR("Failed to send data: %d (sent %zu/%zu bytes)", 
-                                err, total_sent, data_len);
-                            break;
-                        }
-                        
-                        if (sent == 0) {
-                            retry_count++;
-                            if (retry_count >= MAX_RETRIES) {
-                                INFRA_LOG_ERROR("Send failed after %d retries", MAX_RETRIES);
-                                err = INFRA_ERROR_IO;
-                                break;
-                            }
-                            continue;
-                        }
-                        
-                        total_sent += sent;
-                        retry_count = 0;  // 重置重试计数
-                    }
-
-                    if (err == INFRA_OK) {
-                        // 发送数据后的换行和 END
-                        INFRA_LOG_DEBUG("Sending trailing CRLF and END");
-                        err = send_response(conn, "");  // 只发送 \r\n
-                        if (err == INFRA_OK) {
-                            err = send_response(conn, "END");
-                        }
-                    }
-                }
-                if (err != INFRA_OK) {
+                // 检查数据大小是否超过缓冲区
+                if (data_len >= MEMKV_BUFFER_SIZE) {
+                    INFRA_LOG_ERROR("Value too large for buffer: %zu bytes", data_len);
+                    err = send_response(conn, "SERVER_ERROR value too large");
                     if (err == INFRA_ERROR_CLOSED) {
                         INFRA_LOG_INFO("Client closed connection");
                         break;
                     }
+                    continue;
+                }
+
+                // 发送 VALUE 行
+                INFRA_LOG_DEBUG("Sending VALUE line for key: %s", key);
+                err = send_response(conn, "VALUE %s %u %zu", key, flags, data_len);
+                if (err == INFRA_ERROR_CLOSED) {
+                    INFRA_LOG_INFO("Client closed connection");
+                    break;
+                }
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send VALUE line: %d", err);
+                    continue;
+                }
+
+                // 发送数据
+                size_t total_sent = 0;
+                int retry_count = 0;
+                const int MAX_RETRIES = 3;
+                
+                while (total_sent < data_len && retry_count < MAX_RETRIES) {
+                    size_t sent = 0;
+                    err = infra_net_send(conn->sock, (char*)data + total_sent, data_len - total_sent, &sent);
+                    
                     if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                        continue;  // 非阻塞，继续尝试
+                        retry_count++;
+                        infra_sleep(10);  // 等待10ms后重试
+                        continue;
                     }
-                    INFRA_LOG_ERROR("Failed to send response: %d", err);
-                    continue;  // 继续处理其他命令
+                    
+                    if (err == INFRA_ERROR_CLOSED) {
+                        INFRA_LOG_INFO("Client closed connection during data send");
+                        break;
+                    }
+                    
+                    if (err != INFRA_OK) {
+                        INFRA_LOG_ERROR("Failed to send data: %d", err);
+                        break;
+                    }
+                    
+                    if (sent == 0) {
+                        retry_count++;
+                        if (retry_count >= MAX_RETRIES) {
+                            INFRA_LOG_ERROR("Send failed after %d retries", MAX_RETRIES);
+                            err = INFRA_ERROR_IO;
+                            break;
+                        }
+                        continue;
+                    }
+                    
+                    total_sent += sent;
+                    retry_count = 0;  // 重置重试计数
+                }
+
+                if (err == INFRA_ERROR_CLOSED) {
+                    break;
+                }
+
+                if (total_sent < data_len) {
+                    INFRA_LOG_ERROR("Failed to send complete data after %d retries", MAX_RETRIES);
+                    err = INFRA_ERROR_IO;
+                    continue;
+                }
+
+                // 发送数据后的换行和 END
+                if (err == INFRA_OK) {
+                    INFRA_LOG_DEBUG("Sending trailing CRLF and END");
+                    err = send_response(conn, "");  // 只发送 \r\n
+                    if (err == INFRA_ERROR_CLOSED) {
+                        INFRA_LOG_INFO("Client closed connection");
+                        break;
+                    }
+                    if (err == INFRA_OK) {
+                        err = send_response(conn, "END");
+                        if (err == INFRA_ERROR_CLOSED) {
+                            INFRA_LOG_INFO("Client closed connection");
+                            break;
+                        }
+                    }
                 }
             } else {
                 INFRA_LOG_DEBUG("Key not found: %s", key);
                 err = send_response(conn, "END");
-                if (err != INFRA_OK) {
-                    if (err == INFRA_ERROR_CLOSED) {
-                        INFRA_LOG_INFO("Client closed connection");
-                        break;
-                    }
-                    if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                        continue;  // 非阻塞，继续尝试
-                    }
-                    INFRA_LOG_ERROR("Failed to send response: %d", err);
-                    continue;  // 继续处理其他命令
+                if (err == INFRA_ERROR_CLOSED) {
+                    INFRA_LOG_INFO("Client closed connection");
+                    break;
                 }
-            }
-            if (data) {
-                infra_free(data);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send END response: %d", err);
+                    continue;
+                }
             }
         }
         else if (strcasecmp(cmd, "set") == 0) {
