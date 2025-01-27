@@ -214,69 +214,17 @@ static infra_error_t read_command(memkv_conn_t* conn, char* cmd, size_t cmd_size
 }
 
 // 发送响应
-static infra_error_t send_response(memkv_conn_t* conn, const char* fmt, ...) {
-    if (!conn || !conn->sock) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
+static void send_response(memkv_conn_t* conn, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    int len = vsnprintf(conn->buffer, sizeof(conn->buffer) - 2, fmt, args);  // 预留 \r\n 的空间
+    int len = vsnprintf(conn->buffer, sizeof(conn->buffer) - 2, fmt, args);
     va_end(args);
 
-    if (len < 0 || len >= sizeof(conn->buffer) - 2) {
-        return INFRA_ERROR_NO_MEMORY;
-    }
+    if (len < 0 || len >= sizeof(conn->buffer) - 2) return;
 
-    // 添加 \r\n
     conn->buffer[len] = '\r';
     conn->buffer[len + 1] = '\n';
-    len += 2;
-
-    // 发送响应
-    size_t total_sent = 0;
-    int retry_count = 0;
-    const int MAX_RETRIES = 3;
-
-    while (total_sent < len && retry_count < MAX_RETRIES) {
-        size_t sent = 0;
-        infra_error_t err = infra_net_send(conn->sock, conn->buffer + total_sent, len - total_sent, &sent);
-        
-        if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-            retry_count++;
-            infra_sleep(10);  // 等待10ms后重试
-            continue;
-        }
-        
-        if (err == INFRA_ERROR_CLOSED) {
-            INFRA_LOG_INFO("Connection closed by peer during send");
-            return INFRA_ERROR_CLOSED;
-        }
-        
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send data: %d", err);
-            return err;
-        }
-        
-        if (sent == 0) {
-            retry_count++;
-            if (retry_count >= MAX_RETRIES) {
-                INFRA_LOG_ERROR("Send failed after %d retries", MAX_RETRIES);
-                return INFRA_ERROR_IO;
-            }
-            continue;
-        }
-        
-        total_sent += sent;
-        retry_count = 0;  // 重置重试计数
-    }
-
-    if (total_sent < len) {
-        INFRA_LOG_ERROR("Failed to send complete response after %d retries", MAX_RETRIES);
-        return INFRA_ERROR_IO;
-    }
-
-    return INFRA_OK;
+    infra_net_send(conn->sock, conn->buffer, len + 2, NULL);
 }
 
 // 处理连接
@@ -293,325 +241,55 @@ static void* handle_connection(void* arg) {
     size_t value_len;
     uint32_t flags = 0;
     uint32_t exptime = 0;
-    infra_error_t err;
-
-    // 设置非阻塞模式
-    err = infra_net_set_nonblock(conn->sock, true);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to set nonblock mode: %d", err);
-        goto cleanup;
-    }
 
     // 设置socket超时（30秒）
-    err = infra_net_set_timeout(conn->sock, 30000);  // 30秒 = 30000毫秒
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to set timeout: %d", err);
-        goto cleanup;
-    }
+    infra_net_set_timeout(conn->sock, 30000);
 
-    INFRA_LOG_DEBUG("Connection setup complete, starting command processing");
-
-    bool client_closed = false;
-    int idle_count = 0;
-    const int MAX_IDLE = 600;  // 最大空闲次数（约60秒）
-
-    while (g_context.running && !client_closed && idle_count < MAX_IDLE) {
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        FD_SET(infra_net_get_fd(conn->sock), &readfds);
-
-        // 设置超时
-        struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};  // 100ms
-        int max_fd = infra_net_get_fd(conn->sock);
-
-        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
-        if (ready < 0) {
-            if (errno == EINTR) {
-                if (!g_context.running) break;
-                continue;
-            }
-            INFRA_LOG_ERROR("Select failed: %d", errno);
-            break;
-        }
-        
-        if (ready == 0) {
-            idle_count++;
-            continue;
-        }
-
-        if (!FD_ISSET(infra_net_get_fd(conn->sock), &readfds)) {
-            continue;
-        }
-
-        idle_count = 0;  // 重置空闲计数
-
+    while (g_context.running) {
         // 读取命令
-        INFRA_LOG_DEBUG("Reading command from client");
-        err = read_command(conn, cmd, sizeof(cmd), key, sizeof(key),
+        infra_error_t err = read_command(conn, cmd, sizeof(cmd), key, sizeof(key),
             value, sizeof(value), &value_len, &flags, &exptime);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_CLOSED) {
-                INFRA_LOG_INFO("Client closed connection");
-                break;
-            }
-            if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                continue;  // 非阻塞，继续尝试
-            }
-            INFRA_LOG_ERROR("Failed to read command: %d", err);
-            break;
-        }
-
-        INFRA_LOG_DEBUG("Received command: %s, key: %s", cmd, key);
+        if (err != INFRA_OK) break;
 
         // 处理命令
         if (strcasecmp(cmd, "get") == 0) {
-            char data_buffer[MEMKV_BUFFER_SIZE];
-            void* data = data_buffer;
+            void* data = NULL;
             size_t data_len;
-            err = poly_memkv_get(g_context.store, key, &data, &data_len);
-            if (err == INFRA_OK && data != NULL) {
-                // 检查数据大小是否超过缓冲区
-                if (data_len >= MEMKV_BUFFER_SIZE) {
-                    INFRA_LOG_ERROR("Value too large for buffer: %zu bytes", data_len);
-                    err = send_response(conn, "SERVER_ERROR value too large");
-                    if (err == INFRA_ERROR_CLOSED) {
-                        INFRA_LOG_INFO("Client closed connection");
-                        break;
-                    }
-                    continue;
-                }
-
-                // 发送 VALUE 行
-                INFRA_LOG_DEBUG("Sending VALUE line for key: %s", key);
-                err = send_response(conn, "VALUE %s %u %zu", key, flags, data_len);
-                if (err == INFRA_ERROR_CLOSED) {
-                    INFRA_LOG_INFO("Client closed connection");
-                    break;
-                }
-                if (err != INFRA_OK) {
-                    INFRA_LOG_ERROR("Failed to send VALUE line: %d", err);
-                    continue;
-                }
-
-                // 发送数据
-                size_t total_sent = 0;
-                int retry_count = 0;
-                const int MAX_RETRIES = 3;
-                
-                while (total_sent < data_len && retry_count < MAX_RETRIES) {
-                    size_t sent = 0;
-                    err = infra_net_send(conn->sock, (char*)data + total_sent, data_len - total_sent, &sent);
-                    
-                    if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                        retry_count++;
-                        infra_sleep(10);  // 等待10ms后重试
-                        continue;
-                    }
-                    
-                    if (err == INFRA_ERROR_CLOSED) {
-                        INFRA_LOG_INFO("Client closed connection during data send");
-                        break;
-                    }
-                    
-                    if (err != INFRA_OK) {
-                        INFRA_LOG_ERROR("Failed to send data: %d", err);
-                        break;
-                    }
-                    
-                    if (sent == 0) {
-                        retry_count++;
-                        if (retry_count >= MAX_RETRIES) {
-                            INFRA_LOG_ERROR("Send failed after %d retries", MAX_RETRIES);
-                            err = INFRA_ERROR_IO;
-                            break;
-                        }
-                        continue;
-                    }
-                    
-                    total_sent += sent;
-                    retry_count = 0;  // 重置重试计数
-                }
-
-                if (err == INFRA_ERROR_CLOSED) {
-                    break;
-                }
-
-                if (total_sent < data_len) {
-                    INFRA_LOG_ERROR("Failed to send complete data after %d retries", MAX_RETRIES);
-                    err = INFRA_ERROR_IO;
-                    continue;
-                }
-
-                // 发送数据后的换行和 END
-                if (err == INFRA_OK) {
-                    INFRA_LOG_DEBUG("Sending trailing CRLF and END");
-                    err = send_response(conn, "");  // 只发送 \r\n
-                    if (err == INFRA_ERROR_CLOSED) {
-                        INFRA_LOG_INFO("Client closed connection");
-                        break;
-                    }
-                    if (err == INFRA_OK) {
-                        err = send_response(conn, "END");
-                        if (err == INFRA_ERROR_CLOSED) {
-                            INFRA_LOG_INFO("Client closed connection");
-                            break;
-                        }
-                    }
-                }
+            if (poly_memkv_get(g_context.store, key, &data, &data_len) == INFRA_OK && data) {
+                send_response(conn, "VALUE %s %u %zu", key, flags, data_len);
+                infra_net_send(conn->sock, data, data_len, NULL);
+                send_response(conn, "");
+                send_response(conn, "END");
+                free(data);
             } else {
-                INFRA_LOG_DEBUG("Key not found: %s", key);
-                err = send_response(conn, "END");
-                if (err == INFRA_ERROR_CLOSED) {
-                    INFRA_LOG_INFO("Client closed connection");
-                    break;
-                }
-                if (err != INFRA_OK) {
-                    INFRA_LOG_ERROR("Failed to send END response: %d", err);
-                    continue;
-                }
+                send_response(conn, "END");
             }
         }
         else if (strcasecmp(cmd, "set") == 0) {
-            INFRA_LOG_DEBUG("Setting key: %s (len: %zu)", key, value_len);
             err = poly_memkv_set(g_context.store, key, value, value_len);
-            if (err == INFRA_OK) {
-                err = send_response(conn, "STORED");
-            } else {
-                INFRA_LOG_ERROR("Failed to store key %s: %d", key, err);
-                if (err == INFRA_ERROR_SYSTEM) {
-                    // 存储引擎错误，需要停止服务
-                    g_context.running = false;
-                    err = send_response(conn, "SERVER_ERROR storage engine failure");
-                } else {
-                    err = send_response(conn, "NOT_STORED");
-                }
-            }
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_CLOSED) {
-                    INFRA_LOG_INFO("Client closed connection");
-                    break;
-                }
-                if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                    continue;  // 非阻塞，继续尝试
-                }
-                INFRA_LOG_ERROR("Failed to send response: %d", err);
-                continue;  // 继续处理其他命令
-            }
+            send_response(conn, err == INFRA_OK ? "STORED" : "NOT_STORED");
         }
         else if (strcasecmp(cmd, "delete") == 0) {
-            INFRA_LOG_DEBUG("Deleting key: %s", key);
             err = poly_memkv_del(g_context.store, key);
-            if (err == INFRA_OK) {
-                err = send_response(conn, "DELETED");
-            } else {
-                err = send_response(conn, "NOT_FOUND");
-            }
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_CLOSED) {
-                    INFRA_LOG_INFO("Client closed connection");
-                    break;
-                }
-                if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                    continue;  // 非阻塞，继续尝试
-                }
-                INFRA_LOG_ERROR("Failed to send response: %d", err);
-                continue;  // 继续处理其他命令
-            }
+            send_response(conn, err == INFRA_OK ? "DELETED" : "NOT_FOUND");
         }
-        else if (strcasecmp(cmd, "incr") == 0) {
+        else if (strcasecmp(cmd, "incr") == 0 || strcasecmp(cmd, "decr") == 0) {
             uint64_t new_value;
-            INFRA_LOG_DEBUG("Incrementing key: %s by %zu", key, value_len);
-            err = poly_memkv_incr(g_context.store, key, value_len, &new_value);
-            if (err == INFRA_OK) {
-                err = send_response(conn, "%lu", new_value);
+            if (strcasecmp(cmd, "incr") == 0) {
+                err = poly_memkv_incr(g_context.store, key, value_len, &new_value);
             } else {
-                err = send_response(conn, "NOT_FOUND");
+                err = poly_memkv_decr(g_context.store, key, value_len, &new_value);
             }
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_CLOSED) {
-                    INFRA_LOG_INFO("Client closed connection");
-                    break;
-                }
-                if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                    continue;  // 非阻塞，继续尝试
-                }
-                INFRA_LOG_ERROR("Failed to send response: %d", err);
-                continue;  // 继续处理其他命令
-            }
-        }
-        else if (strcasecmp(cmd, "decr") == 0) {
-            uint64_t new_value;
-            INFRA_LOG_DEBUG("Decrementing key: %s by %zu", key, value_len);
-            err = poly_memkv_decr(g_context.store, key, value_len, &new_value);
-            if (err == INFRA_OK) {
-                err = send_response(conn, "%lu", new_value);
-            } else {
-                err = send_response(conn, "NOT_FOUND");
-            }
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_CLOSED) {
-                    INFRA_LOG_INFO("Client closed connection");
-                    break;
-                }
-                if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                    continue;  // 非阻塞，继续尝试
-                }
-                INFRA_LOG_ERROR("Failed to send response: %d", err);
-                continue;  // 继续处理其他命令
-            }
+            send_response(conn, err == INFRA_OK ? "%lu" : "NOT_FOUND", new_value);
         }
         else if (strcasecmp(cmd, "flush_all") == 0) {
-            // TODO: 实现清空存储的功能
-            INFRA_LOG_DEBUG("Flush command received");
-            err = send_response(conn, "OK");
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_CLOSED) {
-                    INFRA_LOG_INFO("Client closed connection");
-                    break;
-                }
-                if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                    continue;  // 非阻塞，继续尝试
-                }
-                INFRA_LOG_ERROR("Failed to send response: %d", err);
-                continue;  // 继续处理其他命令
-            }
+            send_response(conn, "OK");
         }
         else {
-            INFRA_LOG_WARN("Unknown command received: %s", cmd);
-            err = send_response(conn, "ERROR");
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_CLOSED) {
-                    INFRA_LOG_INFO("Client closed connection");
-                    break;
-                }
-                if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                    continue;  // 非阻塞，继续尝试
-                }
-                INFRA_LOG_ERROR("Failed to send response: %d", err);
-                continue;  // 继续处理其他命令
-            }
-        }
-
-        // 处理响应发送错误
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_CLOSED) {
-                INFRA_LOG_INFO("Client closed connection");
-                break;
-            }
-            if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                continue;  // 非阻塞，继续尝试
-            }
-            INFRA_LOG_ERROR("Failed to send response: %d", err);
-            break;
+            send_response(conn, "ERROR");
         }
     }
 
-cleanup:
-    // 清理连接
-    INFRA_LOG_DEBUG("Cleaning up connection after %s", 
-        idle_count >= MAX_IDLE ? "idle timeout" : "normal close");
-
-    infra_net_shutdown(conn->sock, INFRA_NET_SHUTDOWN_BOTH);
     infra_net_close(conn->sock);
     free(conn);
     return NULL;
