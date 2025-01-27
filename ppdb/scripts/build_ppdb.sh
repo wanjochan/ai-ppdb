@@ -11,7 +11,8 @@ mkdir -p "${BUILD_DIR}"
 
 # 设置条件编译选项
 ENABLE_RINETD=1
-ENABLE_MEMKV=1
+
+ENABLE_MEMKV=0
 
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
@@ -23,7 +24,7 @@ if [ "${ENABLE_MEMKV}" = "1" ]; then
 fi
 
 # 添加源目录到包含路径
-CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include"
+CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include -I${PPDB_DIR}/include"
 
 # 构建 ppdb
 echo remove "${BUILD_DIR}/ppdb_latest.exe"
@@ -33,18 +34,15 @@ set -x  # 启用调试输出
 
 # 准备源文件列表
 SOURCES=(
-    "${SRC_DIR}/ppdb/ppdb.c"
-    "${SRC_DIR}/internal/poly/poly_cmdline.c"
-    "${SRC_DIR}/internal/poly/poly_hashtable.c"
-    "${SRC_DIR}/internal/poly/poly_atomic.c"
-    "${SRC_DIR}/internal/poly/poly_memkv.c"
-    "${SRC_DIR}/internal/peer/peer_service.c"
     "${SRC_DIR}/internal/infra/infra_core.c"
     "${SRC_DIR}/internal/infra/infra_memory.c"
     "${SRC_DIR}/internal/infra/infra_error.c"
     "${SRC_DIR}/internal/infra/infra_net.c"
     "${SRC_DIR}/internal/infra/infra_platform.c"
     "${SRC_DIR}/internal/infra/infra_sync.c"
+    "${SRC_DIR}/internal/poly/poly_cmdline.c"
+    "${SRC_DIR}/internal/peer/peer_service.c"
+    "${SRC_DIR}/ppdb/ppdb.c"
 )
 
 # 根据条件添加源文件
