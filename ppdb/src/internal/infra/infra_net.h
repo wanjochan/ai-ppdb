@@ -48,6 +48,7 @@ infra_error_t infra_net_set_keepalive(infra_socket_t sock, bool enable);
 infra_error_t infra_net_set_reuseaddr(infra_socket_t sock, bool enable);
 infra_error_t infra_net_set_nodelay(infra_socket_t sock, bool enable);
 infra_error_t infra_net_set_timeout(infra_socket_t sock, uint32_t timeout_ms);
+infra_error_t infra_net_getsockname(infra_socket_t sock, infra_net_addr_t* addr);
 
 // 数据传输
 infra_error_t infra_net_send(infra_socket_t sock, const void* buf, size_t len, size_t* sent);

@@ -1,7 +1,95 @@
-#include "internal/peer/peer_rinetd.h"
+// #include "internal/peer/peer_rinetd.h"
+
+//rinet: tiny ports forwarding
+
 #include "internal/infra/infra_core.h"
+#include "internal/infra/infra_sync.h"
+#include "internal/infra/infra_net.h"
+#include "internal/peer/peer_service.h"
+
+//-----------------------------------------------------------------------------
+// Constants
+//-----------------------------------------------------------------------------
+
+#define RINETD_BUFFER_SIZE 16384        // 转发缓冲区大小
+#define RINETD_MAX_ADDR_LEN 256        // 地址最大长度
+#define RINETD_MAX_PATH_LEN 256        // 路径最大长度
+#define RINETD_MIN_THREADS 32           // 最小线程数
+#define RINETD_MAX_THREADS 512         // 最大线程数
+#define RINETD_MAX_RULES 128           // 最大规则数
+
+//-----------------------------------------------------------------------------
+// Types
+//-----------------------------------------------------------------------------
+
+// 转发规则
+typedef struct {
+    char src_addr[RINETD_MAX_ADDR_LEN];  // 源地址
+    int src_port;                        // 源端口
+    char dst_addr[RINETD_MAX_ADDR_LEN];  // 目标地址
+    int dst_port;                        // 目标端口
+} rinetd_rule_t;
+
+// 监听线程参数
+typedef struct {
+    rinetd_rule_t* rule;                // 关联的规则
+    infra_socket_t listener;            // 监听socket
+} listener_thread_param_t;
+
+// 转发连接
+typedef struct {
+    infra_socket_t client;              // 客户端socket
+    infra_socket_t server;              // 服务端socket
+    rinetd_rule_t* rule;                // 关联的规则
+    char buffer[RINETD_BUFFER_SIZE];    // 转发缓冲区
+} rinetd_conn_t;
+
+// 连接会话
+typedef struct {
+    infra_socket_t client;              // 客户端socket
+    infra_socket_t server;              // 服务器socket
+    volatile bool c2s_failed;           // 客户端到服务器方向是否失败
+    volatile bool s2c_failed;           // 服务器到客户端方向是否失败
+} rinetd_session_t;
+
+// 服务上下文
+typedef struct {
+    bool running;                        // 服务是否运行
+    char config_path[RINETD_MAX_PATH_LEN]; // 配置文件路径
+    rinetd_rule_t* rules;               // 转发规则数组
+    int rule_count;                      // 规则数量
+    infra_thread_pool_t* pool;          // 线程池
+    infra_socket_t* listeners;          // 监听socket数组
+    infra_thread_t* listener_threads;    // 监听线程数组
+    infra_mutex_t* mutex;               // 全局互斥锁
+    rinetd_session_t* active_sessions;  // 活跃会话数组
+    int session_count;                  // 会话数量
+} rinetd_context_t;
+
+//-----------------------------------------------------------------------------
+// Globals
+//-----------------------------------------------------------------------------
+
+// 声明服务实例
+// extern peer_service_t g_rinetd_service;
 
 extern void bzero(void* s, size_t n);
+
+//-----------------------------------------------------------------------------
+// Forward Declarations
+//-----------------------------------------------------------------------------
+
+// Service interface functions
+static infra_error_t rinetd_init(const infra_config_t* config);
+static infra_error_t rinetd_cleanup(void);
+static infra_error_t rinetd_start(void);
+static infra_error_t rinetd_stop(void);
+static bool rinetd_is_running(void);
+static infra_error_t rinetd_cmd_handler(int argc, char** argv);
+
+// Configuration functions
+static infra_error_t rinetd_load_config(const char* path);
+static infra_error_t rinetd_save_config(const char* path);
 
 //-----------------------------------------------------------------------------
 // Command Line Options
@@ -20,22 +108,32 @@ const int rinetd_option_count = sizeof(rinetd_options) / sizeof(rinetd_options[0
 // Global Variables
 //-----------------------------------------------------------------------------
 
+// 服务实例
+peer_service_t g_rinetd_service = {
+    .config = {
+        .name = "rinetd",
+        .type = SERVICE_TYPE_RINETD,
+        .options = rinetd_options,
+        .option_count = rinetd_option_count,
+        .config = NULL
+    },
+    .state = SERVICE_STATE_STOPPED,
+    .init = rinetd_init,
+    .cleanup = rinetd_cleanup,
+    .start = rinetd_start,
+    .stop = rinetd_stop,
+    .is_running = rinetd_is_running,
+    .cmd_handler = rinetd_cmd_handler
+};
+
+// 服务上下文
 static struct {
     bool running;
     rinetd_rule_t rules[RINETD_MAX_RULES];  // 规则数组
     int rule_count;                          // 当前规则数量
     infra_socket_t listeners[RINETD_MAX_RULES];  // 每个规则对应一个监听器
-    struct pollfd* poll_fds;                 // poll 文件描述符数组
-    int poll_nfds;                          // poll 文件描述符数量
-    infra_thread_pool_t* pool;              // 线程池
+    infra_thread_pool_t* pool;
 } g_context = {0};
-
-//-----------------------------------------------------------------------------
-// Forward Declarations
-//-----------------------------------------------------------------------------
-
-static void* handle_connection(void* arg);
-static infra_error_t create_listener(int rule_index);
 
 //-----------------------------------------------------------------------------
 // Helper Functions
@@ -69,6 +167,7 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
         err = infra_net_send(dst, buffer + total_sent, bytes_received - total_sent, &bytes_sent);
         if (err != INFRA_OK) {
             if (err == INFRA_ERROR_WOULD_BLOCK) {
+                // 发送缓冲区满，短暂等待后重试
                 infra_sleep(10);  // 等待10ms
                 retry_count++;
                 continue;
@@ -81,8 +180,22 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
             return err;
         }
         
+        if (bytes_sent == 0) {
+            retry_count++;
+            if (retry_count >= MAX_RETRIES) {
+                INFRA_LOG_ERROR("Send failed after %d retries", MAX_RETRIES);
+                return INFRA_ERROR_IO;
+            }
+            continue;
+        }
+
         total_sent += bytes_sent;
         retry_count = 0;  // 重置重试计数
+    }
+
+    if (total_sent < bytes_received) {
+        INFRA_LOG_ERROR("%s: Failed to send all data after %d retries", direction, MAX_RETRIES);
+        return INFRA_ERROR_IO;
     }
 
     INFRA_LOG_DEBUG("%s: %zu bytes forwarded", direction, total_sent);
@@ -92,7 +205,9 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
 // 处理单个连接
 static void* handle_connection(void* arg) {
     rinetd_conn_t* conn = (rinetd_conn_t*)arg;
-    if (!conn) return NULL;
+    if (!conn) {
+        return NULL;
+    }
 
     INFRA_LOG_DEBUG("Started forwarding: %s:%d -> %s:%d",
         conn->rule->src_addr, conn->rule->src_port,
@@ -103,43 +218,77 @@ static void* handle_connection(void* arg) {
     infra_net_set_nonblock(conn->server, true);
 
     // 设置socket超时（30秒）
-    infra_net_set_timeout(conn->client, 30000);
+    infra_net_set_timeout(conn->client, 30000);  // 30秒 = 30000毫秒
     infra_net_set_timeout(conn->server, 30000);
 
-    char buffer[RINETD_BUFFER_SIZE];
-    struct pollfd fds[2] = {
-        {infra_net_get_fd(conn->client), POLLIN, 0},
-        {infra_net_get_fd(conn->server), POLLIN, 0}
-    };
+    // 连接状态
+    bool client_closed = false;
+    bool server_closed = false;
+    int idle_count = 0;
+    const int MAX_IDLE = 600;  // 最大空闲次数（约60秒）
 
-    while (g_context.running) {
-        int ready = poll(fds, 2, 1000);  // 1秒超时
+    while (g_context.running && !client_closed && !server_closed && idle_count < MAX_IDLE) {
+        fd_set readfds;
+        FD_ZERO(&readfds);
+
+        // 设置文件描述符
+        int client_fd = infra_net_get_fd(conn->client);
+        int server_fd = infra_net_get_fd(conn->server);
+        
+        if (!client_closed) {
+            FD_SET(client_fd, &readfds);
+        }
+        if (!server_closed) {
+            FD_SET(server_fd, &readfds);
+        }
+
+        // 设置超时
+        struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};  // 100ms
+        int max_fd = (client_fd > server_fd) ? client_fd : server_fd;
+
+        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
         if (ready < 0) {
             if (errno == EINTR) continue;
-            INFRA_LOG_ERROR("Poll failed in connection: %d", errno);
+            INFRA_LOG_ERROR("Select failed: %d", errno);
             break;
         }
-        if (ready == 0) continue;
+        
+        if (ready == 0) {
+            idle_count++;
+            continue;
+        }
+        
+        idle_count = 0;  // 重置空闲计数
 
         // 处理客户端到服务器的数据
-        if (fds[0].revents & POLLIN) {
-            infra_error_t err = forward_data(conn->client, conn->server, buffer, "C->S");
-            if (err == INFRA_ERROR_CLOSED || (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT)) {
+        if (!client_closed && FD_ISSET(client_fd, &readfds)) {
+            infra_error_t err = forward_data(conn->client, conn->server, conn->buffer, "C->S");
+            if (err == INFRA_ERROR_CLOSED) {
+                INFRA_LOG_DEBUG("Client closed connection");
+                client_closed = true;
+            } else if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
+                INFRA_LOG_ERROR("Forward C->S failed: %d", err);
                 break;
             }
         }
 
         // 处理服务器到客户端的数据
-        if (fds[1].revents & POLLIN) {
-            infra_error_t err = forward_data(conn->server, conn->client, buffer, "S->C");
-            if (err == INFRA_ERROR_CLOSED || (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT)) {
+        if (!server_closed && FD_ISSET(server_fd, &readfds)) {
+            infra_error_t err = forward_data(conn->server, conn->client, conn->buffer, "S->C");
+            if (err == INFRA_ERROR_CLOSED) {
+                INFRA_LOG_DEBUG("Server closed connection");
+                server_closed = true;
+            } else if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
+                INFRA_LOG_ERROR("Forward S->C failed: %d", err);
                 break;
             }
         }
     }
 
     // 清理连接
-    INFRA_LOG_DEBUG("Cleaning up connection");
+    INFRA_LOG_DEBUG("Cleaning up connection after %s", 
+        idle_count >= MAX_IDLE ? "idle timeout" : "normal close");
+    
     if (conn->client) {
         infra_net_shutdown(conn->client, INFRA_NET_SHUTDOWN_BOTH);
         infra_net_close(conn->client);
@@ -157,7 +306,9 @@ static void* handle_connection(void* arg) {
 //-----------------------------------------------------------------------------
 
 infra_error_t rinetd_init(const infra_config_t* config) {
-    if (!config) return INFRA_ERROR_INVALID_PARAM;
+    if (!config) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
 
     memset(&g_context, 0, sizeof(g_context));
 
@@ -168,7 +319,12 @@ infra_error_t rinetd_init(const infra_config_t* config) {
         .queue_size = RINETD_MAX_THREADS * 2
     };
 
-    return infra_thread_pool_create(&pool_config, &g_context.pool);
+    infra_error_t err = infra_thread_pool_create(&pool_config, &g_context.pool);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    return INFRA_OK;
 }
 
 infra_error_t rinetd_cleanup(void) {
@@ -190,12 +346,6 @@ infra_error_t rinetd_cleanup(void) {
     }
     g_context.rule_count = 0;
 
-    // 释放 poll 数组
-    if (g_context.poll_fds) {
-        free(g_context.poll_fds);
-        g_context.poll_fds = NULL;
-    }
-
     return INFRA_OK;
 }
 
@@ -208,7 +358,9 @@ static infra_error_t create_listener(int rule_index) {
     infra_socket_t listener = NULL;
     infra_config_t config = {0};
     infra_error_t err = infra_net_create(&listener, false, &config);
-    if (err != INFRA_OK) return err;
+    if (err != INFRA_OK) {
+        return err;
+    }
 
     // 设置地址重用
     err = infra_net_set_reuseaddr(listener, true);
@@ -263,36 +415,38 @@ infra_error_t rinetd_start(void) {
         }
     }
 
-    // 初始化 poll 数组
-    g_context.poll_fds = malloc(sizeof(struct pollfd) * g_context.rule_count);
-    if (!g_context.poll_fds) {
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    // 设置 poll 文件描述符
-    for (int i = 0; i < g_context.rule_count; i++) {
-        g_context.poll_fds[i].fd = infra_net_get_fd(g_context.listeners[i]);
-        g_context.poll_fds[i].events = POLLIN;
-    }
-    g_context.poll_nfds = g_context.rule_count;
-
     // 设置运行标志
     g_context.running = true;
 
     // 在前台运行
     INFRA_LOG_INFO("Starting rinetd service in foreground with %d rules", g_context.rule_count);
     while (g_context.running) {
-        int ready = poll(g_context.poll_fds, g_context.poll_nfds, 1000);  // 1秒超时
+        // 等待所有监听器的连接
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        int max_fd = -1;
+
+        // 设置所有监听器的文件描述符
+        for (int i = 0; i < g_context.rule_count; i++) {
+            int fd = infra_net_get_fd(g_context.listeners[i]);
+            FD_SET(fd, &readfds);
+            if (fd > max_fd) max_fd = fd;
+        }
+
+        // 设置超时
+        struct timeval tv = {.tv_sec = 1, .tv_usec = 0};  // 1秒超时
+        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
         if (ready < 0) {
             if (errno == EINTR) continue;
-            INFRA_LOG_ERROR("Poll failed: %d", errno);
+            INFRA_LOG_ERROR("Select failed: %d", errno);
             break;
         }
         if (ready == 0) continue;  // 超时，继续循环
 
         // 检查每个监听器
-        for (int i = 0; i < g_context.poll_nfds; i++) {
-            if (!(g_context.poll_fds[i].revents & POLLIN)) continue;
+        for (int i = 0; i < g_context.rule_count; i++) {
+            int fd = infra_net_get_fd(g_context.listeners[i]);
+            if (!FD_ISSET(fd, &readfds)) continue;
 
             // 接受连接
             infra_socket_t client = NULL;
@@ -410,27 +564,45 @@ infra_error_t rinetd_cmd_handler(int argc, char** argv) {
         } else if (strcmp(argv[i], "--stop") == 0) {
             return rinetd_stop();
         } else if (strcmp(argv[i], "--status") == 0) {
-            printf("Service is %s\n", 
+            infra_printf("Service is %s\n", 
                 rinetd_is_running() ? "running" : "stopped");
             return INFRA_OK;
         } else if (strncmp(argv[i], "--config=", 9) == 0) {
             config_path = argv[i] + 9;
+        } else if (strcmp(argv[i], "--config") == 0) {
+            if (++i >= argc) {
+                INFRA_LOG_ERROR("Missing config file path");
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+            config_path = argv[i];
         }
     }
 
-    if (should_start) {
-        // 添加测试规则
-        rinetd_rule_t rule = {0};
-        strcpy(rule.src_addr, "127.0.0.1");
-        rule.src_port = 8080;
-        strcpy(rule.dst_addr, "127.0.0.1");
-        rule.dst_port = 80;
-        g_context.rules[g_context.rule_count++] = rule;
-
-        return rinetd_start();
+    // Load config if specified
+    if (config_path) {
+        INFRA_LOG_DEBUG("Loading config file: %s", config_path);
+        err = rinetd_load_config(config_path);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to load config file: %d", err);
+            return err;
+        }
+    } else if (should_start) {
+        INFRA_LOG_ERROR("Config file is required to start the service");
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    return INFRA_ERROR_INVALID_PARAM;
+    // Start service if requested
+    if (should_start) {
+        INFRA_LOG_DEBUG("Starting rinetd service");
+        err = rinetd_start();
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to start rinetd service: %d", err);
+            return err;
+        }
+        INFRA_LOG_INFO("Rinetd service started successfully");
+    }
+
+    return INFRA_OK;
 }
 
 infra_error_t rinetd_load_config(const char* path) {
@@ -450,10 +622,20 @@ infra_error_t rinetd_load_config(const char* path) {
 
     // 解析配置文件
     char line[256];
-    while (fgets(line, sizeof(line), fp) && g_context.rule_count < RINETD_MAX_RULES) {
+    int line_num = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        
         // 跳过注释和空行
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') {
             continue;
+        }
+
+        // 检查规则数量限制
+        if (g_context.rule_count >= RINETD_MAX_RULES) {
+            INFRA_LOG_ERROR("Too many rules (max: %d)", RINETD_MAX_RULES);
+            fclose(fp);
+            return INFRA_ERROR_NO_MEMORY;
         }
 
         // 解析规则
@@ -462,18 +644,39 @@ infra_error_t rinetd_load_config(const char* path) {
         int src_port = 0;
         int dst_port = 0;
 
-        if (sscanf(line, "%s %d %s %d", src_addr, &src_port, dst_addr, &dst_port) == 4) {
-            strncpy(g_context.rules[g_context.rule_count].src_addr, src_addr, RINETD_MAX_ADDR_LEN - 1);
-            g_context.rules[g_context.rule_count].src_port = src_port;
-            strncpy(g_context.rules[g_context.rule_count].dst_addr, dst_addr, RINETD_MAX_ADDR_LEN - 1);
-            g_context.rules[g_context.rule_count].dst_port = dst_port;
-            INFRA_LOG_INFO("Loaded rule %d: %s:%d -> %s:%d", 
-                g_context.rule_count,
-                src_addr, src_port, dst_addr, dst_port);
-            g_context.rule_count++;
-        } else {
-            INFRA_LOG_WARN("Invalid rule format: %s", line);
+        int matched = sscanf(line, "%s %d %s %d", src_addr, &src_port, dst_addr, &dst_port);
+        if (matched != 4) {
+            INFRA_LOG_WARN("Invalid rule format at line %d: %s", line_num, line);
+            continue;
         }
+
+        // 验证端口范围
+        if (src_port <= 0 || src_port > 65535 || dst_port <= 0 || dst_port > 65535) {
+            INFRA_LOG_WARN("Invalid port number at line %d", line_num);
+            continue;
+        }
+
+        // 验证地址长度
+        if (strlen(src_addr) >= RINETD_MAX_ADDR_LEN || strlen(dst_addr) >= RINETD_MAX_ADDR_LEN) {
+            INFRA_LOG_WARN("Address too long at line %d", line_num);
+            continue;
+        }
+
+        // 保存规则
+        bzero(&g_context.rules[g_context.rule_count], sizeof(rinetd_rule_t));
+        strncpy(g_context.rules[g_context.rule_count].src_addr, src_addr, RINETD_MAX_ADDR_LEN - 1);
+        g_context.rules[g_context.rule_count].src_port = (uint16_t)src_port;
+        strncpy(g_context.rules[g_context.rule_count].dst_addr, dst_addr, RINETD_MAX_ADDR_LEN - 1);
+        g_context.rules[g_context.rule_count].dst_port = (uint16_t)dst_port;
+
+        INFRA_LOG_INFO("Loaded rule %d: %s:%d -> %s:%d", 
+            g_context.rule_count,
+            g_context.rules[g_context.rule_count].src_addr,
+            g_context.rules[g_context.rule_count].src_port,
+            g_context.rules[g_context.rule_count].dst_addr,
+            g_context.rules[g_context.rule_count].dst_port);
+
+        g_context.rule_count++;
     }
 
     fclose(fp);
@@ -484,6 +687,33 @@ infra_error_t rinetd_load_config(const char* path) {
     }
 
     INFRA_LOG_INFO("Loaded %d rules from %s", g_context.rule_count, path);
+    return INFRA_OK;
+}
+
+infra_error_t rinetd_save_config(const char* path) {
+    if (!path) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 尝试打开配置文件
+    FILE* fp = fopen(path, "w");
+    if (fp == NULL) {
+        INFRA_LOG_ERROR("Failed to open config file: %s", path);
+        return INFRA_ERROR_IO;
+    }
+
+    // 保存规则
+    for (int i = 0; i < g_context.rule_count; i++) {
+        fprintf(fp, "%s %d %s %d\n",
+            g_context.rules[i].src_addr,
+            g_context.rules[i].src_port,
+            g_context.rules[i].dst_addr,
+            g_context.rules[i].dst_port);
+    }
+
+    fclose(fp);
+
+    INFRA_LOG_INFO("Saved %d rules to %s", g_context.rule_count, path);
     return INFRA_OK;
 } 
 
