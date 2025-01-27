@@ -292,8 +292,6 @@ infra_error_t poly_memkv_switch_engine(poly_memkv_t* store,
     if (store->engine_plugin) {
         const poly_plugin_interface_t* interface = poly_plugin_get_interface(store->engine_plugin);
         interface->cleanup(store->engine_handle);
-        store->engine_plugin = NULL;
-        store->engine_handle = NULL;
     }
 
     // 初始化新引擎

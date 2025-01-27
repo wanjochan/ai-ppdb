@@ -30,6 +30,78 @@ static infra_error_t poly_sqlite_init(void** handle) {
     }
     memset(ctx, 0, sizeof(poly_sqlite_ctx_t));
 
+    // 打开内存数据库
+    int rc = sqlite3_open_v2(":memory:", &ctx->db, 
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+        NULL);
+    if (rc != SQLITE_OK) {
+        free(ctx);
+        sqlite3_shutdown();
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    // 创建表
+    rc = sqlite3_exec(ctx->db,
+        "CREATE TABLE IF NOT EXISTS kv_store ("
+        "key BLOB PRIMARY KEY,"
+        "value BLOB"
+        ");", NULL, NULL, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_close_v2(ctx->db);
+        free(ctx);
+        sqlite3_shutdown();
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    // 准备语句
+    const char* sql;
+    
+    // GET
+    sql = "SELECT value FROM kv_store WHERE key = ?;";
+    rc = sqlite3_prepare_v2(ctx->db, sql, -1, &ctx->get_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_close_v2(ctx->db);
+        free(ctx);
+        sqlite3_shutdown();
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    // SET
+    sql = "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);";
+    rc = sqlite3_prepare_v2(ctx->db, sql, -1, &ctx->set_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(ctx->get_stmt);
+        sqlite3_close_v2(ctx->db);
+        free(ctx);
+        sqlite3_shutdown();
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    // DEL
+    sql = "DELETE FROM kv_store WHERE key = ?;";
+    rc = sqlite3_prepare_v2(ctx->db, sql, -1, &ctx->del_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(ctx->get_stmt);
+        sqlite3_finalize(ctx->set_stmt);
+        sqlite3_close_v2(ctx->db);
+        free(ctx);
+        sqlite3_shutdown();
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    // ITER
+    sql = "SELECT key, value FROM kv_store;";
+    rc = sqlite3_prepare_v2(ctx->db, sql, -1, &ctx->iter_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(ctx->get_stmt);
+        sqlite3_finalize(ctx->set_stmt);
+        sqlite3_finalize(ctx->del_stmt);
+        sqlite3_close_v2(ctx->db);
+        free(ctx);
+        sqlite3_shutdown();
+        return INFRA_ERROR_SYSTEM;
+    }
+
     *handle = ctx;
     return err;
 }
