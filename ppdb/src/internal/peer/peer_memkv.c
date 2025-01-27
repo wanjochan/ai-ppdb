@@ -242,14 +242,27 @@ static void* handle_connection(void* arg) {
 }
 
 // 服务线程
-static void* service_thread(void* arg) {
+static infra_error_t service_thread(void* arg) {
     infra_socket_t listen_sock;
     infra_error_t err;
     
     // 创建监听套接字
-    err = infra_net_create(&listen_sock, false, NULL);
+    infra_config_t config = {0};  // 使用空配置而不是 NULL
+    err = infra_net_create(&listen_sock, false, &config);
     if (err != INFRA_OK) {
-        return NULL;
+        INFRA_LOG_ERROR("Failed to create listen socket: %d (%s)", err, 
+            err == INFRA_ERROR_INVALID_PARAM ? "invalid parameter" :
+            err == INFRA_ERROR_NO_MEMORY ? "out of memory" :
+            err == INFRA_ERROR_SYSTEM ? "system error" : "unknown error");
+        return err;
+    }
+    
+    // 设置地址重用
+    err = infra_net_set_reuseaddr(listen_sock, true);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set reuseaddr: %d", err);
+        infra_net_close(listen_sock);
+        return err;
     }
     
     // 绑定地址
@@ -259,36 +272,61 @@ static void* service_thread(void* arg) {
     };
     err = infra_net_bind(listen_sock, &addr);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to bind address: %d", err);
         infra_net_close(listen_sock);
-        return NULL;
+        return err;
     }
     
     // 开始监听
     err = infra_net_listen(listen_sock);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to listen: %d", err);
         infra_net_close(listen_sock);
-        return NULL;
+        return err;
     }
+    
+    INFRA_LOG_INFO("Listening on %s:%d", addr.host, addr.port);
     
     // 接受连接
     while (g_context.running) {
+        // 设置超时
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        int fd = infra_net_get_fd(listen_sock);
+        FD_SET(fd, &readfds);
+        
+        struct timeval tv = {.tv_sec = 1, .tv_usec = 0};  // 1秒超时
+        int ready = select(fd + 1, &readfds, NULL, NULL, &tv);
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            INFRA_LOG_ERROR("Select failed: %d", errno);
+            break;
+        }
+        if (ready == 0) continue;  // 超时，继续循环
+        
+        // 接受新连接
         infra_socket_t client_sock;
         infra_net_addr_t client_addr;
         err = infra_net_accept(listen_sock, &client_sock, &client_addr);
         if (err != INFRA_OK) {
+            if (err == INFRA_ERROR_WOULD_BLOCK) continue;
+            INFRA_LOG_ERROR("Failed to accept connection: %d", err);
             continue;
         }
+        
+        INFRA_LOG_INFO("Accepted connection from %s:%d", client_addr.host, client_addr.port);
         
         // 提交到线程池处理
         err = infra_thread_pool_submit(g_context.thread_pool,
             (infra_thread_func_t)handle_connection, (void*)client_sock);
         if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to submit connection to thread pool: %d", err);
             infra_net_close(client_sock);
         }
     }
     
     infra_net_close(listen_sock);
-    return NULL;
+    return INFRA_OK;
 }
 
 //-----------------------------------------------------------------------------
@@ -299,62 +337,91 @@ static void* service_thread(void* arg) {
 static infra_error_t memkv_init(const infra_config_t* config) {
     infra_error_t err;
     
+    // 保存现有配置
+    uint16_t port = g_context.port ? g_context.port : 11211;  // 如果未设置则使用默认值
+    poly_memkv_engine_type_t engine = g_context.engine ? g_context.engine : POLY_MEMKV_ENGINE_SQLITE;
+    char* plugin_path = g_context.plugin_path;  // 保存插件路径
+    g_context.plugin_path = NULL;  // 防止被 memset 清除后释放
+    
     // 初始化上下文
     memset(&g_context, 0, sizeof(g_context));
-    g_context.port = 11211;
-    g_context.engine = POLY_MEMKV_ENGINE_SQLITE;
+    g_context.port = port;  // 恢复端口
+    g_context.engine = engine;  // 恢复引擎类型
+    g_context.plugin_path = plugin_path;  // 恢复插件路径
     
     // 创建线程池
     infra_thread_pool_config_t pool_config = {
         .min_threads = MEMKV_MIN_THREADS,
-        .max_threads = MEMKV_MAX_THREADS
+        .max_threads = MEMKV_MAX_THREADS,
+        .queue_size = MEMKV_MAX_THREADS * 2  // 设置队列大小
     };
     err = infra_thread_pool_create(&pool_config, &g_context.thread_pool);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create thread pool: %d", err);
         return err;
     }
     
     // 创建互斥锁
     err = infra_mutex_create(&g_context.mutex);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create mutex: %d", err);
         infra_thread_pool_destroy(g_context.thread_pool);
         return err;
     }
     
     // 创建存储实例
     poly_memkv_config_t config_memkv = {
-        .max_key_size = 256,
-        .max_value_size = 1024*1024,
+        .max_key_size = MEMKV_MAX_KEY_SIZE,
+        .max_value_size = MEMKV_MAX_VALUE_SIZE,
         .engine_type = g_context.engine,
         .plugin_path = g_context.plugin_path
     };
+    
     err = poly_memkv_create(&config_memkv, &g_context.store);
     if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create store: %d", err);
         infra_mutex_destroy(&g_context.mutex);
         infra_thread_pool_destroy(g_context.thread_pool);
         return err;
     }
+    
+    INFRA_LOG_INFO("MemKV service initialized with port %d and %s engine",
+        g_context.port,
+        g_context.engine == POLY_MEMKV_ENGINE_SQLITE ? "sqlite" : "duckdb");
     
     return INFRA_OK;
 }
 
 // 启动服务
 infra_error_t memkv_start(void) {
+    if (!g_context.store) {
+        INFRA_LOG_ERROR("Service not initialized");
+        return INFRA_ERROR_NOT_READY;
+    }
+    
     if (g_context.running) {
+        INFRA_LOG_ERROR("Service already running");
         return INFRA_ERROR_ALREADY_EXISTS;
     }
     
     g_context.running = true;
     
-    // 创建服务线程
-    pthread_t thread;
-    int rc = pthread_create(&thread, NULL, service_thread, NULL);
-    if (rc != 0) {
+    // TODO: 实现守护进程模式
+    // 目前服务在前台运行，后续需要:
+    // 1. 添加 --daemon 选项支持后台运行
+    // 2. 实现 pid 文件管理
+    // 3. 实现日志重定向
+    // 4. 实现信号处理
+    
+    // 在前台运行服务
+    INFRA_LOG_INFO("Starting memkv service in foreground on port %d", g_context.port);
+    infra_error_t err = service_thread(NULL);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Service thread failed: %d", err);
         g_context.running = false;
-        return INFRA_ERROR_SYSTEM;
+        return err;
     }
     
-    pthread_detach(thread);
     return INFRA_OK;
 }
 
@@ -405,15 +472,48 @@ bool memkv_is_running(void) {
 
 // 处理命令行
 infra_error_t memkv_cmd_handler(int argc, char* argv[]) {
-    // 设置默认值
-    g_context.engine = POLY_MEMKV_ENGINE_SQLITE;  // 默认使用SQLite
+    static bool initialized = false;
+    infra_error_t err;
+    
+    if (argc < 1) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
     
     // 解析命令行参数
-    for (int i = 0; i < argc; i++) {
-        if (strncmp(argv[i], "--port=", 7) == 0) {
-            g_context.port = atoi(argv[i] + 7);
-        }
-        else if (strcmp(argv[i], "--status") == 0) {
+    bool should_start = false;
+    bool config_changed = false;
+    uint16_t new_port = 11211;  // 默认端口
+    poly_memkv_engine_type_t new_engine = POLY_MEMKV_ENGINE_SQLITE;  // 默认引擎
+    char* new_plugin_path = NULL;
+    
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--start") == 0) {
+            should_start = true;
+        } else if (strcmp(argv[i], "--stop") == 0) {
+            if (!initialized) {
+                INFRA_LOG_INFO("Service is not initialized");
+                return INFRA_OK;
+            }
+            g_memkv_service.state = SERVICE_STATE_STOPPING;
+            err = memkv_stop();
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to stop memkv service: %d", err);
+                return err;
+            }
+            err = memkv_cleanup();
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to cleanup memkv service: %d", err);
+                return err;
+            }
+            initialized = false;
+            g_memkv_service.state = SERVICE_STATE_STOPPED;
+            INFRA_LOG_INFO("MemKV service stopped successfully");
+            return INFRA_OK;
+        } else if (strcmp(argv[i], "--status") == 0) {
+            if (!initialized) {
+                INFRA_LOG_INFO("Service is not initialized");
+                return INFRA_OK;
+            }
             if (g_context.running) {
                 INFRA_LOG_INFO("Service is running on port %d with %s engine",
                     g_context.port,
@@ -422,46 +522,86 @@ infra_error_t memkv_cmd_handler(int argc, char* argv[]) {
                 INFRA_LOG_INFO("Service is stopped");
             }
             return INFRA_OK;
-        }
-        else if (strcmp(argv[i], "--start") == 0) {
-            return memkv_start();
-        }
-        else if (strcmp(argv[i], "--stop") == 0) {
-            memkv_stop();
-            return INFRA_OK;
-        }
-        else if (strncmp(argv[i], "--engine=", 9) == 0) {
+        } else if (strncmp(argv[i], "--port=", 7) == 0) {
+            int port = atoi(argv[i] + 7);
+            if (port <= 0 || port > 65535) {
+                INFRA_LOG_ERROR("Invalid port number: %d", port);
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+            new_port = port;
+            config_changed = true;
+        } else if (strncmp(argv[i], "--engine=", 9) == 0) {
             const char* engine = argv[i] + 9;
             if (strcmp(engine, "sqlite") == 0) {
-                g_context.engine = POLY_MEMKV_ENGINE_SQLITE;
+                new_engine = POLY_MEMKV_ENGINE_SQLITE;
             } else if (strcmp(engine, "duckdb") == 0) {
-                g_context.engine = POLY_MEMKV_ENGINE_DUCKDB;
+                new_engine = POLY_MEMKV_ENGINE_DUCKDB;
             } else {
                 INFRA_LOG_ERROR("Invalid engine type: %s", engine);
                 return INFRA_ERROR_INVALID_PARAM;
             }
-        }
-        else if (strncmp(argv[i], "--plugin=", 9) == 0) {
-            g_context.plugin_path = strdup(argv[i] + 9);
-            if (!g_context.plugin_path) {
+            config_changed = true;
+        } else if (strncmp(argv[i], "--plugin=", 9) == 0) {
+            const char* new_path = argv[i] + 9;
+            new_plugin_path = strdup(new_path);
+            if (!new_plugin_path) {
                 return INFRA_ERROR_NO_MEMORY;
             }
-        }
-        else if (strncmp(argv[i], "--", 2) == 0) {
-            g_context.plugin_path = strdup(argv[i]);
-            if (!g_context.plugin_path) {
-                return INFRA_ERROR_NO_MEMORY;
-            }
+            config_changed = true;
         }
     }
     
-    // 显示当前配置
-    INFRA_LOG_INFO("Service configuration:");
-    INFRA_LOG_INFO("  Port: %d", g_context.port);
-    INFRA_LOG_INFO("  Engine: %s",
-        g_context.engine == POLY_MEMKV_ENGINE_SQLITE ? "sqlite" : "duckdb");
-    if (g_context.plugin_path) {
-        INFRA_LOG_INFO("  Plugin path: %s", g_context.plugin_path);
+    // 如果配置改变或需要启动，且服务已在运行，则需要重启
+    if ((config_changed || should_start) && g_context.running) {
+        INFRA_LOG_INFO("Configuration changed, restarting service");
+        err = memkv_stop();
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to stop service for restart: %d", err);
+            if (new_plugin_path) free(new_plugin_path);
+            return err;
+        }
+        err = memkv_cleanup();
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to cleanup service for restart: %d", err);
+            if (new_plugin_path) free(new_plugin_path);
+            return err;
+        }
+        initialized = false;
+    }
+    
+    // 如果需要启动服务
+    if (should_start || config_changed) {
+        // 确保服务已初始化
+        if (!initialized) {
+            infra_config_t config = INFRA_DEFAULT_CONFIG;
+            
+            // 在初始化前设置配置
+            g_context.port = new_port;
+            g_context.engine = new_engine;
+            if (g_context.plugin_path) {
+                free(g_context.plugin_path);
+            }
+            g_context.plugin_path = new_plugin_path;
+            
+            err = memkv_init(&config);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to initialize memkv service: %d", err);
+                return err;
+            }
+            initialized = true;
+            g_memkv_service.state = SERVICE_STATE_STARTING;
+        }
+        
+        // 启动服务
+        err = memkv_start();
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to start memkv service: %d", err);
+            g_memkv_service.state = SERVICE_STATE_STOPPED;
+            return err;
+        }
+        
+        g_memkv_service.state = SERVICE_STATE_RUNNING;
+        INFRA_LOG_INFO("MemKV service started successfully");
     }
     
     return INFRA_OK;

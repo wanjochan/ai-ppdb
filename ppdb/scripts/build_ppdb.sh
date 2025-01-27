@@ -7,11 +7,10 @@ if [ $? -ne 0 ]; then
 fi
 
 # 创建构建目录（如果不存在）
-mkdir -p "${BUILD_DIR}"
+mkdir -p "${BUILD_DIR}/obj"
 
 # 设置条件编译选项
 ENABLE_RINETD=1
-
 ENABLE_MEMKV=1
 
 # 添加条件编译宏定义
@@ -30,8 +29,6 @@ CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include -I${PPDB_DIR}/src -I${
 echo remove "${BUILD_DIR}/ppdb_latest.exe"
 rm -f "${BUILD_DIR}/ppdb_latest.exe"
 echo "Building ppdb..."
-set -x  # 启用调试输出
-
 # 准备源文件列表
 SOURCES=(
     "${SRC_DIR}/internal/infra/infra_core.c"
@@ -47,7 +44,6 @@ SOURCES=(
     "${SRC_DIR}/internal/poly/poly_sqlite.c"
     "${SRC_DIR}/internal/peer/peer_service.c"
     "${SRC_DIR}/ppdb/ppdb.c"
-    "${PPDB_DIR}/vendor/sqlite3/sqlite3.c"
 )
 
 # 根据条件添加源文件
@@ -59,9 +55,58 @@ if [ "${ENABLE_MEMKV}" = "1" ]; then
     SOURCES+=("${SRC_DIR}/internal/peer/peer_memkv.c")
 fi
 
-# 编译
-"${CC}" ${CFLAGS} "${SOURCES[@]}" ${LDFLAGS} -o "${BUILD_DIR}/ppdb_latest.exe"
-set +x  # 关闭调试输出
+# 获取 CPU 核心数
+if [ "$(uname)" = "Darwin" ]; then
+    JOBS=$(sysctl -n hw.ncpu)
+else
+    JOBS=$(nproc)
+fi
+
+# 编译第三方库
+echo "Building sqlite3..."
+if [ ! -f "${BUILD_DIR}/obj/sqlite3.o" ] || [ "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -nt "${BUILD_DIR}/obj/sqlite3.o" ]; then
+    "${CC}" ${CFLAGS} -c "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -o "${BUILD_DIR}/obj/sqlite3.o"
+fi
+
+# 增量编译源文件
+echo "Building sources..."
+OBJECTS=()
+PIDS=()
+
+compile_file() {
+    local src=$1
+    local obj=$2
+    echo "Compiling ${src}..."
+    "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
+}
+
+for src in "${SOURCES[@]}"; do
+    obj="${BUILD_DIR}/obj/$(basename "${src}" .c).o"
+    OBJECTS+=("${obj}")
+    if [ ! -f "${obj}" ] || [ "${src}" -nt "${obj}" ]; then
+        # 如果正在运行的任务数达到 CPU 核心数，等待一个任务完成
+        while [ ${#PIDS[@]} -ge $JOBS ]; do
+            for i in ${!PIDS[@]}; do
+                if ! kill -0 ${PIDS[$i]} 2>/dev/null; then
+                    unset PIDS[$i]
+                fi
+            done
+            PIDS=("${PIDS[@]}")  # 重新打包数组
+            [ ${#PIDS[@]} -ge $JOBS ] && sleep 0.1
+        done
+        
+        # 启动新的编译任务
+        compile_file "${src}" "${obj}" &
+        PIDS+=($!)
+    fi
+done
+
+# 等待所有编译任务完成
+wait
+
+# 链接
+echo "Linking..."
+"${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${BUILD_DIR}/obj/sqlite3.o" -o "${BUILD_DIR}/ppdb_latest.exe"
 
 if [ $? -ne 0 ]; then
     echo "Error: Build failed !!!"
