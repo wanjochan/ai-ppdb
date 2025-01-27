@@ -2,6 +2,7 @@
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_net.h"
 #include "internal/infra/infra_sync.h"
+#include "internal/poly/poly_memkv.h"
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -24,7 +25,10 @@ typedef struct {
     uint16_t port;                       // 监听端口
     infra_socket_t listener;             // 监听socket
     infra_thread_pool_t* pool;          // 线程池
-    infra_mutex_t mutex;               // 全局互斥锁，注意这里不需要指针
+    infra_mutex_t mutex;                 // 全局互斥锁
+    poly_memkv_t* store;                // KV存储
+    poly_memkv_engine_type_t engine;    // 存储引擎类型
+    char* plugin_path;                  // 插件路径
 } memkv_context_t;
 
 //-----------------------------------------------------------------------------
@@ -48,6 +52,8 @@ const poly_cmd_option_t memkv_options[] = {
     {"start", "Start the service", false},
     {"stop", "Stop the service", false},
     {"status", "Show service status", false},
+    {"engine", "Storage engine (sqlite/duckdb)", true},
+    {"plugin", "Plugin path for duckdb", false},
 };
 
 const int memkv_option_count = sizeof(memkv_options) / sizeof(memkv_options[0]);
@@ -135,6 +141,12 @@ static void* handle_connection(void* arg) {
         return NULL;
     }
 
+    if (!g_context.store) {
+        send_response(sock, "ERROR: Store not initialized\r\n");
+        infra_net_close(sock);
+        return NULL;
+    }
+
     char buffer[MEMKV_BUFFER_SIZE];
     while (g_context.running) {
         // 读取命令
@@ -148,12 +160,118 @@ static void* handle_connection(void* arg) {
 
         INFRA_LOG_DEBUG("Received command: %s", buffer);
 
-        // TODO: 解析和处理命令
-        // 目前简单返回 "ERROR\r\n"
-        err = send_response(sock, "ERROR\r\n");
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send response: %d", err);
-            break;
+        // 解析命令
+        char* cmd = strtok(buffer, " ");
+        if (!cmd) {
+            send_response(sock, "ERROR\r\n");
+            continue;
+        }
+
+        // 处理命令
+        if (strcmp(cmd, "get") == 0) {
+            char* key = strtok(NULL, " ");
+            if (!key) {
+                send_response(sock, "ERROR\r\n");
+                continue;
+            }
+
+            if (strlen(key) > MEMKV_MAX_KEY_SIZE) {
+                send_response(sock, "ERROR: Key too long\r\n");
+                continue;
+            }
+
+            poly_memkv_item_t* item = NULL;
+            err = poly_memkv_get(g_context.store, key, &item);
+            if (err != INFRA_OK || !item) {
+                send_response(sock, "NOT_FOUND\r\n");
+                continue;
+            }
+
+            // 发送值
+            char response[32];
+            snprintf(response, sizeof(response), "VALUE %zu\r\n", item->value_size);
+            send_response(sock, response);
+            send_response(sock, item->value);
+            send_response(sock, "\r\n");
+            poly_memkv_free_item(item);
+
+        } else if (strcmp(cmd, "set") == 0) {
+            char* key = strtok(NULL, " ");
+            char* value = strtok(NULL, " ");
+            if (!key || !value) {
+                send_response(sock, "ERROR\r\n");
+                continue;
+            }
+
+            size_t key_len = strlen(key);
+            size_t value_len = strlen(value);
+
+            if (key_len > MEMKV_MAX_KEY_SIZE) {
+                send_response(sock, "ERROR: Key too long\r\n");
+                continue;
+            }
+
+            if (value_len > MEMKV_MAX_VALUE_SIZE) {
+                send_response(sock, "ERROR: Value too long\r\n");
+                continue;
+            }
+
+            err = poly_memkv_set(g_context.store, key, value, value_len, 0, 0);
+            if (err != INFRA_OK) {
+                send_response(sock, "ERROR\r\n");
+                continue;
+            }
+
+            send_response(sock, "STORED\r\n");
+
+        } else if (strcmp(cmd, "delete") == 0) {
+            char* key = strtok(NULL, " ");
+            if (!key) {
+                send_response(sock, "ERROR\r\n");
+                continue;
+            }
+
+            if (strlen(key) > MEMKV_MAX_KEY_SIZE) {
+                send_response(sock, "ERROR: Key too long\r\n");
+                continue;
+            }
+
+            err = poly_memkv_delete(g_context.store, key);
+            if (err != INFRA_OK) {
+                send_response(sock, "NOT_FOUND\r\n");
+                continue;
+            }
+
+            send_response(sock, "DELETED\r\n");
+
+        } else if (strcmp(cmd, "stats") == 0) {
+            const poly_memkv_stats_t* stats = poly_memkv_get_stats(g_context.store);
+            if (!stats) {
+                send_response(sock, "ERROR: Failed to get stats\r\n");
+                continue;
+            }
+
+            char response[256];
+            snprintf(response, sizeof(response),
+                "STAT cmd_get %d\r\n"
+                "STAT cmd_set %d\r\n"
+                "STAT cmd_delete %d\r\n"
+                "STAT curr_items %d\r\n"
+                "STAT bytes %d\r\n"
+                "END\r\n",
+                stats->cmd_get, stats->cmd_set,
+                stats->cmd_delete, stats->curr_items,
+                stats->bytes);
+            send_response(sock, response);
+
+        } else if (strcmp(cmd, "engine") == 0) {
+            char response[64];
+            snprintf(response, sizeof(response), "ENGINE %s\r\n",
+                g_context.engine == POLY_MEMKV_ENGINE_SQLITE ? "sqlite" : "duckdb");
+            send_response(sock, response);
+
+        } else {
+            send_response(sock, "ERROR\r\n");
         }
     }
 
@@ -191,6 +309,22 @@ static infra_error_t memkv_init(const infra_config_t* config) {
         return err;
     }
 
+    // 创建KV存储
+    poly_memkv_config_t store_config = {
+        .initial_size = 1024*1024,
+        .max_key_size = MEMKV_MAX_KEY_SIZE,
+        .max_value_size = MEMKV_MAX_VALUE_SIZE,
+        .engine_type = g_context.engine ? g_context.engine : POLY_MEMKV_ENGINE_SQLITE,
+        .plugin_path = g_context.plugin_path
+    };
+
+    err = poly_memkv_create(&store_config, &g_context.store);
+    if (err != INFRA_OK) {
+        infra_mutex_destroy(&g_context.mutex);
+        infra_thread_pool_destroy(g_context.pool);
+        return err;
+    }
+
     return INFRA_OK;
 }
 
@@ -199,12 +333,22 @@ static infra_error_t memkv_cleanup(void) {
         memkv_stop();
     }
 
+    if (g_context.store) {
+        poly_memkv_destroy(g_context.store);
+        g_context.store = NULL;
+    }
+
     if (g_context.pool) {
         infra_thread_pool_destroy(g_context.pool);
         g_context.pool = NULL;
     }
 
-    infra_mutex_destroy(&g_context.mutex);  // 直接使用地址操作符
+    if (g_context.plugin_path) {
+        free(g_context.plugin_path);
+        g_context.plugin_path = NULL;
+    }
+
+    infra_mutex_destroy(&g_context.mutex);
 
     return INFRA_OK;
 }
@@ -212,6 +356,11 @@ static infra_error_t memkv_cleanup(void) {
 static infra_error_t memkv_start(void) {
     if (g_context.running) {
         return INFRA_ERROR_BUSY;
+    }
+
+    if (!g_context.store) {
+        INFRA_LOG_ERROR("Store not initialized");
+        return INFRA_ERROR_INVALID_STATE;
     }
 
     // 创建监听socket
@@ -250,7 +399,9 @@ static infra_error_t memkv_start(void) {
     g_context.listener = listener;
     g_context.running = true;
 
-    INFRA_LOG_INFO("Memkv service started on port %d", g_context.port);
+    INFRA_LOG_INFO("Memkv service started on port %d with %s engine", 
+        g_context.port,
+        g_context.engine == POLY_MEMKV_ENGINE_SQLITE ? "sqlite" : "duckdb");
 
     // 主循环
     while (g_context.running) {
@@ -314,6 +465,7 @@ static infra_error_t memkv_cmd_handler(int argc, char** argv) {
     // Parse command line
     bool should_start = false;
     g_context.port = 11211;  // 默认端口
+    g_context.engine = POLY_MEMKV_ENGINE_SQLITE;  // 默认使用SQLite
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--start") == 0) {
@@ -323,6 +475,10 @@ static infra_error_t memkv_cmd_handler(int argc, char** argv) {
         } else if (strcmp(argv[i], "--status") == 0) {
             infra_printf("Service is %s\n", 
                 memkv_is_running() ? "running" : "stopped");
+            if (memkv_is_running()) {
+                infra_printf("Engine: %s\n",
+                    g_context.engine == POLY_MEMKV_ENGINE_SQLITE ? "sqlite" : "duckdb");
+            }
             return INFRA_OK;
         } else if (strncmp(argv[i], "--port=", 7) == 0) {
             g_context.port = atoi(argv[i] + 7);
@@ -332,6 +488,38 @@ static infra_error_t memkv_cmd_handler(int argc, char** argv) {
                 return INFRA_ERROR_INVALID_PARAM;
             }
             g_context.port = atoi(argv[i]);
+        } else if (strncmp(argv[i], "--engine=", 9) == 0) {
+            const char* engine = argv[i] + 9;
+            if (strcmp(engine, "sqlite") == 0) {
+                g_context.engine = POLY_MEMKV_ENGINE_SQLITE;
+            } else if (strcmp(engine, "duckdb") == 0) {
+                g_context.engine = POLY_MEMKV_ENGINE_DUCKDB;
+            } else {
+                INFRA_LOG_ERROR("Invalid engine type: %s", engine);
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+        } else if (strcmp(argv[i], "--engine") == 0) {
+            if (++i >= argc) {
+                INFRA_LOG_ERROR("Missing engine type");
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+            const char* engine = argv[i];
+            if (strcmp(engine, "sqlite") == 0) {
+                g_context.engine = POLY_MEMKV_ENGINE_SQLITE;
+            } else if (strcmp(engine, "duckdb") == 0) {
+                g_context.engine = POLY_MEMKV_ENGINE_DUCKDB;
+            } else {
+                INFRA_LOG_ERROR("Invalid engine type: %s", engine);
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+        } else if (strncmp(argv[i], "--plugin=", 9) == 0) {
+            g_context.plugin_path = strdup(argv[i] + 9);
+        } else if (strcmp(argv[i], "--plugin") == 0) {
+            if (++i >= argc) {
+                INFRA_LOG_ERROR("Missing plugin path");
+                return INFRA_ERROR_INVALID_PARAM;
+            }
+            g_context.plugin_path = strdup(argv[i]);
         }
     }
 
@@ -343,7 +531,8 @@ static infra_error_t memkv_cmd_handler(int argc, char** argv) {
             INFRA_LOG_ERROR("Failed to start memkv service: %d", err);
             return err;
         }
-        INFRA_LOG_INFO("Memkv service started successfully");
+        INFRA_LOG_INFO("Memkv service started successfully with %s engine",
+            g_context.engine == POLY_MEMKV_ENGINE_SQLITE ? "sqlite" : "duckdb");
     }
 
     return INFRA_OK;

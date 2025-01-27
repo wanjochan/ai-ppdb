@@ -8,7 +8,8 @@ extern peer_service_t g_rinetd_service;
 #endif
 
 #ifdef DEV_MEMKV
-#include "internal/peer/peer_memkv.h"
+// #include "internal/peer/peer_memkv.h"
+extern peer_service_t g_memkv_service;
 #endif
 
 //-----------------------------------------------------------------------------

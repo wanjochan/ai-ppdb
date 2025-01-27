@@ -4,10 +4,17 @@
 #include "internal/infra/infra_core.h"
 #include "internal/poly/poly_hashtable.h"
 #include "internal/poly/poly_atomic.h"
+#include "internal/poly/poly_plugin.h"
 
 //-----------------------------------------------------------------------------
 // Types
 //-----------------------------------------------------------------------------
+
+// 存储引擎类型
+typedef enum {
+    POLY_MEMKV_ENGINE_SQLITE = 1,  // 默认 SQLite 引擎
+    POLY_MEMKV_ENGINE_DUCKDB = 2,  // DuckDB 引擎
+} poly_memkv_engine_type_t;
 
 // 内存KV存储项
 typedef struct poly_memkv_item {
@@ -39,6 +46,8 @@ typedef struct poly_memkv_config {
     size_t initial_size;        // 初始哈希表大小
     size_t max_key_size;        // 最大键长度
     size_t max_value_size;      // 最大值长度
+    poly_memkv_engine_type_t engine_type;  // 存储引擎类型
+    const char* plugin_path;    // 插件路径(仅用于DuckDB)
 } poly_memkv_config_t;
 
 // 内存KV存储句柄
@@ -53,6 +62,13 @@ infra_error_t poly_memkv_create(const poly_memkv_config_t* config, poly_memkv_t*
 
 // 销毁内存KV存储
 void poly_memkv_destroy(poly_memkv_t* store);
+
+// 切换存储引擎
+infra_error_t poly_memkv_switch_engine(poly_memkv_t* store, 
+    poly_memkv_engine_type_t type, const char* plugin_path);
+
+// 获取当前存储引擎类型
+poly_memkv_engine_type_t poly_memkv_get_engine_type(const poly_memkv_t* store);
 
 // 设置键值对
 infra_error_t poly_memkv_set(poly_memkv_t* store, const char* key, 

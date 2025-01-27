@@ -35,6 +35,8 @@ typedef enum {
     INFRA_ERROR_INVALID_TYPE = -22,     // 类型错误
     INFRA_ERROR_PROTOCOL = -23,        // 协议错误
     INFRA_ERROR_CONNECT_FAILED = -24,   // 连接失败
+    INFRA_ERROR_NO_SPACE = -25,      // 空间不足
+    INFRA_ERROR_INVALID_FORMAT = -26, // 无效格式
     INFRA_ERROR_MAX
 } infra_error_t;
 

@@ -1,246 +1,268 @@
 #include "internal/poly/poly_sqlite.h"
 #include "internal/infra/infra_core.h"
-#include "sqlite3.h"
+#include "third_party/sqlite3/sqlite3.h"
 
-// SQLite数据库句柄
-struct poly_sqlite_db {
+// SQLite 上下文
+typedef struct poly_sqlite_ctx {
     sqlite3* db;
     sqlite3_stmt* get_stmt;
-    sqlite3_stmt* put_stmt;
+    sqlite3_stmt* set_stmt;
     sqlite3_stmt* del_stmt;
-};
+    sqlite3_stmt* iter_stmt;
+} poly_sqlite_ctx_t;
 
-// 迭代器结构
-struct poly_sqlite_iter {
-    poly_sqlite_db_t* db;
-    sqlite3_stmt* stmt;
-};
+// 初始化
+static infra_error_t sqlite_init(void** handle) {
+    infra_error_t err = INFRA_SUCCESS;
+    poly_sqlite_ctx_t* ctx = NULL;
 
-// 初始化SQLite模块
-infra_error_t poly_sqlite_init(void) {
-    return INFRA_OK;
+    // 初始化 SQLite
+    if (sqlite3_initialize() != SQLITE_OK) {
+        return INFRA_ERROR_INIT_FAILED;
+    }
+
+    // 分配上下文
+    ctx = (poly_sqlite_ctx_t*)malloc(sizeof(poly_sqlite_ctx_t));
+    if (ctx == NULL) {
+        sqlite3_shutdown();
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    memset(ctx, 0, sizeof(poly_sqlite_ctx_t));
+
+    *handle = ctx;
+    return err;
 }
 
-// 清理SQLite模块
-infra_error_t poly_sqlite_cleanup(void) {
-    return INFRA_OK;
+// 清理
+static void sqlite_cleanup(void* handle) {
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
+    if (ctx) {
+        if (ctx->get_stmt) sqlite3_finalize(ctx->get_stmt);
+        if (ctx->set_stmt) sqlite3_finalize(ctx->set_stmt);
+        if (ctx->del_stmt) sqlite3_finalize(ctx->del_stmt);
+        if (ctx->iter_stmt) sqlite3_finalize(ctx->iter_stmt);
+        if (ctx->db) sqlite3_close_v2(ctx->db);
+        free(ctx);
+    }
+    sqlite3_shutdown();
 }
 
 // 打开数据库
-infra_error_t poly_sqlite_open(const char* path, poly_sqlite_db_t** db) {
-    if (!path || !db) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_sqlite_db_t* sdb = infra_malloc(sizeof(poly_sqlite_db_t));
-    if (!sdb) return INFRA_ERROR_NO_MEMORY;
-    
-    int rc = sqlite3_open(path, &sdb->db);
+static infra_error_t sqlite_open(void* handle, const char* path) {
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
+    int rc;
+
+    // 打开数据库
+    rc = sqlite3_open_v2(path, &ctx->db, 
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+        NULL);
     if (rc != SQLITE_OK) {
-        infra_free(sdb);
-        return INFRA_ERROR_IO;
+        return INFRA_ERROR_OPEN_FAILED;
     }
-    
-    // 创建KV表
-    const char* create_sql = 
-        "CREATE TABLE IF NOT EXISTS kv ("
-        "  key BLOB PRIMARY KEY,"
-        "  value BLOB"
-        ")";
-    char* err_msg = NULL;
-    rc = sqlite3_exec(sdb->db, create_sql, NULL, NULL, &err_msg);
+
+    // 创建表
+    rc = sqlite3_exec(ctx->db,
+        "CREATE TABLE IF NOT EXISTS kv_store ("
+        "key BLOB PRIMARY KEY,"
+        "value BLOB"
+        ");", NULL, NULL, NULL);
     if (rc != SQLITE_OK) {
-        sqlite3_free(err_msg);
-        sqlite3_close(sdb->db);
-        infra_free(sdb);
-        return INFRA_ERROR_IO;
+        return INFRA_ERROR_EXEC_FAILED;
     }
-    
+
     // 准备语句
-    const char* get_sql = "SELECT value FROM kv WHERE key = ?";
-    rc = sqlite3_prepare_v2(sdb->db, get_sql, -1, &sdb->get_stmt, NULL);
-    if (rc != SQLITE_OK) {
-        sqlite3_close(sdb->db);
-        infra_free(sdb);
-        return INFRA_ERROR_IO;
-    }
+    const char* sql;
     
-    const char* put_sql = "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)";
-    rc = sqlite3_prepare_v2(sdb->db, put_sql, -1, &sdb->put_stmt, NULL);
-    if (rc != SQLITE_OK) {
-        sqlite3_finalize(sdb->get_stmt);
-        sqlite3_close(sdb->db);
-        infra_free(sdb);
-        return INFRA_ERROR_IO;
-    }
-    
-    const char* del_sql = "DELETE FROM kv WHERE key = ?";
-    rc = sqlite3_prepare_v2(sdb->db, del_sql, -1, &sdb->del_stmt, NULL);
-    if (rc != SQLITE_OK) {
-        sqlite3_finalize(sdb->get_stmt);
-        sqlite3_finalize(sdb->put_stmt);
-        sqlite3_close(sdb->db);
-        infra_free(sdb);
-        return INFRA_ERROR_IO;
-    }
-    
-    *db = sdb;
-    return INFRA_OK;
+    // GET
+    sql = "SELECT value FROM kv_store WHERE key = ?;";
+    rc = sqlite3_prepare_v2(ctx->db, sql, -1, &ctx->get_stmt, NULL);
+    if (rc != SQLITE_OK) return INFRA_ERROR_PREPARE_FAILED;
+
+    // SET
+    sql = "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);";
+    rc = sqlite3_prepare_v2(ctx->db, sql, -1, &ctx->set_stmt, NULL);
+    if (rc != SQLITE_OK) return INFRA_ERROR_PREPARE_FAILED;
+
+    // DEL
+    sql = "DELETE FROM kv_store WHERE key = ?;";
+    rc = sqlite3_prepare_v2(ctx->db, sql, -1, &ctx->del_stmt, NULL);
+    if (rc != SQLITE_OK) return INFRA_ERROR_PREPARE_FAILED;
+
+    // ITER
+    sql = "SELECT key, value FROM kv_store;";
+    rc = sqlite3_prepare_v2(ctx->db, sql, -1, &ctx->iter_stmt, NULL);
+    if (rc != SQLITE_OK) return INFRA_ERROR_PREPARE_FAILED;
+
+    return INFRA_SUCCESS;
 }
 
 // 关闭数据库
-infra_error_t poly_sqlite_close(poly_sqlite_db_t* db) {
-    if (!db) return INFRA_ERROR_INVALID_PARAM;
+static infra_error_t sqlite_close(void* handle) {
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
     
-    sqlite3_finalize(db->get_stmt);
-    sqlite3_finalize(db->put_stmt);
-    sqlite3_finalize(db->del_stmt);
-    sqlite3_close(db->db);
-    infra_free(db);
+    if (ctx->get_stmt) {
+        sqlite3_finalize(ctx->get_stmt);
+        ctx->get_stmt = NULL;
+    }
+    if (ctx->set_stmt) {
+        sqlite3_finalize(ctx->set_stmt);
+        ctx->set_stmt = NULL;
+    }
+    if (ctx->del_stmt) {
+        sqlite3_finalize(ctx->del_stmt);
+        ctx->del_stmt = NULL;
+    }
+    if (ctx->iter_stmt) {
+        sqlite3_finalize(ctx->iter_stmt);
+        ctx->iter_stmt = NULL;
+    }
+    if (ctx->db) {
+        sqlite3_close_v2(ctx->db);
+        ctx->db = NULL;
+    }
     
-    return INFRA_OK;
+    return INFRA_SUCCESS;
 }
 
-// KV操作
-infra_error_t poly_sqlite_get(poly_sqlite_db_t* db, const void* key, size_t klen, void** val, size_t* vlen) {
-    if (!db || !key || !val || !vlen) return INFRA_ERROR_INVALID_PARAM;
-    
-    sqlite3_reset(db->get_stmt);
-    sqlite3_bind_blob(db->get_stmt, 1, key, klen, SQLITE_STATIC);
-    
-    int rc = sqlite3_step(db->get_stmt);
+// 执行 SQL
+static infra_error_t sqlite_exec(void* handle, const char* sql) {
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
+    int rc = sqlite3_exec(ctx->db, sql, NULL, NULL, NULL);
+    return (rc == SQLITE_OK) ? INFRA_SUCCESS : INFRA_ERROR_EXEC_FAILED;
+}
+
+// 获取值
+static infra_error_t sqlite_get(void* handle, const char* key, void** value, size_t* value_size) {
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
+    int rc;
+
+    // 绑定参数
+    rc = sqlite3_bind_text(ctx->get_stmt, 1, key, -1, SQLITE_STATIC);
+    if (rc != SQLITE_OK) return INFRA_ERROR_BIND_FAILED;
+
+    // 执行查询
+    rc = sqlite3_step(ctx->get_stmt);
     if (rc == SQLITE_ROW) {
-        const void* blob = sqlite3_column_blob(db->get_stmt, 0);
-        int blob_size = sqlite3_column_bytes(db->get_stmt, 0);
+        const void* blob = sqlite3_column_blob(ctx->get_stmt, 0);
+        int size = sqlite3_column_bytes(ctx->get_stmt, 0);
         
-        void* data = infra_malloc(blob_size);
-        if (!data) return INFRA_ERROR_NO_MEMORY;
-        
-        memcpy(data, blob, blob_size);
-        *val = data;
-        *vlen = blob_size;
-        return INFRA_OK;
-    } else if (rc == SQLITE_DONE) {
-        return INFRA_ERROR_NOT_FOUND;
-    }
-    
-    return INFRA_ERROR_IO;
-}
-
-infra_error_t poly_sqlite_put(poly_sqlite_db_t* db, const void* key, size_t klen, const void* val, size_t vlen) {
-    if (!db || !key || !val) return INFRA_ERROR_INVALID_PARAM;
-    
-    sqlite3_reset(db->put_stmt);
-    sqlite3_bind_blob(db->put_stmt, 1, key, klen, SQLITE_STATIC);
-    sqlite3_bind_blob(db->put_stmt, 2, val, vlen, SQLITE_STATIC);
-    
-    int rc = sqlite3_step(db->put_stmt);
-    return (rc == SQLITE_DONE) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t poly_sqlite_del(poly_sqlite_db_t* db, const void* key, size_t klen) {
-    if (!db || !key) return INFRA_ERROR_INVALID_PARAM;
-    
-    sqlite3_reset(db->del_stmt);
-    sqlite3_bind_blob(db->del_stmt, 1, key, klen, SQLITE_STATIC);
-    
-    int rc = sqlite3_step(db->del_stmt);
-    return (rc == SQLITE_DONE) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-// 事务操作
-infra_error_t poly_sqlite_begin(poly_sqlite_db_t* db) {
-    if (!db) return INFRA_ERROR_INVALID_PARAM;
-    char* err_msg = NULL;
-    int rc = sqlite3_exec(db->db, "BEGIN", NULL, NULL, &err_msg);
-    if (rc != SQLITE_OK) {
-        sqlite3_free(err_msg);
-        return INFRA_ERROR_IO;
-    }
-    return INFRA_OK;
-}
-
-infra_error_t poly_sqlite_commit(poly_sqlite_db_t* db) {
-    if (!db) return INFRA_ERROR_INVALID_PARAM;
-    char* err_msg = NULL;
-    int rc = sqlite3_exec(db->db, "COMMIT", NULL, NULL, &err_msg);
-    if (rc != SQLITE_OK) {
-        sqlite3_free(err_msg);
-        return INFRA_ERROR_IO;
-    }
-    return INFRA_OK;
-}
-
-infra_error_t poly_sqlite_rollback(poly_sqlite_db_t* db) {
-    if (!db) return INFRA_ERROR_INVALID_PARAM;
-    char* err_msg = NULL;
-    int rc = sqlite3_exec(db->db, "ROLLBACK", NULL, NULL, &err_msg);
-    if (rc != SQLITE_OK) {
-        sqlite3_free(err_msg);
-        return INFRA_ERROR_IO;
-    }
-    return INFRA_OK;
-}
-
-// 迭代器
-infra_error_t poly_sqlite_iter_create(poly_sqlite_db_t* db, poly_sqlite_iter_t** iter) {
-    if (!db || !iter) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_sqlite_iter_t* it = infra_malloc(sizeof(poly_sqlite_iter_t));
-    if (!it) return INFRA_ERROR_NO_MEMORY;
-    
-    const char* sql = "SELECT key, value FROM kv";
-    int rc = sqlite3_prepare_v2(db->db, sql, -1, &it->stmt, NULL);
-    if (rc != SQLITE_OK) {
-        infra_free(it);
-        return INFRA_ERROR_IO;
-    }
-    
-    it->db = db;
-    *iter = it;
-    return INFRA_OK;
-}
-
-infra_error_t poly_sqlite_iter_next(poly_sqlite_iter_t* iter, void** key, size_t* klen, void** val, size_t* vlen) {
-    if (!iter || !key || !klen || !val || !vlen) return INFRA_ERROR_INVALID_PARAM;
-    
-    int rc = sqlite3_step(iter->stmt);
-    if (rc == SQLITE_ROW) {
-        // 获取key
-        const void* key_blob = sqlite3_column_blob(iter->stmt, 0);
-        int key_size = sqlite3_column_bytes(iter->stmt, 0);
-        void* key_data = infra_malloc(key_size);
-        if (!key_data) return INFRA_ERROR_NO_MEMORY;
-        memcpy(key_data, key_blob, key_size);
-        *key = key_data;
-        *klen = key_size;
-        
-        // 获取value
-        const void* val_blob = sqlite3_column_blob(iter->stmt, 1);
-        int val_size = sqlite3_column_bytes(iter->stmt, 1);
-        void* val_data = infra_malloc(val_size);
-        if (!val_data) {
-            infra_free(key_data);
+        void* buf = malloc(size);
+        if (!buf) {
+            sqlite3_reset(ctx->get_stmt);
             return INFRA_ERROR_NO_MEMORY;
         }
-        memcpy(val_data, val_blob, val_size);
-        *val = val_data;
-        *vlen = val_size;
         
-        return INFRA_OK;
-    } else if (rc == SQLITE_DONE) {
-        return INFRA_ERROR_NOT_FOUND;
+        memcpy(buf, blob, size);
+        *value = buf;
+        *value_size = size;
+        
+        sqlite3_reset(ctx->get_stmt);
+        return INFRA_SUCCESS;
     }
     
-    return INFRA_ERROR_IO;
+    sqlite3_reset(ctx->get_stmt);
+    return INFRA_ERROR_NOT_FOUND;
 }
 
-infra_error_t poly_sqlite_iter_destroy(poly_sqlite_iter_t* iter) {
-    if (!iter) return INFRA_ERROR_INVALID_PARAM;
+// 设置值
+static infra_error_t sqlite_set(void* handle, const char* key, const void* value, size_t value_size) {
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
+    int rc;
+
+    // 绑定参数
+    rc = sqlite3_bind_text(ctx->set_stmt, 1, key, -1, SQLITE_STATIC);
+    if (rc != SQLITE_OK) return INFRA_ERROR_BIND_FAILED;
     
-    sqlite3_finalize(iter->stmt);
-    infra_free(iter);
+    rc = sqlite3_bind_blob(ctx->set_stmt, 2, value, value_size, SQLITE_STATIC);
+    if (rc != SQLITE_OK) {
+        sqlite3_reset(ctx->set_stmt);
+        return INFRA_ERROR_BIND_FAILED;
+    }
+
+    // 执行
+    rc = sqlite3_step(ctx->set_stmt);
+    sqlite3_reset(ctx->set_stmt);
     
-    return INFRA_OK;
+    return (rc == SQLITE_DONE) ? INFRA_SUCCESS : INFRA_ERROR_EXEC_FAILED;
 }
+
+// 删除值
+static infra_error_t sqlite_del(void* handle, const char* key) {
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
+    int rc;
+
+    // 绑定参数
+    rc = sqlite3_bind_text(ctx->del_stmt, 1, key, -1, SQLITE_STATIC);
+    if (rc != SQLITE_OK) return INFRA_ERROR_BIND_FAILED;
+
+    // 执行
+    rc = sqlite3_step(ctx->del_stmt);
+    sqlite3_reset(ctx->del_stmt);
+    
+    return (rc == SQLITE_DONE) ? INFRA_SUCCESS : INFRA_ERROR_EXEC_FAILED;
+}
+
+// 创建迭代器
+static infra_error_t sqlite_iter_create(void* handle, void** iter) {
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
+    
+    // 重置迭代器语句
+    sqlite3_reset(ctx->iter_stmt);
+    
+    *iter = ctx->iter_stmt;
+    return INFRA_SUCCESS;
+}
+
+// 迭代下一个
+static infra_error_t sqlite_iter_next(void* iter, char** key, void** value, size_t* value_size) {
+    sqlite3_stmt* stmt = (sqlite3_stmt*)iter;
+    int rc = sqlite3_step(stmt);
+    
+    if (rc == SQLITE_ROW) {
+        // 获取 key
+        const char* key_text = (const char*)sqlite3_column_text(stmt, 0);
+        *key = strdup(key_text);
+        if (!*key) return INFRA_ERROR_NO_MEMORY;
+        
+        // 获取 value
+        const void* blob = sqlite3_column_blob(stmt, 1);
+        int size = sqlite3_column_bytes(stmt, 1);
+        
+        void* buf = malloc(size);
+        if (!buf) {
+            free(*key);
+            return INFRA_ERROR_NO_MEMORY;
+        }
+        
+        memcpy(buf, blob, size);
+        *value = buf;
+        *value_size = size;
+        
+        return INFRA_SUCCESS;
+    }
+    
+    return INFRA_ERROR_NOT_FOUND;
+}
+
+// 销毁迭代器
+static void sqlite_iter_destroy(void* iter) {
+    // 迭代器是 stmt，在 cleanup 时统一释放
+}
+
+// 全局接口实例
+const poly_sqlite_interface_t g_sqlite_interface = {
+    .init = sqlite_init,
+    .cleanup = sqlite_cleanup,
+    .open = sqlite_open,
+    .close = sqlite_close,
+    .exec = sqlite_exec,
+    .get = sqlite_get,
+    .set = sqlite_set,
+    .del = sqlite_del,
+    .iter_create = sqlite_iter_create,
+    .iter_next = sqlite_iter_next,
+    .iter_destroy = sqlite_iter_destroy
+};
 
 // 在文件末尾添加内置插件定义
 const poly_builtin_plugin_t g_sqlite_plugin = {

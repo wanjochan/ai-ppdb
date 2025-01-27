@@ -25,6 +25,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <dlfcn.h>
 
 /* System headers */
 #include <signal.h>     /* 信号处理 */

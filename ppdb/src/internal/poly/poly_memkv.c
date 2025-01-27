@@ -2,6 +2,9 @@
 #include "internal/infra/infra_core.h"
 #include "internal/poly/poly_hashtable.h"
 #include "internal/poly/poly_atomic.h"
+#include "internal/poly/poly_plugin.h"
+#include "internal/poly/poly_sqlite.h"
+#include "internal/poly/poly_duckdb.h"
 
 //-----------------------------------------------------------------------------
 // Types
@@ -9,11 +12,15 @@
 
 // 内存KV存储实现
 struct poly_memkv {
-    poly_hashtable_t* store;        // 哈希表存储
+    poly_hashtable_t* cache;        // 内存缓存
     poly_memkv_config_t config;     // 配置信息
     poly_memkv_stats_t stats;       // 统计信息
     infra_mutex_t mutex;            // 全局互斥锁
     poly_atomic_t cas_counter;      // CAS计数器
+    poly_plugin_mgr_t* plugins;     // 插件管理器
+    poly_plugin_t* engine_plugin;   // 当前存储引擎插件
+    void* engine_handle;            // 存储引擎句柄
+    poly_memkv_engine_type_t type;  // 当前引擎类型
 };
 
 //-----------------------------------------------------------------------------
@@ -78,7 +85,49 @@ void poly_memkv_free_item(poly_memkv_item_t* item) {
 }
 
 //-----------------------------------------------------------------------------
-// Implementation
+// Static Functions
+//-----------------------------------------------------------------------------
+
+// 初始化默认的SQLite引擎
+static infra_error_t init_sqlite_engine(poly_memkv_t* store) {
+    // 注册内置的SQLite插件
+    poly_builtin_plugin_t sqlite_plugin = {
+        .name = "sqlite",
+        .interface = &g_sqlite_interface,
+        .type = POLY_PLUGIN_SQLITE
+    };
+    
+    infra_error_t err = poly_plugin_register_builtin(store->plugins, &sqlite_plugin);
+    if (err != INFRA_OK) {
+        return err;
+    }
+    
+    store->engine_plugin = (poly_plugin_t*)&sqlite_plugin;
+    store->type = POLY_MEMKV_ENGINE_SQLITE;
+    
+    // 初始化SQLite引擎
+    poly_sqlite_interface_t* sqlite = poly_plugin_get_interface(store->engine_plugin);
+    return sqlite->init(&store->engine_handle);
+}
+
+// 初始化DuckDB引擎
+static infra_error_t init_duckdb_engine(poly_memkv_t* store, const char* plugin_path) {
+    // 加载DuckDB插件
+    infra_error_t err = poly_plugin_mgr_load(store->plugins, 
+        POLY_PLUGIN_DUCKDB, plugin_path, &store->engine_plugin);
+    if (err != INFRA_OK) {
+        return err;
+    }
+    
+    store->type = POLY_MEMKV_ENGINE_DUCKDB;
+    
+    // 初始化DuckDB引擎
+    poly_duckdb_interface_t* duckdb = poly_plugin_get_interface(store->engine_plugin);
+    return duckdb->init(&store->engine_handle);
+}
+
+//-----------------------------------------------------------------------------
+// Public Functions
 //-----------------------------------------------------------------------------
 
 // 创建存储实例
@@ -86,45 +135,41 @@ infra_error_t poly_memkv_create(const poly_memkv_config_t* config, poly_memkv_t*
     if (!config || !store) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-
-    poly_memkv_t* s = malloc(sizeof(poly_memkv_t));
-    if (!s) {
+    
+    *store = calloc(1, sizeof(poly_memkv_t));
+    if (!*store) {
         return INFRA_ERROR_NO_MEMORY;
     }
-
-    // 初始化配置
-    memcpy(&s->config, config, sizeof(poly_memkv_config_t));
-
-    // 创建哈希表
-    infra_error_t err = poly_hashtable_create(config->initial_size, 
-        poly_hashtable_string_hash, poly_hashtable_string_compare, &s->store);
+    
+    // 创建插件管理器
+    infra_error_t err = poly_plugin_mgr_create(&(*store)->plugins);
     if (err != INFRA_OK) {
-        free(s);
+        free(*store);
         return err;
     }
-
-    // 初始化互斥锁
-    err = infra_mutex_create(&s->mutex);
+    
+    // 创建内存缓存
+    err = poly_hashtable_create(config->initial_size, &(*store)->cache);
     if (err != INFRA_OK) {
-        poly_hashtable_destroy(s->store);
-        free(s);
+        poly_plugin_mgr_destroy((*store)->plugins);
+        free(*store);
         return err;
     }
-
-    // 初始化CAS计数器
-    poly_atomic_set(&s->cas_counter, 0);
-
-    // 初始化统计信息
-    poly_atomic_set(&s->stats.cmd_get, 0);
-    poly_atomic_set(&s->stats.cmd_set, 0);
-    poly_atomic_set(&s->stats.cmd_delete, 0);
-    poly_atomic_set(&s->stats.hits, 0);
-    poly_atomic_set(&s->stats.misses, 0);
-    poly_atomic_set(&s->stats.curr_items, 0);
-    poly_atomic_set(&s->stats.total_items, 0);
-    poly_atomic_set(&s->stats.bytes, 0);
-
-    *store = s;
+    
+    // 初始化存储引擎
+    if (config->engine_type == POLY_MEMKV_ENGINE_DUCKDB) {
+        err = init_duckdb_engine(*store, config->plugin_path);
+    } else {
+        err = init_sqlite_engine(*store);
+    }
+    
+    if (err != INFRA_OK) {
+        poly_hashtable_destroy((*store)->cache);
+        poly_plugin_mgr_destroy((*store)->plugins);
+        free(*store);
+        return err;
+    }
+    
     return INFRA_OK;
 }
 
@@ -132,9 +177,22 @@ void poly_memkv_destroy(poly_memkv_t* store) {
     if (!store) {
         return;
     }
-
-    infra_mutex_destroy(&store->mutex);
-    poly_hashtable_destroy(store->store);
+    
+    // 清理存储引擎
+    if (store->engine_plugin) {
+        if (store->type == POLY_MEMKV_ENGINE_SQLITE) {
+            poly_sqlite_interface_t* sqlite = poly_plugin_get_interface(store->engine_plugin);
+            sqlite->cleanup(store->engine_handle);
+        } else {
+            poly_duckdb_interface_t* duckdb = poly_plugin_get_interface(store->engine_plugin);
+            duckdb->cleanup(store->engine_handle);
+            poly_plugin_mgr_unload(store->plugins, store->engine_plugin);
+        }
+    }
+    
+    // 清理其他资源
+    poly_hashtable_destroy(store->cache);
+    poly_plugin_mgr_destroy(store->plugins);
     free(store);
 }
 
@@ -173,7 +231,7 @@ infra_error_t poly_memkv_set(poly_memkv_t* store, const char* key,
 
     // 检查是否存在旧项目
     void* old_value = NULL;
-    infra_error_t get_err = poly_hashtable_get(store->store, key, &old_value);
+    infra_error_t get_err = poly_hashtable_get(store->cache, key, &old_value);
     if (get_err == INFRA_OK && old_value) {
         poly_memkv_item_t* old_item = (poly_memkv_item_t*)old_value;
         poly_atomic_sub(&store->stats.bytes, old_item->value_size);
@@ -187,7 +245,7 @@ infra_error_t poly_memkv_set(poly_memkv_t* store, const char* key,
     poly_atomic_add(&store->stats.bytes, value_size);
 
     // 存储项目
-    infra_error_t err = poly_hashtable_put(store->store, item->key, item);
+    infra_error_t err = poly_hashtable_put(store->cache, item->key, item);
 
     // 如果存储成功且存在旧项目，释放旧项目
     if (err == INFRA_OK && old_value) {
@@ -217,7 +275,7 @@ infra_error_t poly_memkv_get(poly_memkv_t* store, const char* key,
 
     // 获取项目
     void* value = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &value);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &value);
     
     if (err == INFRA_OK && value) {
         poly_memkv_item_t* found = (poly_memkv_item_t*)value;
@@ -225,7 +283,7 @@ infra_error_t poly_memkv_get(poly_memkv_t* store, const char* key,
         // 检查是否过期
         if (poly_memkv_is_expired(found)) {
             // 移除过期项目
-            poly_hashtable_remove(store->store, key);
+            poly_hashtable_remove(store->cache, key);
             poly_atomic_dec(&store->stats.curr_items);
             poly_atomic_sub(&store->stats.bytes, found->value_size);
             poly_memkv_free_item(found);
@@ -270,7 +328,7 @@ infra_error_t poly_memkv_add(poly_memkv_t* store, const char* key,
 
     // 检查key是否存在
     void* existing = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &existing);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &existing);
     
     if (err == INFRA_OK && existing) {
         poly_memkv_item_t* item = (poly_memkv_item_t*)existing;
@@ -278,7 +336,7 @@ infra_error_t poly_memkv_add(poly_memkv_t* store, const char* key,
         // 检查是否过期
         if (poly_memkv_is_expired(item)) {
             // 移除过期项目
-            poly_hashtable_remove(store->store, key);
+            poly_hashtable_remove(store->cache, key);
             poly_atomic_dec(&store->stats.curr_items);
             poly_atomic_sub(&store->stats.bytes, item->value_size);
             poly_memkv_free_item(item);
@@ -304,7 +362,7 @@ infra_error_t poly_memkv_add(poly_memkv_t* store, const char* key,
     poly_atomic_add(&store->stats.bytes, value_size);
 
     // 存储项目
-    err = poly_hashtable_put(store->store, new_item->key, new_item);
+    err = poly_hashtable_put(store->cache, new_item->key, new_item);
     if (err != INFRA_OK) {
         poly_memkv_free_item(new_item);
         poly_atomic_dec(&store->stats.curr_items);
@@ -338,7 +396,7 @@ infra_error_t poly_memkv_replace(poly_memkv_t* store, const char* key,
 
     // 检查key是否存在
     void* existing = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &existing);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &existing);
     
     if (err != INFRA_OK || !existing) {
         infra_mutex_unlock(&store->mutex);
@@ -350,7 +408,7 @@ infra_error_t poly_memkv_replace(poly_memkv_t* store, const char* key,
     // 检查是否过期
     if (poly_memkv_is_expired(item)) {
         // 移除过期项目
-        poly_hashtable_remove(store->store, key);
+        poly_hashtable_remove(store->cache, key);
         poly_atomic_dec(&store->stats.curr_items);
         poly_atomic_sub(&store->stats.bytes, item->value_size);
         poly_memkv_free_item(item);
@@ -373,7 +431,7 @@ infra_error_t poly_memkv_replace(poly_memkv_t* store, const char* key,
     poly_atomic_add(&store->stats.bytes, value_size);
 
     // 存储新项目
-    err = poly_hashtable_put(store->store, new_item->key, new_item);
+    err = poly_hashtable_put(store->cache, new_item->key, new_item);
     if (err != INFRA_OK) {
         poly_memkv_free_item(new_item);
         poly_atomic_add(&store->stats.bytes, item->value_size);
@@ -398,7 +456,7 @@ infra_error_t poly_memkv_delete(poly_memkv_t* store, const char* key) {
 
     // 检查key是否存在
     void* existing = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &existing);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &existing);
     
     if (err != INFRA_OK || !existing) {
         infra_mutex_unlock(&store->mutex);
@@ -410,7 +468,7 @@ infra_error_t poly_memkv_delete(poly_memkv_t* store, const char* key) {
     // 检查是否过期
     if (poly_memkv_is_expired(item)) {
         // 移除过期项目
-        err = poly_hashtable_remove(store->store, key);
+        err = poly_hashtable_remove(store->cache, key);
         poly_atomic_dec(&store->stats.curr_items);
         poly_atomic_sub(&store->stats.bytes, item->value_size);
         poly_memkv_free_item(item);
@@ -419,7 +477,7 @@ infra_error_t poly_memkv_delete(poly_memkv_t* store, const char* key) {
     }
 
     // 移除项目
-    poly_hashtable_remove(store->store, key);
+    poly_hashtable_remove(store->cache, key);
     poly_atomic_dec(&store->stats.curr_items);
     poly_atomic_sub(&store->stats.bytes, item->value_size);
     poly_memkv_free_item(item);
@@ -442,7 +500,7 @@ infra_error_t poly_memkv_append(poly_memkv_t* store, const char* key,
 
     // 检查key是否存在
     void* existing = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &existing);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &existing);
     
     if (err != INFRA_OK || !existing) {
         infra_mutex_unlock(&store->mutex);
@@ -454,7 +512,7 @@ infra_error_t poly_memkv_append(poly_memkv_t* store, const char* key,
     // 检查是否过期
     if (poly_memkv_is_expired(item)) {
         // 移除过期项目
-        poly_hashtable_remove(store->store, key);
+        poly_hashtable_remove(store->cache, key);
         poly_atomic_dec(&store->stats.curr_items);
         poly_atomic_sub(&store->stats.bytes, item->value_size);
         poly_memkv_free_item(item);
@@ -498,7 +556,7 @@ infra_error_t poly_memkv_append(poly_memkv_t* store, const char* key,
     poly_atomic_add(&store->stats.bytes, new_size);
 
     // 存储新项目
-    err = poly_hashtable_put(store->store, new_item->key, new_item);
+    err = poly_hashtable_put(store->cache, new_item->key, new_item);
     if (err != INFRA_OK) {
         poly_memkv_free_item(new_item);
         poly_atomic_add(&store->stats.bytes, item->value_size);
@@ -525,7 +583,7 @@ infra_error_t poly_memkv_prepend(poly_memkv_t* store, const char* key,
 
     // 检查key是否存在
     void* existing = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &existing);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &existing);
     
     if (err != INFRA_OK || !existing) {
         infra_mutex_unlock(&store->mutex);
@@ -537,7 +595,7 @@ infra_error_t poly_memkv_prepend(poly_memkv_t* store, const char* key,
     // 检查是否过期
     if (poly_memkv_is_expired(item)) {
         // 移除过期项目
-        poly_hashtable_remove(store->store, key);
+        poly_hashtable_remove(store->cache, key);
         poly_atomic_dec(&store->stats.curr_items);
         poly_atomic_sub(&store->stats.bytes, item->value_size);
         poly_memkv_free_item(item);
@@ -581,7 +639,7 @@ infra_error_t poly_memkv_prepend(poly_memkv_t* store, const char* key,
     poly_atomic_add(&store->stats.bytes, new_size);
 
     // 存储新项目
-    err = poly_hashtable_put(store->store, new_item->key, new_item);
+    err = poly_hashtable_put(store->cache, new_item->key, new_item);
     if (err != INFRA_OK) {
         poly_memkv_free_item(new_item);
         poly_atomic_add(&store->stats.bytes, item->value_size);
@@ -617,7 +675,7 @@ infra_error_t poly_memkv_cas(poly_memkv_t* store, const char* key,
 
     // 检查key是否存在
     void* existing = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &existing);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &existing);
     
     if (err != INFRA_OK || !existing) {
         infra_mutex_unlock(&store->mutex);
@@ -629,7 +687,7 @@ infra_error_t poly_memkv_cas(poly_memkv_t* store, const char* key,
     // 检查是否过期
     if (poly_memkv_is_expired(item)) {
         // 移除过期项目
-        poly_hashtable_remove(store->store, key);
+        poly_hashtable_remove(store->cache, key);
         poly_atomic_dec(&store->stats.curr_items);
         poly_atomic_sub(&store->stats.bytes, item->value_size);
         poly_memkv_free_item(item);
@@ -658,7 +716,7 @@ infra_error_t poly_memkv_cas(poly_memkv_t* store, const char* key,
     poly_atomic_add(&store->stats.bytes, value_size);
 
     // 存储新项目
-    err = poly_hashtable_put(store->store, new_item->key, new_item);
+    err = poly_hashtable_put(store->cache, new_item->key, new_item);
     if (err != INFRA_OK) {
         poly_memkv_free_item(new_item);
         poly_atomic_add(&store->stats.bytes, item->value_size);
@@ -682,7 +740,7 @@ infra_error_t poly_memkv_flush(poly_memkv_t* store) {
     infra_mutex_lock(&store->mutex);
 
     // 清空哈希表
-    poly_hashtable_clear(store->store);
+    poly_hashtable_clear(store->cache);
 
     // 重置统计信息
     memset(&store->stats, 0, sizeof(poly_memkv_stats_t));
@@ -705,7 +763,7 @@ infra_error_t poly_memkv_incr(poly_memkv_t* store, const char* key,
 
     // 获取项目
     void* value = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &value);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &value);
     if (err != INFRA_OK) {
         infra_mutex_unlock(&store->mutex);
         return INFRA_ERROR_NOT_FOUND;
@@ -716,7 +774,7 @@ infra_error_t poly_memkv_incr(poly_memkv_t* store, const char* key,
     // 检查是否过期
     if (poly_memkv_is_expired(item)) {
         // 移除过期项目
-        poly_hashtable_remove(store->store, key);
+        poly_hashtable_remove(store->cache, key);
         poly_atomic_dec(&store->stats.curr_items);
         poly_atomic_sub(&store->stats.bytes, item->value_size);
         poly_memkv_free_item(item);
@@ -772,7 +830,7 @@ infra_error_t poly_memkv_decr(poly_memkv_t* store, const char* key,
 
     // 获取项目
     void* value = NULL;
-    infra_error_t err = poly_hashtable_get(store->store, key, &value);
+    infra_error_t err = poly_hashtable_get(store->cache, key, &value);
     if (err != INFRA_OK) {
         infra_mutex_unlock(&store->mutex);
         return INFRA_ERROR_NOT_FOUND;
@@ -783,7 +841,7 @@ infra_error_t poly_memkv_decr(poly_memkv_t* store, const char* key,
     // 检查是否过期
     if (poly_memkv_is_expired(item)) {
         // 移除过期项目
-        poly_hashtable_remove(store->store, key);
+        poly_hashtable_remove(store->cache, key);
         poly_atomic_dec(&store->stats.curr_items);
         poly_atomic_sub(&store->stats.bytes, item->value_size);
         poly_memkv_free_item(item);
@@ -825,6 +883,55 @@ infra_error_t poly_memkv_decr(poly_memkv_t* store, const char* key,
     
     infra_mutex_unlock(&store->mutex);
     return INFRA_OK;
+}
+
+infra_error_t poly_memkv_switch_engine(poly_memkv_t* store, 
+    poly_memkv_engine_type_t type, const char* plugin_path) {
+    if (!store) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+    
+    // 如果类型相同且不是DuckDB,无需切换
+    if (store->type == type && type != POLY_MEMKV_ENGINE_DUCKDB) {
+        return INFRA_OK;
+    }
+    
+    // 保存旧引擎数据
+    void* old_handle = store->engine_handle;
+    poly_plugin_t* old_plugin = store->engine_plugin;
+    poly_memkv_engine_type_t old_type = store->type;
+    
+    // 初始化新引擎
+    infra_error_t err;
+    if (type == POLY_MEMKV_ENGINE_DUCKDB) {
+        err = init_duckdb_engine(store, plugin_path);
+    } else {
+        err = init_sqlite_engine(store);
+    }
+    
+    if (err != INFRA_OK) {
+        // 恢复旧引擎
+        store->engine_handle = old_handle;
+        store->engine_plugin = old_plugin;
+        store->type = old_type;
+        return err;
+    }
+    
+    // 清理旧引擎
+    if (old_type == POLY_MEMKV_ENGINE_SQLITE) {
+        poly_sqlite_interface_t* sqlite = poly_plugin_get_interface(old_plugin);
+        sqlite->cleanup(old_handle);
+    } else {
+        poly_duckdb_interface_t* duckdb = poly_plugin_get_interface(old_plugin);
+        duckdb->cleanup(old_handle);
+        poly_plugin_mgr_unload(store->plugins, old_plugin);
+    }
+    
+    return INFRA_OK;
+}
+
+poly_memkv_engine_type_t poly_memkv_get_engine_type(const poly_memkv_t* store) {
+    return store ? store->type : POLY_MEMKV_ENGINE_SQLITE;
 }
 
 // ... 其他函数的实现 ...

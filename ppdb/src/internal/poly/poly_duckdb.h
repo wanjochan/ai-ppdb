@@ -3,36 +3,31 @@
 
 #include "internal/infra/infra_core.h"
 
-// DuckDB数据库句柄
-typedef struct poly_duckdb_db poly_duckdb_db_t;
+// DuckDB 接口
+typedef struct poly_duckdb_interface {
+    // 初始化
+    infra_error_t (*init)(void** handle);
+    
+    // 清理
+    void (*cleanup)(void* handle);
+    
+    // 基本操作
+    infra_error_t (*open)(void* handle, const char* path);
+    infra_error_t (*close)(void* handle);
+    infra_error_t (*exec)(void* handle, const char* sql);
+    
+    // KV 操作
+    infra_error_t (*get)(void* handle, const char* key, void** value, size_t* value_size);
+    infra_error_t (*set)(void* handle, const char* key, const void* value, size_t value_size);
+    infra_error_t (*del)(void* handle, const char* key);
+    
+    // 迭代器
+    infra_error_t (*iter_create)(void* handle, void** iter);
+    infra_error_t (*iter_next)(void* iter, char** key, void** value, size_t* value_size);
+    void (*iter_destroy)(void* iter);
+} poly_duckdb_interface_t;
 
-// 初始化DuckDB模块
-infra_error_t poly_duckdb_init(void);
-
-// 清理DuckDB模块
-infra_error_t poly_duckdb_cleanup(void);
-
-// 打开数据库
-infra_error_t poly_duckdb_open(const char* path, poly_duckdb_db_t** db);
-
-// 关闭数据库
-infra_error_t poly_duckdb_close(poly_duckdb_db_t* db);
-
-// KV操作
-infra_error_t poly_duckdb_get(poly_duckdb_db_t* db, const void* key, size_t klen, void** val, size_t* vlen);
-infra_error_t poly_duckdb_put(poly_duckdb_db_t* db, const void* key, size_t klen, const void* val, size_t vlen);
-infra_error_t poly_duckdb_del(poly_duckdb_db_t* db, const void* key, size_t klen);
-
-// 事务操作
-infra_error_t poly_duckdb_begin(poly_duckdb_db_t* db);
-infra_error_t poly_duckdb_commit(poly_duckdb_db_t* db);
-infra_error_t poly_duckdb_rollback(poly_duckdb_db_t* db);
-
-// 迭代器
-typedef struct poly_duckdb_iter poly_duckdb_iter_t;
-
-infra_error_t poly_duckdb_iter_create(poly_duckdb_db_t* db, poly_duckdb_iter_t** iter);
-infra_error_t poly_duckdb_iter_next(poly_duckdb_iter_t* iter, void** key, size_t* klen, void** val, size_t* vlen);
-infra_error_t poly_duckdb_iter_destroy(poly_duckdb_iter_t* iter);
+// 全局 DuckDB 接口实例
+extern const poly_duckdb_interface_t g_duckdb_interface;
 
 #endif // POLY_DUCKDB_H 
