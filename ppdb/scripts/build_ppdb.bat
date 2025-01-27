@@ -1,6 +1,9 @@
 @echo off
 setlocal EnableDelayedExpansion
 
+echo DEPRECATED, build under Unix for arm64
+exit /b 1
+
 rem Load environment variables and common functions
 call "%~dp0\build_env.bat"
 if errorlevel 1 exit /b 1

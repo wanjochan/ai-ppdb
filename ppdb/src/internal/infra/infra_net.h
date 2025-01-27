@@ -25,11 +25,18 @@ struct infra_socket {
 // 套接字句柄类型
 typedef struct infra_socket* infra_socket_t;
 
+// accept4 标志位
+#define INFRA_NET_ACCEPT_NONBLOCK 0x01  // 设置非阻塞
+#define INFRA_NET_ACCEPT_CLOEXEC  0x02  // 设置 close-on-exec
+
 // 服务端接口
 infra_error_t infra_net_create(infra_socket_t* sock, bool is_udp, const infra_config_t* config);
 infra_error_t infra_net_bind(infra_socket_t sock, const infra_net_addr_t* addr);
 infra_error_t infra_net_listen(infra_socket_t sock);
 infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infra_net_addr_t* client_addr);
+
+//ref @cosmomplitan special
+infra_error_t infra_net_accept4(infra_socket_t sock, infra_socket_t* client, infra_net_addr_t* client_addr, int flags);
 
 // 客户端接口
 infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config);

@@ -1,3 +1,4 @@
+// 这是之前用 select() 的代码，不删除主要是为了后面参考而已，我们参考redbean-webserver也用cosmopolitan的accept4+poll做新版
 #include "internal/peer/peer_rinetd.h"
 
 extern void bzero(void* s, size_t n);

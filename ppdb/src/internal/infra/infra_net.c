@@ -132,7 +132,7 @@ infra_error_t infra_net_listen(infra_socket_t sock) {
     return INFRA_OK;
 }
 
-infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infra_net_addr_t* client_addr) {
+infra_error_t infra_net_accept4(infra_socket_t sock, infra_socket_t* client, infra_net_addr_t* client_addr, int flags) {
     if (sock == NULL || client == NULL) {
         return INFRA_ERROR_INVALID;
     }
@@ -146,7 +146,18 @@ infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infr
     // 接受连接
     struct sockaddr_in addr = {0};
     socklen_t addr_len = sizeof(addr);
-    (*client)->fd = accept(sock->fd, (struct sockaddr*)&addr, &addr_len);
+    //(*client)->fd = accept(sock->fd, (struct sockaddr*)&addr, &addr_len);
+    
+    // 转换标志位
+    int accept4_flags = 0;
+    if (flags & INFRA_NET_ACCEPT_NONBLOCK) {
+        accept4_flags |= SOCK_NONBLOCK;
+    }
+    if (flags & INFRA_NET_ACCEPT_CLOEXEC) {
+        accept4_flags |= SOCK_CLOEXEC;
+    }
+
+    (*client)->fd = accept4(sock->fd, (struct sockaddr*)&addr, &addr_len, accept4_flags);
     if ((*client)->fd == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             infra_free(*client);
@@ -160,17 +171,17 @@ infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infr
 
     (*client)->is_udp = false;
 
-    // 继承服务器套接字的非阻塞设置
-    // 注意：这确保了accept返回的客户端套接字与服务器套接字有相同的阻塞行为
-    // 这对于 mux 模块的正确工作是必要的
-    int flags = fcntl(sock->fd, F_GETFL, 0);
-    if (flags != -1 && (flags & O_NONBLOCK)) {
-        if (fcntl((*client)->fd, F_SETFL, flags) == -1) {
-            infra_net_close(*client);
-            *client = NULL;
-            return INFRA_ERROR_SYSTEM;
-        }
-    }
+    // // 继承服务器套接字的非阻塞设置
+    // // 注意：这确保了accept返回的客户端套接字与服务器套接字有相同的阻塞行为
+    // // 这对于 mux 模块的正确工作是必要的
+    // int flags = fcntl(sock->fd, F_GETFL, 0);
+    // if (flags != -1 && (flags & O_NONBLOCK)) {
+    //     if (fcntl((*client)->fd, F_SETFL, flags) == -1) {
+    //         infra_net_close(*client);
+    //         *client = NULL;
+    //         return INFRA_ERROR_SYSTEM;
+    //     }
+    // }
 
     // 如果需要，填充客户端地址信息
     if (client_addr != NULL) {
@@ -192,6 +203,22 @@ infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infr
     }
 
     return INFRA_OK;
+}
+
+infra_error_t infra_net_accept(infra_socket_t sock, infra_socket_t* client, infra_net_addr_t* client_addr) {
+    // 获取服务器socket的标志
+    int flags = fcntl(sock->fd, F_GETFL, 0);
+    if (flags == -1) {
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    // 如果服务器socket是非阻塞的，新socket也设置为非阻塞
+    int accept_flags = 0;
+    if (flags & O_NONBLOCK) {
+        accept_flags |= INFRA_NET_ACCEPT_NONBLOCK;
+    }
+
+    return infra_net_accept4(sock, client, client_addr, accept_flags);
 }
 
 infra_error_t infra_net_connect(const infra_net_addr_t* addr, infra_socket_t* sock, const infra_config_t* config) {
