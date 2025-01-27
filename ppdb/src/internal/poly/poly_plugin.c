@@ -1,6 +1,7 @@
 #include "internal/poly/poly_plugin.h"
 #include "internal/poly/poly_hashtable.h"
 #include "internal/infra/infra_core.h"
+#include <string.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -20,116 +21,173 @@
 
 // 插件管理器结构
 struct poly_plugin_mgr {
-    poly_hashtable_t* plugins;  // 插件哈希表
+    poly_plugin_t* plugins[16];  // 最多支持16个插件
+    int plugin_count;
 };
 
 // 创建插件管理器
 infra_error_t poly_plugin_mgr_create(poly_plugin_mgr_t** mgr) {
-    if (!mgr) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_plugin_mgr_t* m = infra_malloc(sizeof(poly_plugin_mgr_t));
-    if (!m) return INFRA_ERROR_NO_MEMORY;
-    
-    infra_error_t err = poly_hashtable_create(16, 
-                                            poly_hashtable_string_hash,
-                                            poly_hashtable_string_compare,
-                                            &m->plugins);
-    if (err != INFRA_OK) {
-        infra_free(m);
-        return err;
+    *mgr = (poly_plugin_mgr_t*)infra_malloc(sizeof(poly_plugin_mgr_t));
+    if (*mgr == NULL) {
+        return INFRA_ERROR_NO_MEMORY;
     }
     
-    *mgr = m;
+    memset(*mgr, 0, sizeof(poly_plugin_mgr_t));
     return INFRA_OK;
 }
 
 // 销毁插件管理器
-infra_error_t poly_plugin_mgr_destroy(poly_plugin_mgr_t* mgr) {
-    if (!mgr) return INFRA_ERROR_INVALID_PARAM;
-    
-    // 遍历并卸载所有插件
-    void plugin_unloader(const poly_hashtable_entry_t* entry, void* user_data) {
-        poly_plugin_t* plugin = (poly_plugin_t*)entry->value;
-        if (plugin) {
-            if (plugin->handle) {
-                DL_CLOSE(plugin->handle);
-            }
-            infra_free(plugin);
-        }
+void poly_plugin_mgr_destroy(poly_plugin_mgr_t* mgr) {
+    if (mgr == NULL) return;
+
+    // 卸载所有插件
+    for (int i = 0; i < mgr->plugin_count; i++) {
+        poly_plugin_mgr_unload(mgr, mgr->plugins[i]);
     }
-    
-    poly_hashtable_foreach(mgr->plugins, plugin_unloader, NULL);
-    poly_hashtable_destroy(mgr->plugins);
+
     infra_free(mgr);
+}
+
+// 注册内置插件
+infra_error_t poly_plugin_register_builtin(poly_plugin_mgr_t* mgr,
+                                         const poly_builtin_plugin_t* builtin) {
+    if (mgr == NULL || builtin == NULL) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (mgr->plugin_count >= 16) {
+        return INFRA_ERROR_NO_SPACE;
+    }
+
+    // 创建插件对象
+    poly_plugin_t* plugin = (poly_plugin_t*)infra_malloc(sizeof(poly_plugin_t));
+    if (plugin == NULL) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    // 初始化插件
+    plugin->name = builtin->name;
+    plugin->version = "builtin";
+    plugin->handle = NULL;  // 内置插件无需handle
+    plugin->interface = builtin->interface;
+
+    // 添加到管理器
+    mgr->plugins[mgr->plugin_count++] = plugin;
     
     return INFRA_OK;
 }
 
-// 加载插件
+// 加载动态插件
 infra_error_t poly_plugin_mgr_load(poly_plugin_mgr_t* mgr,
                                   poly_plugin_type_t type,
-                                  const char* plugin_path,
+                                  const char* path,
                                   poly_plugin_t** plugin) {
-    if (!mgr || !plugin_path || !plugin) return INFRA_ERROR_INVALID_PARAM;
-    
+    if (mgr == NULL || path == NULL) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (mgr->plugin_count >= 16) {
+        return INFRA_ERROR_NO_SPACE;
+    }
+
     // 加载动态库
-    DL_HANDLE handle = DL_OPEN(plugin_path);
-    if (!handle) {
+#ifdef _WIN32
+    HMODULE handle = LoadLibraryA(path);
+#else
+    void* handle = dlopen(path, RTLD_LAZY);
+#endif
+    if (handle == NULL) {
         return INFRA_ERROR_IO;
     }
-    
-    // 获取插件信息
-    const char* (*get_name)(void) = DL_SYM(handle, "plugin_get_name");
-    const char* (*get_version)(void) = DL_SYM(handle, "plugin_get_version");
-    void* (*get_interface)(void) = DL_SYM(handle, "plugin_get_interface");
-    
-    if (!get_name || !get_version || !get_interface) {
-        DL_CLOSE(handle);
-        return INFRA_ERROR_INVALID;
+
+    // 获取插件信息函数
+#ifdef _WIN32
+    const char* (*get_name)() = (const char* (*)())GetProcAddress(handle, "plugin_get_name");
+    const char* (*get_version)() = (const char* (*)())GetProcAddress(handle, "plugin_get_version");
+    void* (*get_interface)() = (void* (*)())GetProcAddress(handle, "plugin_get_interface");
+#else
+    const char* (*get_name)() = (const char* (*)())dlsym(handle, "plugin_get_name");
+    const char* (*get_version)() = (const char* (*)())dlsym(handle, "plugin_get_version");
+    void* (*get_interface)() = (void* (*)())dlsym(handle, "plugin_get_interface");
+#endif
+
+    if (get_name == NULL || get_version == NULL || get_interface == NULL) {
+#ifdef _WIN32
+        FreeLibrary(handle);
+#else
+        dlclose(handle);
+#endif
+        return INFRA_ERROR_INVALID_FORMAT;
     }
-    
+
     // 创建插件对象
-    poly_plugin_t* p = infra_malloc(sizeof(poly_plugin_t));
-    if (!p) {
-        DL_CLOSE(handle);
+    poly_plugin_t* new_plugin = (poly_plugin_t*)infra_malloc(sizeof(poly_plugin_t));
+    if (new_plugin == NULL) {
+#ifdef _WIN32
+        FreeLibrary(handle);
+#else
+        dlclose(handle);
+#endif
         return INFRA_ERROR_NO_MEMORY;
     }
-    
-    p->name = get_name();
-    p->version = get_version();
-    p->handle = handle;
-    p->interface = get_interface();
-    
-    // 添加到哈希表
-    infra_error_t err = poly_hashtable_put(mgr->plugins, (void*)p->name, p);
-    if (err != INFRA_OK) {
-        DL_CLOSE(handle);
-        infra_free(p);
-        return err;
-    }
-    
-    *plugin = p;
+
+    // 初始化插件
+    new_plugin->name = get_name();
+    new_plugin->version = get_version();
+    new_plugin->handle = handle;
+    new_plugin->interface = get_interface();
+
+    // 添加到管理器
+    mgr->plugins[mgr->plugin_count++] = new_plugin;
+    *plugin = new_plugin;
+
     return INFRA_OK;
 }
 
 // 卸载插件
 infra_error_t poly_plugin_mgr_unload(poly_plugin_mgr_t* mgr,
                                     poly_plugin_t* plugin) {
-    if (!mgr || !plugin) return INFRA_ERROR_INVALID_PARAM;
-    
-    // 从哈希表中移除
-    infra_error_t err = poly_hashtable_remove(mgr->plugins, plugin->name);
-    if (err != INFRA_OK) {
-        return err;
+    if (mgr == NULL || plugin == NULL) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
-    
-    // 卸载动态库
-    if (plugin->handle) {
-        DL_CLOSE(plugin->handle);
+
+    // 查找插件
+    int index = -1;
+    for (int i = 0; i < mgr->plugin_count; i++) {
+        if (mgr->plugins[i] == plugin) {
+            index = i;
+            break;
+        }
     }
-    
+
+    if (index == -1) {
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // 如果是动态插件，卸载动态库
+    if (plugin->handle != NULL) {
+#ifdef _WIN32
+        FreeLibrary((HMODULE)plugin->handle);
+#else
+        dlclose(plugin->handle);
+#endif
+    }
+
+    // 释放插件对象
     infra_free(plugin);
+
+    // 从管理器中移除
+    for (int i = index; i < mgr->plugin_count - 1; i++) {
+        mgr->plugins[i] = mgr->plugins[i + 1];
+    }
+    mgr->plugin_count--;
+
     return INFRA_OK;
+}
+
+// 获取插件接口
+void* poly_plugin_get_interface(poly_plugin_t* plugin) {
+    return plugin ? plugin->interface : NULL;
 }
 
 // 获取插件

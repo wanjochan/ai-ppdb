@@ -8,6 +8,9 @@
 static poly_plugin_mgr_t* g_plugin_mgr = NULL;
 static poly_plugin_t* g_current_plugin = NULL;
 
+// 在文件开头添加外部声明
+extern const poly_builtin_plugin_t g_sqlite_plugin;
+
 // 帮助信息
 static const char* MEMKV_HELP = 
     "memkv - Memory Key-Value Store\n"
@@ -56,19 +59,18 @@ static infra_error_t load_vendor_plugin(const char* vendor) {
         g_current_plugin = NULL;
     }
 
-    const char* plugin_path;
     if (strcmp(vendor, "sqlite") == 0) {
-        plugin_path = "plugins/sqlite.dll";
+        // 使用内置SQLite插件
+        return poly_plugin_register_builtin(g_plugin_mgr, &g_sqlite_plugin);
     } else if (strcmp(vendor, "duckdb") == 0) {
-        plugin_path = "plugins/duckdb.dll";
-    } else {
-        return INFRA_ERROR_INVALID_PARAM;
+        // DuckDB仍然使用动态加载
+        return poly_plugin_mgr_load(g_plugin_mgr, 
+                                  POLY_PLUGIN_DUCKDB,
+                                  "plugins/duckdb.dll",
+                                  &g_current_plugin);
     }
-
-    return poly_plugin_mgr_load(g_plugin_mgr, 
-                               strcmp(vendor, "sqlite") == 0 ? POLY_PLUGIN_SQLITE : POLY_PLUGIN_DUCKDB,
-                               plugin_path,
-                               &g_current_plugin);
+    
+    return INFRA_ERROR_INVALID_PARAM;
 }
 
 // 命令处理函数

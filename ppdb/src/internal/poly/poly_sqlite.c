@@ -240,4 +240,11 @@ infra_error_t poly_sqlite_iter_destroy(poly_sqlite_iter_t* iter) {
     infra_free(iter);
     
     return INFRA_OK;
-} 
+}
+
+// 在文件末尾添加内置插件定义
+const poly_builtin_plugin_t g_sqlite_plugin = {
+    .name = "sqlite",
+    .interface = &g_sqlite_interface,
+    .type = POLY_PLUGIN_SQLITE
+}; 

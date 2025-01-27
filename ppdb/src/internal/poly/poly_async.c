@@ -1,3 +1,4 @@
+//TODO change select to poll mechanism
 #include "poly_async.h"
 
 #define POLY_ASYNC_MAX_EVENTS 1024
