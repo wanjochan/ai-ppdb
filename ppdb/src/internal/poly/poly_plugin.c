@@ -1,5 +1,4 @@
 #include "internal/poly/poly_plugin.h"
-#include "internal/poly/poly_hashtable.h"
 #include "internal/infra/infra_core.h"
 
 //cosmopolitan
@@ -176,6 +175,6 @@ infra_error_t poly_plugin_mgr_get(poly_plugin_mgr_t* mgr,
 }
 
 // 获取插件接口
-void* poly_plugin_get_interface(const poly_plugin_t* plugin) {
+const poly_plugin_interface_t* poly_plugin_get_interface(const poly_plugin_t* plugin) {
     return plugin ? plugin->interface : NULL;
 } 

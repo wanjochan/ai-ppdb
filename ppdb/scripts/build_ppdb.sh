@@ -24,7 +24,7 @@ if [ "${ENABLE_MEMKV}" = "1" ]; then
 fi
 
 # 添加源目录到包含路径
-CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include -I${PPDB_DIR}/src -I${PPDB_DIR}/include"
+CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${ROOT_DIR}/repos/cosmopolitan//third_party/sqlite3"
 
 # 构建 ppdb
 echo remove "${BUILD_DIR}/ppdb_latest.exe"
@@ -41,7 +41,6 @@ SOURCES=(
     "${SRC_DIR}/internal/infra/infra_platform.c"
     "${SRC_DIR}/internal/infra/infra_sync.c"
     "${SRC_DIR}/internal/poly/poly_cmdline.c"
-    "${SRC_DIR}/internal/poly/poly_hashtable.c"
     "${SRC_DIR}/internal/poly/poly_atomic.c"
     "${SRC_DIR}/internal/poly/poly_plugin.c"
     "${SRC_DIR}/internal/poly/poly_memkv.c"

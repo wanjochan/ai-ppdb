@@ -81,3 +81,6 @@ ppdb/scripts/test.txt
 ppdb/src/cosmo/test4.map
 *.msi
 *.appx
+ppdb/src/vendor/libduckdb.zip
+ppdb/vendor/duckdb/tmp/duckdb
+ppdb/vendor/duckdb/tmp/duckdb-cli.zip

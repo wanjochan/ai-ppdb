@@ -10,16 +10,32 @@ typedef enum {
 } poly_plugin_type_t;
 
 // 插件接口
+typedef struct poly_plugin_interface {
+    // 初始化
+    infra_error_t (*init)(void** handle);
+    // 清理
+    void (*cleanup)(void* handle);
+    // 设置键值对
+    infra_error_t (*set)(void* handle, const char* key,
+        const void* value, size_t value_size);
+    // 获取键值对
+    infra_error_t (*get)(void* handle, const char* key,
+        void** value, size_t* value_size);
+    // 删除键值对
+    infra_error_t (*del)(void* handle, const char* key);
+} poly_plugin_interface_t;
+
+// 插件
 typedef struct poly_plugin {
     const char* name;            // 插件名称
     poly_plugin_type_t type;     // 插件类型
-    void* interface;             // 插件接口
+    const poly_plugin_interface_t* interface;  // 插件接口
 } poly_plugin_t;
 
 // 内置插件
 typedef struct poly_builtin_plugin {
     const char* name;            // 插件名称
-    void* interface;             // 插件接口
+    const poly_plugin_interface_t* interface;  // 插件接口
     poly_plugin_type_t type;     // 插件类型
 } poly_builtin_plugin_t;
 
@@ -49,6 +65,6 @@ infra_error_t poly_plugin_mgr_get(poly_plugin_mgr_t* mgr,
     poly_plugin_type_t type, const char* name, poly_plugin_t** plugin);
 
 // 获取插件接口
-void* poly_plugin_get_interface(const poly_plugin_t* plugin);
+const poly_plugin_interface_t* poly_plugin_get_interface(const poly_plugin_t* plugin);
 
 #endif // POLY_PLUGIN_H 

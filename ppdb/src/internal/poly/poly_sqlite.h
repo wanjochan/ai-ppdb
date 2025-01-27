@@ -2,6 +2,7 @@
 #define POLY_SQLITE_H
 
 #include "internal/infra/infra_core.h"
+#include "internal/poly/poly_plugin.h"
 
 // SQLite 接口
 typedef struct poly_sqlite_interface {
@@ -29,5 +30,8 @@ typedef struct poly_sqlite_interface {
 
 // 全局 SQLite 接口实例
 extern const poly_sqlite_interface_t g_sqlite_interface;
+
+// 获取SQLite插件接口
+const poly_plugin_interface_t* poly_sqlite_get_interface(void);
 
 #endif // POLY_SQLITE_H 
