@@ -65,6 +65,14 @@ infra_error_t poly_memkv_get(poly_memkv_t* store, const char* key,
 // 删除键值对
 infra_error_t poly_memkv_del(poly_memkv_t* store, const char* key);
 
+// 增加计数器
+infra_error_t poly_memkv_incr(poly_memkv_t* store, const char* key,
+    uint64_t delta, uint64_t* new_value);
+
+// 减少计数器
+infra_error_t poly_memkv_decr(poly_memkv_t* store, const char* key,
+    uint64_t delta, uint64_t* new_value);
+
 // 获取统计信息
 const poly_memkv_stats_t* poly_memkv_get_stats(poly_memkv_t* store);
 

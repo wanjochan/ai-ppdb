@@ -26,6 +26,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <ctype.h>
 
 /* System headers */
 #include <signal.h>     /* 信号处理 */

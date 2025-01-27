@@ -28,6 +28,7 @@ CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include -I${PPDB_DIR}/src -I${
 # 构建 ppdb
 echo remove "${BUILD_DIR}/ppdb_latest.exe"
 rm -f "${BUILD_DIR}/ppdb_latest.exe"
+rm -f "${PPDB_DIR}/ppdb_latest.exe"
 echo "Building ppdb..."
 # 准备源文件列表
 SOURCES=(
@@ -66,6 +67,11 @@ fi
 echo "Building sqlite3..."
 if [ ! -f "${BUILD_DIR}/obj/sqlite3.o" ] || [ "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -nt "${BUILD_DIR}/obj/sqlite3.o" ]; then
     "${CC}" ${CFLAGS} -c "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -o "${BUILD_DIR}/obj/sqlite3.o"
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to build sqlite3"
+        rm -f "${BUILD_DIR}/obj/sqlite3.o"
+        exit 1
+    fi
 fi
 
 # 增量编译源文件
@@ -78,6 +84,14 @@ compile_file() {
     local obj=$2
     echo "Compiling ${src}..."
     "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
+    local ret=$?
+    if [ $ret -ne 0 ]; then
+        echo "Error: Failed to compile ${src}"
+        rm -f "${obj}"  # 删除可能生成的不完整目标文件
+        # 向父进程发送信号，通知构建失败
+        kill -TERM $PPID
+        exit $ret
+    fi
 }
 
 for src in "${SOURCES[@]}"; do
@@ -88,6 +102,17 @@ for src in "${SOURCES[@]}"; do
         while [ ${#PIDS[@]} -ge $JOBS ]; do
             for i in ${!PIDS[@]}; do
                 if ! kill -0 ${PIDS[$i]} 2>/dev/null; then
+                    # 检查编译任务的返回值
+                    wait ${PIDS[$i]}
+                    ret=$?
+                    if [ $ret -ne 0 ]; then
+                        echo "Error: A compilation task failed"
+                        # 清理所有正在运行的任务
+                        for pid in ${PIDS[@]}; do
+                            kill $pid 2>/dev/null
+                        done
+                        exit $ret
+                    fi
                     unset PIDS[$i]
                 fi
             done
@@ -101,15 +126,22 @@ for src in "${SOURCES[@]}"; do
     fi
 done
 
-# 等待所有编译任务完成
-wait
+# 等待所有编译任务完成并检查返回值
+for pid in ${PIDS[@]}; do
+    wait $pid
+    ret=$?
+    if [ $ret -ne 0 ]; then
+        echo "Error: A compilation task failed"
+        exit $ret
+    fi
+done
 
 # 链接
 echo "Linking..."
 "${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${BUILD_DIR}/obj/sqlite3.o" -o "${BUILD_DIR}/ppdb_latest.exe"
-
 if [ $? -ne 0 ]; then
-    echo "Error: Build failed !!!"
+    echo "Error: Linking failed"
+    rm -f "${BUILD_DIR}/ppdb_latest.exe"
     exit 1
 fi
 

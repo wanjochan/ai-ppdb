@@ -184,6 +184,92 @@ infra_error_t poly_memkv_del(poly_memkv_t* store, const char* key) {
     return err;
 }
 
+infra_error_t poly_memkv_incr(poly_memkv_t* store, const char* key,
+    uint64_t delta, uint64_t* new_value) {
+    if (!store || !key || !new_value) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 检查键大小限制
+    if (strlen(key) > store->config.max_key_size) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 获取当前值
+    void* data = NULL;
+    size_t data_size = 0;
+    infra_error_t err = poly_memkv_get(store, key, &data, &data_size);
+    
+    uint64_t current = 0;
+    if (err == INFRA_OK && data) {
+        // 尝试将值转换为数字
+        char* endptr;
+        current = strtoull((char*)data, &endptr, 10);
+        if (*endptr != '\0') {
+            free(data);
+            return INFRA_ERROR_INVALID_FORMAT;
+        }
+        free(data);
+    } else if (err != INFRA_ERROR_NOT_FOUND) {
+        return err;
+    }
+
+    // 计算新值
+    *new_value = current + delta;
+
+    // 将新值转换为字符串
+    char value_str[32];
+    snprintf(value_str, sizeof(value_str), "%lu", *new_value);
+
+    // 存储新值
+    return poly_memkv_set(store, key, value_str, strlen(value_str));
+}
+
+infra_error_t poly_memkv_decr(poly_memkv_t* store, const char* key,
+    uint64_t delta, uint64_t* new_value) {
+    if (!store || !key || !new_value) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 检查键大小限制
+    if (strlen(key) > store->config.max_key_size) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 获取当前值
+    void* data = NULL;
+    size_t data_size = 0;
+    infra_error_t err = poly_memkv_get(store, key, &data, &data_size);
+    
+    uint64_t current = 0;
+    if (err == INFRA_OK && data) {
+        // 尝试将值转换为数字
+        char* endptr;
+        current = strtoull((char*)data, &endptr, 10);
+        if (*endptr != '\0') {
+            free(data);
+            return INFRA_ERROR_INVALID_FORMAT;
+        }
+        free(data);
+    } else if (err != INFRA_ERROR_NOT_FOUND) {
+        return err;
+    }
+
+    // 计算新值（防止下溢）
+    if (current < delta) {
+        *new_value = 0;
+    } else {
+        *new_value = current - delta;
+    }
+
+    // 将新值转换为字符串
+    char value_str[32];
+    snprintf(value_str, sizeof(value_str), "%lu", *new_value);
+
+    // 存储新值
+    return poly_memkv_set(store, key, value_str, strlen(value_str));
+}
+
 const poly_memkv_stats_t* poly_memkv_get_stats(poly_memkv_t* store) {
     if (!store) {
         return NULL;
