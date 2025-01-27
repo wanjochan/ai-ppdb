@@ -102,20 +102,14 @@ static infra_error_t read_command(memkv_conn_t* conn, char* cmd, size_t cmd_size
     size_t pos = 0;
     bool found_cr = false;
     infra_error_t err;
+    size_t recv_size;
 
     // 读取命令行直到 \r\n
     while (pos < sizeof(conn->buffer) - 1) {
-        size_t recv_size = 0;
+        recv_size = 0;
         err = infra_net_recv(conn->sock, conn->buffer + pos, 1, &recv_size);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                return err;  // 让外层循环处理非阻塞
-            }
-            return err;
-        }
-        if (recv_size == 0) {
-            return INFRA_ERROR_CLOSED;
-        }
+        if (err != INFRA_OK) return err;
+        if (recv_size == 0) return INFRA_ERROR_CLOSED;
 
         if (conn->buffer[pos] == '\r') {
             found_cr = true;
@@ -130,17 +124,13 @@ static infra_error_t read_command(memkv_conn_t* conn, char* cmd, size_t cmd_size
 
     // 解析命令行
     char* token = strtok(conn->buffer, " ");
-    if (!token) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+    if (!token) return INFRA_ERROR_INVALID_PARAM;
     strncpy(cmd, token, cmd_size - 1);
     cmd[cmd_size - 1] = '\0';
 
     // 解析 key
     token = strtok(NULL, " ");
-    if (!token) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+    if (!token) return INFRA_ERROR_INVALID_PARAM;
     strncpy(key, token, key_size - 1);
     key[key_size - 1] = '\0';
 
@@ -172,36 +162,21 @@ static infra_error_t read_command(memkv_conn_t* conn, char* cmd, size_t cmd_size
         // 读取数据
         size_t bytes_read = 0;
         while (bytes_read < *data_len) {
-            size_t recv_size = 0;
+            recv_size = 0;
             err = infra_net_recv(conn->sock, data + bytes_read, *data_len - bytes_read, &recv_size);
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                    return err;  // 让外层循环处理非阻塞
-                }
-                return err;
-            }
-            if (recv_size == 0) {
-                return INFRA_ERROR_CLOSED;
-            }
+            if (err != INFRA_OK) return err;
+            if (recv_size == 0) return INFRA_ERROR_CLOSED;
             bytes_read += recv_size;
         }
 
         // 读取结尾的 \r\n
         char end[2];
-        size_t recv_size = 0;
+        recv_size = 0;
         err = infra_net_recv(conn->sock, end, 2, &recv_size);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                return err;  // 让外层循环处理非阻塞
-            }
-            return err;
-        }
+        if (err != INFRA_OK) return err;
         if (recv_size != 2 || end[0] != '\r' || end[1] != '\n') {
             return INFRA_ERROR_INVALID_PARAM;
         }
-    } else if (strcasecmp(cmd, "delete") == 0) {
-        // delete 命令可能有额外的 noreply 参数，忽略它
-        token = strtok(NULL, " ");  // 尝试读取 noreply
     } else if (strcasecmp(cmd, "incr") == 0 || strcasecmp(cmd, "decr") == 0) {
         // 解析增量值
         token = strtok(NULL, " ");
@@ -214,17 +189,50 @@ static infra_error_t read_command(memkv_conn_t* conn, char* cmd, size_t cmd_size
 }
 
 // 发送响应
-static void send_response(memkv_conn_t* conn, const char* fmt, ...) {
+static infra_error_t send_response(memkv_conn_t* conn, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     int len = vsnprintf(conn->buffer, sizeof(conn->buffer) - 2, fmt, args);
     va_end(args);
 
-    if (len < 0 || len >= sizeof(conn->buffer) - 2) return;
+    if (len < 0 || len >= sizeof(conn->buffer) - 2) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
 
     conn->buffer[len] = '\r';
     conn->buffer[len + 1] = '\n';
-    infra_net_send(conn->sock, conn->buffer, len + 2, NULL);
+    len += 2;
+
+    size_t sent = 0;
+    while (sent < len) {
+        size_t bytes = 0;
+        infra_error_t err = infra_net_send(conn->sock, conn->buffer + sent, len - sent, &bytes);
+        if (err != INFRA_OK) {
+            return err;
+        }
+        if (bytes == 0) {
+            return INFRA_ERROR_CLOSED;
+        }
+        sent += bytes;
+    }
+    return INFRA_OK;
+}
+
+// 发送数据块
+static infra_error_t send_data(memkv_conn_t* conn, const void* data, size_t len) {
+    size_t sent = 0;
+    while (sent < len) {
+        size_t bytes = 0;
+        infra_error_t err = infra_net_send(conn->sock, (const char*)data + sent, len - sent, &bytes);
+        if (err != INFRA_OK) {
+            return err;
+        }
+        if (bytes == 0) {
+            return INFRA_ERROR_CLOSED;
+        }
+        sent += bytes;
+    }
+    return INFRA_OK;
 }
 
 // 处理连接
@@ -241,13 +249,14 @@ static void* handle_connection(void* arg) {
     size_t value_len;
     uint32_t flags = 0;
     uint32_t exptime = 0;
+    infra_error_t err;
 
     // 设置socket超时（30秒）
     infra_net_set_timeout(conn->sock, 30000);
 
     while (g_context.running) {
         // 读取命令
-        infra_error_t err = read_command(conn, cmd, sizeof(cmd), key, sizeof(key),
+        err = read_command(conn, cmd, sizeof(cmd), key, sizeof(key),
             value, sizeof(value), &value_len, &flags, &exptime);
         if (err != INFRA_OK) break;
 
@@ -255,23 +264,48 @@ static void* handle_connection(void* arg) {
         if (strcasecmp(cmd, "get") == 0) {
             void* data = NULL;
             size_t data_len;
-            if (poly_memkv_get(g_context.store, key, &data, &data_len) == INFRA_OK && data) {
-                send_response(conn, "VALUE %s %u %zu", key, flags, data_len);
-                infra_net_send(conn->sock, data, data_len, NULL);
-                send_response(conn, "");
-                send_response(conn, "END");
+            err = poly_memkv_get(g_context.store, key, &data, &data_len);
+            if (err == INFRA_OK && data) {
+                err = send_response(conn, "VALUE %s %u %zu", key, flags, data_len);
+                if (err != INFRA_OK) {
+                    free(data);
+                    break;
+                }
+                err = send_data(conn, data, data_len);
+                if (err != INFRA_OK) {
+                    free(data);
+                    break;
+                }
+                err = send_response(conn, "");
+                if (err != INFRA_OK) {
+                    free(data);
+                    break;
+                }
+                err = send_response(conn, "END");
                 free(data);
+                if (err != INFRA_OK) break;
             } else {
-                send_response(conn, "END");
+                err = send_response(conn, "END");
+                if (err != INFRA_OK) break;
             }
         }
         else if (strcasecmp(cmd, "set") == 0) {
             err = poly_memkv_set(g_context.store, key, value, value_len);
-            send_response(conn, err == INFRA_OK ? "STORED" : "NOT_STORED");
+            if (err == INFRA_OK) {
+                err = send_response(conn, "STORED");
+            } else {
+                err = send_response(conn, "NOT_STORED");
+            }
+            if (err != INFRA_OK) break;
         }
         else if (strcasecmp(cmd, "delete") == 0) {
             err = poly_memkv_del(g_context.store, key);
-            send_response(conn, err == INFRA_OK ? "DELETED" : "NOT_FOUND");
+            if (err == INFRA_OK) {
+                err = send_response(conn, "DELETED");
+            } else {
+                err = send_response(conn, "NOT_FOUND");
+            }
+            if (err != INFRA_OK) break;
         }
         else if (strcasecmp(cmd, "incr") == 0 || strcasecmp(cmd, "decr") == 0) {
             uint64_t new_value;
@@ -280,13 +314,20 @@ static void* handle_connection(void* arg) {
             } else {
                 err = poly_memkv_decr(g_context.store, key, value_len, &new_value);
             }
-            send_response(conn, err == INFRA_OK ? "%lu" : "NOT_FOUND", new_value);
+            if (err == INFRA_OK) {
+                err = send_response(conn, "%lu", new_value);
+            } else {
+                err = send_response(conn, "NOT_FOUND");
+            }
+            if (err != INFRA_OK) break;
         }
         else if (strcasecmp(cmd, "flush_all") == 0) {
-            send_response(conn, "OK");
+            err = send_response(conn, "OK");
+            if (err != INFRA_OK) break;
         }
         else {
-            send_response(conn, "ERROR");
+            err = send_response(conn, "ERROR");
+            if (err != INFRA_OK) break;
         }
     }
 
