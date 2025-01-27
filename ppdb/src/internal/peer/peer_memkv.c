@@ -36,7 +36,7 @@ typedef struct memkv_context {
 //-----------------------------------------------------------------------------
 
 // Service interface functions
-static infra_error_t memkv_init(void);
+static infra_error_t memkv_init(const infra_config_t* config);
 static infra_error_t memkv_cleanup(void);
 static infra_error_t memkv_start(void);
 static infra_error_t memkv_stop(void);
@@ -296,7 +296,7 @@ static void* service_thread(void* arg) {
 //-----------------------------------------------------------------------------
 
 // 初始化服务
-infra_error_t memkv_init(void) {
+static infra_error_t memkv_init(const infra_config_t* config) {
     infra_error_t err;
     
     // 初始化上下文
@@ -305,7 +305,11 @@ infra_error_t memkv_init(void) {
     g_context.engine = POLY_MEMKV_ENGINE_SQLITE;
     
     // 创建线程池
-    err = infra_thread_pool_create(4, &g_context.thread_pool);
+    infra_thread_pool_config_t pool_config = {
+        .min_threads = MEMKV_MIN_THREADS,
+        .max_threads = MEMKV_MAX_THREADS
+    };
+    err = infra_thread_pool_create(&pool_config, &g_context.thread_pool);
     if (err != INFRA_OK) {
         return err;
     }
@@ -318,13 +322,13 @@ infra_error_t memkv_init(void) {
     }
     
     // 创建存储实例
-    poly_memkv_config_t config = {
+    poly_memkv_config_t config_memkv = {
         .max_key_size = 256,
         .max_value_size = 1024*1024,
         .engine_type = g_context.engine,
         .plugin_path = g_context.plugin_path
     };
-    err = poly_memkv_create(&config, &g_context.store);
+    err = poly_memkv_create(&config_memkv, &g_context.store);
     if (err != INFRA_OK) {
         infra_mutex_destroy(&g_context.mutex);
         infra_thread_pool_destroy(g_context.thread_pool);
@@ -355,19 +359,24 @@ infra_error_t memkv_start(void) {
 }
 
 // 停止服务
-void memkv_stop(void) {
+static infra_error_t memkv_stop(void) {
     if (!g_context.running) {
-        return;
+        return INFRA_OK;
     }
     
     g_context.running = false;
     
-    // 等待所有任务完成
-    infra_thread_pool_wait(g_context.thread_pool);
+    // 等待所有任务完成并销毁线程池
+    if (g_context.thread_pool) {
+        infra_thread_pool_destroy(g_context.thread_pool);
+        g_context.thread_pool = NULL;
+    }
+    
+    return INFRA_OK;
 }
 
 // 清理服务
-void memkv_cleanup(void) {
+static infra_error_t memkv_cleanup(void) {
     if (g_context.store) {
         poly_memkv_destroy(g_context.store);
         g_context.store = NULL;
@@ -386,6 +395,7 @@ void memkv_cleanup(void) {
     infra_mutex_destroy(&g_context.mutex);
     
     memset(&g_context, 0, sizeof(g_context));
+    return INFRA_OK;
 }
 
 // 检查服务是否运行
