@@ -1,9 +1,23 @@
 #!/bin/bash
+# 记录开始时间
+START_TIME=$(date +%s.%N)
 
 # 加载环境变量和通用函数
 source "$(dirname "$0")/build_env.sh"
 if [ $? -ne 0 ]; then
     echo "Error: Failed to load build environment"
+    exit 1
+fi
+
+
+# 检查sqlite3.h和duckdb.h是否存在
+if [ ! -f "${PPDB_DIR}/vendor/sqlite3/sqlite3.h" ]; then
+    echo -e "${RED}Error: sqlite3.h not found in ${PPDB_DIR}/vendor/sqlite3/${NC}"
+    exit 1
+fi
+
+if [ ! -f "${PPDB_DIR}/vendor/duckdb/duckdb.h" ]; then
+    echo -e "${RED}Error: duckdb.h not found in ${PPDB_DIR}/vendor/duckdb/${NC}" 
     exit 1
 fi
 
@@ -14,37 +28,28 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # 创建构建目录（如果不存在）
-mkdir -p "${BUILD_DIR}/infra"
+mkdir -p "${BUILD_DIR}/poly"
 
-# 编译所有 infra 源文件
-echo -e "${GREEN}Building infra library...${NC}"
+# 编译所有 poly 源文件
+echo -e "${GREEN}Building poly library...${NC}"
 
 # 清理旧的库文件
-rm -vf "${BUILD_DIR}/infra/libinfra.a"
+rm -vf "${BUILD_DIR}/poly/libpoly.a"
 
 # 定义源文件
-INFRA_SOURCES=(
-    "${SRC_DIR}/internal/infra/infra_core.c"
-    "${SRC_DIR}/internal/infra/infra_memory.c"
-    "${SRC_DIR}/internal/infra/infra_error.c"
-    "${SRC_DIR}/internal/infra/infra_net.c"
-    "${SRC_DIR}/internal/infra/infra_platform.c"
-    "${SRC_DIR}/internal/infra/infra_sync.c"
-    "${SRC_DIR}/internal/infra/infra_ds.c"
+POLY_SOURCES=(
+    "${SRC_DIR}/internal/poly/poly_sqlite.c"
+    "${SRC_DIR}/internal/poly/poly_duckdb.c"
+    "${SRC_DIR}/internal/poly/poly_memkv.c"
 )
-
-# TODO if FLAG_BUILD_CLEAN...
-#rm -vf ${BUILD_DIR}/infra/*.o
 
 # 设置最大并发数
 MAX_JOBS=2
-## 自动设置最大并发数为CPU核心数
-#MAX_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 # 编译函数
 compile_file() {
     local src=$1
-    local obj="${BUILD_DIR}/infra/$(basename "${src}" .c).o"
+    local obj="${BUILD_DIR}/poly/$(basename "${src}" .c).o"
     
     # 检查是否需要重新编译
     if [ -f "$obj" ] && [ "$src" -ot "$obj" ]; then
@@ -53,7 +58,9 @@ compile_file() {
     fi
     
     echo -e "${GREEN}Compiling ${src}...${NC}"
-    ${CC} ${CFLAGS} -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${TOOLCHAIN_DIR}/include" -c "${src}" -o "${obj}"
+    ${CC} ${CFLAGS} -I"${PPDB_DIR}/include" -I"${SRC_DIR}" \
+        -I"${PPDB_DIR}/vendor/sqlite3" -I"${PPDB_DIR}/vendor/duckdb" \
+        -c "${src}" -o "${obj}"
     if [ $? -ne 0 ]; then
         echo -e "${RED}Error: Failed to compile ${src}${NC}"
         return 1
@@ -66,7 +73,7 @@ echo "Starting parallel compilation (max ${MAX_JOBS} jobs)..."
 pids=()
 current_jobs=0
 
-for src in "${INFRA_SOURCES[@]}"; do
+for src in "${POLY_SOURCES[@]}"; do
     # 等待，直到有空闲的编译槽
     while [ ${current_jobs} -ge ${MAX_JOBS} ]; do
         for i in ${!pids[@]}; do
@@ -97,15 +104,15 @@ if [ "$failed" -ne 0 ]; then
     exit 1
 fi
 
-# 创建静态库
-echo -e "${GREEN}Creating static library...${NC}"
-"${AR}" rcs "${BUILD_DIR}/infra/libinfra.a" "${BUILD_DIR}"/infra/*.o
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Error: Failed to create static library${NC}"
-    exit 1
-fi
+# # 创建静态库
+# echo -e "${GREEN}Creating static library...${NC}"
+# "${AR}" rcs "${BUILD_DIR}/poly/libpoly.a" "${BUILD_DIR}"/poly/*.o
+# if [ $? -ne 0 ]; then
+#     echo -e "${RED}Error: Failed to create static library${NC}"
+#     exit 1
+# fi
 
-echo -e "${GREEN}Build complete.${NC}"
-ls -lh "${BUILD_DIR}/infra/libinfra.a"
+# echo -e "${GREEN}Build complete.${NC}"
+# ls -lh "${BUILD_DIR}/poly/libpoly.a"
 
-exit 0 
+exit 0

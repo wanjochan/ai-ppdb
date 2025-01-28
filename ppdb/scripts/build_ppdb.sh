@@ -63,7 +63,7 @@ else
     JOBS=$(nproc)
 fi
 
-# 编译第三方库
+# 编译第三方库(TODO call build_poly.sh instead)
 echo "Building sqlite3..."
 if [ ! -f "${BUILD_DIR}/obj/sqlite3.o" ] || [ "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -nt "${BUILD_DIR}/obj/sqlite3.o" ]; then
     "${CC}" ${CFLAGS} -c "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -o "${BUILD_DIR}/obj/sqlite3.o"

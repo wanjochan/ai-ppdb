@@ -259,6 +259,7 @@ typedef struct infra_rbtree_node {
 
 typedef struct {
     infra_rbtree_node_t* root;
+    infra_rbtree_node_t* nil;  // sentinel node
     size_t size;
 } infra_rbtree_t;
 

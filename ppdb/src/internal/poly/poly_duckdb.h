@@ -3,6 +3,12 @@
 
 #include "internal/infra/infra_core.h"
 
+// DuckDB 数据库句柄
+typedef struct poly_duckdb_db poly_duckdb_db_t;
+
+// DuckDB 迭代器句柄
+typedef struct poly_duckdb_iter poly_duckdb_iter_t;
+
 // DuckDB 接口
 typedef struct poly_duckdb_interface {
     // 初始化

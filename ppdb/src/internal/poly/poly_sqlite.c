@@ -197,6 +197,10 @@ static infra_error_t poly_sqlite_get(void* handle, const char* key,
     poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
     int rc;
     
+    // 重置语句
+    sqlite3_reset(ctx->get_stmt);
+    sqlite3_clear_bindings(ctx->get_stmt);
+    
     // 绑定参数
     rc = sqlite3_bind_text(ctx->get_stmt, 1, key, -1, SQLITE_STATIC);
     if (rc != SQLITE_OK) return INFRA_ERROR_SYSTEM;
@@ -211,7 +215,11 @@ static infra_error_t poly_sqlite_get(void* handle, const char* key,
         
         // 分配内存
         void* buf = malloc(size);
-        if (!buf) return INFRA_ERROR_NO_MEMORY;
+        if (!buf) {
+            sqlite3_reset(ctx->get_stmt);
+            sqlite3_clear_bindings(ctx->get_stmt);
+            return INFRA_ERROR_NO_MEMORY;
+        }
         
         // 复制数据
         memcpy(buf, blob, size);
@@ -219,10 +227,12 @@ static infra_error_t poly_sqlite_get(void* handle, const char* key,
         *value_size = size;
         
         sqlite3_reset(ctx->get_stmt);
+        sqlite3_clear_bindings(ctx->get_stmt);
         return INFRA_OK;
     }
     
     sqlite3_reset(ctx->get_stmt);
+    sqlite3_clear_bindings(ctx->get_stmt);
     return INFRA_ERROR_NOT_FOUND;
 }
 
@@ -232,19 +242,25 @@ static infra_error_t poly_sqlite_set(void* handle, const char* key,
     poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
     int rc;
     
+    // 重置语句
+    sqlite3_reset(ctx->set_stmt);
+    sqlite3_clear_bindings(ctx->set_stmt);
+    
     // 绑定参数
-    rc = sqlite3_bind_text(ctx->set_stmt, 1, key, -1, SQLITE_STATIC);
+    rc = sqlite3_bind_text(ctx->set_stmt, 1, key, -1, SQLITE_TRANSIENT);
     if (rc != SQLITE_OK) return INFRA_ERROR_SYSTEM;
     
-    rc = sqlite3_bind_blob(ctx->set_stmt, 2, value, value_size, SQLITE_STATIC);
+    rc = sqlite3_bind_blob(ctx->set_stmt, 2, value, value_size, SQLITE_TRANSIENT);
     if (rc != SQLITE_OK) {
         sqlite3_reset(ctx->set_stmt);
+        sqlite3_clear_bindings(ctx->set_stmt);
         return INFRA_ERROR_SYSTEM;
     }
     
     // 执行语句
     rc = sqlite3_step(ctx->set_stmt);
     sqlite3_reset(ctx->set_stmt);
+    sqlite3_clear_bindings(ctx->set_stmt);
     
     return (rc == SQLITE_DONE) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }
@@ -254,6 +270,10 @@ static infra_error_t poly_sqlite_del(void* handle, const char* key) {
     poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)handle;
     int rc;
     
+    // 重置语句
+    sqlite3_reset(ctx->del_stmt);
+    sqlite3_clear_bindings(ctx->del_stmt);
+    
     // 绑定参数
     rc = sqlite3_bind_text(ctx->del_stmt, 1, key, -1, SQLITE_STATIC);
     if (rc != SQLITE_OK) return INFRA_ERROR_SYSTEM;
@@ -261,6 +281,7 @@ static infra_error_t poly_sqlite_del(void* handle, const char* key) {
     // 执行语句
     rc = sqlite3_step(ctx->del_stmt);
     sqlite3_reset(ctx->del_stmt);
+    sqlite3_clear_bindings(ctx->del_stmt);
     
     return (rc == SQLITE_DONE) ? INFRA_OK : INFRA_ERROR_SYSTEM;
 }

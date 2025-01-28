@@ -2,9 +2,9 @@
  * infra_ds.c - Core Data Structure Implementation
  */
 
-#include "internal/infra/infra_core.h"
-#include "internal/infra/infra_ds.h"
-#include "internal/infra/infra_memory.h"
+#include "infra_core.h"
+#include "infra_memory.h"
+#include "infra_ds.h"
 
 //-----------------------------------------------------------------------------
 // List Operations Implementation
@@ -269,15 +269,41 @@ void infra_hash_clear(infra_hash_t* hash) {
 // Red-Black Tree Operations Implementation
 //-----------------------------------------------------------------------------
 
-static infra_rbtree_node_t* create_node(int key, void* value) {
+static void transplant(infra_rbtree_t* tree, infra_rbtree_node_t* u, infra_rbtree_node_t* v) {
+    if (u->parent == tree->nil) {
+        tree->root = v;
+    } else if (u == u->parent->left) {
+        u->parent->left = v;
+    } else {
+        u->parent->right = v;
+    }
+    v->parent = u->parent;
+}
+
+static infra_rbtree_node_t* minimum(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
+    while (node->left != tree->nil) {
+        node = node->left;
+    }
+    return node;
+}
+
+static void clear_node(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
+    if (node != NULL && node != tree->nil) {
+        clear_node(tree, node->left);
+        clear_node(tree, node->right);
+        infra_free(node);
+    }
+}
+
+static infra_rbtree_node_t* create_node(infra_rbtree_t* tree, int key, void* value) {
     infra_rbtree_node_t* node = (infra_rbtree_node_t*)infra_malloc(sizeof(infra_rbtree_node_t));
     if (node != NULL) {
         node->key = key;
         node->value = value;
         node->color = INFRA_RBTREE_RED;
-        node->parent = NULL;
-        node->left = NULL;
-        node->right = NULL;
+        node->parent = tree->nil;
+        node->left = tree->nil;
+        node->right = tree->nil;
     }
     return node;
 }
@@ -286,13 +312,13 @@ static void rotate_left(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
     infra_rbtree_node_t* right = node->right;
     node->right = right->left;
 
-    if (right->left != NULL) {
+    if (right->left != tree->nil) {
         right->left->parent = node;
     }
 
     right->parent = node->parent;
 
-    if (node->parent == NULL) {
+    if (node->parent == tree->nil) {
         tree->root = right;
     } else if (node == node->parent->left) {
         node->parent->left = right;
@@ -308,13 +334,13 @@ static void rotate_right(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
     infra_rbtree_node_t* left = node->left;
     node->left = left->right;
 
-    if (left->right != NULL) {
+    if (left->right != tree->nil) {
         left->right->parent = node;
     }
 
     left->parent = node->parent;
 
-    if (node->parent == NULL) {
+    if (node->parent == tree->nil) {
         tree->root = left;
     } else if (node == node->parent->right) {
         node->parent->right = left;
@@ -330,7 +356,7 @@ static void fix_insert(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
     while (node != tree->root && node->parent->color == INFRA_RBTREE_RED) {
         if (node->parent == node->parent->parent->left) {
             infra_rbtree_node_t* uncle = node->parent->parent->right;
-            if (uncle != NULL && uncle->color == INFRA_RBTREE_RED) {
+            if (uncle != tree->nil && uncle->color == INFRA_RBTREE_RED) {
                 node->parent->color = INFRA_RBTREE_BLACK;
                 uncle->color = INFRA_RBTREE_BLACK;
                 node->parent->parent->color = INFRA_RBTREE_RED;
@@ -346,7 +372,7 @@ static void fix_insert(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
             }
         } else {
             infra_rbtree_node_t* uncle = node->parent->parent->left;
-            if (uncle != NULL && uncle->color == INFRA_RBTREE_RED) {
+            if (uncle != tree->nil && uncle->color == INFRA_RBTREE_RED) {
                 node->parent->color = INFRA_RBTREE_BLACK;
                 uncle->color = INFRA_RBTREE_BLACK;
                 node->parent->parent->color = INFRA_RBTREE_RED;
@@ -365,6 +391,79 @@ static void fix_insert(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
     tree->root->color = INFRA_RBTREE_BLACK;
 }
 
+static void fix_delete(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
+    while (node != tree->root && node->color == INFRA_RBTREE_BLACK) {
+        if (node == node->parent->left) {
+            infra_rbtree_node_t* sibling = node->parent->right;
+            if (sibling == tree->nil) {
+                node = node->parent;
+                continue;
+            }
+            if (sibling->color == INFRA_RBTREE_RED) {
+                sibling->color = INFRA_RBTREE_BLACK;
+                node->parent->color = INFRA_RBTREE_RED;
+                rotate_left(tree, node->parent);
+                sibling = node->parent->right;
+            }
+            if ((sibling->left == tree->nil || sibling->left->color == INFRA_RBTREE_BLACK) &&
+                (sibling->right == tree->nil || sibling->right->color == INFRA_RBTREE_BLACK)) {
+                sibling->color = INFRA_RBTREE_RED;
+                node = node->parent;
+            } else {
+                if (sibling->right == tree->nil || sibling->right->color == INFRA_RBTREE_BLACK) {
+                    if (sibling->left != tree->nil) {
+                        sibling->left->color = INFRA_RBTREE_BLACK;
+                    }
+                    sibling->color = INFRA_RBTREE_RED;
+                    rotate_right(tree, sibling);
+                    sibling = node->parent->right;
+                }
+                sibling->color = node->parent->color;
+                node->parent->color = INFRA_RBTREE_BLACK;
+                if (sibling->right != tree->nil) {
+                    sibling->right->color = INFRA_RBTREE_BLACK;
+                }
+                rotate_left(tree, node->parent);
+                node = tree->root;
+            }
+        } else {
+            infra_rbtree_node_t* sibling = node->parent->left;
+            if (sibling == tree->nil) {
+                node = node->parent;
+                continue;
+            }
+            if (sibling->color == INFRA_RBTREE_RED) {
+                sibling->color = INFRA_RBTREE_BLACK;
+                node->parent->color = INFRA_RBTREE_RED;
+                rotate_right(tree, node->parent);
+                sibling = node->parent->left;
+            }
+            if ((sibling->right == tree->nil || sibling->right->color == INFRA_RBTREE_BLACK) &&
+                (sibling->left == tree->nil || sibling->left->color == INFRA_RBTREE_BLACK)) {
+                sibling->color = INFRA_RBTREE_RED;
+                node = node->parent;
+            } else {
+                if (sibling->left == tree->nil || sibling->left->color == INFRA_RBTREE_BLACK) {
+                    if (sibling->right != tree->nil) {
+                        sibling->right->color = INFRA_RBTREE_BLACK;
+                    }
+                    sibling->color = INFRA_RBTREE_RED;
+                    rotate_left(tree, sibling);
+                    sibling = node->parent->left;
+                }
+                sibling->color = node->parent->color;
+                node->parent->color = INFRA_RBTREE_BLACK;
+                if (sibling->left != tree->nil) {
+                    sibling->left->color = INFRA_RBTREE_BLACK;
+                }
+                rotate_right(tree, node->parent);
+                node = tree->root;
+            }
+        }
+    }
+    node->color = INFRA_RBTREE_BLACK;
+}
+
 infra_error_t infra_rbtree_create(infra_rbtree_t** tree) {
     if (tree == NULL) {
         return INFRA_ERROR_INVALID_PARAM;
@@ -375,17 +474,21 @@ infra_error_t infra_rbtree_create(infra_rbtree_t** tree) {
         return INFRA_ERROR_NO_MEMORY;
     }
 
-    (*tree)->root = NULL;
+    // 创建哨兵节点
+    (*tree)->nil = (infra_rbtree_node_t*)infra_malloc(sizeof(infra_rbtree_node_t));
+    if ((*tree)->nil == NULL) {
+        infra_free(*tree);
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    (*tree)->nil->color = INFRA_RBTREE_BLACK;
+    (*tree)->nil->left = NULL;
+    (*tree)->nil->right = NULL;
+    (*tree)->nil->parent = NULL;
+    (*tree)->root = (*tree)->nil;
     (*tree)->size = 0;
 
     return INFRA_OK;
-}
-
-void infra_rbtree_destroy(infra_rbtree_t* tree) {
-    if (tree != NULL) {
-        infra_rbtree_clear(tree);
-        infra_free(tree);
-    }
 }
 
 infra_error_t infra_rbtree_insert(infra_rbtree_t* tree, int key, void* value) {
@@ -393,15 +496,15 @@ infra_error_t infra_rbtree_insert(infra_rbtree_t* tree, int key, void* value) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    infra_rbtree_node_t* node = create_node(key, value);
+    infra_rbtree_node_t* node = create_node(tree, key, value);
     if (node == NULL) {
         return INFRA_ERROR_NO_MEMORY;
     }
 
-    infra_rbtree_node_t* parent = NULL;
+    infra_rbtree_node_t* parent = tree->nil;
     infra_rbtree_node_t* current = tree->root;
 
-    while (current != NULL) {
+    while (current != tree->nil) {
         parent = current;
         if (key < current->key) {
             current = current->left;
@@ -417,7 +520,7 @@ infra_error_t infra_rbtree_insert(infra_rbtree_t* tree, int key, void* value) {
 
     node->parent = parent;
 
-    if (parent == NULL) {
+    if (parent == tree->nil) {
         tree->root = node;
     } else if (key < parent->key) {
         parent->left = node;
@@ -437,7 +540,7 @@ void* infra_rbtree_find(infra_rbtree_t* tree, int key) {
     }
 
     infra_rbtree_node_t* node = tree->root;
-    while (node != NULL) {
+    while (node != tree->nil) {
         if (key < node->key) {
             node = node->left;
         } else if (key > node->key) {
@@ -450,70 +553,13 @@ void* infra_rbtree_find(infra_rbtree_t* tree, int key) {
     return NULL;
 }
 
-static void fix_delete(infra_rbtree_t* tree, infra_rbtree_node_t* node) {
-    while (node != tree->root && node->color == INFRA_RBTREE_BLACK) {
-        if (node == node->parent->left) {
-            infra_rbtree_node_t* sibling = node->parent->right;
-            if (sibling->color == INFRA_RBTREE_RED) {
-                sibling->color = INFRA_RBTREE_BLACK;
-                node->parent->color = INFRA_RBTREE_RED;
-                rotate_left(tree, node->parent);
-                sibling = node->parent->right;
-            }
-            if (sibling->left->color == INFRA_RBTREE_BLACK && 
-                sibling->right->color == INFRA_RBTREE_BLACK) {
-                sibling->color = INFRA_RBTREE_RED;
-                node = node->parent;
-            } else {
-                if (sibling->right->color == INFRA_RBTREE_BLACK) {
-                    sibling->left->color = INFRA_RBTREE_BLACK;
-                    sibling->color = INFRA_RBTREE_RED;
-                    rotate_right(tree, sibling);
-                    sibling = node->parent->right;
-                }
-                sibling->color = node->parent->color;
-                node->parent->color = INFRA_RBTREE_BLACK;
-                sibling->right->color = INFRA_RBTREE_BLACK;
-                rotate_left(tree, node->parent);
-                node = tree->root;
-            }
-        } else {
-            infra_rbtree_node_t* sibling = node->parent->left;
-            if (sibling->color == INFRA_RBTREE_RED) {
-                sibling->color = INFRA_RBTREE_BLACK;
-                node->parent->color = INFRA_RBTREE_RED;
-                rotate_right(tree, node->parent);
-                sibling = node->parent->left;
-            }
-            if (sibling->right->color == INFRA_RBTREE_BLACK && 
-                sibling->left->color == INFRA_RBTREE_BLACK) {
-                sibling->color = INFRA_RBTREE_RED;
-                node = node->parent;
-            } else {
-                if (sibling->left->color == INFRA_RBTREE_BLACK) {
-                    sibling->right->color = INFRA_RBTREE_BLACK;
-                    sibling->color = INFRA_RBTREE_RED;
-                    rotate_left(tree, sibling);
-                    sibling = node->parent->left;
-                }
-                sibling->color = node->parent->color;
-                node->parent->color = INFRA_RBTREE_BLACK;
-                sibling->left->color = INFRA_RBTREE_BLACK;
-                rotate_right(tree, node->parent);
-                node = tree->root;
-            }
-        }
-    }
-    node->color = INFRA_RBTREE_BLACK;
-}
-
 void* infra_rbtree_remove(infra_rbtree_t* tree, int key) {
     if (tree == NULL) {
         return NULL;
     }
 
     infra_rbtree_node_t* node = tree->root;
-    while (node != NULL) {
+    while (node != tree->nil) {
         if (key < node->key) {
             node = node->left;
         } else if (key > node->key) {
@@ -522,45 +568,39 @@ void* infra_rbtree_remove(infra_rbtree_t* tree, int key) {
             void* value = node->value;
             
             infra_rbtree_node_t* x;
-            infra_rbtree_node_t* y;
+            infra_rbtree_node_t* y = node;
+            infra_rbtree_color_t y_original_color = y->color;
 
-            if (node->left == NULL || node->right == NULL) {
-                y = node;
+            if (node->left == tree->nil) {
+                x = node->right;
+                transplant(tree, node, node->right);
+            } else if (node->right == tree->nil) {
+                x = node->left;
+                transplant(tree, node, node->left);
             } else {
-                y = node->right;
-                while (y->left != NULL) {
-                    y = y->left;
-                }
-            }
-
-            if (y->left != NULL) {
-                x = y->left;
-            } else {
+                y = minimum(tree, node->right);
+                y_original_color = y->color;
                 x = y->right;
+                
+                if (y->parent == node) {
+                    x->parent = y;
+                } else {
+                    transplant(tree, y, y->right);
+                    y->right = node->right;
+                    y->right->parent = y;
+                }
+                
+                transplant(tree, node, y);
+                y->left = node->left;
+                y->left->parent = y;
+                y->color = node->color;
             }
 
-            if (x != NULL) {
-                x->parent = y->parent;
-            }
-
-            if (y->parent == NULL) {
-                tree->root = x;
-            } else if (y == y->parent->left) {
-                y->parent->left = x;
-            } else {
-                y->parent->right = x;
-            }
-
-            if (y != node) {
-                node->key = y->key;
-                node->value = y->value;
-            }
-
-            if (y->color == INFRA_RBTREE_BLACK && x != NULL) {
+            if (y_original_color == INFRA_RBTREE_BLACK) {
                 fix_delete(tree, x);
             }
 
-            infra_free(y);
+            infra_free(node);
             tree->size--;
             return value;
         }
@@ -569,18 +609,18 @@ void* infra_rbtree_remove(infra_rbtree_t* tree, int key) {
     return NULL;
 }
 
-static void clear_node(infra_rbtree_node_t* node) {
-    if (node != NULL) {
-        clear_node(node->left);
-        clear_node(node->right);
-        infra_free(node);
+void infra_rbtree_clear(infra_rbtree_t* tree) {
+    if (tree != NULL) {
+        clear_node(tree, tree->root);
+        tree->root = tree->nil;
+        tree->size = 0;
     }
 }
 
-void infra_rbtree_clear(infra_rbtree_t* tree) {
+void infra_rbtree_destroy(infra_rbtree_t* tree) {
     if (tree != NULL) {
-        clear_node(tree->root);
-        tree->root = NULL;
-        tree->size = 0;
+        infra_rbtree_clear(tree);
+        infra_free(tree->nil);
+        infra_free(tree);
     }
 } 

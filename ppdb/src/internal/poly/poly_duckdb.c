@@ -128,19 +128,18 @@ infra_error_t poly_duckdb_get(poly_duckdb_db_t* db, const void* key, size_t klen
     }
     
     // 获取BLOB数据
-    size_t blob_size;
-    void* blob_data = (void*)duckdb_value_blob(&result, 0, 0, &blob_size);
+    duckdb_blob blob = duckdb_value_blob(&result, 0, 0);
     
     // 复制数据
-    void* data = infra_malloc(blob_size);
+    void* data = infra_malloc(blob.size);
     if (!data) {
         duckdb_destroy_result(&result);
         return INFRA_ERROR_NO_MEMORY;
     }
     
-    memcpy(data, blob_data, blob_size);
+    memcpy(data, blob.data, blob.size);
     *val = data;
-    *vlen = blob_size;
+    *vlen = blob.size;
     
     duckdb_destroy_result(&result);
     return INFRA_OK;
@@ -241,25 +240,23 @@ infra_error_t poly_duckdb_iter_next(poly_duckdb_iter_t* iter, void** key, size_t
     }
     
     // 获取key
-    size_t key_size;
-    void* key_data = (void*)duckdb_value_blob(&iter->result, 0, iter->current_row, &key_size);
-    void* key_copy = infra_malloc(key_size);
+    duckdb_blob key_blob = duckdb_value_blob(&iter->result, 0, iter->current_row);
+    void* key_copy = infra_malloc(key_blob.size);
     if (!key_copy) return INFRA_ERROR_NO_MEMORY;
-    memcpy(key_copy, key_data, key_size);
+    memcpy(key_copy, key_blob.data, key_blob.size);
     *key = key_copy;
-    *klen = key_size;
+    *klen = key_blob.size;
     
     // 获取value
-    size_t val_size;
-    void* val_data = (void*)duckdb_value_blob(&iter->result, 1, iter->current_row, &val_size);
-    void* val_copy = infra_malloc(val_size);
+    duckdb_blob val_blob = duckdb_value_blob(&iter->result, 1, iter->current_row);
+    void* val_copy = infra_malloc(val_blob.size);
     if (!val_copy) {
         infra_free(key_copy);
         return INFRA_ERROR_NO_MEMORY;
     }
-    memcpy(val_copy, val_data, val_size);
+    memcpy(val_copy, val_blob.data, val_blob.size);
     *val = val_copy;
-    *vlen = val_size;
+    *vlen = val_blob.size;
     
     iter->current_row++;
     return INFRA_OK;

@@ -11,7 +11,7 @@ static struct {
     infra_error_t expected_error;
 } g_error_state = {false, INFRA_OK};
 
-const char* infra_error_str(infra_error_t err) {
+const char* infra_error_string(infra_error_t err) {
     switch (err) {
         case INFRA_OK:
             return "Success";
@@ -22,7 +22,7 @@ const char* infra_error_str(infra_error_t err) {
         case INFRA_ERROR_INVALID_PARAM:
             return "Invalid parameter";
         case INFRA_ERROR_NO_MEMORY:
-            return "Out of memory";
+            return "No memory";
         case INFRA_ERROR_EXISTS:
             return "Already exists";
         case INFRA_ERROR_NOT_READY:

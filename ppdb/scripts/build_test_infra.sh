@@ -16,7 +16,7 @@ TEST_FILES="test_memory.c test_log.c test_sync.c test_error.c test_struct.c test
 if [ -z "$TEST_MODULE" ]; then
     echo "Available test modules:"
     for f in $TEST_FILES; do
-        echo "    ${f%.c}"
+        echo "\t${f%.c}" | sed 's/test_//'
     done
     exit 0
 fi
@@ -39,6 +39,11 @@ else
         fi
     done
 fi
+
+echo ========= clean old begin
+#find "${BUILD_DIR}/test/white/infra/"
+rm -vrf "${BUILD_DIR}/test/white/infra/*"
+echo ========= clean old end
 
 if [ $NEED_BUILD_INFRA -eq 1 ]; then
     echo "Building infra library..."
@@ -64,8 +69,7 @@ fi
 
 if [ $NEED_BUILD_FRAMEWORK -eq 1 ]; then
     echo "Building test framework..."
-    echo "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/test_framework.c" -c -o "${BUILD_DIR}/test/white/framework/test_framework.o"
-    "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/test_framework.c" -c -o "${BUILD_DIR}/test/white/framework/test_framework.o"
+    "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/test_framework.c" -c -o "${BUILD_DIR}/test/white/framework/test_framework.o"
     if [ $? -ne 0 ]; then
         exit 1
     fi
@@ -83,7 +87,7 @@ fi
 
 if [ $NEED_BUILD_MOCK -eq 1 ]; then
     echo "Building mock framework..."
-    "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/mock_framework.c" -c -o "${BUILD_DIR}/test/white/framework/mock_framework.o"
+    "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/mock_framework.c" -c -o "${BUILD_DIR}/test/white/framework/mock_framework.o"
     if [ $? -ne 0 ]; then
         exit 1
     fi
@@ -101,16 +105,9 @@ fi
 
 if [ $NEED_BUILD_MOCK_CORE -eq 1 ]; then
     echo "Building mock core..."
-    echo "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${SRC_DIR}" \
-        -I"${PPDB_DIR}/test" \
-        -I"${PPDB_DIR}/test/white" \
-        -I"${PPDB_DIR}/test/white/framework" \
-        "${PPDB_DIR}/test/white/infra/mock/core/mock_core.c" \
-        -c -o "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o"
     "${CC}" ${CFLAGS} \
         -I"${PPDB_DIR}" \
+        -I"${PPDB_DIR}/include" \
         -I"${SRC_DIR}" \
         -I"${PPDB_DIR}/test" \
         -I"${PPDB_DIR}/test/white" \
@@ -156,17 +153,9 @@ for f in $TEST_FILES; do
     
     if [ $NEED_BUILD -eq 1 ]; then
         echo "Building $f..."
-        echo "${CC}" ${CFLAGS} \
-            -I"${PPDB_DIR}" \
-            -I"${SRC_DIR}" \
-            -I"${PPDB_DIR}/test" \
-            -I"${PPDB_DIR}/test/white" \
-            -I"${PPDB_DIR}/test/white/framework" \
-            -I"${PPDB_DIR}/src/internal/infra" \
-            "${PPDB_DIR}/test/white/infra/$f" \
-            -c -o "${BUILD_DIR}/test/white/infra/${base}.o"
         "${CC}" ${CFLAGS} \
             -I"${PPDB_DIR}" \
+            -I"${PPDB_DIR}/include" \
             -I"${SRC_DIR}" \
             -I"${PPDB_DIR}/test" \
             -I"${PPDB_DIR}/test/white" \
