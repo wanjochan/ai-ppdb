@@ -11,7 +11,7 @@
 #define MAX_PLUGINS 16
 
 struct poly_plugin_mgr {
-    const poly_plugin_interface_t* plugins[MAX_PLUGINS];
+    const poly_plugin_t* plugins[MAX_PLUGINS];
     size_t plugin_count;
 };
 
@@ -41,8 +41,8 @@ void poly_plugin_mgr_destroy(poly_plugin_mgr_t* mgr) {
 }
 
 // 注册内置插件
-infra_error_t poly_plugin_register_builtin(poly_plugin_mgr_t* mgr, const poly_plugin_interface_t* interface) {
-    if (!mgr || !interface) {
+infra_error_t poly_plugin_register_builtin(poly_plugin_mgr_t* mgr, const poly_builtin_plugin_t* plugin) {
+    if (!mgr || !plugin) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
@@ -50,13 +50,22 @@ infra_error_t poly_plugin_register_builtin(poly_plugin_mgr_t* mgr, const poly_pl
         return INFRA_ERROR_NO_MEMORY;
     }
 
-    mgr->plugins[mgr->plugin_count++] = interface;
+    poly_plugin_t* new_plugin = malloc(sizeof(poly_plugin_t));
+    if (!new_plugin) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    new_plugin->name = plugin->name;
+    new_plugin->type = plugin->type;
+    new_plugin->interface = plugin->interface;
+
+    mgr->plugins[mgr->plugin_count++] = new_plugin;
     return INFRA_OK;
 }
 
 // 加载插件
-infra_error_t poly_plugin_mgr_load(poly_plugin_mgr_t* mgr, const char* path) {
-    if (!mgr || !path) {
+infra_error_t poly_plugin_mgr_load(poly_plugin_mgr_t* mgr, poly_plugin_type_t type, const char* path, poly_plugin_t** plugin) {
+    if (!mgr || !path || !plugin) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
@@ -65,33 +74,25 @@ infra_error_t poly_plugin_mgr_load(poly_plugin_mgr_t* mgr, const char* path) {
 }
 
 // 获取插件
-infra_error_t poly_plugin_mgr_get(poly_plugin_mgr_t** mgr) {
-    if (!mgr) {
+infra_error_t poly_plugin_mgr_get(poly_plugin_mgr_t* mgr, poly_plugin_type_t type, const char* name, poly_plugin_t** plugin) {
+    if (!mgr || !name || !plugin) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (!g_plugin_mgr) {
-        infra_error_t err = poly_plugin_mgr_create(&g_plugin_mgr);
-        if (err != INFRA_OK) {
-            return err;
+    for (size_t i = 0; i < mgr->plugin_count; i++) {
+        if (mgr->plugins[i]->type == type && strcmp(mgr->plugins[i]->name, name) == 0) {
+            *plugin = (poly_plugin_t*)mgr->plugins[i];
+            return INFRA_OK;
         }
     }
 
-    *mgr = g_plugin_mgr;
-    return INFRA_OK;
+    return INFRA_ERROR_NOT_FOUND;
 }
 
 // 获取插件接口
-const poly_plugin_interface_t* poly_plugin_get_interface(poly_plugin_mgr_t* mgr, const char* name) {
-    if (!mgr || !name) {
+const poly_plugin_interface_t* poly_plugin_get_interface(const poly_plugin_t* plugin) {
+    if (!plugin) {
         return NULL;
     }
-
-    for (size_t i = 0; i < mgr->plugin_count; i++) {
-        if (strcmp(mgr->plugins[i]->name, name) == 0) {
-            return mgr->plugins[i];
-        }
-    }
-
-    return NULL;
+    return plugin->interface;
 } 

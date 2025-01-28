@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# 设置自动初始化环境变量
+# 如果不加这个，自己的 main()里面要自己调用 infra_init() 
+export INFRA_AUTO_INIT=1
+
 # 记录开始时间
 START_TIME=$(date +%s.%N)
 
@@ -153,6 +157,37 @@ else
     echo -e "${YELLOW}MemKV implementation is up to date, skipping build${NC}"
 fi
 
+# 编译实现文件
+ATOMIC_OBJ="${BUILD_DIR}/test/black/poly/poly_atomic.o"
+ATOMIC_SRC="${PPDB_DIR}/src/internal/poly/poly_atomic.c"
+if need_rebuild "$ATOMIC_OBJ" "$ATOMIC_SRC"; then
+    echo -e "${GREEN}Building atomic implementation...${NC}"
+    ${CC} ${CFLAGS} \
+        -I"${PPDB_DIR}" \
+        -I"${PPDB_DIR}/include" \
+        -I"${PPDB_DIR}/src" \
+        "$ATOMIC_SRC" \
+        -c -o "$ATOMIC_OBJ"
+    handle_error $? "Failed to build atomic implementation"
+else
+    echo -e "${YELLOW}Atomic implementation is up to date, skipping build${NC}"
+fi
+
+PLUGIN_OBJ="${BUILD_DIR}/test/black/poly/poly_plugin.o"
+PLUGIN_SRC="${PPDB_DIR}/src/internal/poly/poly_plugin.c"
+if need_rebuild "$PLUGIN_OBJ" "$PLUGIN_SRC"; then
+    echo -e "${GREEN}Building plugin implementation...${NC}"
+    ${CC} ${CFLAGS} \
+        -I"${PPDB_DIR}" \
+        -I"${PPDB_DIR}/include" \
+        -I"${PPDB_DIR}/src" \
+        "$PLUGIN_SRC" \
+        -c -o "$PLUGIN_OBJ"
+    handle_error $? "Failed to build plugin implementation"
+else
+    echo -e "${YELLOW}Plugin implementation is up to date, skipping build${NC}"
+fi
+
 # 编译测试框架
 TEST_FRAMEWORK_OBJ="${BUILD_DIR}/test/black/poly/test_framework.o"
 TEST_FRAMEWORK_SRC="${PPDB_DIR}/test/white/framework/test_framework.c"
@@ -211,7 +246,7 @@ fi
 
 MEMKV_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_memkv"
 MEMKV_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_memkv.c"
-if need_rebuild "$MEMKV_TEST_BIN" "$MEMKV_TEST_SRC" "$MEMKV_IMPL_OBJ" "$SQLITE_IMPL_OBJ" "$DUCKDB_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ"; then
+if need_rebuild "$MEMKV_TEST_BIN" "$MEMKV_TEST_SRC" "$MEMKV_IMPL_OBJ" "$SQLITE_IMPL_OBJ" "$DUCKDB_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ" "$ATOMIC_OBJ" "$PLUGIN_OBJ"; then
     echo -e "${GREEN}Building MemKV tests...${NC}"
     ${CC} ${CFLAGS} \
         -I"${PPDB_DIR}" \
@@ -223,6 +258,8 @@ if need_rebuild "$MEMKV_TEST_BIN" "$MEMKV_TEST_SRC" "$MEMKV_IMPL_OBJ" "$SQLITE_I
         "$DUCKDB_IMPL_OBJ" \
         "$TEST_FRAMEWORK_OBJ" \
         "$SQLITE_OBJ" \
+        "$ATOMIC_OBJ" \
+        "$PLUGIN_OBJ" \
         "${BUILD_DIR}/infra/libinfra.a" \
         -o "$MEMKV_TEST_BIN"
     handle_error $? "Failed to build MemKV tests"
