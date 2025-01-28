@@ -101,8 +101,8 @@ fi
 echo -e "${GREEN}Building poly tests...${NC}"
 
 # 清理旧的测试文件
-rm -f "${BUILD_DIR}/test/black/poly/test_poly_sqlite"
-rm -f "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
+rm -f "${BUILD_DIR}/test/black/poly/test_poly_sqlitekv"
+rm -f "${BUILD_DIR}/test/black/poly/test_poly_duckdbkv"
 rm -f "${BUILD_DIR}/test/black/poly/test_poly_memkv"
 
 # 不需要，测死和产品的 o 分开吧
@@ -110,8 +110,8 @@ rm -f "${BUILD_DIR}/test/black/poly/test_poly_memkv"
 # sh "$(dirname "$0")/build_poly.sh"
 
 # 编译实现文件 (?? not by build_poly.sh ???)
-SQLITE_IMPL_OBJ="${BUILD_DIR}/test/black/poly/poly_sqlite.o"
-SQLITE_IMPL_SRC="${PPDB_DIR}/src/internal/poly/poly_sqlite.c"
+SQLITE_IMPL_OBJ="${BUILD_DIR}/test/black/poly/poly_sqlitekv.o"
+SQLITE_IMPL_SRC="${PPDB_DIR}/src/internal/poly/poly_sqlitekv.c"
 if need_rebuild "$SQLITE_IMPL_OBJ" "$SQLITE_IMPL_SRC"; then
     echo -e "${GREEN}Building SQLite implementation...${NC}"
     ${CC} ${CFLAGS} \
@@ -126,8 +126,8 @@ else
     echo -e "${YELLOW}SQLite implementation is up to date, skipping build${NC}"
 fi
 
-DUCKDB_IMPL_OBJ="${BUILD_DIR}/test/black/poly/poly_duckdb.o"
-DUCKDB_IMPL_SRC="${PPDB_DIR}/src/internal/poly/poly_duckdb.c"
+DUCKDB_IMPL_OBJ="${BUILD_DIR}/test/black/poly/poly_duckdbkv.o"
+DUCKDB_IMPL_SRC="${PPDB_DIR}/src/internal/poly/poly_duckdbkv.c"
 if need_rebuild "$DUCKDB_IMPL_OBJ" "$DUCKDB_IMPL_SRC"; then
     echo -e "${GREEN}Building DuckDB implementation...${NC}"
     ${CC} ${CFLAGS} \
@@ -207,8 +207,8 @@ else
 fi
 
 # 编译测试文件
-SQLITE_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_sqlite"
-SQLITE_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_sqlite.c"
+SQLITE_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_sqlitekv"
+SQLITE_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_sqlitekv.c"
 if need_rebuild "$SQLITE_TEST_BIN" "$SQLITE_TEST_SRC" "$SQLITE_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ"; then
     echo -e "${GREEN}Building SQLite tests...${NC}"
     ${CC} ${CFLAGS} \
@@ -227,8 +227,8 @@ else
     echo -e "${YELLOW}SQLite tests are up to date, skipping build${NC}"
 fi
 
-DUCKDB_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_duckdb"
-DUCKDB_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_duckdb.c"
+DUCKDB_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_duckdbkv"
+DUCKDB_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_duckdbkv.c"
 if need_rebuild "$DUCKDB_TEST_BIN" "$DUCKDB_TEST_SRC" "$DUCKDB_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ"; then
     echo -e "${GREEN}Building DuckDB tests...${NC}"
     ${CC} ${CFLAGS} \

@@ -3,7 +3,7 @@
 #include "test/white/framework/test_framework.h"
 
 // DuckDB 基本操作测试
-static void test_duckdb_basic_ops(void) {
+static void test_duckdbkv_basic_ops(void) {
     void* db;
     infra_error_t err;
     const char* key = "test_key";
@@ -12,38 +12,38 @@ static void test_duckdb_basic_ops(void) {
     size_t value_len;
 
     // 初始化
-    err = g_duckdb_interface.init(&db);
+    err = g_duckdbkv_interface.init(&db);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 打开数据库
-    err = g_duckdb_interface.open(db, ":memory:");
+    err = g_duckdbkv_interface.open(db, ":memory:");
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 设置键值对
-    err = g_duckdb_interface.set(db, key, strlen(key), value, strlen(value) + 1);
+    err = g_duckdbkv_interface.set(db, key, strlen(key), value, strlen(value) + 1);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 获取键值对
-    err = g_duckdb_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
+    err = g_duckdbkv_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
     TEST_ASSERT_EQUAL(value_len, strlen(value) + 1);
     TEST_ASSERT_EQUAL_STR(value, (char*)retrieved_value);
     infra_free(retrieved_value);
 
     // 删除键值对
-    err = g_duckdb_interface.del(db, key, strlen(key));
+    err = g_duckdbkv_interface.del(db, key, strlen(key));
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 验证键值对已被删除
-    err = g_duckdb_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
+    err = g_duckdbkv_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
     TEST_ASSERT_EQUAL(err, INFRA_ERROR_NOT_FOUND);
 
     // 清理
-    g_duckdb_interface.cleanup(db);
+    g_duckdbkv_interface.cleanup(db);
 }
 
 // DuckDB 迭代器测试
-static void test_duckdb_iterator(void) {
+static void test_duckdbkv_iterator(void) {
     void* db;
     void* iter;
     infra_error_t err;
@@ -53,29 +53,29 @@ static void test_duckdb_iterator(void) {
     int count = 0;
 
     // 初始化
-    err = g_duckdb_interface.init(&db);
+    err = g_duckdbkv_interface.init(&db);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 打开数据库
-    err = g_duckdb_interface.open(db, ":memory:");
+    err = g_duckdbkv_interface.open(db, ":memory:");
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 插入测试数据
-    err = g_duckdb_interface.set(db, "key1", strlen("key1"), "value1", strlen("value1") + 1);
+    err = g_duckdbkv_interface.set(db, "key1", strlen("key1"), "value1", strlen("value1") + 1);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
-    err = g_duckdb_interface.set(db, "key2", strlen("key2"), "value2", strlen("value2") + 1);
+    err = g_duckdbkv_interface.set(db, "key2", strlen("key2"), "value2", strlen("value2") + 1);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
-    err = g_duckdb_interface.set(db, "key3", strlen("key3"), "value3", strlen("value3") + 1);
+    err = g_duckdbkv_interface.set(db, "key3", strlen("key3"), "value3", strlen("value3") + 1);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 创建迭代器
-    err = g_duckdb_interface.iter_create(db, &iter);
+    err = g_duckdbkv_interface.iter_create(db, &iter);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 遍历所有键值对
-    while (g_duckdb_interface.iter_next(iter, &key, &value, &value_len) == INFRA_OK) {
+    while (g_duckdbkv_interface.iter_next(iter, &key, &value, &value_len) == INFRA_OK) {
         TEST_ASSERT_NOT_NULL(key);
         TEST_ASSERT_NOT_NULL(value);
         TEST_ASSERT_TRUE(value_len > 0);
@@ -95,14 +95,14 @@ static void test_duckdb_iterator(void) {
     TEST_ASSERT_EQUAL(3, count);
 
     // 销毁迭代器
-    g_duckdb_interface.iter_destroy(iter);
+    g_duckdbkv_interface.iter_destroy(iter);
 
     // 清理
-    g_duckdb_interface.cleanup(db);
+    g_duckdbkv_interface.cleanup(db);
 }
 
 // DuckDB 事务测试
-static void test_duckdb_transaction(void) {
+static void test_duckdbkv_transaction(void) {
     void* db;
     infra_error_t err;
     const char* key = "test_key";
@@ -111,43 +111,43 @@ static void test_duckdb_transaction(void) {
     size_t value_len;
 
     // 初始化
-    err = g_duckdb_interface.init(&db);
+    err = g_duckdbkv_interface.init(&db);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 打开数据库
-    err = g_duckdb_interface.open(db, ":memory:");
+    err = g_duckdbkv_interface.open(db, ":memory:");
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 设置键值对
-    err = g_duckdb_interface.set(db, key, strlen(key), value, strlen(value) + 1);
+    err = g_duckdbkv_interface.set(db, key, strlen(key), value, strlen(value) + 1);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 执行事务
-    err = g_duckdb_interface.exec(db, "BEGIN TRANSACTION;");
+    err = g_duckdbkv_interface.exec(db, "BEGIN TRANSACTION;");
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 在事务中修改数据
-    err = g_duckdb_interface.exec(db, "UPDATE kv_store SET value = X'6E657776616C7565' WHERE key = 'test_key';");
+    err = g_duckdbkv_interface.exec(db, "UPDATE kv_store SET value = X'6E657776616C7565' WHERE key = 'test_key';");
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 提交事务
-    err = g_duckdb_interface.exec(db, "COMMIT;");
+    err = g_duckdbkv_interface.exec(db, "COMMIT;");
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 验证修改后的值
-    err = g_duckdb_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
+    err = g_duckdbkv_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
     TEST_ASSERT_EQUAL_STR("newvalue", (char*)retrieved_value);
     infra_free(retrieved_value);
 
     // 清理
-    g_duckdb_interface.cleanup(db);
+    g_duckdbkv_interface.cleanup(db);
 }
 
 int main() {
     TEST_BEGIN();
-    RUN_TEST(test_duckdb_basic_ops);
-    RUN_TEST(test_duckdb_iterator);
-    RUN_TEST(test_duckdb_transaction);
+    RUN_TEST(test_duckdbkv_basic_ops);
+    RUN_TEST(test_duckdbkv_iterator);
+    RUN_TEST(test_duckdbkv_transaction);
     TEST_END();
 } 
