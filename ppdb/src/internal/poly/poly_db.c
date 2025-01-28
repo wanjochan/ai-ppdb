@@ -2,7 +2,8 @@
 #include "internal/infra/infra_memory.h"
 #include "internal/poly/poly_db.h"
 #include "sqlite3.h"
-// #include "duckdb.h" //we use cosmo_dlxxxx load libduckdb
+#include "duckdb.h" // Only for type definitions, implementation loaded dynamically
+
 
 // DuckDB 函数指针类型定义
 typedef duckdb_state (*duckdb_open_t)(const char *path, duckdb_database *out_database);
@@ -42,6 +43,11 @@ typedef struct duckdb_impl {
     duckdb_value_string_t value_string;
     duckdb_free_t free;
 } duckdb_impl_t;
+
+// SQLite 实现结构体
+typedef struct sqlite_impl {
+    sqlite3* db;
+} sqlite_impl_t;
 
 // Database interface structure
 struct poly_db {
@@ -122,7 +128,10 @@ static infra_error_t duckdb_exec(poly_db_t* db, const char* sql) {
     duckdb_impl_t* impl = (duckdb_impl_t*)db->impl;
     duckdb_result result;
     duckdb_state state = impl->query(impl->handle, sql, &result);
-    if (state != DuckDBSuccess) return INFRA_ERROR_EXEC_FAILED;
+    if (state != DuckDBSuccess) {
+        infra_log_error("DuckDB query failed");
+        return INFRA_ERROR_EXEC_FAILED;
+    }
     impl->destroy_result(&result);
     return INFRA_OK;
 }
@@ -150,6 +159,92 @@ static infra_error_t duckdb_query(poly_db_t* db, const char* sql, poly_db_result
     res->db = db;
     res->internal_result = duck_result;
     *result = res;
+    return INFRA_OK;
+}
+
+// SQLite 实现的接口函数
+static infra_error_t sqlite_exec(poly_db_t* db, const char* sql) {
+    if (!db || !sql) return INFRA_ERROR_INVALID_PARAM;
+    sqlite_impl_t* impl = (sqlite_impl_t*)db->impl;
+    char* err_msg = NULL;
+    int rc = sqlite3_exec(impl->db, sql, NULL, NULL, &err_msg);
+    if (rc != SQLITE_OK) {
+        infra_log_error("SQLite error: %s", err_msg ? err_msg : "unknown error");
+        if (err_msg) sqlite3_free(err_msg);
+        return INFRA_ERROR_EXEC_FAILED;
+    }
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_query(poly_db_t* db, const char* sql, poly_db_result_t** result) {
+    if (!db || !sql || !result) return INFRA_ERROR_INVALID_PARAM;
+    sqlite_impl_t* impl = (sqlite_impl_t*)db->impl;
+    
+    poly_db_result_t* res = infra_malloc(sizeof(poly_db_result_t));
+    if (!res) return INFRA_ERROR_NO_MEMORY;
+    
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(impl->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        infra_free(res);
+        return INFRA_ERROR_EXEC_FAILED;
+    }
+    
+    res->db = db;
+    res->internal_result = stmt;
+    *result = res;
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_result_row_count(poly_db_result_t* result, size_t* count) {
+    if (!result || !count) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* stmt = (sqlite3_stmt*)result->internal_result;
+    *count = sqlite3_data_count(stmt);
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_result_get_blob(poly_db_result_t* result, size_t row, size_t col, void** data, size_t* size) {
+    if (!result || !data || !size) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* stmt = (sqlite3_stmt*)result->internal_result;
+    
+    if (sqlite3_step(stmt) != SQLITE_ROW) {
+        *data = NULL;
+        *size = 0;
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    const void* blob = sqlite3_column_blob(stmt, col);
+    int blob_size = sqlite3_column_bytes(stmt, col);
+    
+    if (!blob) {
+        *data = NULL;
+        *size = 0;
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    void* blob_copy = infra_malloc(blob_size);
+    if (!blob_copy) return INFRA_ERROR_NO_MEMORY;
+    
+    memcpy(blob_copy, blob, blob_size);
+    *data = blob_copy;
+    *size = blob_size;
+    
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_result_get_string(poly_db_result_t* result, size_t row, size_t col, char** str) {
+    if (!result || !str) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* stmt = (sqlite3_stmt*)result->internal_result;
+    
+    const unsigned char* text = sqlite3_column_text(stmt, col);
+    if (!text) {
+        *str = NULL;
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    *str = infra_strdup((const char*)text);
+    if (!*str) return INFRA_ERROR_NO_MEMORY;
+    
     return INFRA_OK;
 }
 
@@ -190,12 +285,35 @@ infra_error_t poly_db_open(const char* url, poly_db_t** db) {
             new_db->impl = impl;
             new_db->exec = duckdb_exec;
             new_db->query = duckdb_query;
+            new_db->result_row_count = duckdb_result_row_count;
+            new_db->result_get_blob = duckdb_result_get_blob;
+            new_db->result_get_string = duckdb_result_get_string;
+            new_db->close = destroy_duckdb;
             break;
         }
-        case POLY_DB_TYPE_SQLITE:
-            // TODO: 实现 SQLite 支持
-            err = INFRA_ERROR_NOT_IMPLEMENTED;
+        case POLY_DB_TYPE_SQLITE: {
+            sqlite_impl_t* impl = infra_malloc(sizeof(sqlite_impl_t));
+            if (!impl) {
+                infra_free(new_db);
+                return INFRA_ERROR_NO_MEMORY;
+            }
+            
+            int rc = sqlite3_open(path, &impl->db);
+            if (rc != SQLITE_OK) {
+                infra_free(impl);
+                infra_free(new_db);
+                return INFRA_ERROR_OPEN_FAILED;
+            }
+            
+            new_db->impl = impl;
+            new_db->exec = sqlite_exec;
+            new_db->query = sqlite_query;
+            new_db->result_row_count = sqlite_result_row_count;
+            new_db->result_get_blob = sqlite_result_get_blob;
+            new_db->result_get_string = sqlite_result_get_string;
+            new_db->close = sqlite_close;
             break;
+        }
         default:
             err = INFRA_ERROR_INVALID_PARAM;
     }
@@ -233,15 +351,17 @@ void poly_db_result_free(poly_db_result_t* result) {
             case POLY_DB_TYPE_DUCKDB: {
                 duckdb_impl_t* impl = (duckdb_impl_t*)result->db->impl;
                 impl->destroy_result((duckdb_result*)result->internal_result);
+                infra_free(result->internal_result);  // 只释放外层结构
                 break;
             }
-            case POLY_DB_TYPE_SQLITE:
-                // TODO: 实现 SQLite 结果清理
+            case POLY_DB_TYPE_SQLITE: {
+                sqlite3_stmt* stmt = (sqlite3_stmt*)result->internal_result;
+                if (stmt) sqlite3_finalize(stmt);  // finalize 会自动释放内存
                 break;
+            }
             default:
                 break;
         }
-        infra_free(result->internal_result);
     }
     infra_free(result);
 }

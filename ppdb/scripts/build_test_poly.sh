@@ -321,7 +321,7 @@ fi
 
 MEMKV_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_memkv"
 MEMKV_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_memkv.c"
-if need_rebuild "$MEMKV_TEST_BIN" "$MEMKV_TEST_SRC" "$MEMKV_IMPL_OBJ" "$SQLITE_IMPL_OBJ" "$DUCKDB_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ" "$ATOMIC_OBJ" "$PLUGIN_OBJ"; then
+if need_rebuild "$MEMKV_TEST_BIN" "$MEMKV_TEST_SRC" "$MEMKV_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ" "$ATOMIC_OBJ" "$PLUGIN_OBJ"; then
     echo -e "${GREEN}Building MemKV tests...${NC}"
     ${CC} ${CFLAGS} \
         -I"${PPDB_DIR}" \
@@ -329,8 +329,6 @@ if need_rebuild "$MEMKV_TEST_BIN" "$MEMKV_TEST_SRC" "$MEMKV_IMPL_OBJ" "$SQLITE_I
         -I"${PPDB_DIR}/src" \
         "$MEMKV_TEST_SRC" \
         "$MEMKV_IMPL_OBJ" \
-        "$SQLITE_IMPL_OBJ" \
-        "$DUCKDB_IMPL_OBJ" \
         "$TEST_FRAMEWORK_OBJ" \
         "$SQLITE_OBJ" \
         "$ATOMIC_OBJ" \

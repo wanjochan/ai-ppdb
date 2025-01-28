@@ -42,8 +42,6 @@ SOURCES=(
     "${SRC_DIR}/internal/poly/poly_atomic.c"
     "${SRC_DIR}/internal/poly/poly_plugin.c"
     "${SRC_DIR}/internal/poly/poly_memkv.c"
-    "${SRC_DIR}/internal/poly/poly_sqlitekv.c"
-    "${SRC_DIR}/internal/poly/poly_duckdbkv.c"
     "${SRC_DIR}/internal/peer/peer_service.c"
     "${SRC_DIR}/ppdb/ppdb.c"
 )
