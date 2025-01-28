@@ -2,7 +2,7 @@
 #include "internal/infra/infra_memory.h"
 #include "internal/poly/poly_db.h"
 #include "sqlite3.h"
-// #include "duckdb.h" //cosmo_dlxxxx
+// #include "duckdb.h" //we use cosmo_dlxxxx load libduckdb
 
 // DuckDB 函数指针类型定义
 typedef duckdb_state (*duckdb_open_t)(const char *path, duckdb_database *out_database);
@@ -70,8 +70,8 @@ static infra_error_t create_duckdb(duckdb_impl_t** impl) {
     if (!duckdb) return INFRA_ERROR_NO_MEMORY;
     memset(duckdb, 0, sizeof(duckdb_impl_t));
 
-    // 加载 DuckDB 动态库
-    duckdb->handle = dlopen("libduckdb.so", RTLD_LAZY);
+    // 加载 DuckDB 动态库 (NOTES: cosmo will load dll/dylib automatically)
+    duckdb->handle = cosmo_dlopen("libduckdb.so", RTLD_LAZY);
     if (!duckdb->handle) {
         infra_free(duckdb);
         return INFRA_ERROR_LOAD_LIBRARY;

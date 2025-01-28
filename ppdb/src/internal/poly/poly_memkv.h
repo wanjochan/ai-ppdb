@@ -15,7 +15,9 @@ typedef enum poly_memkv_engine {
 typedef struct poly_memkv_db {
     poly_memkv_engine_t engine;  // Engine type
     poly_db_t* db;              // Underlying database interface
-    void* impl;                 // Implementation handle (poly_sqlitekv_db_t or poly_duckdbkv_db_t)
+    void* impl;                 // Implementation handle
+    poly_db_status_t status;    // Current database status
+    char error_msg[256];        // Last error message
 } poly_memkv_db_t;
 
 // Memory KV iterator
@@ -36,17 +38,22 @@ typedef enum poly_memkv_error {
     POLY_MEMKV_ERROR_VALUE_TOO_LARGE = -4,
     POLY_MEMKV_ERROR_KEY_NOT_FOUND = -5,
     POLY_MEMKV_ERROR_MEMORY_LIMIT = -6,
-    POLY_MEMKV_ERROR_INTERNAL = -7
+    POLY_MEMKV_ERROR_INTERNAL = -7,
+    POLY_MEMKV_ERROR_ENGINE_FAILED = -8,   // Engine initialization failed
+    POLY_MEMKV_ERROR_FALLBACK = -9         // Using fallback engine
 } poly_memkv_error_t;
 
 // Configuration for memory KV store
 typedef struct poly_memkv_config {
-    poly_memkv_engine_t engine;    // Engine type
-    const char* url;               // Database URL (replaces path)
-    size_t max_key_size;          // Maximum key size
-    size_t max_value_size;        // Maximum value size
-    size_t memory_limit;          // Maximum memory usage (0 for unlimited)
-    bool enable_compression;      // Enable value compression
+    poly_memkv_engine_t engine;     // Engine type
+    const char* url;                // Database URL
+    size_t max_key_size;           // Maximum key size
+    size_t max_value_size;         // Maximum value size
+    size_t memory_limit;           // Maximum memory usage (0 for unlimited)
+    bool enable_compression;       // Enable value compression
+    const char* plugin_path;       // Path to dynamic library
+    bool allow_fallback;          // Allow fallback to SQLite if DuckDB fails
+    bool read_only;               // Open in read-only mode
 } poly_memkv_config_t;
 
 // Interface functions
@@ -61,5 +68,10 @@ infra_error_t poly_memkv_exec(poly_memkv_db_t* db, const char* sql);
 infra_error_t poly_memkv_iter_create(poly_memkv_db_t* db, poly_memkv_iter_t** iter);
 infra_error_t poly_memkv_iter_next(poly_memkv_iter_t* iter, char** key, void** value, size_t* value_len);
 void poly_memkv_iter_destroy(poly_memkv_iter_t* iter);
+
+// Status functions
+poly_db_status_t poly_memkv_get_status(const poly_memkv_db_t* db);
+const char* poly_memkv_get_error_message(const poly_memkv_db_t* db);
+bool poly_memkv_is_degraded(const poly_memkv_db_t* db);
 
 #endif // POLY_MEMKV_H 

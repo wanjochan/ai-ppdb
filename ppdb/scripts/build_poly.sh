@@ -45,10 +45,9 @@ echo -e "${GREEN}Building poly library...${NC}"
 rm -vf "${BUILD_DIR}/poly/libpoly.a"
 
 # 定义源文件
-POLY_SOURCES=(
-    "${SRC_DIR}/internal/poly/poly_sqlitekv.c"
-    "${SRC_DIR}/internal/poly/poly_duckdbkv.c"
+SRC_FILES=(
     "${SRC_DIR}/internal/poly/poly_memkv.c"
+    "${SRC_DIR}/internal/poly/poly_memkv_cmd.c"
     "${SRC_DIR}/internal/poly/poly_db.c"
 )
 
@@ -82,7 +81,7 @@ echo "Starting parallel compilation (max ${MAX_JOBS} jobs)..."
 pids=()
 current_jobs=0
 
-for src in "${POLY_SOURCES[@]}"; do
+for src in "${SRC_FILES[@]}"; do
     # 等待，直到有空闲的编译槽
     while [ ${current_jobs} -ge ${MAX_JOBS} ]; do
         for i in ${!pids[@]}; do

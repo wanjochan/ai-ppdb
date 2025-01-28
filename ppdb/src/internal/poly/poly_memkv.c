@@ -1,7 +1,6 @@
 #include "internal/infra/infra_core.h"
 #include "internal/poly/poly_memkv.h"
-#include "internal/poly/poly_sqlitekv.h"
-#include "internal/poly/poly_duckdbkv.h"
+#include "internal/poly/poly_db.h"
 #include "internal/infra/infra_error.h"
 #include "internal/infra/infra_memory.h"
 
@@ -43,6 +42,94 @@ static infra_error_t init_duckdb_engine(poly_memkv_t* store) {
 
     // 获取插件实例
     return poly_plugin_mgr_get(store->plugin_mgr, POLY_PLUGIN_DUCKDB, "duckdb", &store->engine_plugin);
+}
+
+// SQLite KV 实现
+static infra_error_t poly_sqlitekv_set_internal(poly_db_t* db, const char* key, size_t key_len,
+                                   const void* value, size_t value_size) {
+    if (!db || !key || !value) return INFRA_ERROR_INVALID_PARAM;
+
+    char sql[512];
+    snprintf(sql, sizeof(sql), 
+        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);");
+
+    return poly_db_exec(db, sql);
+}
+
+static infra_error_t poly_sqlitekv_get_internal(poly_db_t* db, const char* key, size_t key_len,
+                                   void** value, size_t* value_size) {
+    if (!db || !key || !value || !value_size) return INFRA_ERROR_INVALID_PARAM;
+
+    char sql[512];
+    snprintf(sql, sizeof(sql), "SELECT value FROM kv_store WHERE key = ?;");
+
+    poly_db_result_t* result = NULL;
+    infra_error_t err = poly_db_query(db, sql, &result);
+    if (err != INFRA_OK) return err;
+
+    size_t count = 0;
+    err = poly_db_result_row_count(result, &count);
+    if (err != INFRA_OK || count == 0) {
+        poly_db_result_free(result);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    err = poly_db_result_get_blob(result, 0, 0, value, value_size);
+    poly_db_result_free(result);
+    return err;
+}
+
+static infra_error_t poly_sqlitekv_del_internal(poly_db_t* db, const char* key, size_t key_len) {
+    if (!db || !key) return INFRA_ERROR_INVALID_PARAM;
+
+    char sql[512];
+    snprintf(sql, sizeof(sql), "DELETE FROM kv_store WHERE key = ?;");
+
+    return poly_db_exec(db, sql);
+}
+
+// DuckDB KV 实现
+static infra_error_t poly_duckdbkv_set_internal(poly_db_t* db, const char* key, size_t key_len,
+                                   const void* value, size_t value_size) {
+    if (!db || !key || !value) return INFRA_ERROR_INVALID_PARAM;
+
+    char sql[512];
+    snprintf(sql, sizeof(sql), 
+        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);");
+
+    return poly_db_exec(db, sql);
+}
+
+static infra_error_t poly_duckdbkv_get_internal(poly_db_t* db, const char* key, size_t key_len,
+                                   void** value, size_t* value_size) {
+    if (!db || !key || !value || !value_size) return INFRA_ERROR_INVALID_PARAM;
+
+    char sql[512];
+    snprintf(sql, sizeof(sql), "SELECT value FROM kv_store WHERE key = ?;");
+
+    poly_db_result_t* result = NULL;
+    infra_error_t err = poly_db_query(db, sql, &result);
+    if (err != INFRA_OK) return err;
+
+    size_t count = 0;
+    err = poly_db_result_row_count(result, &count);
+    if (err != INFRA_OK || count == 0) {
+        poly_db_result_free(result);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    err = poly_db_result_get_blob(result, 0, 0, value, value_size);
+    poly_db_result_free(result);
+    return err;
+}
+
+static infra_error_t poly_duckdbkv_del_internal(poly_db_t* db, const char* key, size_t key_len) {
+    if (!db || !key) return INFRA_ERROR_INVALID_PARAM;
+
+    char sql[512];
+    snprintf(sql, sizeof(sql), "DELETE FROM kv_store WHERE key = ?;");
+
+    return poly_db_exec(db, sql);
 }
 
 //-----------------------------------------------------------------------------
@@ -183,9 +270,9 @@ infra_error_t poly_memkv_set(poly_memkv_db_t* db, const char* key, const void* v
 
     switch (db->engine) {
         case POLY_MEMKV_ENGINE_SQLITE:
-            return poly_sqlitekv_set((poly_sqlitekv_db_t*)db->impl, key, value, value_len);
+            return poly_sqlitekv_set_internal(db->db, key, strlen(key), value, value_len);
         case POLY_MEMKV_ENGINE_DUCKDB:
-            return poly_duckdbkv_set((poly_duckdbkv_db_t*)db->impl, key, value, value_len);
+            return poly_duckdbkv_set_internal(db->db, key, strlen(key), value, value_len);
         default:
             return INFRA_ERROR_INVALID_PARAM;
     }
@@ -199,9 +286,9 @@ infra_error_t poly_memkv_get(poly_memkv_db_t* db, const char* key, void** value,
 
     switch (db->engine) {
         case POLY_MEMKV_ENGINE_SQLITE:
-            return poly_sqlitekv_get((poly_sqlitekv_db_t*)db->impl, key, value, value_len);
+            return poly_sqlitekv_get_internal(db->db, key, strlen(key), value, value_len);
         case POLY_MEMKV_ENGINE_DUCKDB:
-            return poly_duckdbkv_get((poly_duckdbkv_db_t*)db->impl, key, value, value_len);
+            return poly_duckdbkv_get_internal(db->db, key, strlen(key), value, value_len);
         default:
             return INFRA_ERROR_INVALID_PARAM;
     }
@@ -215,9 +302,9 @@ infra_error_t poly_memkv_del(poly_memkv_db_t* db, const char* key) {
 
     switch (db->engine) {
         case POLY_MEMKV_ENGINE_SQLITE:
-            return poly_sqlitekv_del((poly_sqlitekv_db_t*)db->impl, key);
+            return poly_sqlitekv_del_internal(db->db, key, strlen(key));
         case POLY_MEMKV_ENGINE_DUCKDB:
-            return poly_duckdbkv_del((poly_duckdbkv_db_t*)db->impl, key);
+            return poly_duckdbkv_del_internal(db->db, key, strlen(key));
         default:
             return INFRA_ERROR_INVALID_PARAM;
     }
@@ -425,4 +512,3 @@ void poly_memkv_close(poly_memkv_db_t* db) {
     infra_free(db);
 }
 
-// ... 其他函数的实现 ...

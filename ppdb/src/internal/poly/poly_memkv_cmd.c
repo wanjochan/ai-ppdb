@@ -1,7 +1,4 @@
 #include "internal/poly/poly_memkv.h"
-#include "internal/poly/poly_sqlitekv.h"
-#include "internal/poly/poly_duckdbkv.h"
-#include "internal/poly/poly_memkv_cmd.h"
 #include "internal/poly/poly_cmdline.h"
 #include "internal/poly/poly_plugin.h"
 #include "internal/poly/poly_sqlite.h"
