@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 设置环境变量以禁用自动初始化
-export INFRA_NO_AUTO_INIT=1
+#export INFRA_NO_AUTO_INIT=1
 
 # 记录开始时间
 START_TIME=$(date +%s.%N)

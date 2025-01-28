@@ -63,9 +63,9 @@ infra_global_t g_infra = {
 // 自动初始化
 static void __attribute__((constructor)) infra_auto_init(void) {
     //infra_fprintf(stdout, "infra_auto_init()\n");
-    // 如果没有设置 INFRA_AUTO_INIT 环境变量，则跳过自动初始化
-    const char* auto_init = getenv("INFRA_AUTO_INIT");
-    if (!auto_init) {
+    // 如果没有设置 INFRA_NO_AUTO_INIT 环境变量，则自动初始化
+    const char* no_auto_init = getenv("INFRA_NO_AUTO_INIT");
+    if (no_auto_init) {
         return;
     }
 
@@ -80,9 +80,9 @@ static void __attribute__((constructor)) infra_auto_init(void) {
 
 // 自动清理
 static void __attribute__((destructor)) infra_auto_cleanup(void) {
-    // 如果没有设置 INFRA_AUTO_INIT 环境变量，则跳过自动清理
-    const char* auto_init = getenv("INFRA_AUTO_INIT");
-    if (!auto_init) {
+    // 如果没有设置 INFRA_NO_AUTO_INIT 环境变量，则自动清理
+    const char* no_auto_init = getenv("INFRA_NO_AUTO_INIT");
+    if (no_auto_init) {
         return;
     }
     infra_cleanup();

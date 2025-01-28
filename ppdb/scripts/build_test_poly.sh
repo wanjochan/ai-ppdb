@@ -1,8 +1,6 @@
 #!/bin/bash
 
-# 设置自动初始化环境变量
-# 如果不加这个，自己的 main()里面要自己调用 infra_init() 
-export INFRA_AUTO_INIT=1
+#export INFRA_NO_AUTO_INIT=1
 
 # 记录开始时间
 START_TIME=$(date +%s.%N)
