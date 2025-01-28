@@ -1,5 +1,9 @@
 #include "poly_atomic.h"
 
+void poly_atomic_init(poly_atomic_t* v, int32_t value) {
+    atomic_store((atomic_int*)v, value);
+}
+
 int32_t poly_atomic_get(const poly_atomic_t* v) {
     return atomic_load((const atomic_int*)v);
 }

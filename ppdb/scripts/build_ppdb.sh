@@ -23,7 +23,7 @@ if [ "${ENABLE_MEMKV}" = "1" ]; then
 fi
 
 # 添加源目录到包含路径
-CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${PPDB_DIR}/vendor/sqlite3"
+CFLAGS="${CFLAGS} -I${SRC_DIR} -I${TOOLCHAIN_DIR}/include -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${PPDB_DIR}/vendor/sqlite3 -I${PPDB_DIR}/vendor/duckdb"
 
 # 构建 ppdb
 echo remove "${BUILD_DIR}/ppdb_latest.exe"

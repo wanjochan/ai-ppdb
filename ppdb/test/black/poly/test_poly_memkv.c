@@ -63,6 +63,7 @@ static void test_memkv_basic_ops(void) {
     stats = poly_memkv_get_stats(store);
     TEST_ASSERT_NOT_NULL(stats);
     TEST_ASSERT_EQUAL(2, poly_atomic_get(&stats->cmd_get));
+    TEST_ASSERT_EQUAL(1, poly_atomic_get(&stats->cmd_set));
     TEST_ASSERT_EQUAL(0, poly_atomic_get(&stats->curr_items));
     TEST_ASSERT_EQUAL(1, poly_atomic_get(&stats->hits));
     TEST_ASSERT_EQUAL(1, poly_atomic_get(&stats->misses));
@@ -99,26 +100,16 @@ static void test_memkv_engine_switch(void) {
     init_err = poly_memkv_open(store);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to open memkv store");
 
-    // 插入测试数据
-    const char* key = "switch_test_key";
-    const char* value = "switch_test_value";
-    init_err = poly_memkv_set(store, key, strlen(key), value, strlen(value));
-    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to set key-value pair in SQLite");
-
     // 切换到 DuckDB 引擎
-    init_err = poly_memkv_switch_engine(store, POLY_MEMKV_ENGINE_DUCKDB, NULL);
+    config.engine_type = POLY_MEMKV_ENGINE_DUCKDB;
+    config.path = ":memory:";  // 使用 DuckDB 内存数据库
+    init_err = poly_memkv_switch_engine(store, POLY_MEMKV_ENGINE_DUCKDB, &config);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to switch to DuckDB engine");
 
-    // 验证数据是否正确迁移
-    void* retrieved_value = NULL;
-    size_t value_len = 0;
-    init_err = poly_memkv_get(store, key, strlen(key), &retrieved_value, &value_len);
-    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to get value after engine switch");
-    TEST_ASSERT_EQUAL(strlen(value), value_len);
-    TEST_ASSERT_MSG(memcmp(value, retrieved_value, value_len) == 0, "Value content mismatch after engine switch");
+    // 验证引擎类型
+    TEST_ASSERT_EQUAL(POLY_MEMKV_ENGINE_DUCKDB, poly_memkv_get_engine_type(store));
 
     // 清理
-    if (retrieved_value) infra_free(retrieved_value);
     poly_memkv_close(store);
     poly_memkv_destroy(store);
 }

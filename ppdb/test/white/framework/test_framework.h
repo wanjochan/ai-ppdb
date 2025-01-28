@@ -93,8 +93,8 @@ extern int g_test_stats[3];  // total, passed, failed
 
 #define TEST_ASSERT_EQUAL(expected, actual) \
     TEST_ASSERT_MSG((expected) == (actual), \
-                    "Expected %lu but got %lu", \
-                    (uint64_t)(expected), (uint64_t)(actual))
+                    "Expected %d but got %d", \
+                    (int64_t)(expected), (int64_t)(actual))
 
 #define TEST_ASSERT_EQUAL_PTR(expected, actual) \
     TEST_ASSERT_MSG((expected) == (actual), \

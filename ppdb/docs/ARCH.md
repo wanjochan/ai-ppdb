@@ -70,11 +70,11 @@ PPDB采用分层架构设计，自下而上分为三层:
    - poly_memkv: KV存储抽象层,提供统一接口
    - poly_plugin: 插件系统,支持动态加载存储引擎
    - poly_sqlite/duckdb: 存储引擎实现
+   [duckdb c api](https://duckdb.org/docs/api/c/api.html)
 
 2. 存储引擎策略:
-   - SQLite作为内置引擎(静态链接)
-   - DuckDB作为扩展引擎(动态加载)
-   - 运行时可切换,无需重新编译
+   - SQLite作为内置引擎(静态链接)，而且 poly_sqlite 可重用于其它组件
+   - DuckDB作为扩展引擎(动态加载)，成为 memkv/diskkv 等备选底层引擎
 
 3. 插件化优势:
    - 存储引擎可独立升级

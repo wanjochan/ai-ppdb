@@ -59,6 +59,14 @@ infra_error_t poly_memkv_create(poly_memkv_t** store) {
     memset(new_store, 0, sizeof(poly_memkv_t));
     new_store->config.engine_type = POLY_MEMKV_ENGINE_SQLITE;  // 默认使用 SQLite
 
+    // 初始化统计信息
+    poly_atomic_init(&new_store->stats.cmd_get, 0);
+    poly_atomic_init(&new_store->stats.cmd_set, 0);
+    poly_atomic_init(&new_store->stats.cmd_del, 0);
+    poly_atomic_init(&new_store->stats.curr_items, 0);
+    poly_atomic_init(&new_store->stats.hits, 0);
+    poly_atomic_init(&new_store->stats.misses, 0);
+
     // 创建插件管理器
     infra_error_t err = poly_plugin_mgr_create(&new_store->plugin_mgr);
     if (err != INFRA_OK) {
@@ -105,6 +113,19 @@ infra_error_t poly_memkv_open(poly_memkv_t* store) {
     err = interface->init(&store->engine_handle);
     if (err != INFRA_OK) return err;
 
+    // 根据引擎类型打开数据库
+    if (store->config.engine_type == POLY_MEMKV_ENGINE_SQLITE) {
+        const poly_sqlite_interface_t* sqlite_interface = (const poly_sqlite_interface_t*)interface;
+        err = sqlite_interface->open(store->engine_handle, store->config.path);
+    } else {
+        const poly_duckdb_interface_t* duckdb_interface = (const poly_duckdb_interface_t*)interface;
+        err = duckdb_interface->open(&store->engine_handle, store->config.path);
+    }
+    if (err != INFRA_OK) {
+        interface->cleanup(store->engine_handle);
+        return err;
+    }
+
     return INFRA_OK;
 }
 
@@ -138,76 +159,78 @@ void poly_memkv_destroy(poly_memkv_t* store) {
 // 设置键值对
 infra_error_t poly_memkv_set(poly_memkv_t* store, const char* key, size_t key_len,
                             const void* value, size_t value_len) {
-    if (!store || !key || !value) return INFRA_ERROR_INVALID_PARAM;
-
-    // 检查长度限制
-    if (store->config.max_key_size > 0 && key_len > store->config.max_key_size) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    if (store->config.max_value_size > 0 && value_len > store->config.max_value_size) {
+    if (!store || !key || !value) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 获取插件接口
     const poly_plugin_interface_t* interface = poly_plugin_get_interface(store->engine_plugin);
-    if (!interface) return INFRA_ERROR_INVALID_STATE;
-
-    // 设置键值对
-    infra_error_t err = interface->set(store->engine_handle, key, value, value_len);
-    if (err == INFRA_OK) {
-        poly_atomic_inc(&store->stats.cmd_set);
+    if (!interface) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    return err;
+    // 如果存在旧值，先获取它
+    void* old_value = NULL;
+    size_t old_value_len = 0;
+    infra_error_t get_err = interface->get(store->engine_handle, key, key_len, &old_value, &old_value_len);
+    if (get_err == INFRA_OK) {
+        infra_free(old_value);
+    }
+
+    // 设置新值
+    infra_error_t err = interface->set(store->engine_handle, key, key_len, value, value_len);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    // 更新统计信息
+    if (get_err == INFRA_ERROR_NOT_FOUND) {
+        poly_atomic_inc(&store->stats.curr_items);
+    }
+    poly_atomic_inc(&store->stats.cmd_set);
+    if (get_err == INFRA_OK) {
+        poly_atomic_dec(&store->stats.curr_items);
+    }
+
+    return INFRA_OK;
 }
 
 // 获取键值对
 infra_error_t poly_memkv_get(poly_memkv_t* store, const char* key, size_t key_len,
                             void** value, size_t* value_len) {
-    if (!store || !key || !value || !value_len) return INFRA_ERROR_INVALID_PARAM;
-
-    // 检查长度限制
-    if (store->config.max_key_size > 0 && key_len > store->config.max_key_size) {
+    if (!store || !key || !value || !value_len) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 获取插件接口
     const poly_plugin_interface_t* interface = poly_plugin_get_interface(store->engine_plugin);
-    if (!interface) return INFRA_ERROR_INVALID_STATE;
-
-    // 获取键值对
-    infra_error_t err = interface->get(store->engine_handle, key, value, value_len);
-    if (err == INFRA_OK) {
-        poly_atomic_inc(&store->stats.cmd_get);
-        poly_atomic_inc(&store->stats.hits);
-    } else if (err == INFRA_ERROR_NOT_FOUND) {
-        poly_atomic_inc(&store->stats.cmd_get);
-        poly_atomic_inc(&store->stats.misses);
+    if (!interface) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    return err;
+    return interface->get(store->engine_handle, key, key_len, value, value_len);
 }
 
 // 删除键值对
 infra_error_t poly_memkv_del(poly_memkv_t* store, const char* key, size_t key_len) {
-    if (!store || !key) return INFRA_ERROR_INVALID_PARAM;
-
-    // 检查长度限制
-    if (store->config.max_key_size > 0 && key_len > store->config.max_key_size) {
+    if (!store || !key) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 获取插件接口
     const poly_plugin_interface_t* interface = poly_plugin_get_interface(store->engine_plugin);
-    if (!interface) return INFRA_ERROR_INVALID_STATE;
-
-    // 删除键值对
-    infra_error_t err = interface->del(store->engine_handle, key);
-    if (err == INFRA_OK) {
-        poly_atomic_inc(&store->stats.cmd_del);
+    if (!interface) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    return err;
+    // 如果存在值，先获取它以更新统计信息
+    void* value = NULL;
+    size_t value_len = 0;
+    infra_error_t get_err = interface->get(store->engine_handle, key, key_len, &value, &value_len);
+    if (get_err == INFRA_OK) {
+        poly_atomic_dec(&store->stats.curr_items);
+        poly_atomic_inc(&store->stats.cmd_del);
+        infra_free(value);
+    }
+
+    return interface->del(store->engine_handle, key, key_len);
 }
 
 // 创建迭代器
@@ -311,8 +334,18 @@ infra_error_t poly_memkv_switch_engine(poly_memkv_t* store,
     // 关闭当前存储
     poly_memkv_close(store);
 
+    // 清理旧的插件管理器
+    if (store->plugin_mgr) {
+        poly_plugin_mgr_destroy(store->plugin_mgr);
+        store->plugin_mgr = NULL;
+    }
+
+    // 创建新的插件管理器
+    infra_error_t err = poly_plugin_mgr_create(&store->plugin_mgr);
+    if (err != INFRA_OK) return err;
+
     // 更新配置
-    infra_error_t err = poly_memkv_configure(store, config);
+    err = poly_memkv_configure(store, config);
     if (err != INFRA_OK) return err;
 
     // 重新打开存储

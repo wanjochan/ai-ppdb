@@ -16,13 +16,13 @@ typedef struct poly_plugin_interface {
     // 清理
     void (*cleanup)(void* handle);
     // 设置键值对
-    infra_error_t (*set)(void* handle, const char* key,
+    infra_error_t (*set)(void* handle, const char* key, size_t key_len,
         const void* value, size_t value_size);
     // 获取键值对
-    infra_error_t (*get)(void* handle, const char* key,
+    infra_error_t (*get)(void* handle, const char* key, size_t key_len,
         void** value, size_t* value_size);
     // 删除键值对
-    infra_error_t (*del)(void* handle, const char* key);
+    infra_error_t (*del)(void* handle, const char* key, size_t key_len);
 } poly_plugin_interface_t;
 
 // 插件

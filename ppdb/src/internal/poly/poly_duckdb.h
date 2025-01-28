@@ -25,14 +25,14 @@ typedef struct poly_duckdb_interface {
     void (*cleanup)(void* handle);
     
     // 基本操作
-    infra_error_t (*open)(void** handle, const char* path);
+    infra_error_t (*open)(void* handle, const char* path);
     void (*close)(void* handle);
     infra_error_t (*exec)(void* handle, const char* sql);
     
     // KV 操作
-    infra_error_t (*get)(void* handle, const char* key, void** value, size_t* value_size);
-    infra_error_t (*set)(void* handle, const char* key, const void* value, size_t value_size);
-    infra_error_t (*del)(void* handle, const char* key);
+    infra_error_t (*get)(void* handle, const char* key, size_t key_len, void** value, size_t* value_size);
+    infra_error_t (*set)(void* handle, const char* key, size_t key_len, const void* value, size_t value_size);
+    infra_error_t (*del)(void* handle, const char* key, size_t key_len);
     
     // 迭代器
     infra_error_t (*iter_create)(void* handle, void** iter);
@@ -43,8 +43,11 @@ typedef struct poly_duckdb_interface {
 // 全局 DuckDB 接口实例
 extern const poly_duckdb_interface_t g_duckdb_interface;
 
+// 获取 DuckDB 插件接口
+const poly_plugin_interface_t* poly_duckdb_get_interface(void);
+
 // 打开和关闭数据库
-infra_error_t poly_duckdb_open(void** db, const char* path);
+infra_error_t poly_duckdb_open(void* db, const char* path);
 void poly_duckdb_close(void* db);
 
 /**
@@ -56,7 +59,7 @@ void poly_duckdb_close(void* db);
  * @param value_len 值长度
  * @return 错误码
  */
-infra_error_t poly_duckdb_set(void* db, const char* key,
+infra_error_t poly_duckdb_set(void* db, const char* key, size_t key_len,
                              const void* value, size_t value_len);
 
 /**
@@ -68,7 +71,7 @@ infra_error_t poly_duckdb_set(void* db, const char* key,
  * @param value_len 值长度的指针
  * @return 错误码
  */
-infra_error_t poly_duckdb_get(void* db, const char* key,
+infra_error_t poly_duckdb_get(void* db, const char* key, size_t key_len,
                              void** value, size_t* value_len);
 
 /**
@@ -78,7 +81,7 @@ infra_error_t poly_duckdb_get(void* db, const char* key,
  * @param key_len 键长度
  * @return 错误码
  */
-infra_error_t poly_duckdb_del(void* db, const char* key);
+infra_error_t poly_duckdb_del(void* db, const char* key, size_t key_len);
 
 // 迭代器操作
 infra_error_t poly_duckdb_iter_create(void* db, void** iter);

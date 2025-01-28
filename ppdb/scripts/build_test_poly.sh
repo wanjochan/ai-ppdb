@@ -105,7 +105,11 @@ rm -f "${BUILD_DIR}/test/black/poly/test_poly_sqlite"
 rm -f "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
 rm -f "${BUILD_DIR}/test/black/poly/test_poly_memkv"
 
-# 编译实现文件
+# 不需要，测死和产品的 o 分开吧
+# echo "sh build_poly.sh"
+# sh "$(dirname "$0")/build_poly.sh"
+
+# 编译实现文件 (?? not by build_poly.sh ???)
 SQLITE_IMPL_OBJ="${BUILD_DIR}/test/black/poly/poly_sqlite.o"
 SQLITE_IMPL_SRC="${PPDB_DIR}/src/internal/poly/poly_sqlite.c"
 if need_rebuild "$SQLITE_IMPL_OBJ" "$SQLITE_IMPL_SRC"; then

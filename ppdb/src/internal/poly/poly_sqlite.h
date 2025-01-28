@@ -27,9 +27,9 @@ typedef struct poly_sqlite_interface {
     infra_error_t (*exec)(void* handle, const char* sql);
     
     // KV 操作
-    infra_error_t (*get)(void* handle, const char* key, void** value, size_t* value_size);
-    infra_error_t (*set)(void* handle, const char* key, const void* value, size_t value_size);
-    infra_error_t (*del)(void* handle, const char* key);
+    infra_error_t (*get)(void* handle, const char* key, size_t key_len, void** value, size_t* value_size);
+    infra_error_t (*set)(void* handle, const char* key, size_t key_len, const void* value, size_t value_size);
+    infra_error_t (*del)(void* handle, const char* key, size_t key_len);
     
     // 迭代器
     infra_error_t (*iter_create)(void* handle, void** iter);
@@ -48,9 +48,9 @@ infra_error_t poly_sqlite_open(poly_sqlite_db_t** db, const char* path);
 void poly_sqlite_close(poly_sqlite_db_t* db);
 
 // 基本操作
-infra_error_t poly_sqlite_set(poly_sqlite_db_t* db, const char* key, size_t key_len, const void* value, size_t value_len);
-infra_error_t poly_sqlite_get(poly_sqlite_db_t* db, const char* key, size_t key_len, void** value, size_t* value_len);
-infra_error_t poly_sqlite_del(poly_sqlite_db_t* db, const char* key, size_t key_len);
+infra_error_t poly_sqlite_set(void* db, const char* key, size_t key_len, const void* value, size_t value_len);
+infra_error_t poly_sqlite_get(void* db, const char* key, size_t key_len, void** value, size_t* value_len);
+infra_error_t poly_sqlite_del(void* db, const char* key, size_t key_len);
 
 // 事务操作
 infra_error_t poly_sqlite_begin(poly_sqlite_db_t* db);

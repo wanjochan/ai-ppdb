@@ -1,131 +1,147 @@
 #include "internal/poly/poly_sqlite.h"
-#include "test/white/framework/test_framework.h"
 #include "internal/infra/infra_core.h"
+#include "test/white/framework/test_framework.h"
 
 // 基本操作测试
 static void test_sqlite_basic_ops(void) {
-    poly_sqlite_db_t* db = NULL;
+    void* db;
     infra_error_t err;
-    
-    // 打开数据库
-    err = poly_sqlite_open(&db, ":memory:");
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open database");
-    TEST_ASSERT_NOT_NULL(db);
-    
-    // 测试 SET
     const char* key = "test_key";
     const char* value = "test_value";
-    err = poly_sqlite_set(db, key, strlen(key), value, strlen(value));
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to set key-value pair");
-    
-    // 测试 GET
-    void* retrieved_value = NULL;
-    size_t value_len = 0;
-    err = poly_sqlite_get(db, key, strlen(key), &retrieved_value, &value_len);
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to get value");
-    TEST_ASSERT_EQUAL(strlen(value), value_len);
-    TEST_ASSERT_MSG(memcmp(value, retrieved_value, value_len) == 0, "Value content mismatch");
-    
-    // 测试 DEL
-    err = poly_sqlite_del(db, key, strlen(key));
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to delete key");
-    
-    // 验证删除
-    err = poly_sqlite_get(db, key, strlen(key), &retrieved_value, &value_len);
-    TEST_ASSERT_MSG(err == INFRA_ERROR_NOT_FOUND, "Key should not exist after deletion");
-    
+    void* retrieved_value;
+    size_t value_len;
+
+    // 初始化
+    err = g_sqlite_interface.init(&db);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    // 打开数据库
+    err = g_sqlite_interface.open(db, ":memory:");
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    // 设置键值对
+    err = g_sqlite_interface.set(db, key, strlen(key), value, strlen(value) + 1);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    // 获取键值对
+    err = g_sqlite_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+    TEST_ASSERT_EQUAL(value_len, strlen(value) + 1);
+    TEST_ASSERT_EQUAL_STR(value, (char*)retrieved_value);
+    infra_free(retrieved_value);
+
+    // 删除键值对
+    err = g_sqlite_interface.del(db, key, strlen(key));
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    // 验证键值对已被删除
+    err = g_sqlite_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
+    TEST_ASSERT_EQUAL(err, INFRA_ERROR_NOT_FOUND);
+
     // 清理
-    if (retrieved_value) infra_free(retrieved_value);
-    poly_sqlite_close(db);
+    g_sqlite_interface.cleanup(db);
 }
 
-// 测试迭代器功能
-static void test_sqlite_iterator() {
-    poly_sqlite_db_t* db = NULL;
-    infra_error_t err = poly_sqlite_open(&db, ":memory:");
-    if (err != INFRA_OK) {
-        return;
-    }
+// 迭代器测试
+static void test_sqlite_iterator(void) {
+    void* db;
+    void* iter;
+    infra_error_t err;
+    char* key;
+    void* value;
+    size_t value_len;
+    int count = 0;
 
-    const char* keys[] = {"key1", "key2", "key3"};
-    const char* values[] = {"value1", "value2", "value3"};
-    int count = sizeof(keys) / sizeof(keys[0]);
+    // 初始化
+    err = g_sqlite_interface.init(&db);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    // 打开数据库
+    err = g_sqlite_interface.open(db, ":memory:");
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 插入测试数据
-    for (int i = 0; i < count; i++) {
-        err = poly_sqlite_set(db, keys[i], strlen(keys[i]), values[i], strlen(values[i]));
-        if (err != INFRA_OK) {
-            poly_sqlite_close(db);
-            return;
-        }
-    }
+    err = g_sqlite_interface.set(db, "key1", strlen("key1"), "value1", strlen("value1") + 1);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    err = g_sqlite_interface.set(db, "key2", strlen("key2"), "value2", strlen("value2") + 1);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    err = g_sqlite_interface.set(db, "key3", strlen("key3"), "value3", strlen("value3") + 1);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 创建迭代器
-    poly_sqlite_iter_t* iter = NULL;
-    err = poly_sqlite_iter_create(db, &iter);
-    if (err != INFRA_OK) {
-        poly_sqlite_close(db);
-        return;
-    }
+    err = g_sqlite_interface.iter_create(db, &iter);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 遍历所有键值对
-    char* key = NULL;
-    size_t key_len = 0;
-    void* value = NULL;
-    size_t value_len = 0;
+    while (g_sqlite_interface.iter_next(iter, &key, &value, &value_len) == INFRA_OK) {
+        TEST_ASSERT_NOT_NULL(key);
+        TEST_ASSERT_NOT_NULL(value);
+        TEST_ASSERT_TRUE(value_len > 0);
 
-    while ((err = poly_sqlite_iter_next(iter, &key, &key_len, &value, &value_len)) == INFRA_OK) {
-        // 验证数据
-        if (key && value) {
-            // 这里可以添加具体的验证逻辑
-        }
+        // 验证键值对格式
+        TEST_ASSERT_EQUAL(0, strncmp(key, "key", 3));
+        TEST_ASSERT_EQUAL(0, strncmp(value, "value", 5));
+        TEST_ASSERT_TRUE(key[3] >= '1' && key[3] <= '3');
+        TEST_ASSERT_EQUAL(key[3], ((char*)value)[5]);
+
+        infra_free(key);
+        infra_free(value);
+        count++;
     }
 
-    // 清理资源
-    poly_sqlite_iter_destroy(iter);
-    poly_sqlite_close(db);
+    // 验证遍历到的键值对数量
+    TEST_ASSERT_EQUAL(3, count);
+
+    // 销毁迭代器
+    g_sqlite_interface.iter_destroy(iter);
+
+    // 清理
+    g_sqlite_interface.cleanup(db);
 }
 
-// 测试事务功能
-static infra_error_t test_sqlite_transaction(void) {
-    poly_sqlite_db_t* db = NULL;
-    infra_error_t err = poly_sqlite_open(&db, ":memory:");
-    if (err != INFRA_OK) {
-        return err;
-    }
+// 事务测试
+static void test_sqlite_transaction(void) {
+    void* db;
+    infra_error_t err;
+    const char* key = "test_key";
+    const char* value = "test_value";
+    void* retrieved_value;
+    size_t value_len;
 
-    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)db;
-    err = poly_sqlite_exec(ctx, "BEGIN TRANSACTION");
-    if (err != INFRA_OK) {
-        poly_sqlite_close(db);
-        return err;
-    }
+    // 初始化
+    err = g_sqlite_interface.init(&db);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
 
-    // 执行一些操作
-    const char* key = "tx_key";
-    const char* value = "tx_value";
-    err = poly_sqlite_set(db, key, strlen(key), value, strlen(value));
-    if (err != INFRA_OK) {
-        poly_sqlite_exec(ctx, "ROLLBACK");
-        poly_sqlite_close(db);
-        return err;
-    }
+    // 打开数据库
+    err = g_sqlite_interface.open(db, ":memory:");
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
 
-    if (err != INFRA_OK) {
-        poly_sqlite_exec(ctx, "ROLLBACK");
-        poly_sqlite_close(db);
-        return err;
-    }
+    // 设置键值对
+    err = g_sqlite_interface.set(db, key, strlen(key), value, strlen(value) + 1);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
 
-    err = poly_sqlite_exec(ctx, "COMMIT");
-    if (err != INFRA_OK) {
-        poly_sqlite_exec(ctx, "ROLLBACK");
-        poly_sqlite_close(db);
-        return err;
-    }
+    // 执行事务
+    err = g_sqlite_interface.exec(db, "BEGIN TRANSACTION;");
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
 
-    poly_sqlite_close(db);
-    return INFRA_OK;
+    // 在事务中修改数据
+    err = g_sqlite_interface.exec(db, "UPDATE kv_store SET value = X'6E657776616C7565' WHERE key = 'test_key';");
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    // 提交事务
+    err = g_sqlite_interface.exec(db, "COMMIT;");
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+
+    // 验证修改后的值
+    err = g_sqlite_interface.get(db, key, strlen(key), &retrieved_value, &value_len);
+    TEST_ASSERT_EQUAL(err, INFRA_OK);
+    TEST_ASSERT_EQUAL_STR("newvalue", (char*)retrieved_value);
+    infra_free(retrieved_value);
+
+    // 清理
+    g_sqlite_interface.cleanup(db);
 }
 
 int main(void) {
