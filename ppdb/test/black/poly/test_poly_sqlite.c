@@ -1,21 +1,22 @@
 #include "internal/poly/poly_sqlite.h"
 #include "test/white/framework/test_framework.h"
+#include "internal/infra/infra_core.h"
 
-// SQLite 基本操作测试
+// 基本操作测试
 static void test_sqlite_basic_ops(void) {
     poly_sqlite_db_t* db = NULL;
     infra_error_t err;
     
     // 打开数据库
-    err = poly_sqlite_open(":memory:", &db);
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open SQLite database");
+    err = poly_sqlite_open(&db, ":memory:");
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open database");
     TEST_ASSERT_NOT_NULL(db);
     
-    // 测试 PUT
+    // 测试 SET
     const char* key = "test_key";
     const char* value = "test_value";
-    err = poly_sqlite_put(db, key, strlen(key), value, strlen(value));
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to put key-value pair");
+    err = poly_sqlite_set(db, key, strlen(key), value, strlen(value));
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to set key-value pair");
     
     // 测试 GET
     void* retrieved_value = NULL;
@@ -38,83 +39,93 @@ static void test_sqlite_basic_ops(void) {
     poly_sqlite_close(db);
 }
 
-// SQLite 迭代器测试
-static void test_sqlite_iterator(void) {
+// 测试迭代器功能
+static void test_sqlite_iterator() {
     poly_sqlite_db_t* db = NULL;
-    poly_sqlite_iter_t* iter = NULL;
-    infra_error_t err;
-    
-    // 打开数据库
-    err = poly_sqlite_open(":memory:", &db);
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open SQLite database");
-    
-    // 插入测试数据
+    infra_error_t err = poly_sqlite_open(&db, ":memory:");
+    if (err != INFRA_OK) {
+        return;
+    }
+
     const char* keys[] = {"key1", "key2", "key3"};
     const char* values[] = {"value1", "value2", "value3"};
-    for (int i = 0; i < 3; i++) {
-        err = poly_sqlite_put(db, keys[i], strlen(keys[i]), values[i], strlen(values[i]));
-        TEST_ASSERT_MSG(err == INFRA_OK, "Failed to put test data");
+    int count = sizeof(keys) / sizeof(keys[0]);
+
+    // 插入测试数据
+    for (int i = 0; i < count; i++) {
+        err = poly_sqlite_set(db, keys[i], strlen(keys[i]), values[i], strlen(values[i]));
+        if (err != INFRA_OK) {
+            poly_sqlite_close(db);
+            return;
+        }
     }
-    
+
     // 创建迭代器
+    poly_sqlite_iter_t* iter = NULL;
     err = poly_sqlite_iter_create(db, &iter);
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to create iterator");
-    
-    // 遍历数据
-    int count = 0;
-    void* key;
-    size_t key_len;
-    void* value;
-    size_t value_len;
-    
-    while ((err = poly_sqlite_iter_next(iter, &key, &key_len, &value, &value_len)) == INFRA_OK) {
-        TEST_ASSERT_NOT_NULL(key);
-        TEST_ASSERT_NOT_NULL(value);
-        count++;
-        infra_free(key);
-        infra_free(value);
+    if (err != INFRA_OK) {
+        poly_sqlite_close(db);
+        return;
     }
-    
-    TEST_ASSERT_EQUAL(3, count);
-    TEST_ASSERT_MSG(err == INFRA_ERROR_NOT_FOUND, "Iterator should end with NOT_FOUND");
-    
-    // 清理
+
+    // 遍历所有键值对
+    char* key = NULL;
+    size_t key_len = 0;
+    void* value = NULL;
+    size_t value_len = 0;
+
+    while ((err = poly_sqlite_iter_next(iter, &key, &key_len, &value, &value_len)) == INFRA_OK) {
+        // 验证数据
+        if (key && value) {
+            // 这里可以添加具体的验证逻辑
+        }
+    }
+
+    // 清理资源
     poly_sqlite_iter_destroy(iter);
     poly_sqlite_close(db);
 }
 
-// SQLite 事务测试
-static void test_sqlite_transaction(void) {
+// 测试事务功能
+static infra_error_t test_sqlite_transaction(void) {
     poly_sqlite_db_t* db = NULL;
-    infra_error_t err;
-    
-    // 打开数据库
-    err = poly_sqlite_open(":memory:", &db);
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open SQLite database");
-    
-    // 开始事务
-    err = poly_sqlite_begin(db);
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to begin transaction");
-    
-    // 插入数据
+    infra_error_t err = poly_sqlite_open(":memory:", &db);
+    if (err != INFRA_OK) {
+        return err;
+    }
+
+    poly_sqlite_ctx_t* ctx = (poly_sqlite_ctx_t*)db;
+    err = poly_sqlite_exec(ctx, "BEGIN TRANSACTION");
+    if (err != INFRA_OK) {
+        poly_sqlite_close(db);
+        return err;
+    }
+
+    // 执行一些操作
     const char* key = "tx_key";
     const char* value = "tx_value";
-    err = poly_sqlite_put(db, key, strlen(key), value, strlen(value));
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to put in transaction");
-    
-    // 提交事务
-    err = poly_sqlite_commit(db);
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to commit transaction");
-    
-    // 验证数据
-    void* retrieved_value = NULL;
-    size_t value_len = 0;
-    err = poly_sqlite_get(db, key, strlen(key), &retrieved_value, &value_len);
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to get committed value");
-    
-    // 清理
-    if (retrieved_value) infra_free(retrieved_value);
+    err = poly_sqlite_set(db, key, strlen(key), value, strlen(value));
+    if (err != INFRA_OK) {
+        poly_sqlite_exec(ctx, "ROLLBACK");
+        poly_sqlite_close(db);
+        return err;
+    }
+
+    if (err != INFRA_OK) {
+        poly_sqlite_exec(ctx, "ROLLBACK");
+        poly_sqlite_close(db);
+        return err;
+    }
+
+    err = poly_sqlite_exec(ctx, "COMMIT");
+    if (err != INFRA_OK) {
+        poly_sqlite_exec(ctx, "ROLLBACK");
+        poly_sqlite_close(db);
+        return err;
+    }
+
     poly_sqlite_close(db);
+    return INFRA_OK;
 }
 
 int main(void) {

@@ -42,7 +42,7 @@ POLY_SOURCES=(
 )
 
 # 设置最大并发数
-MAX_JOBS=2
+MAX_JOBS=1
 
 # 编译函数
 compile_file() {

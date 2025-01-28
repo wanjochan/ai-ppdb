@@ -2,12 +2,15 @@
 #define POLY_SQLITE_H
 
 #include "internal/infra/infra_core.h"
+#include "sqlite3.h"
 #include "internal/poly/poly_plugin.h"
 
 // SQLite 数据库句柄
+struct poly_sqlite_db;
 typedef struct poly_sqlite_db poly_sqlite_db_t;
 
-// SQLite 迭代器句柄
+// SQLite 迭代器
+struct poly_sqlite_iter;
 typedef struct poly_sqlite_iter poly_sqlite_iter_t;
 
 // SQLite 接口
@@ -40,15 +43,14 @@ extern const poly_sqlite_interface_t g_sqlite_interface;
 // 获取SQLite插件接口
 const poly_plugin_interface_t* poly_sqlite_get_interface(void);
 
-// 基本操作
-infra_error_t poly_sqlite_open(const char* path, poly_sqlite_db_t** db);
-infra_error_t poly_sqlite_close(poly_sqlite_db_t* db);
-infra_error_t poly_sqlite_exec(poly_sqlite_db_t* db, const char* sql);
+// 打开和关闭数据库
+infra_error_t poly_sqlite_open(poly_sqlite_db_t** db, const char* path);
+void poly_sqlite_close(poly_sqlite_db_t* db);
 
-// KV 操作
-infra_error_t poly_sqlite_get(poly_sqlite_db_t* db, const void* key, size_t klen, void** val, size_t* vlen);
-infra_error_t poly_sqlite_put(poly_sqlite_db_t* db, const void* key, size_t klen, const void* val, size_t vlen);
-infra_error_t poly_sqlite_del(poly_sqlite_db_t* db, const void* key, size_t klen);
+// 基本操作
+infra_error_t poly_sqlite_set(poly_sqlite_db_t* db, const char* key, size_t key_len, const void* value, size_t value_len);
+infra_error_t poly_sqlite_get(poly_sqlite_db_t* db, const char* key, size_t key_len, void** value, size_t* value_len);
+infra_error_t poly_sqlite_del(poly_sqlite_db_t* db, const char* key, size_t key_len);
 
 // 事务操作
 infra_error_t poly_sqlite_begin(poly_sqlite_db_t* db);
@@ -57,7 +59,23 @@ infra_error_t poly_sqlite_rollback(poly_sqlite_db_t* db);
 
 // 迭代器操作
 infra_error_t poly_sqlite_iter_create(poly_sqlite_db_t* db, poly_sqlite_iter_t** iter);
-infra_error_t poly_sqlite_iter_next(poly_sqlite_iter_t* iter, void** key, size_t* klen, void** val, size_t* vlen);
-infra_error_t poly_sqlite_iter_destroy(poly_sqlite_iter_t* iter);
+infra_error_t poly_sqlite_iter_next(poly_sqlite_iter_t* iter, char** key, size_t* key_len, void** value, size_t* value_len);
+void poly_sqlite_iter_destroy(poly_sqlite_iter_t* iter);
+
+typedef struct poly_sqlite_ctx {
+    sqlite3* db;
+    sqlite3_stmt* get_stmt;
+    sqlite3_stmt* set_stmt;
+    sqlite3_stmt* del_stmt;
+    sqlite3_stmt* iter_stmt;
+} poly_sqlite_ctx_t;
+
+/**
+ * @brief 执行 SQL 语句
+ * @param ctx SQLite 上下文
+ * @param sql SQL 语句
+ * @return 错误码
+ */
+infra_error_t poly_sqlite_exec(poly_sqlite_ctx_t* ctx, const char* sql);
 
 #endif // POLY_SQLITE_H 

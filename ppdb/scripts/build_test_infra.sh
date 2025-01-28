@@ -137,12 +137,7 @@ for f in $TEST_FILES; do
     
     if [ $NEED_LINK -eq 1 ]; then
         echo "Linking ${base}..."
-        echo "${CC}" \
-            "${BUILD_DIR}/test/white/framework/test_framework.o" \
-            "${BUILD_DIR}/test/white/infra/${base}.o" \
-            "${BUILD_DIR}/infra/libinfra.a" \
-            ${LDFLAGS} ${LIBS} \
-            -o "${BUILD_DIR}/test/white/infra/${base}.exe"
+
         "${CC}" \
             "${BUILD_DIR}/test/white/framework/test_framework.o" \
             "${BUILD_DIR}/test/white/infra/${base}.o" \
@@ -154,12 +149,6 @@ for f in $TEST_FILES; do
             exit 1
         fi
 
-        #echo "Creating binary ${base}..."
-        #"${OBJCOPY}" -S -O binary "${BUILD_DIR}/test/white/infra/${base}.dbg" "${BUILD_DIR}/test/white/infra/${base}"
-        #if [ $? -ne 0 ]; then
-        #    echo "Failed to create binary ${base}"
-        #    exit 1
-        #fi
     else
         echo "${base}.exe binary is up to date."
     fi

@@ -48,87 +48,83 @@ echo -e "${GREEN}Building poly tests...${NC}"
 # 清理旧的测试文件
 rm -f "${BUILD_DIR}/test/black/poly/test_poly_sqlite"
 rm -f "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
+rm -f "${BUILD_DIR}/test/black/poly/test_poly_memkv"
 
-# Build SQLite implementation
-echo -e "Building SQLite implementation..."
-mkdir -p "${BUILD_DIR}/src/internal/poly"
+# 编译实现文件
+echo -e "${GREEN}Building SQLite implementation...${NC}"
 ${CC} ${CFLAGS} \
     -I"${PPDB_DIR}" \
     -I"${PPDB_DIR}/include" \
-    -I"${SRC_DIR}" \
+    -I"${PPDB_DIR}/src" \
     -I"${PPDB_DIR}/vendor/sqlite3" \
-    "${SRC_DIR}/internal/poly/poly_sqlite.c" \
-    -c -o "${BUILD_DIR}/src/internal/poly/poly_sqlite.o"
-if [ $? -ne 0 ]; then
-    echo -e "Error: Failed to build SQLite implementation"
-    exit 1
-fi
+    "${PPDB_DIR}/src/internal/poly/poly_sqlite.c" \
+    -c -o "${BUILD_DIR}/test/black/poly/poly_sqlite.o"
 
-# Build DuckDB implementation
-echo -e "Building DuckDB implementation..."
+echo -e "${GREEN}Building DuckDB implementation...${NC}"
 ${CC} ${CFLAGS} \
     -I"${PPDB_DIR}" \
     -I"${PPDB_DIR}/include" \
-    -I"${SRC_DIR}" \
+    -I"${PPDB_DIR}/src" \
     -I"${PPDB_DIR}/vendor/duckdb" \
-    "${SRC_DIR}/internal/poly/poly_duckdb.c" \
-    -c -o "${BUILD_DIR}/src/internal/poly/poly_duckdb.o"
-if [ $? -ne 0 ]; then
-    echo -e "Error: Failed to build DuckDB implementation"
-    exit 1
-fi
+    "${PPDB_DIR}/src/internal/poly/poly_duckdb.c" \
+    -c -o "${BUILD_DIR}/test/black/poly/poly_duckdb.o"
+
+echo -e "${GREEN}Building MemKV implementation...${NC}"
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${PPDB_DIR}/src" \
+    "${PPDB_DIR}/src/internal/poly/poly_memkv.c" \
+    -c -o "${BUILD_DIR}/test/black/poly/poly_memkv.o"
 
 # 编译测试框架
 echo -e "${GREEN}Building test framework...${NC}"
 ${CC} ${CFLAGS} \
     -I"${PPDB_DIR}" \
     -I"${PPDB_DIR}/include" \
-    -I"${SRC_DIR}" \
+    -I"${PPDB_DIR}/src" \
     "${PPDB_DIR}/test/white/framework/test_framework.c" \
     -c -o "${BUILD_DIR}/test/black/poly/test_framework.o"
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Error: Failed to build test framework${NC}"
-    exit 1
-fi
-
-# 编译 SQLite 测试程序
+# 编译测试文件
 echo -e "${GREEN}Building SQLite tests...${NC}"
 ${CC} ${CFLAGS} \
     -I"${PPDB_DIR}" \
     -I"${PPDB_DIR}/include" \
-    -I"${PPDB_DIR}/test/black/poly" \
-    -I"${SRC_DIR}" \
+    -I"${PPDB_DIR}/src" \
+    -I"${PPDB_DIR}/vendor/sqlite3" \
     "${PPDB_DIR}/test/black/poly/test_poly_sqlite.c" \
+    "${BUILD_DIR}/test/black/poly/poly_sqlite.o" \
     "${BUILD_DIR}/test/black/poly/test_framework.o" \
-    "${BUILD_DIR}/src/internal/poly/poly_sqlite.o" \
-    "${BUILD_DIR}/infra/libinfra.a" \
     "${BUILD_DIR}/vendor/sqlite3/sqlite3.o" \
+    "${BUILD_DIR}/infra/libinfra.a" \
     -o "${BUILD_DIR}/test/black/poly/test_poly_sqlite"
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Error: Failed to build SQLite tests${NC}"
-    exit 1
-fi
-
-# 编译 DuckDB 测试程序
 echo -e "${GREEN}Building DuckDB tests...${NC}"
 ${CC} ${CFLAGS} \
     -I"${PPDB_DIR}" \
     -I"${PPDB_DIR}/include" \
-    -I"${SRC_DIR}" \
+    -I"${PPDB_DIR}/src" \
     -I"${PPDB_DIR}/vendor/duckdb" \
     "${PPDB_DIR}/test/black/poly/test_poly_duckdb.c" \
+    "${BUILD_DIR}/test/black/poly/poly_duckdb.o" \
     "${BUILD_DIR}/test/black/poly/test_framework.o" \
-    "${BUILD_DIR}/src/internal/poly/poly_duckdb.o" \
     "${BUILD_DIR}/infra/libinfra.a" \
-    -ldl \
     -o "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
 
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Error: Failed to build DuckDB tests${NC}"
-    exit 1
-fi
+echo -e "${GREEN}Building MemKV tests...${NC}"
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${PPDB_DIR}/src" \
+    "${PPDB_DIR}/test/black/poly/test_poly_memkv.c" \
+    "${BUILD_DIR}/test/black/poly/poly_memkv.o" \
+    "${BUILD_DIR}/test/black/poly/poly_sqlite.o" \
+    "${BUILD_DIR}/test/black/poly/poly_duckdb.o" \
+    "${BUILD_DIR}/test/black/poly/test_framework.o" \
+    "${BUILD_DIR}/vendor/sqlite3/sqlite3.o" \
+    "${BUILD_DIR}/infra/libinfra.a" \
+    -o "${BUILD_DIR}/test/black/poly/test_poly_memkv"
 
 echo -e "${GREEN}Build complete.${NC}"
 ls -lh "${BUILD_DIR}/test/black/poly/test_poly_"*
@@ -139,20 +135,23 @@ echo -e "${GREEN}Running SQLite tests...${NC}"
 
 echo -e "${GREEN}Running DuckDB tests...${NC}"
 # 设置 DuckDB 库路径
-export DYLD_LIBRARY_PATH="${BUILD_DIR}/vendor/duckdb:$DYLD_LIBRARY_PATH"
+export DYLD_LIBRARY_PATH="${BUILD_DIR}/vendor/duckdb:${DYLD_LIBRARY_PATH}"
 export DUCKDB_LIBRARY_PATH="${BUILD_DIR}/vendor/duckdb/libduckdb.dylib"
 
 # 显示调试信息
 echo "Debug info:"
-echo "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH"
-echo "DUCKDB_LIBRARY_PATH=$DUCKDB_LIBRARY_PATH"
+echo "DYLD_LIBRARY_PATH=${DYLD_LIBRARY_PATH}"
+echo "DUCKDB_LIBRARY_PATH=${DUCKDB_LIBRARY_PATH}"
 echo "DuckDB library details:"
-ls -l "$DUCKDB_LIBRARY_PATH"
-file "$DUCKDB_LIBRARY_PATH"
-nm "$DUCKDB_LIBRARY_PATH" | grep duckdb_open || echo "Symbol duckdb_open not found"
+ls -lh "${DUCKDB_LIBRARY_PATH}"
+file "${DUCKDB_LIBRARY_PATH}"
+nm "${DUCKDB_LIBRARY_PATH}" | grep duckdb_open
 echo "Test binary details:"
 file "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
 
 "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
+
+echo -e "${GREEN}Running MemKV tests...${NC}"
+"${BUILD_DIR}/test/black/poly/test_poly_memkv"
 
 exit $? 

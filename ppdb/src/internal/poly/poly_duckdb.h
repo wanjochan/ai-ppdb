@@ -2,11 +2,18 @@
 #define POLY_DUCKDB_H
 
 #include "internal/infra/infra_core.h"
+#include "duckdb.h"
+#include "internal/poly/poly_plugin.h"
+
+// 成功状态码
+#define DuckDB_SUCCESS DuckDBSuccess
 
 // DuckDB 数据库句柄
+struct poly_duckdb_db;
 typedef struct poly_duckdb_db poly_duckdb_db_t;
 
-// DuckDB 迭代器句柄
+// DuckDB 迭代器
+struct poly_duckdb_iter;
 typedef struct poly_duckdb_iter poly_duckdb_iter_t;
 
 // DuckDB 接口
@@ -35,5 +42,47 @@ typedef struct poly_duckdb_interface {
 
 // 全局 DuckDB 接口实例
 extern const poly_duckdb_interface_t g_duckdb_interface;
+
+// 打开和关闭数据库
+infra_error_t poly_duckdb_open(poly_duckdb_db_t** db, const char* path);
+void poly_duckdb_close(poly_duckdb_db_t* db);
+
+/**
+ * @brief 设置键值对
+ * @param db DuckDB 数据库实例
+ * @param key 键
+ * @param key_len 键长度
+ * @param value 值
+ * @param value_len 值长度
+ * @return 错误码
+ */
+infra_error_t poly_duckdb_set(poly_duckdb_db_t* db, const void* key, size_t key_len,
+                             const void* value, size_t value_len);
+
+/**
+ * @brief 获取键值对
+ * @param db DuckDB 数据库实例
+ * @param key 键
+ * @param key_len 键长度
+ * @param value 值的指针
+ * @param value_len 值长度的指针
+ * @return 错误码
+ */
+infra_error_t poly_duckdb_get(poly_duckdb_db_t* db, const void* key, size_t key_len,
+                             void** value, size_t* value_len);
+
+/**
+ * @brief 删除键值对
+ * @param db DuckDB 数据库实例
+ * @param key 键
+ * @param key_len 键长度
+ * @return 错误码
+ */
+infra_error_t poly_duckdb_del(poly_duckdb_db_t* db, const void* key, size_t key_len);
+
+// 迭代器操作
+infra_error_t poly_duckdb_iter_create(poly_duckdb_db_t* db, poly_duckdb_iter_t** iter);
+infra_error_t poly_duckdb_iter_next(poly_duckdb_iter_t* iter, char** key, size_t* key_len, void** value, size_t* value_len);
+void poly_duckdb_iter_destroy(poly_duckdb_iter_t* iter);
 
 #endif // POLY_DUCKDB_H 

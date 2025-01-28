@@ -39,16 +39,13 @@ static struct {
 struct poly_duckdb_db {
     duckdb_database db;
     duckdb_connection conn;
-    duckdb_prepared_statement get_stmt;
-    duckdb_prepared_statement put_stmt;
-    duckdb_prepared_statement del_stmt;
+    duckdb_prepared_statement stmt;
 };
 
-// 迭代器结构
+// DuckDB迭代器
 struct poly_duckdb_iter {
-    poly_duckdb_db_t* db;
-    duckdb_prepared_statement stmt;
     duckdb_result result;
+    duckdb_connection conn;
     size_t current_row;
     size_t total_rows;
 };
@@ -121,92 +118,75 @@ infra_error_t poly_duckdb_init(void** handle) {
 }
 
 // 清理DuckDB模块
-void poly_duckdb_cleanup(void* handle) {
-    if (!handle) return;
-    
-    poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
-    if (g_duckdb.handle) {
-        g_duckdb.destroy_prepare(&db->get_stmt);
-        g_duckdb.destroy_prepare(&db->put_stmt);
-        g_duckdb.destroy_prepare(&db->del_stmt);
-        g_duckdb.disconnect(&db->conn);
-        g_duckdb.close(&db->db);
-        cosmo_dlclose(g_duckdb.handle);
-        g_duckdb.handle = NULL;
+void poly_duckdb_cleanup(poly_duckdb_db_t* db) {
+    if (!db) {
+        return;
     }
-    infra_free(db);
+
+    if (db->stmt) {
+        g_duckdb.destroy_prepare(&db->stmt);
+        db->stmt = NULL;
+    }
+    if (db->conn) {
+        g_duckdb.disconnect(&db->conn);
+        db->conn = NULL;
+    }
 }
 
 // 打开数据库
-infra_error_t poly_duckdb_open(void* handle, const char* path) {
-    if (!handle || !path || !g_duckdb.handle) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
-    
-    if (g_duckdb.open(path, &db->db) != DuckDBSuccess) {
+infra_error_t poly_duckdb_open(poly_duckdb_db_t** db, const char* path) {
+    if (!db || !path) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 分配内存
+    poly_duckdb_db_t* new_db = infra_malloc(sizeof(poly_duckdb_db_t));
+    if (!new_db) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    // 打开数据库
+    if (g_duckdb.open(path, &new_db->db) != DuckDB_SUCCESS) {
+        infra_free(new_db);
         return INFRA_ERROR_IO;
     }
-    
-    if (g_duckdb.connect(db->db, &db->conn) != DuckDBSuccess) {
-        g_duckdb.close(&db->db);
+
+    // 创建连接
+    if (g_duckdb.connect(new_db->db, &new_db->conn) != DuckDB_SUCCESS) {
+        g_duckdb.close(&new_db->db);
+        infra_free(new_db);
         return INFRA_ERROR_IO;
     }
-    
-    // 创建KV表
-    const char* create_sql = 
-        "CREATE TABLE IF NOT EXISTS kv ("
-        "  key BLOB PRIMARY KEY,"
-        "  value BLOB"
-        ")";
-    duckdb_result result;
-    duckdb_state state = g_duckdb.query(db->conn, create_sql, &result);
-    g_duckdb.destroy_result(&result);
-    if (state != DuckDBSuccess) {
-        g_duckdb.disconnect(&db->conn);
-        g_duckdb.close(&db->db);
+
+    // 创建表
+    duckdb_state state;
+    state = g_duckdb.query(new_db->conn,
+        "CREATE TABLE IF NOT EXISTS kv_store ("
+        "key BLOB PRIMARY KEY,"
+        "value BLOB"
+        ");",
+        NULL);
+
+    if (state != DuckDB_SUCCESS) {
+        g_duckdb.disconnect(&new_db->conn);
+        g_duckdb.close(&new_db->db);
+        infra_free(new_db);
         return INFRA_ERROR_IO;
     }
-    
-    // 准备语句
-    const char* get_sql = "SELECT value FROM kv WHERE key = ?";
-    if (g_duckdb.prepare(db->conn, get_sql, &db->get_stmt) != DuckDBSuccess) {
-        g_duckdb.disconnect(&db->conn);
-        g_duckdb.close(&db->db);
-        return INFRA_ERROR_IO;
-    }
-    
-    const char* put_sql = "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)";
-    if (g_duckdb.prepare(db->conn, put_sql, &db->put_stmt) != DuckDBSuccess) {
-        g_duckdb.destroy_prepare(&db->get_stmt);
-        g_duckdb.disconnect(&db->conn);
-        g_duckdb.close(&db->db);
-        return INFRA_ERROR_IO;
-    }
-    
-    const char* del_sql = "DELETE FROM kv WHERE key = ?";
-    if (g_duckdb.prepare(db->conn, del_sql, &db->del_stmt) != DuckDBSuccess) {
-        g_duckdb.destroy_prepare(&db->get_stmt);
-        g_duckdb.destroy_prepare(&db->put_stmt);
-        g_duckdb.disconnect(&db->conn);
-        g_duckdb.close(&db->db);
-        return INFRA_ERROR_IO;
-    }
-    
+
+    *db = new_db;
     return INFRA_OK;
 }
 
 // 关闭数据库
-infra_error_t poly_duckdb_close(void* handle) {
-    if (!handle || !g_duckdb.handle) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
-    g_duckdb.destroy_prepare(&db->get_stmt);
-    g_duckdb.destroy_prepare(&db->put_stmt);
-    g_duckdb.destroy_prepare(&db->del_stmt);
+void poly_duckdb_close(poly_duckdb_db_t* db) {
+    if (!db) {
+        return;
+    }
+
     g_duckdb.disconnect(&db->conn);
     g_duckdb.close(&db->db);
-    
-    return INFRA_OK;
+    infra_free(db);
 }
 
 // 执行 SQL 语句
@@ -218,185 +198,180 @@ infra_error_t poly_duckdb_exec(void* handle, const char* sql) {
     duckdb_state state = g_duckdb.query(db->conn, sql, &result);
     g_duckdb.destroy_result(&result);
     
-    return (state == DuckDBSuccess) ? INFRA_OK : INFRA_ERROR_IO;
+    return (state == DuckDB_SUCCESS) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
-// KV操作
-infra_error_t poly_duckdb_get(void* handle, const char* key, void** value, size_t* value_size) {
-    if (!handle || !key || !value || !value_size || !g_duckdb.handle) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
-    
-    fprintf(stderr, "Getting key: %s (length: %zu)\n", key, strlen(key));
-    
-    // 绑定参数 - 不包含 null 终止符
-    g_duckdb.bind_blob(db->get_stmt, 1, key, strlen(key));
-    
-    // 执行查询
+// 设置键值对
+infra_error_t poly_duckdb_set(poly_duckdb_db_t* db, const void* key, size_t key_len,
+                             const void* value, size_t value_len) {
+    if (!db || !key || !value) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    duckdb_prepared_statement stmt = NULL;
+    duckdb_state state;
     duckdb_result result;
-    if (g_duckdb.execute_prepared(db->get_stmt, &result) != DuckDBSuccess) {
-        fprintf(stderr, "Get operation failed\n");
+
+    state = g_duckdb.prepare(db->conn, "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)", &stmt);
+    if (state != DuckDB_SUCCESS) {
         return INFRA_ERROR_IO;
     }
-    
-    // 检查结果
-    if (g_duckdb.value_is_null(&result, 0, 0)) {
-        fprintf(stderr, "Key not found (null value)\n");
+
+    g_duckdb.bind_blob(stmt, 1, key, key_len);
+    g_duckdb.bind_blob(stmt, 2, value, value_len);
+
+    state = g_duckdb.execute_prepared(stmt, &result);
+    g_duckdb.destroy_prepare(&stmt);
+    g_duckdb.destroy_result(&result);
+
+    return (state == DuckDB_SUCCESS) ? INFRA_OK : INFRA_ERROR_IO;
+}
+
+// 获取键值对
+infra_error_t poly_duckdb_get(poly_duckdb_db_t* db, const void* key, size_t key_len,
+                             void** value, size_t* value_len) {
+    if (!db || !key || !value || !value_len) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    duckdb_prepared_statement stmt = NULL;
+    duckdb_state state;
+    duckdb_result result;
+
+    state = g_duckdb.prepare(db->conn, "SELECT value FROM kv_store WHERE key = ?", &stmt);
+    if (state != DuckDB_SUCCESS) {
+        return INFRA_ERROR_IO;
+    }
+
+    g_duckdb.bind_blob(stmt, 1, key, key_len);
+    state = g_duckdb.execute_prepared(stmt, &result);
+    g_duckdb.destroy_prepare(&stmt);
+
+    if (state != DuckDB_SUCCESS) {
+        g_duckdb.destroy_result(&result);
+        return INFRA_ERROR_IO;
+    }
+
+    if (g_duckdb.row_count(&result) == 0) {
         g_duckdb.destroy_result(&result);
         return INFRA_ERROR_NOT_FOUND;
     }
-    
-    // 获取BLOB数据
+
     duckdb_blob blob = g_duckdb.value_blob(&result, 0, 0);
-    fprintf(stderr, "Found value with size: %zu\n", blob.size);
-    
-    // 如果值为空，也视为未找到
-    if (blob.size == 0) {
-        fprintf(stderr, "Key not found (empty value)\n");
-        g_duckdb.destroy_result(&result);
-        return INFRA_ERROR_NOT_FOUND;
-    }
-    
-    // 复制数据
-    void* data = infra_malloc(blob.size);
-    if (!data) {
+    *value_len = blob.size;
+    *value = infra_malloc(*value_len);
+    if (!*value) {
         g_duckdb.destroy_result(&result);
         return INFRA_ERROR_NO_MEMORY;
     }
-    
-    memcpy(data, blob.data, blob.size);
-    *value = data;
-    *value_size = blob.size;
-    
+
+    memcpy(*value, blob.data, *value_len);
     g_duckdb.destroy_result(&result);
     return INFRA_OK;
 }
 
-infra_error_t poly_duckdb_set(void* handle, const char* key, const void* value, size_t value_size) {
-    if (!handle || !key || !value || !g_duckdb.handle) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
-    
-    // 绑定参数 - 不包含 null 终止符
-    g_duckdb.bind_blob(db->put_stmt, 1, key, strlen(key));
-    g_duckdb.bind_blob(db->put_stmt, 2, value, value_size);
-    
-    // 执行语句
-    duckdb_result result;
-    duckdb_state state = g_duckdb.execute_prepared(db->put_stmt, &result);
-    g_duckdb.destroy_result(&result);
-    
-    return (state == DuckDBSuccess) ? INFRA_OK : INFRA_ERROR_IO;
-}
+// 删除键值对
+infra_error_t poly_duckdb_del(poly_duckdb_db_t* db, const void* key, size_t key_len) {
+    if (!db || !key) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
 
-infra_error_t poly_duckdb_del(void* handle, const char* key) {
-    if (!handle || !key || !g_duckdb.handle) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
-    
-    fprintf(stderr, "Deleting key: %s (length: %zu)\n", key, strlen(key));
-    
-    // 绑定参数 - 不包含 null 终止符
-    g_duckdb.bind_blob(db->del_stmt, 1, key, strlen(key));
-    
-    // 执行语句
-    duckdb_result result;
-    duckdb_state state = g_duckdb.execute_prepared(db->del_stmt, &result);
-    fprintf(stderr, "Delete operation state: %d\n", state);
-    g_duckdb.destroy_result(&result);
-    
-    return (state == DuckDBSuccess) ? INFRA_OK : INFRA_ERROR_IO;
+    duckdb_prepared_statement stmt = NULL;
+    if (g_duckdb.prepare(db->conn, "DELETE FROM kv_store WHERE key = ?", &stmt) != DuckDB_SUCCESS) {
+        return INFRA_ERROR_IO;
+    }
+
+    g_duckdb.bind_blob(stmt, 1, key, key_len);
+    if (g_duckdb.get_error(stmt)) {
+        g_duckdb.destroy_prepare(&stmt);
+        return INFRA_ERROR_UNKNOWN;
+    }
+
+    duckdb_state state = g_duckdb.execute_prepared(stmt, NULL);
+    g_duckdb.destroy_prepare(&stmt);
+
+    return (state == DuckDB_SUCCESS) ? INFRA_OK : INFRA_ERROR_IO;
 }
 
 // 创建迭代器
-infra_error_t poly_duckdb_iter_create(void* handle, void** iter) {
-    if (!handle || !iter || !g_duckdb.handle) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
-    poly_duckdb_iter_t* iterator = infra_malloc(sizeof(poly_duckdb_iter_t));
-    if (!iterator) return INFRA_ERROR_NO_MEMORY;
-    
-    iterator->db = db;
-    iterator->current_row = 0;
-    iterator->total_rows = 0;
-    
-    // 准备查询语句
-    const char* sql = "SELECT key, value FROM kv ORDER BY key";
-    if (g_duckdb.prepare(db->conn, sql, &iterator->stmt) != DuckDBSuccess) {
-        infra_free(iterator);
-        return INFRA_ERROR_IO;
+infra_error_t poly_duckdb_iter_create(poly_duckdb_db_t* db, poly_duckdb_iter_t** iter) {
+    if (!db || !iter) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
-    
+
+    // 分配内存
+    poly_duckdb_iter_t* new_iter = infra_malloc(sizeof(poly_duckdb_iter_t));
+    if (!new_iter) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
     // 执行查询
-    if (g_duckdb.execute_prepared(iterator->stmt, &iterator->result) != DuckDBSuccess) {
-        g_duckdb.destroy_prepare(&iterator->stmt);
-        infra_free(iterator);
+    if (g_duckdb.query(db->conn,
+        "SELECT key, value FROM kv_store;",
+        &new_iter->result) != DuckDB_SUCCESS) {
+        infra_free(new_iter);
         return INFRA_ERROR_IO;
     }
-    
-    iterator->total_rows = g_duckdb.row_count(&iterator->result);
-    *iter = iterator;
+
+    new_iter->conn = db->conn;
+    new_iter->current_row = 0;
+    new_iter->total_rows = g_duckdb.row_count(&new_iter->result);
+
+    *iter = new_iter;
     return INFRA_OK;
 }
 
-// 获取下一个键值对
-infra_error_t poly_duckdb_iter_next(void* iter, char** key, void** value, size_t* value_size) {
-    if (!iter || !key || !value || !value_size || !g_duckdb.handle) return INFRA_ERROR_INVALID_PARAM;
-    
-    poly_duckdb_iter_t* iterator = (poly_duckdb_iter_t*)iter;
-    
-    // 检查是否已经遍历完所有行
-    if (iterator->current_row >= iterator->total_rows) {
+// 迭代下一个键值对
+infra_error_t poly_duckdb_iter_next(poly_duckdb_iter_t* iter, char** key, size_t* key_len, void** value, size_t* value_len) {
+    if (!iter || !key || !key_len || !value || !value_len) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (iter->current_row >= iter->total_rows) {
         return INFRA_ERROR_NOT_FOUND;
     }
-    
-    // 获取当前行的键和值
-    duckdb_blob key_blob = g_duckdb.value_blob(&iterator->result, 0, iterator->current_row);
-    duckdb_blob value_blob = g_duckdb.value_blob(&iterator->result, 1, iterator->current_row);
-    
-    // 分配内存并复制键 - 添加 null 终止符
-    char* key_data = infra_malloc(key_blob.size + 1);
-    if (!key_data) return INFRA_ERROR_NO_MEMORY;
+
+    // 获取键
+    duckdb_blob key_blob = g_duckdb.value_blob(&iter->result, 0, iter->current_row);
+    char* key_data = infra_malloc(key_blob.size + 1);  // +1 for null terminator
+    if (!key_data) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
     memcpy(key_data, key_blob.data, key_blob.size);
-    key_data[key_blob.size] = '\0';  // 确保字符串正确终止
-    
-    // 分配内存并复制值
+    key_data[key_blob.size] = '\0';
+    *key = key_data;
+    *key_len = key_blob.size;
+
+    // 获取值
+    duckdb_blob value_blob = g_duckdb.value_blob(&iter->result, 1, iter->current_row);
     void* value_data = infra_malloc(value_blob.size);
     if (!value_data) {
         infra_free(key_data);
         return INFRA_ERROR_NO_MEMORY;
     }
     memcpy(value_data, value_blob.data, value_blob.size);
-    
-    *key = key_data;
     *value = value_data;
-    *value_size = value_blob.size;
-    
-    iterator->current_row++;
+    *value_len = value_blob.size;
+
+    iter->current_row++;
     return INFRA_OK;
 }
 
 // 销毁迭代器
-void poly_duckdb_iter_destroy(void* iter) {
-    if (!iter || !g_duckdb.handle) return;
-    
-    poly_duckdb_iter_t* iterator = (poly_duckdb_iter_t*)iter;
-    g_duckdb.destroy_result(&iterator->result);
-    g_duckdb.destroy_prepare(&iterator->stmt);
-    infra_free(iterator);
+void poly_duckdb_iter_destroy(poly_duckdb_iter_t* iter) {
+    if (!iter) {
+        return;
+    }
+
+    g_duckdb.destroy_result(&iter->result);
+    infra_free(iter);
 }
 
 // 全局 DuckDB 接口实例
-const poly_duckdb_interface_t g_duckdb_interface = {
+static const poly_plugin_interface_t g_duckdb_interface = {
     .init = poly_duckdb_init,
-    .cleanup = poly_duckdb_cleanup,
-    .open = poly_duckdb_open,
-    .close = poly_duckdb_close,
-    .exec = poly_duckdb_exec,
-    .get = poly_duckdb_get,
-    .set = poly_duckdb_set,
-    .del = poly_duckdb_del,
-    .iter_create = poly_duckdb_iter_create,
-    .iter_next = poly_duckdb_iter_next,
-    .iter_destroy = poly_duckdb_iter_destroy
+    .cleanup = (void (*)(void*))poly_duckdb_cleanup,
+    .set = (infra_error_t (*)(void*, const char*, const void*, size_t))poly_duckdb_set,
+    .get = (infra_error_t (*)(void*, const char*, void**, size_t*))poly_duckdb_get,
+    .del = (infra_error_t (*)(void*, const char*))poly_duckdb_del
 }; 
