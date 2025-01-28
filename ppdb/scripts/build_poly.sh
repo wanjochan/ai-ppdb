@@ -1,4 +1,12 @@
 #!/bin/bash
+# 记录开始时间
+START_TIME=$(date +%s.%N)
+
+# 设置颜色输出
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
 # 加载环境变量和通用函数
 source "$(dirname "$0")/build_env.sh"
@@ -7,6 +15,8 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# 添加开始时间统计
+start_time=$(date +%s)
 
 # 检查sqlite3.h和duckdb.h是否存在
 if [ ! -f "${PPDB_DIR}/vendor/sqlite3/sqlite3.h" ]; then
@@ -112,5 +122,10 @@ fi
 
 # echo -e "${GREEN}Build complete.${NC}"
 # ls -lh "${BUILD_DIR}/poly/libpoly.a"
+
+# 在文件末尾添加编译时间统计
+end_time=$(date +%s)
+duration=$((end_time - start_time))
+echo -e "${GREEN}Build completed in ${duration} seconds.${NC}"
 
 exit 0

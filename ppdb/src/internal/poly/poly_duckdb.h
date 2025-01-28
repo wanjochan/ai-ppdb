@@ -26,7 +26,7 @@ typedef struct poly_duckdb_interface {
     
     // 基本操作
     infra_error_t (*open)(void* handle, const char* path);
-    infra_error_t (*close)(void* handle);
+    void (*close)(void* handle);
     infra_error_t (*exec)(void* handle, const char* sql);
     
     // KV 操作
@@ -44,8 +44,8 @@ typedef struct poly_duckdb_interface {
 extern const poly_duckdb_interface_t g_duckdb_interface;
 
 // 打开和关闭数据库
-infra_error_t poly_duckdb_open(poly_duckdb_db_t** db, const char* path);
-void poly_duckdb_close(poly_duckdb_db_t* db);
+infra_error_t poly_duckdb_open(void** db, const char* path);
+void poly_duckdb_close(void* db);
 
 /**
  * @brief 设置键值对
@@ -56,7 +56,7 @@ void poly_duckdb_close(poly_duckdb_db_t* db);
  * @param value_len 值长度
  * @return 错误码
  */
-infra_error_t poly_duckdb_set(poly_duckdb_db_t* db, const void* key, size_t key_len,
+infra_error_t poly_duckdb_set(void* db, const char* key,
                              const void* value, size_t value_len);
 
 /**
@@ -68,7 +68,7 @@ infra_error_t poly_duckdb_set(poly_duckdb_db_t* db, const void* key, size_t key_
  * @param value_len 值长度的指针
  * @return 错误码
  */
-infra_error_t poly_duckdb_get(poly_duckdb_db_t* db, const void* key, size_t key_len,
+infra_error_t poly_duckdb_get(void* db, const char* key,
                              void** value, size_t* value_len);
 
 /**
@@ -78,11 +78,11 @@ infra_error_t poly_duckdb_get(poly_duckdb_db_t* db, const void* key, size_t key_
  * @param key_len 键长度
  * @return 错误码
  */
-infra_error_t poly_duckdb_del(poly_duckdb_db_t* db, const void* key, size_t key_len);
+infra_error_t poly_duckdb_del(void* db, const char* key);
 
 // 迭代器操作
-infra_error_t poly_duckdb_iter_create(poly_duckdb_db_t* db, poly_duckdb_iter_t** iter);
-infra_error_t poly_duckdb_iter_next(poly_duckdb_iter_t* iter, char** key, size_t* key_len, void** value, size_t* value_len);
-void poly_duckdb_iter_destroy(poly_duckdb_iter_t* iter);
+infra_error_t poly_duckdb_iter_create(void* db, void** iter);
+infra_error_t poly_duckdb_iter_next(void* iter, char** key, void** value, size_t* value_len);
+void poly_duckdb_iter_destroy(void* iter);
 
 #endif // POLY_DUCKDB_H 

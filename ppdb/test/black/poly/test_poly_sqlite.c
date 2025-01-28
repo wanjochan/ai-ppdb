@@ -89,7 +89,7 @@ static void test_sqlite_iterator() {
 // 测试事务功能
 static infra_error_t test_sqlite_transaction(void) {
     poly_sqlite_db_t* db = NULL;
-    infra_error_t err = poly_sqlite_open(":memory:", &db);
+    infra_error_t err = poly_sqlite_open(&db, ":memory:");
     if (err != INFRA_OK) {
         return err;
     }
