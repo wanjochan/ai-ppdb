@@ -15,7 +15,7 @@ static void test_duckdb_basic_ops(void) {
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to initialize DuckDB");
     
     // 打开数据库
-    err = g_duckdb_interface.open(db, ":memory:");
+    err = g_duckdb_interface.open(&db, ":memory:");
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open DuckDB database");
     TEST_ASSERT_NOT_NULL(db);
     
@@ -61,7 +61,7 @@ static void test_duckdb_iterator(void) {
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to initialize DuckDB");
     
     // 打开数据库
-    err = g_duckdb_interface.open(db, ":memory:");
+    err = g_duckdb_interface.open(&db, ":memory:");
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open DuckDB database");
     
     // 插入测试数据
@@ -112,7 +112,7 @@ static void test_duckdb_transaction(void) {
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to initialize DuckDB");
     
     // 打开数据库
-    err = g_duckdb_interface.open(db, ":memory:");
+    err = g_duckdb_interface.open(&db, ":memory:");
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open DuckDB database");
     
     // 开始事务

@@ -63,11 +63,8 @@ static infra_error_t load_vendor_plugin(const char* vendor) {
         // 使用内置SQLite插件
         return poly_plugin_register_builtin(g_plugin_mgr, &g_sqlite_plugin);
     } else if (strcmp(vendor, "duckdb") == 0) {
-        // DuckDB仍然使用动态加载
-        return poly_plugin_mgr_load(g_plugin_mgr, 
-                                  POLY_PLUGIN_DUCKDB,
-                                  "plugins/duckdb.dll",
-                                  &g_current_plugin);
+        const char* plugin_path = "libduckdb.so";//@cosmo_dlopen will auto find .dll/.dylib
+        return poly_plugin_mgr_load(g_plugin_mgr,POLY_PLUGIN_DUCKDB,plugin_path,&g_current_plugin);
     }
     
     return INFRA_ERROR_INVALID_PARAM;

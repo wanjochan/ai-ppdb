@@ -86,7 +86,7 @@ else
     echo -e "${YELLOW}SQLite is up to date, skipping build${NC}"
 fi
 
-# 复制 DuckDB 动态库
+# 复制 DuckDB 动态库 (TODO 不需要，到时是从 exe所在的当前目录加载就好）
 DUCKDB_LIB="${BUILD_DIR}/vendor/duckdb/libduckdb.dylib"
 DUCKDB_SRC="${PPDB_DIR}/vendor/duckdb/libduckdb.dylib"
 if need_rebuild "$DUCKDB_LIB" "$DUCKDB_SRC"; then
@@ -275,30 +275,29 @@ echo -e "${GREEN}Running SQLite tests...${NC}"
 handle_error $? "SQLite tests failed"
 
 echo -e "${GREEN}Running DuckDB tests...${NC}"
-# 设置 DuckDB 库路径
-export DYLD_LIBRARY_PATH="${BUILD_DIR}/vendor/duckdb:${DYLD_LIBRARY_PATH}"
-export DUCKDB_LIBRARY_PATH="$DUCKDB_LIB"
 
-# 显示调试信息
+# 设置动态库搜索路径
+export DYLD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb:${DYLD_LIBRARY_PATH}"
+export DUCKDB_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb/libduckdb.dylib"
+
+# 打印调试信息
 echo "Debug info:"
 echo "DYLD_LIBRARY_PATH=${DYLD_LIBRARY_PATH}"
 echo "DUCKDB_LIBRARY_PATH=${DUCKDB_LIBRARY_PATH}"
 echo "DuckDB library details:"
-ls -lh "$DUCKDB_LIB"
-handle_error $? "Failed to check DuckDB library"
-
-file "$DUCKDB_LIB"
-handle_error $? "Failed to get DuckDB library info"
-
-nm "$DUCKDB_LIB" | grep duckdb_open
-handle_error $? "Failed to check DuckDB symbols"
-
+ls -l "${DUCKDB_LIBRARY_PATH}"
+file "${DUCKDB_LIBRARY_PATH}"
+nm "${DUCKDB_LIBRARY_PATH}" | grep duckdb_open
 echo "Test binary details:"
-file "$DUCKDB_TEST_BIN"
-handle_error $? "Failed to get DuckDB test binary info"
+file "${DUCKDB_TEST_BIN}"
+echo "DUCKDB_TEST_BIN=${DUCKDB_TEST_BIN}"
 
+# 运行测试
 "$DUCKDB_TEST_BIN"
-handle_error $? "DuckDB tests failed"
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Error: DuckDB tests failed${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}Running MemKV tests...${NC}"
 "$MEMKV_TEST_BIN"

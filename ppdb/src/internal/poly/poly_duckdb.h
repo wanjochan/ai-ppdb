@@ -25,7 +25,7 @@ typedef struct poly_duckdb_interface {
     void (*cleanup)(void* handle);
     
     // 基本操作
-    infra_error_t (*open)(void* handle, const char* path);
+    infra_error_t (*open)(void** handle, const char* path);
     void (*close)(void* handle);
     infra_error_t (*exec)(void* handle, const char* sql);
     
