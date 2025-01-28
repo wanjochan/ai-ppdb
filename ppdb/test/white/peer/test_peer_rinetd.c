@@ -3,8 +3,8 @@
 #include "internal/infra/infra_thread.h"
 #include "internal/infra/infra_net.h"
 
-// Mock server for testing
-static void* mock_server(void* arg) {
+// Test server for testing
+static void* test_server(void* arg) {
     infra_socket_t server = NULL;
     infra_socket_t client = NULL;
     infra_config_t config = {0};
@@ -133,9 +133,9 @@ void test_rinetd_forward(void) {
     });
     TEST_ASSERT(err == INFRA_OK);
 
-    // Start mock server
+    // Start test server
     infra_thread_t* server_thread = NULL;
-    err = infra_thread_create(&server_thread, mock_server, NULL);
+    err = infra_thread_create(&server_thread, test_server, NULL);
     TEST_ASSERT(err == INFRA_OK);
 
     // Test client connection
@@ -238,4 +238,4 @@ void test_rinetd_service(void) {
 
     err = rinetd_cleanup();
     TEST_ASSERT(err == INFRA_OK);
-} 
+}

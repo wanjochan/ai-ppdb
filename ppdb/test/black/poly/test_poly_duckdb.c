@@ -3,71 +3,78 @@
 
 // DuckDB 基本操作测试
 static void test_duckdb_basic_ops(void) {
-    poly_duckdb_db_t* db = NULL;
+    void* db = NULL;
     infra_error_t err;
     
+    // 初始化
+    err = g_duckdb_interface.init(&db);
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to initialize DuckDB");
+    
     // 打开数据库
-    err = poly_duckdb_open(":memory:", &db);
+    err = g_duckdb_interface.open(db, ":memory:");
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open DuckDB database");
     TEST_ASSERT_NOT_NULL(db);
     
-    // 测试 PUT
+    // 测试 SET
     const char* key = "test_key";
     const char* value = "test_value";
-    err = poly_duckdb_put(db, key, strlen(key), value, strlen(value));
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to put key-value pair");
+    err = g_duckdb_interface.set(db, key, value, strlen(value));
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to set key-value pair");
     
     // 测试 GET
     void* retrieved_value = NULL;
     size_t value_len = 0;
-    err = poly_duckdb_get(db, key, strlen(key), &retrieved_value, &value_len);
+    err = g_duckdb_interface.get(db, key, &retrieved_value, &value_len);
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to get value");
     TEST_ASSERT_EQUAL(strlen(value), value_len);
     TEST_ASSERT_MSG(memcmp(value, retrieved_value, value_len) == 0, "Value content mismatch");
     
     // 测试 DEL
-    err = poly_duckdb_del(db, key, strlen(key));
+    err = g_duckdb_interface.del(db, key);
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to delete key");
     
     // 验证删除
-    err = poly_duckdb_get(db, key, strlen(key), &retrieved_value, &value_len);
+    err = g_duckdb_interface.get(db, key, &retrieved_value, &value_len);
     TEST_ASSERT_MSG(err == INFRA_ERROR_NOT_FOUND, "Key should not exist after deletion");
     
     // 清理
     if (retrieved_value) infra_free(retrieved_value);
-    poly_duckdb_close(db);
+    g_duckdb_interface.cleanup(db);
 }
 
 // DuckDB 迭代器测试
 static void test_duckdb_iterator(void) {
-    poly_duckdb_db_t* db = NULL;
-    poly_duckdb_iter_t* iter = NULL;
+    void* db = NULL;
+    void* iter = NULL;
     infra_error_t err;
     
+    // 初始化
+    err = g_duckdb_interface.init(&db);
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to initialize DuckDB");
+    
     // 打开数据库
-    err = poly_duckdb_open(":memory:", &db);
+    err = g_duckdb_interface.open(db, ":memory:");
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open DuckDB database");
     
     // 插入测试数据
     const char* keys[] = {"key1", "key2", "key3"};
     const char* values[] = {"value1", "value2", "value3"};
     for (int i = 0; i < 3; i++) {
-        err = poly_duckdb_put(db, keys[i], strlen(keys[i]), values[i], strlen(values[i]));
-        TEST_ASSERT_MSG(err == INFRA_OK, "Failed to put test data");
+        err = g_duckdb_interface.set(db, keys[i], values[i], strlen(values[i]));
+        TEST_ASSERT_MSG(err == INFRA_OK, "Failed to set test data");
     }
     
     // 创建迭代器
-    err = poly_duckdb_iter_create(db, &iter);
+    err = g_duckdb_interface.iter_create(db, &iter);
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to create iterator");
     
     // 遍历数据
     int count = 0;
-    void* key;
-    size_t key_len;
+    char* key;
     void* value;
     size_t value_len;
     
-    while ((err = poly_duckdb_iter_next(iter, &key, &key_len, &value, &value_len)) == INFRA_OK) {
+    while ((err = g_duckdb_interface.iter_next(iter, &key, &value, &value_len)) == INFRA_OK) {
         TEST_ASSERT_NOT_NULL(key);
         TEST_ASSERT_NOT_NULL(value);
         count++;
@@ -79,42 +86,46 @@ static void test_duckdb_iterator(void) {
     TEST_ASSERT_MSG(err == INFRA_ERROR_NOT_FOUND, "Iterator should end with NOT_FOUND");
     
     // 清理
-    poly_duckdb_iter_destroy(iter);
-    poly_duckdb_close(db);
+    g_duckdb_interface.iter_destroy(iter);
+    g_duckdb_interface.cleanup(db);
 }
 
 // DuckDB 事务测试
 static void test_duckdb_transaction(void) {
-    poly_duckdb_db_t* db = NULL;
+    void* db = NULL;
     infra_error_t err;
     
+    // 初始化
+    err = g_duckdb_interface.init(&db);
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to initialize DuckDB");
+    
     // 打开数据库
-    err = poly_duckdb_open(":memory:", &db);
+    err = g_duckdb_interface.open(db, ":memory:");
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to open DuckDB database");
     
     // 开始事务
-    err = poly_duckdb_begin(db);
+    err = g_duckdb_interface.exec(db, "BEGIN TRANSACTION");
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to begin transaction");
     
     // 插入数据
     const char* key = "tx_key";
     const char* value = "tx_value";
-    err = poly_duckdb_put(db, key, strlen(key), value, strlen(value));
-    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to put in transaction");
+    err = g_duckdb_interface.set(db, key, value, strlen(value));
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to set in transaction");
     
     // 提交事务
-    err = poly_duckdb_commit(db);
+    err = g_duckdb_interface.exec(db, "COMMIT");
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to commit transaction");
     
     // 验证数据
     void* retrieved_value = NULL;
     size_t value_len = 0;
-    err = poly_duckdb_get(db, key, strlen(key), &retrieved_value, &value_len);
+    err = g_duckdb_interface.get(db, key, &retrieved_value, &value_len);
     TEST_ASSERT_MSG(err == INFRA_OK, "Failed to get committed value");
     
     // 清理
     if (retrieved_value) infra_free(retrieved_value);
-    poly_duckdb_close(db);
+    g_duckdb_interface.cleanup(db);
 }
 
 int main(void) {

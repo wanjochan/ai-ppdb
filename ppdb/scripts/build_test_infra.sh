@@ -57,7 +57,6 @@ fi
 
 # 创建必要的目录
 mkdir -p "${BUILD_DIR}/test/white/framework"
-mkdir -p "${BUILD_DIR}/test/white/infra/mock/core"
 
 # 检查测试框架是否需要重新构建
 NEED_BUILD_FRAMEWORK=0
@@ -75,50 +74,6 @@ if [ $NEED_BUILD_FRAMEWORK -eq 1 ]; then
     fi
 else
     echo "Test framework is up to date."
-fi
-
-# 检查mock框架是否需要重新构建
-NEED_BUILD_MOCK=0
-if [ ! -f "${BUILD_DIR}/test/white/framework/mock_framework.o" ]; then
-    NEED_BUILD_MOCK=1
-elif [ "${PPDB_DIR}/test/white/framework/mock_framework.c" -nt "${BUILD_DIR}/test/white/framework/mock_framework.o" ]; then
-    NEED_BUILD_MOCK=1
-fi
-
-if [ $NEED_BUILD_MOCK -eq 1 ]; then
-    echo "Building mock framework..."
-    "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/mock_framework.c" -c -o "${BUILD_DIR}/test/white/framework/mock_framework.o"
-    if [ $? -ne 0 ]; then
-        exit 1
-    fi
-else
-    echo "Mock framework is up to date."
-fi
-
-# 检查mock core是否需要重新构建
-NEED_BUILD_MOCK_CORE=0
-if [ ! -f "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o" ]; then
-    NEED_BUILD_MOCK_CORE=1
-elif [ "${PPDB_DIR}/test/white/infra/mock/core/mock_core.c" -nt "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o" ]; then
-    NEED_BUILD_MOCK_CORE=1
-fi
-
-if [ $NEED_BUILD_MOCK_CORE -eq 1 ]; then
-    echo "Building mock core..."
-    "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${PPDB_DIR}/include" \
-        -I"${SRC_DIR}" \
-        -I"${PPDB_DIR}/test" \
-        -I"${PPDB_DIR}/test/white" \
-        -I"${PPDB_DIR}/test/white/framework" \
-        "${PPDB_DIR}/test/white/infra/mock/core/mock_core.c" \
-        -c -o "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o"
-    if [ $? -ne 0 ]; then
-        exit 1
-    fi
-else
-    echo "Mock core is up to date."
 fi
 
 echo "Building test cases..."
@@ -184,16 +139,12 @@ for f in $TEST_FILES; do
         echo "Linking ${base}..."
         echo "${CC}" \
             "${BUILD_DIR}/test/white/framework/test_framework.o" \
-            "${BUILD_DIR}/test/white/framework/mock_framework.o" \
-            "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o" \
             "${BUILD_DIR}/test/white/infra/${base}.o" \
             "${BUILD_DIR}/infra/libinfra.a" \
             ${LDFLAGS} ${LIBS} \
             -o "${BUILD_DIR}/test/white/infra/${base}.exe"
         "${CC}" \
             "${BUILD_DIR}/test/white/framework/test_framework.o" \
-            "${BUILD_DIR}/test/white/framework/mock_framework.o" \
-            "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o" \
             "${BUILD_DIR}/test/white/infra/${base}.o" \
             "${BUILD_DIR}/infra/libinfra.a" \
             ${LDFLAGS} ${LIBS} \
@@ -227,4 +178,4 @@ END_TIME=$(date +%s.%N)
 ELAPSED_TIME=$(echo "$END_TIME - $START_TIME" | bc)
 printf "Total build time: %.3f seconds\n" $ELAPSED_TIME
 
-exit 0 
+exit 0

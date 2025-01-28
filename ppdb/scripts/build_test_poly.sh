@@ -21,6 +21,7 @@ fi
 # 创建构建目录
 mkdir -p "${BUILD_DIR}/test/black/poly"
 mkdir -p "${BUILD_DIR}/vendor/sqlite3"
+mkdir -p "${BUILD_DIR}/vendor/duckdb"
 
 # 编译 SQLite
 echo -e "${GREEN}Building SQLite...${NC}"
@@ -30,6 +31,14 @@ ${CC} ${CFLAGS} \
     -c -o "${BUILD_DIR}/vendor/sqlite3/sqlite3.o"
 if [ $? -ne 0 ]; then
     echo -e "${RED}Error: Failed to build SQLite${NC}"
+    exit 1
+fi
+
+# 复制 DuckDB 动态库
+echo -e "${GREEN}Copying DuckDB library...${NC}"
+cp "${PPDB_DIR}/vendor/duckdb/libduckdb.dylib" "${BUILD_DIR}/vendor/duckdb/"
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Error: Failed to copy DuckDB library${NC}"
     exit 1
 fi
 
@@ -52,6 +61,20 @@ ${CC} ${CFLAGS} \
     -c -o "${BUILD_DIR}/src/internal/poly/poly_sqlite.o"
 if [ $? -ne 0 ]; then
     echo -e "Error: Failed to build SQLite implementation"
+    exit 1
+fi
+
+# Build DuckDB implementation
+echo -e "Building DuckDB implementation..."
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${SRC_DIR}" \
+    -I"${PPDB_DIR}/vendor/duckdb" \
+    "${SRC_DIR}/internal/poly/poly_duckdb.c" \
+    -c -o "${BUILD_DIR}/src/internal/poly/poly_duckdb.o"
+if [ $? -ne 0 ]; then
+    echo -e "Error: Failed to build DuckDB implementation"
     exit 1
 fi
 
@@ -89,23 +112,23 @@ if [ $? -ne 0 ]; then
 fi
 
 # 编译 DuckDB 测试程序
-# echo -e "${GREEN}Building DuckDB tests...${NC}"
-# ${CC} ${CFLAGS} \
-#     -I"${PPDB_DIR}" \
-#     -I"${PPDB_DIR}/include" \
-#     -I"${SRC_DIR}" \
-#     -I"${PPDB_DIR}/vendor/sqlite3" \
-#     -I"${PPDB_DIR}/vendor/duckdb" \
-#     "${TEST_DIR}/black/poly/test_poly_duckdb.c" \
-#     "${BUILD_DIR}/test/black/poly/test_framework.o" \
-#     "${BUILD_DIR}/poly/poly_duckdb.o" \
-#     "${BUILD_DIR}/infra/libinfra.a" \
-#     -o "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
+echo -e "${GREEN}Building DuckDB tests...${NC}"
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${SRC_DIR}" \
+    -I"${PPDB_DIR}/vendor/duckdb" \
+    "${PPDB_DIR}/test/black/poly/test_poly_duckdb.c" \
+    "${BUILD_DIR}/test/black/poly/test_framework.o" \
+    "${BUILD_DIR}/src/internal/poly/poly_duckdb.o" \
+    "${BUILD_DIR}/infra/libinfra.a" \
+    -L"${BUILD_DIR}/vendor/duckdb" -lduckdb \
+    -o "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
 
-# if [ $? -ne 0 ]; then
-#     echo -e "${RED}Error: Failed to build DuckDB tests${NC}"
-#     exit 1
-# fi
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Error: Failed to build DuckDB tests${NC}"
+    exit 1
+fi
 
 echo -e "${GREEN}Build complete.${NC}"
 ls -lh "${BUILD_DIR}/test/black/poly/test_poly_"*
@@ -114,7 +137,7 @@ ls -lh "${BUILD_DIR}/test/black/poly/test_poly_"*
 echo -e "${GREEN}Running SQLite tests...${NC}"
 "${BUILD_DIR}/test/black/poly/test_poly_sqlite"
 
-# echo -e "${GREEN}Running DuckDB tests...${NC}"
-# "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
+echo -e "${GREEN}Running DuckDB tests...${NC}"
+"${BUILD_DIR}/test/black/poly/test_poly_duckdb"
 
 exit $? 
