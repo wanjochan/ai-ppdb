@@ -1,6 +1,4 @@
 #!/bin/bash
-# 记录开始时间
-START_TIME=$(date +%s.%N)
 
 # 加载环境变量和通用函数
 source "$(dirname "$0")/build_env.sh"
@@ -104,7 +102,7 @@ if [ "$failed" -ne 0 ]; then
     exit 1
 fi
 
-# # 创建静态库
+# # 创建静态库（暂时不需要）
 # echo -e "${GREEN}Creating static library...${NC}"
 # "${AR}" rcs "${BUILD_DIR}/poly/libpoly.a" "${BUILD_DIR}"/poly/*.o
 # if [ $? -ne 0 ]; then
