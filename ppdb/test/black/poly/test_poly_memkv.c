@@ -10,6 +10,11 @@ static void test_memkv_basic_ops(void) {
 
     // 创建并初始化 memkv 实例
     poly_memkv_t* store = NULL;
+    init_err = poly_memkv_create(&store);
+    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to create memkv instance");
+    TEST_ASSERT_NOT_NULL(store);
+
+    // 配置存储引擎
     poly_memkv_config_t config = {
         .max_key_size = 1024,
         .max_value_size = 4096,
@@ -17,30 +22,36 @@ static void test_memkv_basic_ops(void) {
         .path = ":memory:"
     };
 
-    init_err = poly_memkv_create(&store);
-    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to create memkv instance");
-    TEST_ASSERT_NOT_NULL(store);
-
-    // 配置存储引擎
     init_err = poly_memkv_configure(store, &config);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to configure memkv instance");
 
     // 打开存储
     init_err = poly_memkv_open(store);
-    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to open memkv store");
+    if (init_err != INFRA_OK) {
+        poly_memkv_destroy(store);
+        TEST_FAIL_MSG("Failed to open memkv store");
+    }
 
     // 测试 SET
     const char* key = "test_key";
     const char* value = "test_value";
-    init_err = poly_memkv_set(store, key, strlen(key), value, strlen(value));
-    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to set key-value pair");
+    init_err = poly_memkv_set(store, key, strlen(key), value, strlen(value) + 1);
+    if (init_err != INFRA_OK) {
+        poly_memkv_close(store);
+        poly_memkv_destroy(store);
+        TEST_FAIL_MSG("Failed to set key-value pair");
+    }
 
     // 测试 GET
     void* retrieved_value = NULL;
     size_t value_len = 0;
     init_err = poly_memkv_get(store, key, strlen(key), &retrieved_value, &value_len);
-    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to get value");
-    TEST_ASSERT_EQUAL(strlen(value), value_len);
+    if (init_err != INFRA_OK) {
+        poly_memkv_close(store);
+        poly_memkv_destroy(store);
+        TEST_FAIL_MSG("Failed to get value");
+    }
+    TEST_ASSERT_EQUAL(strlen(value) + 1, value_len);
     TEST_ASSERT_MSG(memcmp(value, retrieved_value, value_len) == 0, "Value content mismatch");
 
     // 测试统计信息
@@ -53,7 +64,12 @@ static void test_memkv_basic_ops(void) {
 
     // 测试 DEL
     init_err = poly_memkv_del(store, key, strlen(key));
-    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to delete key");
+    if (init_err != INFRA_OK) {
+        infra_free(retrieved_value);
+        poly_memkv_close(store);
+        poly_memkv_destroy(store);
+        TEST_FAIL_MSG("Failed to delete key");
+    }
 
     // 验证删除
     init_err = poly_memkv_get(store, key, strlen(key), &retrieved_value, &value_len);
@@ -130,7 +146,17 @@ static void test_memkv_config(void) {
     };
 
     init_err = poly_memkv_create(&store);
+    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to create memkv instance");
+    
+    // 配置存储引擎（使用无效配置）
+    init_err = poly_memkv_configure(store, &invalid_config);
     TEST_ASSERT_MSG(init_err == INFRA_ERROR_INVALID_PARAM, "Should fail with invalid key size");
+    
+    // 清理无效配置的实例
+    if (store) {
+        poly_memkv_destroy(store);
+        store = NULL;
+    }
 
     // 测试边界值
     poly_memkv_config_t valid_config = {
@@ -143,8 +169,17 @@ static void test_memkv_config(void) {
     init_err = poly_memkv_create(&store);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to create memkv instance with valid config");
 
+    // 配置存储引擎（使用有效配置）
+    init_err = poly_memkv_configure(store, &valid_config);
+    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to configure memkv instance with valid config");
+
+    // 打开存储
+    init_err = poly_memkv_open(store);
+    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to open memkv store");
+
     // 测试超出大小限制
     char* large_key = infra_malloc(valid_config.max_key_size + 1);
+    TEST_ASSERT_NOT_NULL(large_key);
     memset(large_key, 'A', valid_config.max_key_size);
     large_key[valid_config.max_key_size] = '\0';
 
@@ -153,6 +188,7 @@ static void test_memkv_config(void) {
 
     // 清理
     infra_free(large_key);
+    poly_memkv_close(store);
     poly_memkv_destroy(store);
 }
 

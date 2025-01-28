@@ -73,12 +73,20 @@ infra_error_t poly_duckdbkv_init(void** handle) {
         g_duckdb.handle = NULL;
     }
 
-    const char* duckdb_path = "libduckdb.so";//@cosmo_dlopen will auto find .dll/.dylib
+    // 从环境变量获取 DuckDB 库路径
+    const char* duckdb_path = getenv("DUCKDB_LIBRARY_PATH");
+    if (!duckdb_path) {
+#ifdef __APPLE__
+        duckdb_path = "libduckdb.dylib";  // macOS 默认路径
+#else
+        duckdb_path = "libduckdb.so";  // Linux 默认路径
+#endif
+    }
     fprintf(stderr, "Attempting to load DuckDB library from: %s\n", duckdb_path);
     g_duckdb.handle = cosmo_dlopen(duckdb_path, RTLD_LAZY);
     if (!g_duckdb.handle) {
         fprintf(stderr, "Failed to load DuckDB library from %s: %s\n", duckdb_path, cosmo_dlerror());
-        return INFRA_ERROR_IO;
+        return INFRA_ERROR_NOT_FOUND;  // 返回 -7
     }
     fprintf(stderr, "Successfully loaded DuckDB library from %s\n", duckdb_path);
 
@@ -536,9 +544,9 @@ const poly_duckdbkv_interface_t g_duckdbkv_interface = {
     .cleanup = poly_duckdbkv_cleanup,
     .open = wrap_open,
     .close = wrap_close,
-    .get = poly_duckdbkv_get,
-    .set = poly_duckdbkv_set,
-    .del = poly_duckdbkv_del,
+    .get = poly_duckdbkv_get_internal,
+    .set = poly_duckdbkv_set_internal,
+    .del = poly_duckdbkv_del_internal,
     .exec = wrap_exec,
     .iter_create = wrap_iter_create,
     .iter_next = wrap_iter_next,

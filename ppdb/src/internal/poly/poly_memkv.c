@@ -57,7 +57,18 @@ infra_error_t poly_memkv_create(poly_memkv_t** store) {
 
     // 初始化成员
     memset(new_store, 0, sizeof(poly_memkv_t));
+
+    // 创建插件管理器
+    infra_error_t err = poly_plugin_mgr_create(&new_store->plugin_mgr);
+    if (err != INFRA_OK) {
+        infra_free(new_store);
+        return err;
+    }
+
+    // 设置默认配置
     new_store->config.engine_type = POLY_MEMKV_ENGINE_SQLITE;  // 默认使用 SQLite
+    new_store->config.max_key_size = 1024;  // 默认最大键大小
+    new_store->config.max_value_size = 4096;  // 默认最大值大小
 
     // 初始化统计信息
     poly_atomic_init(&new_store->stats.cmd_get, 0);
@@ -66,13 +77,6 @@ infra_error_t poly_memkv_create(poly_memkv_t** store) {
     poly_atomic_init(&new_store->stats.curr_items, 0);
     poly_atomic_init(&new_store->stats.hits, 0);
     poly_atomic_init(&new_store->stats.misses, 0);
-
-    // 创建插件管理器
-    infra_error_t err = poly_plugin_mgr_create(&new_store->plugin_mgr);
-    if (err != INFRA_OK) {
-        infra_free(new_store);
-        return err;
-    }
 
     *store = new_store;
     return INFRA_OK;

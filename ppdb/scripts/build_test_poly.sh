@@ -281,7 +281,7 @@ handle_error $? "SQLite tests failed"
 echo -e "${GREEN}Running DuckDB tests...${NC}"
 
 # 设置动态库搜索路径
-export DYLD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb:${DYLD_LIBRARY_PATH}"
+export DYLD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb"
 export DUCKDB_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb/libduckdb.dylib"
 
 # 打印调试信息
