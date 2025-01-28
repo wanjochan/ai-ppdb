@@ -55,19 +55,31 @@ struct poly_duckdb_iter {
 
 // 初始化DuckDB模块
 infra_error_t poly_duckdb_init(void** handle) {
+    fprintf(stderr, "DuckDB init starting...\n");
     if (!handle) return INFRA_ERROR_INVALID_PARAM;
 
     poly_duckdb_db_t* db = infra_malloc(sizeof(poly_duckdb_db_t));
-    if (!db) return INFRA_ERROR_NO_MEMORY;
+    if (!db) {
+        fprintf(stderr, "Failed to allocate memory for db handle\n");
+        return INFRA_ERROR_NO_MEMORY;
+    }
 
     // 加载 DuckDB 动态库
-    g_duckdb.handle = cosmo_dlopen("../../../vendor/duckdb/libduckdb.dylib", RTLD_LAZY);
-    if (!g_duckdb.handle) {
-        fprintf(stderr, "Failed to load DuckDB library: %s\n", cosmo_dlerror());
+    const char* duckdb_path = getenv("DUCKDB_LIBRARY_PATH");
+    fprintf(stderr, "DUCKDB_LIBRARY_PATH = %s\n", duckdb_path ? duckdb_path : "NULL");
+    if (!duckdb_path) {
+        fprintf(stderr, "DUCKDB_LIBRARY_PATH environment variable not set\n");
         infra_free(db);
         return INFRA_ERROR_IO;
     }
-    fprintf(stderr, "Successfully loaded DuckDB library\n");
+    fprintf(stderr, "Attempting to load DuckDB library from: %s\n", duckdb_path);
+    g_duckdb.handle = cosmo_dlopen(duckdb_path, RTLD_LAZY);
+    if (!g_duckdb.handle) {
+        fprintf(stderr, "Failed to load DuckDB library from %s: %s\n", duckdb_path, cosmo_dlerror());
+        infra_free(db);
+        return INFRA_ERROR_IO;
+    }
+    fprintf(stderr, "Successfully loaded DuckDB library from %s\n", duckdb_path);
 
     // 获取函数指针
     g_duckdb.open = (duckdb_open_t)cosmo_dlsym(g_duckdb.handle, "duckdb_open");
@@ -215,23 +227,35 @@ infra_error_t poly_duckdb_get(void* handle, const char* key, void** value, size_
     
     poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
     
-    // 绑定参数
+    fprintf(stderr, "Getting key: %s (length: %zu)\n", key, strlen(key));
+    
+    // 绑定参数 - 不包含 null 终止符
     g_duckdb.bind_blob(db->get_stmt, 1, key, strlen(key));
     
     // 执行查询
     duckdb_result result;
     if (g_duckdb.execute_prepared(db->get_stmt, &result) != DuckDBSuccess) {
+        fprintf(stderr, "Get operation failed\n");
         return INFRA_ERROR_IO;
     }
     
     // 检查结果
     if (g_duckdb.value_is_null(&result, 0, 0)) {
+        fprintf(stderr, "Key not found (null value)\n");
         g_duckdb.destroy_result(&result);
         return INFRA_ERROR_NOT_FOUND;
     }
     
     // 获取BLOB数据
     duckdb_blob blob = g_duckdb.value_blob(&result, 0, 0);
+    fprintf(stderr, "Found value with size: %zu\n", blob.size);
+    
+    // 如果值为空，也视为未找到
+    if (blob.size == 0) {
+        fprintf(stderr, "Key not found (empty value)\n");
+        g_duckdb.destroy_result(&result);
+        return INFRA_ERROR_NOT_FOUND;
+    }
     
     // 复制数据
     void* data = infra_malloc(blob.size);
@@ -253,7 +277,7 @@ infra_error_t poly_duckdb_set(void* handle, const char* key, const void* value, 
     
     poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
     
-    // 绑定参数
+    // 绑定参数 - 不包含 null 终止符
     g_duckdb.bind_blob(db->put_stmt, 1, key, strlen(key));
     g_duckdb.bind_blob(db->put_stmt, 2, value, value_size);
     
@@ -270,12 +294,15 @@ infra_error_t poly_duckdb_del(void* handle, const char* key) {
     
     poly_duckdb_db_t* db = (poly_duckdb_db_t*)handle;
     
-    // 绑定参数
+    fprintf(stderr, "Deleting key: %s (length: %zu)\n", key, strlen(key));
+    
+    // 绑定参数 - 不包含 null 终止符
     g_duckdb.bind_blob(db->del_stmt, 1, key, strlen(key));
     
     // 执行语句
     duckdb_result result;
     duckdb_state state = g_duckdb.execute_prepared(db->del_stmt, &result);
+    fprintf(stderr, "Delete operation state: %d\n", state);
     g_duckdb.destroy_result(&result);
     
     return (state == DuckDBSuccess) ? INFRA_OK : INFRA_ERROR_IO;
@@ -327,11 +354,11 @@ infra_error_t poly_duckdb_iter_next(void* iter, char** key, void** value, size_t
     duckdb_blob key_blob = g_duckdb.value_blob(&iterator->result, 0, iterator->current_row);
     duckdb_blob value_blob = g_duckdb.value_blob(&iterator->result, 1, iterator->current_row);
     
-    // 分配内存并复制键
+    // 分配内存并复制键 - 添加 null 终止符
     char* key_data = infra_malloc(key_blob.size + 1);
     if (!key_data) return INFRA_ERROR_NO_MEMORY;
     memcpy(key_data, key_blob.data, key_blob.size);
-    key_data[key_blob.size] = '\0';
+    key_data[key_blob.size] = '\0';  // 确保字符串正确终止
     
     // 分配内存并复制值
     void* value_data = infra_malloc(value_blob.size);

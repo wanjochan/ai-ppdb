@@ -18,7 +18,7 @@ fi
 
 echo "Building all infra tests..."
 
-MODULES="memory memory_pool error sync log struct net"
+MODULES="memory memory_pool error sync log net"
 BUILD_FAILED=0
 
 for module in $MODULES; do

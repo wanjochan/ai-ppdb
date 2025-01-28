@@ -593,6 +593,37 @@ int infra_snprintf(char* str, size_t size, const char* format, ...)
 // File Operations
 //-----------------------------------------------------------------------------
 
+infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle) {
+    if (!path || !handle) return INFRA_ERROR_INVALID;
+
+    int open_flags = 0;
+    
+    // 转换标志位
+    if ((flags & INFRA_FILE_RDONLY) && (flags & INFRA_FILE_WRONLY)) {
+        open_flags |= O_RDWR;
+    } else if (flags & INFRA_FILE_RDONLY) {
+        open_flags |= O_RDONLY;
+    } else if (flags & INFRA_FILE_WRONLY) {
+        open_flags |= O_WRONLY;
+    }
+    
+    if (flags & INFRA_FILE_APPEND) open_flags |= O_APPEND;
+    if (flags & INFRA_FILE_TRUNC) open_flags |= O_TRUNC;
+    
+    // 如果是写模式且文件不存在，则创建文件
+    if ((flags & INFRA_FILE_WRONLY) || (flags & INFRA_FILE_APPEND)) {
+        open_flags |= O_CREAT;
+    }
+
+    int fd = open(path, open_flags, mode);
+    if (fd == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    *handle = (INFRA_CORE_Handle_t)fd;
+    return INFRA_OK;
+}
+
 infra_error_t infra_file_close(infra_handle_t handle) {
     if (!handle) return INFRA_ERROR_INVALID;
 
@@ -764,5 +795,3 @@ infra_error_t infra_get_cwd(char* buffer, size_t size) {
 
     return INFRA_OK;
 }
-
-

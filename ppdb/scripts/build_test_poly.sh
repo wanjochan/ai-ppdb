@@ -122,6 +122,7 @@ ${CC} ${CFLAGS} \
     "${BUILD_DIR}/test/black/poly/test_framework.o" \
     "${BUILD_DIR}/src/internal/poly/poly_duckdb.o" \
     "${BUILD_DIR}/infra/libinfra.a" \
+    -ldl \
     -o "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
 
 if [ $? -ne 0 ]; then
@@ -137,6 +138,21 @@ echo -e "${GREEN}Running SQLite tests...${NC}"
 "${BUILD_DIR}/test/black/poly/test_poly_sqlite"
 
 echo -e "${GREEN}Running DuckDB tests...${NC}"
+# 设置 DuckDB 库路径
+export DYLD_LIBRARY_PATH="${BUILD_DIR}/vendor/duckdb:$DYLD_LIBRARY_PATH"
+export DUCKDB_LIBRARY_PATH="${BUILD_DIR}/vendor/duckdb/libduckdb.dylib"
+
+# 显示调试信息
+echo "Debug info:"
+echo "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH"
+echo "DUCKDB_LIBRARY_PATH=$DUCKDB_LIBRARY_PATH"
+echo "DuckDB library details:"
+ls -l "$DUCKDB_LIBRARY_PATH"
+file "$DUCKDB_LIBRARY_PATH"
+nm "$DUCKDB_LIBRARY_PATH" | grep duckdb_open || echo "Symbol duckdb_open not found"
+echo "Test binary details:"
+file "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
+
 "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
 
 exit $? 

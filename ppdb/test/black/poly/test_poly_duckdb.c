@@ -3,6 +3,10 @@
 
 // DuckDB 基本操作测试
 static void test_duckdb_basic_ops(void) {
+    // 初始化基础设施层
+    infra_error_t init_err = infra_init();
+    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to initialize infra");
+
     void* db = NULL;
     infra_error_t err;
     
@@ -44,6 +48,10 @@ static void test_duckdb_basic_ops(void) {
 
 // DuckDB 迭代器测试
 static void test_duckdb_iterator(void) {
+    // 初始化基础设施层
+    infra_error_t init_err = infra_init();
+    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to initialize infra");
+
     void* db = NULL;
     void* iter = NULL;
     infra_error_t err;
@@ -92,6 +100,10 @@ static void test_duckdb_iterator(void) {
 
 // DuckDB 事务测试
 static void test_duckdb_transaction(void) {
+    // 初始化基础设施层
+    infra_error_t init_err = infra_init();
+    TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to initialize infra");
+
     void* db = NULL;
     infra_error_t err;
     
