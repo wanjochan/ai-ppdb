@@ -122,7 +122,6 @@ ${CC} ${CFLAGS} \
     "${BUILD_DIR}/test/black/poly/test_framework.o" \
     "${BUILD_DIR}/src/internal/poly/poly_duckdb.o" \
     "${BUILD_DIR}/infra/libinfra.a" \
-    -L"${BUILD_DIR}/vendor/duckdb" -lduckdb \
     -o "${BUILD_DIR}/test/black/poly/test_poly_duckdb"
 
 if [ $? -ne 0 ]; then
