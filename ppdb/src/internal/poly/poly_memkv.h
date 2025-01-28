@@ -2,119 +2,64 @@
 #define POLY_MEMKV_H
 
 #include "internal/infra/infra_core.h"
-#include "internal/poly/poly_plugin.h"
-#include "internal/poly/poly_atomic.h"
+#include "internal/infra/infra_error.h"
+#include "internal/poly/poly_db.h"
 
-//-----------------------------------------------------------------------------
-// Types
-//-----------------------------------------------------------------------------
+// Memory KV engine type
+typedef enum poly_memkv_engine {
+    POLY_MEMKV_ENGINE_SQLITE,  // Use SQLite as backend
+    POLY_MEMKV_ENGINE_DUCKDB  // Use DuckDB as backend
+} poly_memkv_engine_t;
 
-// 存储引擎类型
-typedef enum {
-    POLY_MEMKV_ENGINE_SQLITE,  // SQLite引擎(默认)
-    POLY_MEMKV_ENGINE_DUCKDB   // DuckDB引擎
-} poly_memkv_engine_type_t;
+// Memory KV database handle
+typedef struct poly_memkv_db {
+    poly_memkv_engine_t engine;  // Engine type
+    poly_db_t* db;              // Underlying database interface
+    void* impl;                 // Implementation handle (poly_sqlitekv_db_t or poly_duckdbkv_db_t)
+} poly_memkv_db_t;
 
-// 配置参数
-typedef struct {
-    size_t max_key_size;          // 最大键长度
-    size_t max_value_size;        // 最大值长度
-    poly_memkv_engine_type_t engine_type;  // 存储引擎类型
-    char* path;                   // 存储路径
-} poly_memkv_config_t;
-
-// 统计信息
-typedef struct {
-    poly_atomic_t cmd_get;         // GET命令次数
-    poly_atomic_t cmd_set;         // SET命令次数
-    poly_atomic_t cmd_del;         // DELETE命令次数
-    poly_atomic_t curr_items;      // 当前项目数
-    poly_atomic_t hits;            // 缓存命中次数
-    poly_atomic_t misses;          // 缓存未命中次数
-} poly_memkv_stats_t;
-
-// 引擎句柄类型
-typedef struct poly_sqlitekv_db poly_sqlitekv_db_t;
-typedef struct poly_duckdbkv_db poly_duckdbkv_db_t;
-
-// 引擎迭代器类型
-typedef struct poly_sqlitekv_iter poly_sqlitekv_iter_t;
-typedef struct poly_duckdbkv_iter poly_duckdbkv_iter_t;
-
-// 存储实例
-typedef struct poly_memkv {
-    poly_memkv_config_t config;    // 配置参数
-    poly_memkv_stats_t stats;      // 统计信息
-    poly_plugin_mgr_t* plugin_mgr; // 插件管理器
-    poly_plugin_t* engine_plugin;  // 存储引擎插件
-    void* engine_handle;           // 存储引擎句柄
-} poly_memkv_t;
-
-// 迭代器结构体
+// Memory KV iterator
 typedef struct poly_memkv_iter {
-    poly_memkv_t* store;
-    void* engine_iter;
+    poly_memkv_engine_t engine;  // Engine type
+    poly_db_result_t* result;    // Underlying query result
+    void* impl;                  // Implementation iterator
+    size_t current_row;          // Current row
+    size_t total_rows;           // Total rows
 } poly_memkv_iter_t;
 
-//-----------------------------------------------------------------------------
-// Functions
-//-----------------------------------------------------------------------------
+// Error codes specific to Memory KV
+typedef enum poly_memkv_error {
+    POLY_MEMKV_ERROR_NONE = 0,
+    POLY_MEMKV_ERROR_INVALID_CONFIG = -1,
+    POLY_MEMKV_ERROR_INVALID_ENGINE = -2,
+    POLY_MEMKV_ERROR_KEY_TOO_LARGE = -3,
+    POLY_MEMKV_ERROR_VALUE_TOO_LARGE = -4,
+    POLY_MEMKV_ERROR_KEY_NOT_FOUND = -5,
+    POLY_MEMKV_ERROR_MEMORY_LIMIT = -6,
+    POLY_MEMKV_ERROR_INTERNAL = -7
+} poly_memkv_error_t;
 
-// 创建 MemKV 实例
-infra_error_t poly_memkv_create(poly_memkv_t** store);
+// Configuration for memory KV store
+typedef struct poly_memkv_config {
+    poly_memkv_engine_t engine;    // Engine type
+    const char* url;               // Database URL (replaces path)
+    size_t max_key_size;          // Maximum key size
+    size_t max_value_size;        // Maximum value size
+    size_t memory_limit;          // Maximum memory usage (0 for unlimited)
+    bool enable_compression;      // Enable value compression
+} poly_memkv_config_t;
 
-// 配置 MemKV 实例
-infra_error_t poly_memkv_configure(poly_memkv_t* store, const poly_memkv_config_t* config);
+// Interface functions
+infra_error_t poly_memkv_create(const poly_memkv_config_t* config, poly_memkv_db_t** db);
+void poly_memkv_destroy(poly_memkv_db_t* db);
+infra_error_t poly_memkv_get(poly_memkv_db_t* db, const char* key, void** value, size_t* value_len);
+infra_error_t poly_memkv_set(poly_memkv_db_t* db, const char* key, const void* value, size_t value_len);
+infra_error_t poly_memkv_del(poly_memkv_db_t* db, const char* key);
+infra_error_t poly_memkv_exec(poly_memkv_db_t* db, const char* sql);
 
-// 打开存储
-infra_error_t poly_memkv_open(poly_memkv_t* store);
-
-// 关闭存储
-void poly_memkv_close(poly_memkv_t* store);
-
-// 销毁 MemKV 实例
-void poly_memkv_destroy(poly_memkv_t* store);
-
-// 设置键值对
-infra_error_t poly_memkv_set(poly_memkv_t* store, const char* key, size_t key_len,
-    const void* value, size_t value_len);
-
-// 获取键值对
-infra_error_t poly_memkv_get(poly_memkv_t* store, const char* key, size_t key_len,
-    void** value, size_t* value_len);
-
-// 删除键值对
-infra_error_t poly_memkv_del(poly_memkv_t* store, const char* key, size_t key_len);
-
-// 创建迭代器
-infra_error_t poly_memkv_iter_create(poly_memkv_t* store, poly_memkv_iter_t** iter);
-
-// 迭代下一个键值对
-infra_error_t poly_memkv_iter_next(poly_memkv_iter_t* iter, char** key, size_t* key_len,
-    void** value, size_t* value_len);
-
-// 销毁迭代器
+// Iterator functions
+infra_error_t poly_memkv_iter_create(poly_memkv_db_t* db, poly_memkv_iter_t** iter);
+infra_error_t poly_memkv_iter_next(poly_memkv_iter_t* iter, char** key, void** value, size_t* value_len);
 void poly_memkv_iter_destroy(poly_memkv_iter_t* iter);
-
-// 获取存储引擎类型
-poly_memkv_engine_type_t poly_memkv_get_engine_type(const poly_memkv_t* store);
-
-/**
- * @brief 获取 MemKV 统计信息
- * @param store MemKV 存储实例
- * @return 统计信息指针，如果失败返回 NULL
- */
-const poly_memkv_stats_t* poly_memkv_get_stats(poly_memkv_t* store);
-
-/**
- * @brief 切换存储引擎
- * @param store MemKV 存储实例
- * @param engine_type 目标引擎类型
- * @param config 引擎配置
- * @return 错误码
- */
-infra_error_t poly_memkv_switch_engine(poly_memkv_t* store, 
-                                     poly_memkv_engine_type_t engine_type,
-                                     const poly_memkv_config_t* config);
 
 #endif // POLY_MEMKV_H 

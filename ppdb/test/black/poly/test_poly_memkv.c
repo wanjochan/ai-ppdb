@@ -16,10 +16,12 @@ static void test_memkv_basic_ops(void) {
 
     // 配置存储引擎
     poly_memkv_config_t config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,  // 默认使用 SQLite
+        .url = ":memory:",
         .max_key_size = 1024,
         .max_value_size = 4096,
-        .engine_type = POLY_MEMKV_ENGINE_SQLITE,  // 默认使用 SQLite
-        .path = ":memory:"
+        .memory_limit = 1024 * 1024,  // 1MB memory limit
+        .enable_compression = false
     };
 
     init_err = poly_memkv_configure(store, &config);
@@ -99,13 +101,15 @@ static void test_memkv_engine_switch(void) {
     // 创建并初始化 memkv 实例（SQLite）
     poly_memkv_t* store = NULL;
     poly_memkv_config_t config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .url = ":memory:",
         .max_key_size = 1024,
         .max_value_size = 4096,
-        .engine_type = POLY_MEMKV_ENGINE_SQLITE,
-        .path = ":memory:"
+        .memory_limit = 1024 * 1024,  // 1MB memory limit
+        .enable_compression = false
     };
 
-    init_err = poly_memkv_create(&store);
+    init_err = poly_memkv_create(&config, &store);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to create memkv instance");
 
     // 配置存储引擎
@@ -117,8 +121,8 @@ static void test_memkv_engine_switch(void) {
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to open memkv store");
 
     // 切换到 DuckDB 引擎
-    config.engine_type = POLY_MEMKV_ENGINE_DUCKDB;
-    config.path = ":memory:";  // 使用 DuckDB 内存数据库
+    config.engine = POLY_MEMKV_ENGINE_DUCKDB;
+    config.url = ":memory:";  // 使用 DuckDB 内存数据库
     init_err = poly_memkv_switch_engine(store, POLY_MEMKV_ENGINE_DUCKDB, &config);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to switch to DuckDB engine");
 
@@ -139,13 +143,15 @@ static void test_memkv_config(void) {
     // 测试无效配置
     poly_memkv_t* store = NULL;
     poly_memkv_config_t invalid_config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .url = ":memory:",
         .max_key_size = 0,  // 无效的键大小
         .max_value_size = 4096,
-        .engine_type = POLY_MEMKV_ENGINE_SQLITE,
-        .path = ":memory:"
+        .memory_limit = 1024 * 1024,  // 1MB memory limit
+        .enable_compression = false
     };
 
-    init_err = poly_memkv_create(&store);
+    init_err = poly_memkv_create(&invalid_config, &store);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to create memkv instance");
     
     // 配置存储引擎（使用无效配置）
@@ -160,13 +166,15 @@ static void test_memkv_config(void) {
 
     // 测试边界值
     poly_memkv_config_t valid_config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .url = ":memory:",
         .max_key_size = 1024,
         .max_value_size = 4096,
-        .engine_type = POLY_MEMKV_ENGINE_SQLITE,
-        .path = ":memory:"
+        .memory_limit = 1024 * 1024,  // 1MB memory limit
+        .enable_compression = false
     };
 
-    init_err = poly_memkv_create(&store);
+    init_err = poly_memkv_create(&valid_config, &store);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to create memkv instance with valid config");
 
     // 配置存储引擎（使用有效配置）
@@ -201,13 +209,15 @@ static void test_memkv_iterator(void) {
     // 创建并初始化 memkv 实例
     poly_memkv_t* store = NULL;
     poly_memkv_config_t config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .url = ":memory:",
         .max_key_size = 1024,
         .max_value_size = 4096,
-        .engine_type = POLY_MEMKV_ENGINE_SQLITE,
-        .path = ":memory:"
+        .memory_limit = 1024 * 1024,  // 1MB memory limit
+        .enable_compression = false
     };
 
-    init_err = poly_memkv_create(&store);
+    init_err = poly_memkv_create(&config, &store);
     TEST_ASSERT_MSG(init_err == INFRA_OK, "Failed to create memkv instance");
 
     // 配置存储引擎
@@ -254,14 +264,68 @@ static void test_memkv_iterator(void) {
     poly_memkv_destroy(store);
 }
 
-int main(void) {
-    TEST_BEGIN();
+// 添加新的测试用例
+static void test_memkv_memory_limit(void) {
+    poly_memkv_t* store = NULL;
+    poly_memkv_config_t config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .url = ":memory:",
+        .max_key_size = 1024,
+        .max_value_size = 1024,
+        .memory_limit = 2048,  // 很小的内存限制
+        .enable_compression = false
+    };
+
+    infra_error_t err = poly_memkv_create(&config, &store);
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to create memkv instance");
+
+    // 尝试写入超过内存限制的数据
+    char large_value[2048] = {0};
+    memset(large_value, 'A', sizeof(large_value) - 1);
     
-    // 运行所有测试
+    err = poly_memkv_set(store, "large_key", large_value, sizeof(large_value));
+    TEST_ASSERT_MSG(err == POLY_MEMKV_ERROR_MEMORY_LIMIT, "Should fail with memory limit error");
+
+    poly_memkv_destroy(store);
+}
+
+static void test_memkv_compression(void) {
+    poly_memkv_t* store = NULL;
+    poly_memkv_config_t config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .url = ":memory:",
+        .max_key_size = 1024,
+        .max_value_size = 4096,
+        .memory_limit = 2048,
+        .enable_compression = true
+    };
+
+    infra_error_t err = poly_memkv_create(&config, &store);
+    TEST_ASSERT_MSG(err == INFRA_OK, "Failed to create memkv instance");
+
+    // 创建可压缩的数据（重复模式）
+    char compressible[2048] = {0};
+    for (int i = 0; i < sizeof(compressible) - 1; i += 4) {
+        memcpy(compressible + i, "ABCD", 4);
+    }
+    
+    // 由于启用了压缩，这应该能成功
+    err = poly_memkv_set(store, "compressed_key", compressible, sizeof(compressible));
+    TEST_ASSERT_MSG(err == INFRA_OK, "Compression should allow large value to fit");
+
+    poly_memkv_destroy(store);
+}
+
+int main(void) {
+    TEST_BEGIN("Memory KV Store Tests");
+    
     RUN_TEST(test_memkv_basic_ops);
     RUN_TEST(test_memkv_engine_switch);
     RUN_TEST(test_memkv_config);
     RUN_TEST(test_memkv_iterator);
+    RUN_TEST(test_memkv_memory_limit);    // 新增
+    RUN_TEST(test_memkv_compression);     // 新增
     
     TEST_END();
+    return 0;
 } 

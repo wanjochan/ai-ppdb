@@ -4,6 +4,8 @@
 #ifndef INFRA_ERROR_H_
 #define INFRA_ERROR_H_
 
+//#include "internal/infra/infra_core.h"
+
 
 //-----------------------------------------------------------------------------
 // Error Type
@@ -38,6 +40,9 @@ typedef enum {
     INFRA_ERROR_NO_SPACE = -25,      // 空间不足
     INFRA_ERROR_INVALID_FORMAT = -26, // 无效格式
     INFRA_ERROR_NOT_INITIALIZED = -27, // 系统未初始化
+    INFRA_ERROR_QUERY_FAILED = -28, //
+    INFRA_ERROR_INVALID_URL = -29, //
+    INFRA_ERROR_OPEN_FAILED = -30, //
     INFRA_ERROR_MAX
 } infra_error_t;
 
@@ -50,7 +55,7 @@ const char* infra_error_string(infra_error_t err);
 // 预期错误处理函数
 void infra_set_expected_error(infra_error_t err);
 void infra_clear_expected_error(void);
-bool infra_is_expected_error(infra_error_t err);
+infra_error_t infra_is_expected_error(infra_error_t err);
 
 //-----------------------------------------------------------------------------
 // System Error Code Mapping

@@ -38,6 +38,16 @@ typedef struct memkv_context {
     char* plugin_path;
 } memkv_context_t;
 
+// Peer Memory KV Store handle implementation
+struct peer_memkv_db {
+    poly_memkv_db_t* db;  // Underlying poly_memkv handle
+};
+
+// Peer Memory KV Store iterator implementation
+struct peer_memkv_iter {
+    poly_memkv_iter_t* iter;  // Underlying poly_memkv iterator
+};
+
 //-----------------------------------------------------------------------------
 // Forward Declarations
 //-----------------------------------------------------------------------------
@@ -761,5 +771,90 @@ infra_error_t memkv_cmd_handler(int argc, char* argv[]) {
     }
     
     return INFRA_OK;
+}
+
+infra_error_t peer_memkv_open(peer_memkv_db_t** db, const char* path) {
+    if (!db || !path) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    peer_memkv_db_t* peer_db = infra_malloc(sizeof(peer_memkv_db_t));
+    if (!peer_db) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    // Default to SQLite engine for now
+    infra_error_t err = poly_memkv_open(&peer_db->db, path, POLY_MEMKV_ENGINE_SQLITE);
+    if (err != INFRA_OK) {
+        infra_free(peer_db);
+        return err;
+    }
+
+    *db = peer_db;
+    return INFRA_OK;
+}
+
+void peer_memkv_close(peer_memkv_db_t* db) {
+    if (!db) return;
+    if (db->db) {
+        poly_memkv_close(db->db);
+    }
+    infra_free(db);
+}
+
+infra_error_t peer_memkv_get(peer_memkv_db_t* db, const char* key, void** value, size_t* value_len) {
+    if (!db || !key || !value || !value_len) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+    return poly_memkv_get(db->db, key, value, value_len);
+}
+
+infra_error_t peer_memkv_set(peer_memkv_db_t* db, const char* key, const void* value, size_t value_len) {
+    if (!db || !key || !value) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+    return poly_memkv_set(db->db, key, value, value_len);
+}
+
+infra_error_t peer_memkv_del(peer_memkv_db_t* db, const char* key) {
+    if (!db || !key) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+    return poly_memkv_del(db->db, key);
+}
+
+infra_error_t peer_memkv_iter_create(peer_memkv_db_t* db, peer_memkv_iter_t** iter) {
+    if (!db || !iter) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    peer_memkv_iter_t* peer_iter = infra_malloc(sizeof(peer_memkv_iter_t));
+    if (!peer_iter) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    infra_error_t err = poly_memkv_iter_create(db->db, &peer_iter->iter);
+    if (err != INFRA_OK) {
+        infra_free(peer_iter);
+        return err;
+    }
+
+    *iter = peer_iter;
+    return INFRA_OK;
+}
+
+infra_error_t peer_memkv_iter_next(peer_memkv_iter_t* iter, char** key, void** value, size_t* value_len) {
+    if (!iter || !key || !value || !value_len) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+    return poly_memkv_iter_next(iter->iter, key, value, value_len);
+}
+
+void peer_memkv_iter_destroy(peer_memkv_iter_t* iter) {
+    if (!iter) return;
+    if (iter->iter) {
+        poly_memkv_iter_destroy(iter->iter);
+    }
+    infra_free(iter);
 }
 

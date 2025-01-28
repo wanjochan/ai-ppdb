@@ -1,75 +1,39 @@
 #ifndef POLY_DB_H
 #define POLY_DB_H
 
-#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_error.h"
 
-// 数据库类型
-typedef enum {
-    POLY_DB_TYPE_SQLITE,
-    POLY_DB_TYPE_DUCKDB
-} poly_db_type_t;
-
-// 基础类型定义
-typedef void* poly_db_handle_t;      // 通用数据库句柄
-typedef void* poly_db_stmt_t;        // 通用语句句柄
-typedef void* poly_db_connection_t;  // 通用连接句柄
-
-// 结果集结构
-struct poly_db_result {
-    poly_db_t* db;           // 指向数据库句柄的指针
-    void* internal_result;   // 内部结果集（如 duckdb_result）
-};
-typedef struct poly_db_result* poly_db_result_t;
-
-// 数据库句柄
+// Forward declarations
 struct poly_db;
 typedef struct poly_db poly_db_t;
 
-// // 数据库迭代器 TODO
-// struct poly_db_iter;
-// typedef struct poly_db_iter poly_db_iter_t;
+struct poly_db_result;
+typedef struct poly_db_result poly_db_result_t;
 
-// 统一的数据库接口
-typedef struct poly_db_interface {
-    // 连接管理
-    infra_error_t (*open)(poly_db_t** db, const char* url);
-    void (*close)(poly_db_t* db);
-    
-    // // KV 操作
-    // infra_error_t (*get)(poly_db_t* db, const char* key, size_t key_len, void** value, size_t* value_size);
-    // infra_error_t (*set)(poly_db_t* db, const char* key, size_t key_len, const void* value, size_t value_size);
-    // infra_error_t (*del)(poly_db_t* db, const char* key, size_t key_len);
-    
-    // // 迭代器
-    // infra_error_t (*iter_create)(poly_db_t* db, poly_db_iter_t** iter);
-    // infra_error_t (*iter_next)(poly_db_iter_t* iter, char** key, void** value, size_t* value_size);
-    // void (*iter_destroy)(poly_db_iter_t* iter);
-    
-    // SQL 执行
-    infra_error_t (*exec)(poly_db_t* db, const char* sql);
-    
-    // 查询操作
-    infra_error_t (*query)(poly_db_t* db, const char* sql, poly_db_result_t* result);
-    infra_error_t (*result_row_count)(poly_db_result_t result, size_t* count);
-    infra_error_t (*result_column_count)(poly_db_result_t result, size_t* count);
-    infra_error_t (*result_get_string)(poly_db_result_t result, size_t row, size_t col, char** value);
-    infra_error_t (*result_get_blob)(poly_db_result_t result, size_t row, size_t col, void** data, size_t* size);
-    void (*result_free)(poly_db_result_t result);
-} poly_db_interface_t;
+// Database type enumeration
+typedef enum poly_db_type {
+    POLY_DB_TYPE_UNKNOWN = 0,
+    POLY_DB_TYPE_SQLITE = 1,    // SQLite storage engine
+    POLY_DB_TYPE_DUCKDB = 2,    // DuckDB storage engine
+    POLY_DB_TYPE_COUNT          // Number of database types
+} poly_db_type_t;
 
-// 主要接口函数
-infra_error_t poly_db_open(const char* url, poly_db_t** db);
+// Database configuration
+typedef struct poly_db_config {
+    poly_db_type_t type;        // Database type
+    const char* url;            // Database URL
+    size_t max_memory;          // Maximum memory usage (0 for unlimited)
+    bool read_only;             // Open in read-only mode
+} poly_db_config_t;
+
+// Database interface functions
+infra_error_t poly_db_open(const poly_db_config_t* config, poly_db_t** db);
 void poly_db_close(poly_db_t* db);
-
-// SQL 执行
 infra_error_t poly_db_exec(poly_db_t* db, const char* sql);
-
-// 查询操作
-infra_error_t poly_db_query(poly_db_t* db, const char* sql, poly_db_result_t* result);
-infra_error_t poly_db_result_row_count(poly_db_result_t result, size_t* count);
-infra_error_t poly_db_result_column_count(poly_db_result_t result, size_t* count);
-infra_error_t poly_db_result_get_string(poly_db_result_t result, size_t row, size_t col, char** value);
-infra_error_t poly_db_result_get_blob(poly_db_result_t result, size_t row, size_t col, void** data, size_t* size);
-void poly_db_result_free(poly_db_result_t result);
+infra_error_t poly_db_query(poly_db_t* db, const char* sql, poly_db_result_t** result);
+void poly_db_result_free(poly_db_result_t* result);
+infra_error_t poly_db_result_row_count(poly_db_result_t* result, size_t* count);
+infra_error_t poly_db_result_get_blob(poly_db_result_t* result, size_t row, size_t col, void** data, size_t* size);
+infra_error_t poly_db_result_get_string(poly_db_result_t* result, size_t row, size_t col, char** str);
 
 #endif // POLY_DB_H

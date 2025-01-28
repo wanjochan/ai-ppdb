@@ -1,464 +1,304 @@
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_memory.h"
 #include "internal/poly/poly_db.h"
-#include "cosmo.h"
-
-// DuckDB 类型定义
-typedef void* duckdb_database;
-typedef void* duckdb_connection;
-typedef void* duckdb_result;
-
-// DuckDB 状态
-typedef int duckdb_state;
-#define DuckDBSuccess 0
-#define DuckDBError 1
+#include "sqlite3.h"
+// #include "duckdb.h" //cosmo_dlxxxx
 
 // DuckDB 函数指针类型定义
-typedef duckdb_state (*duckdb_open_t)(const char*, duckdb_database*);
-typedef void (*duckdb_close_t)(duckdb_database*);
-typedef duckdb_state (*duckdb_connect_t)(duckdb_database, duckdb_connection*);
-typedef void (*duckdb_disconnect_t)(duckdb_connection*);
-typedef duckdb_state (*duckdb_query_t)(duckdb_connection, const char*, duckdb_result*);
-typedef void (*duckdb_destroy_result_t)(duckdb_result*);
+typedef duckdb_state (*duckdb_open_t)(const char *path, duckdb_database *out_database);
+typedef void (*duckdb_close_t)(duckdb_database *database);
+typedef duckdb_state (*duckdb_connect_t)(duckdb_database database, duckdb_connection *out_connection);
+typedef void (*duckdb_disconnect_t)(duckdb_connection *connection);
+typedef duckdb_state (*duckdb_query_t)(duckdb_connection connection, const char *query, duckdb_result *out_result);
+typedef duckdb_state (*duckdb_prepare_t)(duckdb_connection connection, const char *query, duckdb_prepared_statement *out_prepared_statement);
+typedef void (*duckdb_destroy_prepare_t)(duckdb_prepared_statement *prepared_statement);
+typedef duckdb_state (*duckdb_execute_prepared_t)(duckdb_prepared_statement prepared_statement, duckdb_result *out_result);
+typedef void (*duckdb_destroy_result_t)(duckdb_result *result);
+typedef bool (*duckdb_value_is_null_t)(duckdb_result *result, idx_t col, idx_t row);
+typedef duckdb_blob (*duckdb_value_blob_t)(duckdb_result *result, idx_t col, idx_t row);
+typedef void (*duckdb_bind_blob_t)(duckdb_prepared_statement prepared_statement, idx_t param_idx, const void *data, idx_t length);
+typedef duckdb_state (*duckdb_bind_varchar_t)(duckdb_prepared_statement prepared_statement, idx_t param_idx, const char *str);
+typedef idx_t (*duckdb_row_count_t)(duckdb_result *result);
+typedef duckdb_string (*duckdb_value_string_t)(duckdb_result *result, idx_t col, idx_t row);
+typedef void (*duckdb_free_t)(void *ptr);
 
-// DuckDB 函数指针结构
-typedef struct {
+// DuckDB 实现结构体
+typedef struct duckdb_impl {
     void* handle;
     duckdb_open_t open;
     duckdb_close_t close;
     duckdb_connect_t connect;
     duckdb_disconnect_t disconnect;
     duckdb_query_t query;
+    duckdb_prepare_t prepare;
+    duckdb_destroy_prepare_t destroy_prepare;
+    duckdb_execute_prepared_t execute_prepared;
     duckdb_destroy_result_t destroy_result;
-} duckdb_functions_t;
+    duckdb_value_is_null_t value_is_null;
+    duckdb_value_blob_t value_blob;
+    duckdb_bind_blob_t bind_blob;
+    duckdb_bind_varchar_t bind_varchar;
+    duckdb_row_count_t row_count;
+    duckdb_value_string_t value_string;
+    duckdb_free_t free;
+} duckdb_impl_t;
 
-// DuckDB 数据库句柄
-typedef struct {
-    duckdb_database db;
-    duckdb_connection conn;
-    duckdb_functions_t* funcs;
-} poly_duckdb_t;
-
-// SQLite 数据库句柄
-typedef struct {
-    void* db;
-} poly_sqlite_t;
-
-// 统一的数据库句柄
-typedef struct poly_db {
+// Database interface structure
+struct poly_db {
     poly_db_type_t type;
-    union {
-        poly_sqlite_t sqlite;
-        poly_duckdb_t duckdb;
-    };
-} poly_db_t;
+    void* impl;
+    infra_error_t (*exec)(struct poly_db* db, const char* sql);
+    infra_error_t (*query)(struct poly_db* db, const char* sql, poly_db_result_t** result);
+    void (*free_result)(struct poly_db* db, void* result);
+    void (*close)(struct poly_db* db);
+    infra_error_t (*result_row_count)(poly_db_result_t* result, size_t* count);
+    infra_error_t (*result_get_blob)(poly_db_result_t* result, size_t row, size_t col, void** data, size_t* size);
+    infra_error_t (*result_get_string)(poly_db_result_t* result, size_t row, size_t col, char** str);
+};
 
-// URL 解析函数 （成熟后放 poly_db.h 中可以更多地方用到）
-static infra_error_t parse_db_url(const char* url, char** scheme, char** path, char** params) {
-    if (!url || !scheme || !path || !params) {
-        fprintf(stderr, "parse_db_url: Invalid parameters\n");
-        return INFRA_ERROR_INVALID_PARAM;
+// Result structure
+struct poly_db_result {
+    poly_db_t* db;
+    void* internal_result;
+};
+
+// 创建 DuckDB 实例
+static infra_error_t create_duckdb(duckdb_impl_t** impl) {
+    if (!impl) return INFRA_ERROR_INVALID_PARAM;
+
+    duckdb_impl_t* duckdb = infra_malloc(sizeof(duckdb_impl_t));
+    if (!duckdb) return INFRA_ERROR_NO_MEMORY;
+    memset(duckdb, 0, sizeof(duckdb_impl_t));
+
+    // 加载 DuckDB 动态库
+    duckdb->handle = dlopen("libduckdb.so", RTLD_LAZY);
+    if (!duckdb->handle) {
+        infra_free(duckdb);
+        return INFRA_ERROR_LOAD_LIBRARY;
     }
 
-    fprintf(stderr, "parse_db_url: Parsing URL: %s\n", url);
+    // 加载函数指针
+    duckdb->open = (duckdb_open_t)dlsym(duckdb->handle, "duckdb_open");
+    duckdb->close = (duckdb_close_t)dlsym(duckdb->handle, "duckdb_close");
+    duckdb->connect = (duckdb_connect_t)dlsym(duckdb->handle, "duckdb_connect");
+    duckdb->disconnect = (duckdb_disconnect_t)dlsym(duckdb->handle, "duckdb_disconnect");
+    duckdb->query = (duckdb_query_t)dlsym(duckdb->handle, "duckdb_query");
+    duckdb->prepare = (duckdb_prepare_t)dlsym(duckdb->handle, "duckdb_prepare");
+    duckdb->destroy_prepare = (duckdb_destroy_prepare_t)dlsym(duckdb->handle, "duckdb_destroy_prepare");
+    duckdb->execute_prepared = (duckdb_execute_prepared_t)dlsym(duckdb->handle, "duckdb_execute_prepared");
+    duckdb->destroy_result = (duckdb_destroy_result_t)dlsym(duckdb->handle, "duckdb_destroy_result");
+    duckdb->value_is_null = (duckdb_value_is_null_t)dlsym(duckdb->handle, "duckdb_value_is_null");
+    duckdb->value_blob = (duckdb_value_blob_t)dlsym(duckdb->handle, "duckdb_value_blob");
+    duckdb->bind_blob = (duckdb_bind_blob_t)dlsym(duckdb->handle, "duckdb_bind_blob");
+    duckdb->bind_varchar = (duckdb_bind_varchar_t)dlsym(duckdb->handle, "duckdb_bind_varchar");
+    duckdb->row_count = (duckdb_row_count_t)dlsym(duckdb->handle, "duckdb_row_count");
+    duckdb->value_string = (duckdb_value_string_t)dlsym(duckdb->handle, "duckdb_value_string");
+    duckdb->free = (duckdb_free_t)dlsym(duckdb->handle, "duckdb_free");
 
-    const char* scheme_end = strstr(url, "://");
-    if (!scheme_end) {
-        fprintf(stderr, "parse_db_url: Invalid URL format, missing ://\n");
-        return INFRA_ERROR_INVALID_PARAM;
+    // 验证所有函数指针都已加载
+    if (!duckdb->open || !duckdb->close || !duckdb->connect || !duckdb->disconnect ||
+        !duckdb->query || !duckdb->prepare || !duckdb->destroy_prepare || !duckdb->execute_prepared ||
+        !duckdb->destroy_result || !duckdb->value_is_null || !duckdb->value_blob || !duckdb->bind_blob ||
+        !duckdb->bind_varchar || !duckdb->row_count || !duckdb->value_string || !duckdb->free) {
+        dlclose(duckdb->handle);
+        infra_free(duckdb);
+        return INFRA_ERROR_LOAD_LIBRARY;
     }
 
-    size_t scheme_len = scheme_end - url;
-    *scheme = (char*)infra_malloc(scheme_len + 1);
-    if (!*scheme) {
-        fprintf(stderr, "parse_db_url: Failed to allocate memory for scheme\n");
-        return INFRA_ERROR_NO_MEMORY;
-    }
-    strncpy(*scheme, url, scheme_len);
-    (*scheme)[scheme_len] = '\0';
-    fprintf(stderr, "parse_db_url: Found scheme: %s\n", *scheme);
+    *impl = duckdb;
+    return INFRA_OK;
+}
 
-    const char* path_start = scheme_end + 3;
-    const char* params_start = strchr(path_start, '?');
+// 销毁 DuckDB 实例
+static void destroy_duckdb(duckdb_impl_t* impl) {
+    if (!impl) return;
+    if (impl->handle) dlclose(impl->handle);
+    infra_free(impl);
+}
+
+// DuckDB 实现的接口函数
+static infra_error_t duckdb_exec(poly_db_t* db, const char* sql) {
+    if (!db || !sql) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)db->impl;
+    duckdb_result result;
+    duckdb_state state = impl->query(impl->handle, sql, &result);
+    if (state != DuckDBSuccess) return INFRA_ERROR_EXEC_FAILED;
+    impl->destroy_result(&result);
+    return INFRA_OK;
+}
+
+static infra_error_t duckdb_query(poly_db_t* db, const char* sql, poly_db_result_t** result) {
+    if (!db || !sql || !result) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)db->impl;
     
-    if (params_start) {
-        size_t path_len = params_start - path_start;
-        *path = (char*)infra_malloc(path_len + 1);
-        if (!*path) {
-            fprintf(stderr, "parse_db_url: Failed to allocate memory for path\n");
-            infra_free(*scheme);
-            return INFRA_ERROR_NO_MEMORY;
-        }
-        strncpy(*path, path_start, path_len);
-        (*path)[path_len] = '\0';
-        fprintf(stderr, "parse_db_url: Found path: %s\n", *path);
-
-        size_t params_len = strlen(params_start + 1);
-        *params = (char*)infra_malloc(params_len + 1);
-        if (!*params) {
-            fprintf(stderr, "parse_db_url: Failed to allocate memory for params\n");
-            infra_free(*scheme);
-            infra_free(*path);
-            return INFRA_ERROR_NO_MEMORY;
-        }
-        strcpy(*params, params_start + 1);
-        fprintf(stderr, "parse_db_url: Found params: %s\n", *params);
-    } else {
-        size_t path_len = strlen(path_start);
-        *path = (char*)infra_malloc(path_len + 1);
-        if (!*path) {
-            fprintf(stderr, "parse_db_url: Failed to allocate memory for path\n");
-            infra_free(*scheme);
-            return INFRA_ERROR_NO_MEMORY;
-        }
-        strcpy(*path, path_start);
-        fprintf(stderr, "parse_db_url: Found path: %s\n", *path);
-
-        *params = (char*)infra_malloc(1);
-        if (!*params) {
-            fprintf(stderr, "parse_db_url: Failed to allocate memory for params\n");
-            infra_free(*scheme);
-            infra_free(*path);
-            return INFRA_ERROR_NO_MEMORY;
-        }
-        (*params)[0] = '\0';
-        fprintf(stderr, "parse_db_url: No params found\n");
-    }
-
-    return INFRA_OK;
-}
-
-// DuckDB 动态加载
-static infra_error_t load_duckdb(const char* lib_path, duckdb_functions_t** funcs) {
-    if (!lib_path || !funcs) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    duckdb_functions_t* f = (duckdb_functions_t*)infra_malloc(sizeof(duckdb_functions_t));
-    if (!f) {
+    poly_db_result_t* res = infra_malloc(sizeof(poly_db_result_t));
+    if (!res) return INFRA_ERROR_NO_MEMORY;
+    
+    duckdb_result* duck_result = infra_malloc(sizeof(duckdb_result));
+    if (!duck_result) {
+        infra_free(res);
         return INFRA_ERROR_NO_MEMORY;
     }
-    memset(f, 0, sizeof(duckdb_functions_t));
-
-    fprintf(stderr, "Loading DuckDB from: %s\n", lib_path);
-    f->handle = cosmo_dlopen(lib_path, RTLD_LAZY);
-    if (!f->handle) {
-        fprintf(stderr, "Failed to load DuckDB: %s\n", cosmo_dlerror());
-        infra_free(f);
-        return INFRA_ERROR_NOT_FOUND;
+    
+    duckdb_state state = impl->query(impl->handle, sql, duck_result);
+    if (state != DuckDBSuccess) {
+        infra_free(duck_result);
+        infra_free(res);
+        return INFRA_ERROR_EXEC_FAILED;
     }
-    fprintf(stderr, "Successfully loaded DuckDB library\n");
-
-    // 加载所需的函数
-    #define LOAD_SYMBOL(name) \
-        f->name = (duckdb_##name##_t)cosmo_dlsym(f->handle, "duckdb_" #name); \
-        fprintf(stderr, "Loading symbol duckdb_%s: %p\n", #name, (void*)f->name); \
-        if (!f->name) { \
-            fprintf(stderr, "Failed to get duckdb_" #name " symbol: %s\n", dlerror()); \
-            void* handle = f->handle; \
-            cosmo_dlclose(handle); \
-            infra_free(f); \
-            return INFRA_ERROR_IO; \
-        }
-
-    LOAD_SYMBOL(open);
-    LOAD_SYMBOL(close);
-    LOAD_SYMBOL(connect);
-    LOAD_SYMBOL(disconnect);
-    LOAD_SYMBOL(query);
-    LOAD_SYMBOL(destroy_result);
-
-    #undef LOAD_SYMBOL
-
-    fprintf(stderr, "Successfully loaded all DuckDB symbols\n");
-
-    *funcs = f;
+    
+    res->db = db;
+    res->internal_result = duck_result;
+    *result = res;
     return INFRA_OK;
 }
 
-// 获取参数值
-static char* get_param_value(const char* params, const char* key) {
-    size_t params_len = strlen(params);
-    char* params_copy = (char*)infra_malloc(params_len + 1);
-    if (!params_copy) return NULL;
-    strcpy(params_copy, params);
-
-    char* param = strtok(params_copy, "&");
-    while (param) {
-        char* equals = strchr(param, '=');
-        if (equals) {
-            *equals = '\0';
-            if (strcmp(param, key) == 0) {
-                size_t value_len = strlen(equals + 1);
-                char* value = (char*)infra_malloc(value_len + 1);
-                if (!value) {
-                    infra_free(params_copy);
-                    return NULL;
-                }
-                strcpy(value, equals + 1);
-                infra_free(params_copy);
-                return value;
-            }
-        }
-        param = strtok(NULL, "&");
-    }
-
-    infra_free(params_copy);
-    return NULL;
-}
-
+// 公共接口函数实现
 infra_error_t poly_db_open(const char* url, poly_db_t** db) {
-    if (!url || !db) {
-        fprintf(stderr, "poly_db_open: Invalid parameters\n");
+    if (!url || !db) return INFRA_ERROR_INVALID_PARAM;
+
+    // 解析 URL 获取数据库类型和路径
+    poly_db_type_t type = POLY_DB_TYPE_UNKNOWN;
+    const char* path = NULL;
+
+    if (strncmp(url, "sqlite://", 9) == 0) {
+        type = POLY_DB_TYPE_SQLITE;
+        path = url + 9;
+    } else if (strncmp(url, "duckdb://", 9) == 0) {
+        type = POLY_DB_TYPE_DUCKDB;
+        path = url + 9;
+    } else {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    *db = NULL;  // 初始化输出参数
 
-    char *scheme = NULL, *path = NULL, *params = NULL;
-    infra_error_t err = parse_db_url(url, &scheme, &path, &params);
+    // 创建数据库实例
+    poly_db_t* new_db = infra_malloc(sizeof(poly_db_t));
+    if (!new_db) return INFRA_ERROR_NO_MEMORY;
+    memset(new_db, 0, sizeof(poly_db_t));
+    new_db->type = type;
+
+    // 根据类型初始化实现
+    infra_error_t err = INFRA_OK;
+    switch (type) {
+        case POLY_DB_TYPE_DUCKDB: {
+            duckdb_impl_t* impl;
+            err = create_duckdb(&impl);
+            if (err != INFRA_OK) {
+                infra_free(new_db);
+                return err;
+            }
+            new_db->impl = impl;
+            new_db->exec = duckdb_exec;
+            new_db->query = duckdb_query;
+            break;
+        }
+        case POLY_DB_TYPE_SQLITE:
+            // TODO: 实现 SQLite 支持
+            err = INFRA_ERROR_NOT_IMPLEMENTED;
+            break;
+        default:
+            err = INFRA_ERROR_INVALID_PARAM;
+    }
+
     if (err != INFRA_OK) {
-        // 即使 parse_db_url 部分成功，也要释放可能已分配的内存
-        if (scheme) infra_free(scheme);
-        if (path) infra_free(path);
-        if (params) infra_free(params);
+        infra_free(new_db);
         return err;
     }
 
-    fprintf(stderr, "TMP DEBUG： Opening scheme: %s\n", scheme);
-    
-    poly_db_t* handle = (poly_db_t*)infra_malloc(sizeof(poly_db_t));
-    if (!handle) {
-        infra_free(scheme);
-        infra_free(path);
-        infra_free(params);
-        return INFRA_ERROR_NO_MEMORY;
-    }
-    if (strcmp(scheme, "sqlite") == 0) {
-        fprintf(stderr, "SQLite: Returning INFRA_ERROR_NOT_SUPPORTED (%d)\n", INFRA_ERROR_NOT_SUPPORTED);
-        // SQLite 动态加载将在后续实现
-        infra_free(handle);
-        infra_free(scheme);
-        infra_free(path);
-        infra_free(params);
-        return INFRA_ERROR_NOT_SUPPORTED;
-    } else if (strcmp(scheme, "duckdb") == 0) {
-        fprintf(stderr, "Opening DuckDB database...\n");
-        handle->type = POLY_DB_TYPE_DUCKDB;
-        
-        const char* load_path = "libduckdb.so";
-        
-        // 加载 DuckDB
-        fprintf(stderr, "Loading DuckDB from: %s\n", load_path);
-        err = load_duckdb(load_path, &handle->duckdb.funcs);
-        if (err != INFRA_OK) {
-            fprintf(stderr, "Failed to load DuckDB library\n");
-            infra_free(handle);
-            infra_free(scheme);
-            infra_free(path);
-            infra_free(params);
-            return err;
-        }
-
-        fprintf(stderr, "Opening database: %s\n", path);
-        // 如果路径是 ":memory:" 或 NULL，使用内存数据库
-        const char* db_path = (path && strcmp(path, ":memory:") != 0) ? path : NULL;
-
-        // 打开数据库
-        duckdb_state state = handle->duckdb.funcs->open(db_path, &handle->duckdb.db);
-        fprintf(stderr, "DuckDB open state: %d\n", state);
-        if (state != DuckDBSuccess) {
-            fprintf(stderr, "Failed to open DuckDB database: %s\n", path);
-            void* lib_handle = handle->duckdb.funcs->handle;
-            duckdb_functions_t* funcs = handle->duckdb.funcs;
-            cosmo_dlclose(lib_handle);
-            infra_free(funcs);
-            infra_free(handle);
-            infra_free(scheme);
-            infra_free(path);
-            infra_free(params);
-            return INFRA_ERROR_IO;
-        }
-        fprintf(stderr, "Database opened successfully\n");
-
-        fprintf(stderr, "Creating connection...\n");
-        // 创建连接
-        state = handle->duckdb.funcs->connect(handle->duckdb.db, &handle->duckdb.conn);
-        fprintf(stderr, "DuckDB connect state: %d\n", state);
-        if (state != DuckDBSuccess) {
-            fprintf(stderr, "Failed to create DuckDB connection\n");
-            handle->duckdb.funcs->close(&handle->duckdb.db);
-            void* lib_handle = handle->duckdb.funcs->handle;
-            duckdb_functions_t* funcs = handle->duckdb.funcs;
-            cosmo_dlclose(lib_handle);
-            infra_free(funcs);
-            infra_free(handle);
-            infra_free(scheme);
-            infra_free(path);
-            infra_free(params);
-            return INFRA_ERROR_IO;
-        }
-        fprintf(stderr, "DuckDB connection established successfully\n");
-    } else {
-        infra_free(handle);
-        infra_free(scheme);
-        infra_free(path);
-        infra_free(params);
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    infra_free(scheme);
-    infra_free(path);
-    infra_free(params);
-    *db = handle;
+    *db = new_db;
     return INFRA_OK;
 }
 
 void poly_db_close(poly_db_t* db) {
     if (!db) return;
-
-    if (db->type == POLY_DB_TYPE_SQLITE) {
-        // SQLite 关闭将在后续实现
-    } else if (db->type == POLY_DB_TYPE_DUCKDB) {
-        if (db->duckdb.funcs) {
-            // 先断开连接
-            db->duckdb.funcs->disconnect(&db->duckdb.conn);
-            // 再关闭数据库
-            db->duckdb.funcs->close(&db->duckdb.db);
-            // 保存 handle 以便后续关闭
-            void* handle = db->duckdb.funcs->handle;
-            // 释放函数指针结构体
-            infra_free(db->duckdb.funcs);
-            // 最后关闭动态库
-            cosmo_dlclose(handle);
-        }
+    
+    switch (db->type) {
+        case POLY_DB_TYPE_DUCKDB:
+            destroy_duckdb((duckdb_impl_t*)db->impl);
+            break;
+        case POLY_DB_TYPE_SQLITE:
+            // TODO: 实现 SQLite 清理
+            break;
+        default:
+            break;
     }
+    
     infra_free(db);
 }
 
-// KV 操作的实现将在后续添加
-// 迭代器操作的实现将在后续添加
-// SQL 执行操作的实现将在后续添加
-
-// 执行查询
-infra_error_t poly_db_query(poly_db_t* db, const char* sql, poly_db_result_t* result) {
-    if (!db || !sql || !result) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    // 分配结果集结构
-    poly_db_result_t res = (poly_db_result_t)infra_malloc(sizeof(struct poly_db_result));
-    if (!res) {
-        return INFRA_ERROR_NO_MEMORY;
-    }
-    
-    // 初始化结果集
-    res->db = db;
-    res->internal_result = NULL;
-    
-    // 根据数据库类型执行查询
-    infra_error_t err = INFRA_ERROR_NOT_IMPLEMENTED;
-    if (db->type == POLY_DB_TYPE_DUCKDB) {
-        duckdb_result* duck_result = (duckdb_result*)infra_malloc(sizeof(duckdb_result));
-        if (!duck_result) {
-            infra_free(res);
-            return INFRA_ERROR_NO_MEMORY;
+void poly_db_result_free(poly_db_result_t* result) {
+    if (!result) return;
+    if (result->db && result->internal_result) {
+        switch (result->db->type) {
+            case POLY_DB_TYPE_DUCKDB: {
+                duckdb_impl_t* impl = (duckdb_impl_t*)result->db->impl;
+                impl->destroy_result((duckdb_result*)result->internal_result);
+                break;
+            }
+            case POLY_DB_TYPE_SQLITE:
+                // TODO: 实现 SQLite 结果清理
+                break;
+            default:
+                break;
         }
-        
-        duckdb_state state = db->duckdb.funcs->query(db->duckdb.conn, sql, duck_result);
-        if (state != DuckDBSuccess) {
-            infra_free(duck_result);
-            infra_free(res);
-            return INFRA_ERROR_IO;
-        }
-        
-        res->internal_result = duck_result;
-        err = INFRA_OK;
+        infra_free(result->internal_result);
     }
-    // TODO: 添加 SQLite 支持
-    
-    if (err != INFRA_OK) {
-        infra_free(res);
-        return err;
-    }
-    
-    // 如果调用者已有结果集，先释放它
-    if (*result) {
-        poly_db_result_free(*result);
-    }
-    
-    *result = res;
-    return INFRA_OK;
-}
-
-// 获取结果集行数
-infra_error_t poly_db_result_row_count(poly_db_result_t result, size_t* count) {
-    if (!result || !count) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    poly_db_t* db = ((poly_db_result_t*)result)->db;
-    if (!db || !db->interface || !db->interface->result_row_count) {
-        return INFRA_ERROR_NOT_IMPLEMENTED;
-    }
-    
-    return db->interface->result_row_count(result, count);
-}
-
-// 获取结果集列数
-infra_error_t poly_db_result_column_count(poly_db_result_t result, size_t* count) {
-    if (!result || !count) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    poly_db_t* db = ((poly_db_result_t*)result)->db;
-    if (!db || !db->interface || !db->interface->result_column_count) {
-        return INFRA_ERROR_NOT_IMPLEMENTED;
-    }
-    
-    return db->interface->result_column_count(result, count);
-}
-
-// 获取字符串值
-infra_error_t poly_db_result_get_string(poly_db_result_t result, size_t row, size_t col, char** value) {
-    if (!result || !value) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    poly_db_t* db = ((poly_db_result_t*)result)->db;
-    if (!db || !db->interface || !db->interface->result_get_string) {
-        return INFRA_ERROR_NOT_IMPLEMENTED;
-    }
-    
-    return db->interface->result_get_string(result, row, col, value);
-}
-
-// 获取二进制数据
-infra_error_t poly_db_result_get_blob(poly_db_result_t result, size_t row, size_t col, void** data, size_t* size) {
-    if (!result || !data || !size) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    poly_db_t* db = ((poly_db_result_t*)result)->db;
-    if (!db || !db->interface || !db->interface->result_get_blob) {
-        return INFRA_ERROR_NOT_IMPLEMENTED;
-    }
-    
-    return db->interface->result_get_blob(result, row, col, data, size);
-}
-
-// 释放结果集
-void poly_db_result_free(poly_db_result_t result) {
-    if (!result) {
-        return;
-    }
-    
-    if (result->db) {
-        if (result->db->type == POLY_DB_TYPE_DUCKDB && result->internal_result) {
-            result->db->duckdb.funcs->destroy_result((duckdb_result*)result->internal_result);
-            infra_free(result->internal_result);
-        }
-        // TODO: 添加 SQLite 支持
-    }
-    
     infra_free(result);
+}
+
+infra_error_t poly_db_result_row_count(poly_db_result_t* result, size_t* count) {
+    if (!result || !count) return INFRA_ERROR_INVALID_PARAM;
+    
+    switch (result->db->type) {
+        case POLY_DB_TYPE_DUCKDB: {
+            duckdb_impl_t* impl = (duckdb_impl_t*)result->db->impl;
+            *count = impl->row_count((duckdb_result*)result->internal_result);
+            return INFRA_OK;
+        }
+        case POLY_DB_TYPE_SQLITE:
+            // TODO: 实现 SQLite 行数获取
+            return INFRA_ERROR_NOT_IMPLEMENTED;
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
+    }
+}
+
+infra_error_t poly_db_result_get_blob(poly_db_result_t* result, size_t row, size_t col, void** data, size_t* size) {
+    if (!result || !data || !size) return INFRA_ERROR_INVALID_PARAM;
+    
+    switch (result->db->type) {
+        case POLY_DB_TYPE_DUCKDB: {
+            duckdb_impl_t* impl = (duckdb_impl_t*)result->db->impl;
+            duckdb_blob blob = impl->value_blob((duckdb_result*)result->internal_result, col, row);
+            *data = infra_malloc(blob.size);
+            if (!*data) return INFRA_ERROR_NO_MEMORY;
+            memcpy(*data, blob.data, blob.size);
+            *size = blob.size;
+            return INFRA_OK;
+        }
+        case POLY_DB_TYPE_SQLITE:
+            // TODO: 实现 SQLite BLOB 获取
+            return INFRA_ERROR_NOT_IMPLEMENTED;
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
+    }
+}
+
+infra_error_t poly_db_result_get_string(poly_db_result_t* result, size_t row, size_t col, char** str) {
+    if (!result || !str) return INFRA_ERROR_INVALID_PARAM;
+    
+    switch (result->db->type) {
+        case POLY_DB_TYPE_DUCKDB: {
+            duckdb_impl_t* impl = (duckdb_impl_t*)result->db->impl;
+            duckdb_string value = impl->value_string((duckdb_result*)result->internal_result, col, row);
+            *str = infra_strdup(value);
+            if (!*str) return INFRA_ERROR_NO_MEMORY;
+            return INFRA_OK;
+        }
+        case POLY_DB_TYPE_SQLITE:
+            // TODO: 实现 SQLite 字符串获取
+            return INFRA_ERROR_NOT_IMPLEMENTED;
+        default:
+            return INFRA_ERROR_INVALID_PARAM;
+    }
 }
