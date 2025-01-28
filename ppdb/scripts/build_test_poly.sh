@@ -206,6 +206,36 @@ else
     echo -e "${YELLOW}Test framework is up to date, skipping build${NC}"
 fi
 
+# 编译 poly_db 测试
+TEST_DB_SRC="${PPDB_DIR}/test/poly/test_poly_db.c"
+TEST_DB_OBJ="${BUILD_DIR}/test/poly/test_poly_db.o"
+TEST_DB_BIN="${BUILD_DIR}/test/poly/test_poly_db"
+
+if need_rebuild "$TEST_DB_OBJ" "$TEST_DB_SRC"; then
+    echo -e "${GREEN}Building poly_db test...${NC}"
+    mkdir -p "$(dirname "$TEST_DB_OBJ")"
+    ${CC} ${CFLAGS} \
+        -I"${PPDB_DIR}" \
+        -I"${PPDB_DIR}/include" \
+        -I"${PPDB_DIR}/src" \
+        -I"${PPDB_DIR}/vendor/sqlite3" \
+        -I"${PPDB_DIR}/vendor/duckdb" \
+        -c "$TEST_DB_SRC" \
+        -o "$TEST_DB_OBJ"
+    handle_error $? "Failed to compile poly_db test"
+fi
+
+if need_rebuild "$TEST_DB_BIN" "$TEST_DB_OBJ" "${BUILD_DIR}/poly/poly_db.o"; then
+    echo -e "${GREEN}Linking poly_db test...${NC}"
+    ${CC} \
+        "$TEST_DB_OBJ" \
+        "${BUILD_DIR}/poly/poly_db.o" \
+        "${BUILD_DIR}/infra/libinfra.a" \
+        -o "$TEST_DB_BIN" \
+        ${LDFLAGS}
+    handle_error $? "Failed to link poly_db test"
+fi
+
 # 编译测试文件
 SQLITE_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_sqlitekv"
 SQLITE_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_sqlitekv.c"
@@ -269,16 +299,21 @@ else
     echo -e "${YELLOW}MemKV tests are up to date, skipping build${NC}"
 fi
 
-echo -e "${GREEN}Build complete.${NC}"
-ls -lh "${BUILD_DIR}/test/black/poly/test_poly_"*
-handle_error $? "Failed to list test binaries"
+# 运行所有测试
+echo -e "${GREEN}Running all tests...${NC}"
 
-# 运行测试
-echo -e "${GREEN}Running SQLite tests...${NC}"
+# 运行 poly_db 测试
+echo -e "${GREEN}Running poly_db tests...${NC}"
+"$TEST_DB_BIN"
+handle_error $? "poly_db tests failed"
+
+# 运行 SQLiteKV 测试
+echo -e "${GREEN}Running SQLiteKV tests...${NC}"
 "$SQLITE_TEST_BIN"
-handle_error $? "SQLite tests failed"
+handle_error $? "SQLiteKV tests failed"
 
-echo -e "${GREEN}Running DuckDB tests...${NC}"
+# 运行 DuckDBKV 测试
+echo -e "${GREEN}Running DuckDBKV tests...${NC}"
 
 # 设置动态库搜索路径
 export DYLD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb"
@@ -303,6 +338,7 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# 运行 MemKV 测试
 echo -e "${GREEN}Running MemKV tests...${NC}"
 "$MEMKV_TEST_BIN"
 handle_error $? "MemKV tests failed"

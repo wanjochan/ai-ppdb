@@ -1,7 +1,6 @@
 #include "internal/poly/poly_duckdbkv.h"
 #include "internal/infra/infra_core.h"
 #include "test/white/framework/test_framework.h"
-#include <stdlib.h>
 
 // DuckDB 基本操作测试
 static void test_duckdbkv_basic_ops(void) {
@@ -12,18 +11,8 @@ static void test_duckdbkv_basic_ops(void) {
     void* retrieved_value;
     size_t value_len;
 
-    // 清除环境变量
-    unsetenv("DUCKDB_LIBRARY_PATH");
-    unsetenv("DYLD_LIBRARY_PATH");
-    unsetenv("LD_LIBRARY_PATH");
-
     // 初始化
     err = g_duckdbkv_interface.init(&db);
-    if (err == INFRA_ERROR_NOT_FOUND) {
-        fprintf(stderr, "DuckDB library not found, skipping test\n");
-        TEST_ASSERT_EQUAL(err, INFRA_ERROR_NOT_FOUND);
-        return;
-    }
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 打开数据库
@@ -63,18 +52,8 @@ static void test_duckdbkv_iterator(void) {
     size_t value_len;
     int count = 0;
 
-    // 清除环境变量
-    unsetenv("DUCKDB_LIBRARY_PATH");
-    unsetenv("DYLD_LIBRARY_PATH");
-    unsetenv("LD_LIBRARY_PATH");
-
     // 初始化
     err = g_duckdbkv_interface.init(&db);
-    if (err == INFRA_ERROR_NOT_FOUND) {
-        fprintf(stderr, "DuckDB library not found, skipping test\n");
-        TEST_ASSERT_EQUAL(err, INFRA_ERROR_NOT_FOUND);
-        return;
-    }
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 打开数据库
@@ -131,18 +110,8 @@ static void test_duckdbkv_transaction(void) {
     void* retrieved_value;
     size_t value_len;
 
-    // 清除环境变量
-    unsetenv("DUCKDB_LIBRARY_PATH");
-    unsetenv("DYLD_LIBRARY_PATH");
-    unsetenv("LD_LIBRARY_PATH");
-
     // 初始化
     err = g_duckdbkv_interface.init(&db);
-    if (err == INFRA_ERROR_NOT_FOUND) {
-        fprintf(stderr, "DuckDB library not found, skipping test\n");
-        TEST_ASSERT_EQUAL(err, INFRA_ERROR_NOT_FOUND);
-        return;
-    }
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 打开数据库

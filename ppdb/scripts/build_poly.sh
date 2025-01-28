@@ -49,6 +49,7 @@ POLY_SOURCES=(
     "${SRC_DIR}/internal/poly/poly_sqlitekv.c"
     "${SRC_DIR}/internal/poly/poly_duckdbkv.c"
     "${SRC_DIR}/internal/poly/poly_memkv.c"
+    "${SRC_DIR}/internal/poly/poly_db.c"
 )
 
 # 设置最大并发数
