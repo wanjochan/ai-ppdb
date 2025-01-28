@@ -150,4 +150,6 @@ int main() {
     RUN_TEST(test_duckdbkv_iterator);
     RUN_TEST(test_duckdbkv_transaction);
     TEST_END();
+
+    return 0;
 } 

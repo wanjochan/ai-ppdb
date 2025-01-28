@@ -13,7 +13,13 @@ typedef enum {
 typedef void* poly_db_handle_t;      // 通用数据库句柄
 typedef void* poly_db_stmt_t;        // 通用语句句柄
 typedef void* poly_db_connection_t;  // 通用连接句柄
-typedef void* poly_db_result_t;      // 通用结果集句柄
+
+// 结果集结构
+struct poly_db_result {
+    poly_db_t* db;           // 指向数据库句柄的指针
+    void* internal_result;   // 内部结果集（如 duckdb_result）
+};
+typedef struct poly_db_result* poly_db_result_t;
 
 // 数据库句柄
 struct poly_db;
@@ -41,12 +47,29 @@ typedef struct poly_db_interface {
     
     // SQL 执行
     infra_error_t (*exec)(poly_db_t* db, const char* sql);
+    
+    // 查询操作
+    infra_error_t (*query)(poly_db_t* db, const char* sql, poly_db_result_t* result);
+    infra_error_t (*result_row_count)(poly_db_result_t result, size_t* count);
+    infra_error_t (*result_column_count)(poly_db_result_t result, size_t* count);
+    infra_error_t (*result_get_string)(poly_db_result_t result, size_t row, size_t col, char** value);
+    infra_error_t (*result_get_blob)(poly_db_result_t result, size_t row, size_t col, void** data, size_t* size);
+    void (*result_free)(poly_db_result_t result);
 } poly_db_interface_t;
 
 // 主要接口函数
 infra_error_t poly_db_open(const char* url, poly_db_t** db);
 void poly_db_close(poly_db_t* db);
 
+// SQL 执行
 infra_error_t poly_db_exec(poly_db_t* db, const char* sql);
+
+// 查询操作
+infra_error_t poly_db_query(poly_db_t* db, const char* sql, poly_db_result_t* result);
+infra_error_t poly_db_result_row_count(poly_db_result_t result, size_t* count);
+infra_error_t poly_db_result_column_count(poly_db_result_t result, size_t* count);
+infra_error_t poly_db_result_get_string(poly_db_result_t result, size_t row, size_t col, char** value);
+infra_error_t poly_db_result_get_blob(poly_db_result_t result, size_t row, size_t col, void** data, size_t* size);
+void poly_db_result_free(poly_db_result_t result);
 
 #endif // POLY_DB_H

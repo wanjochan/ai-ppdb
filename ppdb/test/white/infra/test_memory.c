@@ -163,8 +163,14 @@ static void test_memory_protection(void) {
 }
 
 int main(void) {
+    // 禁用自动初始化
+    setenv("INFRA_NO_AUTO_INIT", "1", 1);
+
+    // 确保系统未初始化
+    infra_cleanup();
+
     TEST_BEGIN();
-    
+
     RUN_TEST(test_memory_init);
     RUN_TEST(test_memory_basic);
     RUN_TEST(test_memory_operations);
@@ -172,16 +178,8 @@ int main(void) {
     RUN_TEST(test_memory_stress);
     RUN_TEST(test_memory_protection);
     RUN_TEST(test_memory_cleanup);
-    
+
     TEST_END();
-    
-    // 打印内存统计信息
-    infra_printf("\nMemory Statistics:\n");
-    infra_printf("Total allocations: %ld\n", g_stats.total_allocs);
-    infra_printf("Total frees: %ld\n", g_stats.total_frees);
-    infra_printf("Total bytes allocated: %ld\n", g_stats.total_bytes);
-    infra_printf("Peak memory usage: %ld bytes\n", g_stats.peak_bytes);
-    infra_printf("Average allocation size: %.2f bytes\n", g_stats.avg_alloc_size);
-    
+
     return 0;
 } 

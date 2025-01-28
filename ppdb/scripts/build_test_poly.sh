@@ -1,7 +1,5 @@
 #!/bin/bash
 
-#export INFRA_NO_AUTO_INIT=1
-
 # 记录开始时间
 START_TIME=$(date +%s.%N)
 
@@ -61,6 +59,9 @@ if [ ! -f "${PPDB_DIR}/vendor/duckdb/duckdb.h" ]; then
     exit 1
 fi
 
+#echo clean up ${BUILD_DIR}
+#rm -rvf ${BUILD_DIR}/*
+
 # 创建构建目录
 echo -e "${GREEN}Creating build directories...${NC}"
 mkdir -p "${BUILD_DIR}/test/black/poly"
@@ -71,6 +72,9 @@ handle_error $? "Failed to create vendor/sqlite3 directory"
 
 mkdir -p "${BUILD_DIR}/vendor/duckdb"
 handle_error $? "Failed to create vendor/duckdb directory"
+
+# 设置测试二进制文件路径
+TEST_DB_BIN="${BUILD_DIR}/test/black/poly/test_poly_db"
 
 # 编译 SQLite
 SQLITE_OBJ="${BUILD_DIR}/vendor/sqlite3/sqlite3.o"
@@ -206,35 +210,74 @@ else
     echo -e "${YELLOW}Test framework is up to date, skipping build${NC}"
 fi
 
+# 编译 poly_db
+echo -e "${GREEN}Building poly_db...${NC}"
+mkdir -p "${BUILD_DIR}/test/black/poly"
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${PPDB_DIR}/src" \
+    -I"${PPDB_DIR}/vendor/sqlite3" \
+    -I"${PPDB_DIR}/vendor/duckdb" \
+    -c "${PPDB_DIR}/src/internal/poly/poly_db.c" \
+    -o "${BUILD_DIR}/test/black/poly/poly_db.o"
+handle_error $? "Failed to compile poly_db"
+
 # 编译 poly_db 测试
-TEST_DB_SRC="${PPDB_DIR}/test/poly/test_poly_db.c"
-TEST_DB_OBJ="${BUILD_DIR}/test/poly/test_poly_db.o"
-TEST_DB_BIN="${BUILD_DIR}/test/poly/test_poly_db"
+echo -e "${GREEN}Building poly_db test...${NC}"
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${PPDB_DIR}/src" \
+    -I"${PPDB_DIR}/vendor/sqlite3" \
+    -I"${PPDB_DIR}/vendor/duckdb" \
+    -c "${PPDB_DIR}/test/poly/test_poly_db.c" \
+    -o "${BUILD_DIR}/test/poly/test_poly_db.o"
+handle_error $? "Failed to compile poly_db test"
 
-if need_rebuild "$TEST_DB_OBJ" "$TEST_DB_SRC"; then
-    echo -e "${GREEN}Building poly_db test...${NC}"
-    mkdir -p "$(dirname "$TEST_DB_OBJ")"
-    ${CC} ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}/vendor/sqlite3" \
-        -I"${PPDB_DIR}/vendor/duckdb" \
-        -c "$TEST_DB_SRC" \
-        -o "$TEST_DB_OBJ"
-    handle_error $? "Failed to compile poly_db test"
-fi
+# 编译 infra_memory
+echo -e "${GREEN}Building infra_memory...${NC}"
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${PPDB_DIR}/src" \
+    -c "${PPDB_DIR}/src/internal/infra/infra_memory.c" \
+    -o "${BUILD_DIR}/test/black/poly/infra_memory.o"
+handle_error $? "Failed to compile infra_memory"
 
-if need_rebuild "$TEST_DB_BIN" "$TEST_DB_OBJ" "${BUILD_DIR}/poly/poly_db.o"; then
-    echo -e "${GREEN}Linking poly_db test...${NC}"
-    ${CC} \
-        "$TEST_DB_OBJ" \
-        "${BUILD_DIR}/poly/poly_db.o" \
-        "${BUILD_DIR}/infra/libinfra.a" \
-        -o "$TEST_DB_BIN" \
-        ${LDFLAGS}
-    handle_error $? "Failed to link poly_db test"
-fi
+# 编译 infra_sync
+echo -e "${GREEN}Building infra_sync...${NC}"
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${PPDB_DIR}/src" \
+    -c "${PPDB_DIR}/src/internal/infra/infra_sync.c" \
+    -o "${BUILD_DIR}/test/black/poly/infra_sync.o"
+handle_error $? "Failed to compile infra_sync"
+
+# 编译 infra_platform
+echo -e "${GREEN}Building infra_platform...${NC}"
+${CC} ${CFLAGS} \
+    -I"${PPDB_DIR}" \
+    -I"${PPDB_DIR}/include" \
+    -I"${PPDB_DIR}/src" \
+    -c "${PPDB_DIR}/src/internal/infra/infra_platform.c" \
+    -o "${BUILD_DIR}/test/black/poly/infra_platform.o"
+handle_error $? "Failed to compile infra_platform"
+
+# 链接 poly_db 测试
+echo -e "${GREEN}Linking poly_db test...${NC}"
+${CC} ${CFLAGS} \
+    -o "${TEST_DB_BIN}" \
+    "${BUILD_DIR}/test/poly/test_poly_db.o" \
+    "${BUILD_DIR}/test/black/poly/poly_db.o" \
+    "${BUILD_DIR}/test/black/poly/test_framework.o" \
+    "${BUILD_DIR}/test/black/poly/infra_memory.o" \
+    "${BUILD_DIR}/test/black/poly/infra_sync.o" \
+    "${BUILD_DIR}/test/black/poly/infra_platform.o" \
+    "${BUILD_DIR}/infra/libinfra.a" \
+    ${LDFLAGS}
+handle_error $? "Failed to link poly_db test"
 
 # 编译测试文件
 SQLITE_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_sqlitekv"
@@ -301,6 +344,23 @@ fi
 
 # 运行所有测试
 echo -e "${GREEN}Running all tests...${NC}"
+
+# # 检查动态库文件
+# DUCKDB_LIB="${PPDB_DIR}/vendor/duckdb/libduckdb.so"
+# if [ "$(uname)" = "Darwin" ]; then
+#     DUCKDB_LIB="${PPDB_DIR}/vendor/duckdb/libduckdb.dylib"
+# fi
+
+# if [ ! -f "$DUCKDB_LIB" ]; then
+#     echo -e "${RED}Error: DuckDB library not found at $DUCKDB_LIB${NC}"
+#     exit 1
+# fi
+
+# 设置动态库搜索路径
+export DYLD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb:${PPDB_DIR}/vendor/sqlite3:${DYLD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb:${PPDB_DIR}/vendor/sqlite3:${LD_LIBRARY_PATH}"
+
+echo -e "${GREEN}Using DuckDB library: $DUCKDB_LIB${NC}"
 
 # 运行 poly_db 测试
 echo -e "${GREEN}Running poly_db tests...${NC}"
