@@ -34,12 +34,12 @@ typedef struct {
 } poly_memkv_stats_t;
 
 // 引擎句柄类型
-typedef struct poly_sqlite_db poly_sqlite_db_t;
-typedef struct poly_duckdb_db poly_duckdb_db_t;
+typedef struct poly_sqlitekv_db poly_sqlitekv_db_t;
+typedef struct poly_duckdbkv_db poly_duckdbkv_db_t;
 
 // 引擎迭代器类型
-typedef struct poly_sqlite_iter poly_sqlite_iter_t;
-typedef struct poly_duckdb_iter poly_duckdb_iter_t;
+typedef struct poly_sqlitekv_iter poly_sqlitekv_iter_t;
+typedef struct poly_duckdbkv_iter poly_duckdbkv_iter_t;
 
 // 存储实例
 typedef struct poly_memkv {

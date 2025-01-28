@@ -92,10 +92,10 @@ static infra_error_t cmd_get(int argc, char** argv) {
     void* db;
     if (strcmp(vendor, "sqlite") == 0) {
         sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->open(db_path, (poly_sqlite_db_t**)&db);
+        err = sqlite->open(db_path, (poly_sqlitekv_db_t**)&db);
     } else {
         duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->open(db_path, (poly_duckdb_db_t**)&db);
+        err = duckdb->open(db_path, (poly_duckdbkv_db_t**)&db);
     }
     if (err != INFRA_OK) return err;
 
@@ -148,10 +148,10 @@ static infra_error_t cmd_put(int argc, char** argv) {
     void* db;
     if (strcmp(vendor, "sqlite") == 0) {
         sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->open(db_path, (poly_sqlite_db_t**)&db);
+        err = sqlite->open(db_path, (poly_sqlitekv_db_t**)&db);
     } else {
         duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->open(db_path, (poly_duckdb_db_t**)&db);
+        err = duckdb->open(db_path, (poly_duckdbkv_db_t**)&db);
     }
     if (err != INFRA_OK) return err;
 
@@ -194,10 +194,10 @@ static infra_error_t cmd_del(int argc, char** argv) {
     void* db;
     if (strcmp(vendor, "sqlite") == 0) {
         sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->open(db_path, (poly_sqlite_db_t**)&db);
+        err = sqlite->open(db_path, (poly_sqlitekv_db_t**)&db);
     } else {
         duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->open(db_path, (poly_duckdb_db_t**)&db);
+        err = duckdb->open(db_path, (poly_duckdbkv_db_t**)&db);
     }
     if (err != INFRA_OK) return err;
 
@@ -234,10 +234,10 @@ static infra_error_t cmd_list(int argc, char** argv) {
     void* db;
     if (strcmp(vendor, "sqlite") == 0) {
         sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->open(db_path, (poly_sqlite_db_t**)&db);
+        err = sqlite->open(db_path, (poly_sqlitekv_db_t**)&db);
     } else {
         duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->open(db_path, (poly_duckdb_db_t**)&db);
+        err = duckdb->open(db_path, (poly_duckdbkv_db_t**)&db);
     }
     if (err != INFRA_OK) return err;
 
@@ -245,10 +245,10 @@ static infra_error_t cmd_list(int argc, char** argv) {
     void* iter;
     if (strcmp(vendor, "sqlite") == 0) {
         sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->iter_create(db, (poly_sqlite_iter_t**)&iter);
+        err = sqlite->iter_create(db, (poly_sqlitekv_iter_t**)&iter);
     } else {
         duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->iter_create(db, (poly_duckdb_iter_t**)&iter);
+        err = duckdb->iter_create(db, (poly_duckdbkv_iter_t**)&iter);
     }
     if (err != INFRA_OK) goto cleanup;
 

@@ -28,17 +28,17 @@ typedef struct {
 
 // 静态接口实例
 static duckdb_interface_t g_duckdb_interface = {
-    .init = poly_duckdb_init,
-    .cleanup = poly_duckdb_cleanup,
-    .open = poly_duckdb_open,
-    .close = poly_duckdb_close,
-    .get = poly_duckdb_get,
-    .set = poly_duckdb_set,
-    .del = poly_duckdb_del,
-    .exec = poly_duckdb_exec,
-    .iter_create = poly_duckdb_iter_create,
-    .iter_next = poly_duckdb_iter_next,
-    .iter_destroy = poly_duckdb_iter_destroy
+    .init = poly_duckdbkv_init,
+    .cleanup = poly_duckdbkv_cleanup,
+    .open = poly_duckdbkv_open,
+    .close = poly_duckdbkv_close,
+    .get = poly_duckdbkv_get,
+    .set = poly_duckdbkv_set,
+    .del = poly_duckdbkv_del,
+    .exec = poly_duckdbkv_exec,
+    .iter_create = poly_duckdbkv_iter_create,
+    .iter_next = poly_duckdbkv_iter_next,
+    .iter_destroy = poly_duckdbkv_iter_destroy
 };
 
 // 获取插件接口

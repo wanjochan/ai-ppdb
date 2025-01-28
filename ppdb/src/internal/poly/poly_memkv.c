@@ -7,15 +7,15 @@
 // Static functions
 //-----------------------------------------------------------------------------
 
-// 初始化 SQLite 引擎
+// 初始化 SQLite KV 引擎
 static infra_error_t init_sqlite_engine(poly_memkv_t* store) {
     if (!store) return INFRA_ERROR_INVALID_PARAM;
 
-    // 注册 SQLite 插件
+    // 注册 SQLite KV 插件
     poly_builtin_plugin_t plugin = {
         .name = "sqlite",
         .type = POLY_PLUGIN_SQLITE,
-        .interface = (const poly_plugin_interface_t*)&g_sqlite_interface
+        .interface = (const poly_plugin_interface_t*)&g_sqlitekv_interface
     };
 
     infra_error_t err = poly_plugin_register_builtin(store->plugin_mgr, &plugin);
@@ -25,15 +25,15 @@ static infra_error_t init_sqlite_engine(poly_memkv_t* store) {
     return poly_plugin_mgr_get(store->plugin_mgr, POLY_PLUGIN_SQLITE, "sqlite", &store->engine_plugin);
 }
 
-// 初始化 DuckDB 引擎
+// 初始化 DuckDB KV 引擎
 static infra_error_t init_duckdb_engine(poly_memkv_t* store) {
     if (!store) return INFRA_ERROR_INVALID_PARAM;
 
-    // 注册 DuckDB 插件
+    // 注册 DuckDB KV 插件
     poly_builtin_plugin_t plugin = {
         .name = "duckdb",
         .type = POLY_PLUGIN_DUCKDB,
-        .interface = (const poly_plugin_interface_t*)&g_duckdb_interface
+        .interface = (const poly_plugin_interface_t*)&g_duckdbkv_interface
     };
 
     infra_error_t err = poly_plugin_register_builtin(store->plugin_mgr, &plugin);
@@ -115,10 +115,10 @@ infra_error_t poly_memkv_open(poly_memkv_t* store) {
 
     // 根据引擎类型打开数据库
     if (store->config.engine_type == POLY_MEMKV_ENGINE_SQLITE) {
-        const poly_sqlite_interface_t* sqlite_interface = (const poly_sqlite_interface_t*)interface;
+        const poly_sqlitekv_interface_t* sqlite_interface = (const poly_sqlitekv_interface_t*)interface;
         err = sqlite_interface->open(store->engine_handle, store->config.path);
     } else {
-        const poly_duckdb_interface_t* duckdb_interface = (const poly_duckdb_interface_t*)interface;
+        const poly_duckdbkv_interface_t* duckdb_interface = (const poly_duckdbkv_interface_t*)interface;
         err = duckdb_interface->open(&store->engine_handle, store->config.path);
     }
     if (err != INFRA_OK) {
@@ -254,14 +254,14 @@ infra_error_t poly_memkv_iter_create(poly_memkv_t* store, poly_memkv_iter_t** it
 
     // 创建引擎迭代器
     if (store->config.engine_type == POLY_MEMKV_ENGINE_SQLITE) {
-        const poly_sqlite_interface_t* sqlite_interface = (const poly_sqlite_interface_t*)interface;
+        const poly_sqlitekv_interface_t* sqlite_interface = (const poly_sqlitekv_interface_t*)interface;
         infra_error_t err = sqlite_interface->iter_create(store->engine_handle, &new_iter->engine_iter);
         if (err != INFRA_OK) {
             infra_free(new_iter);
             return err;
         }
     } else {
-        const poly_duckdb_interface_t* duckdb_interface = (const poly_duckdb_interface_t*)interface;
+        const poly_duckdbkv_interface_t* duckdb_interface = (const poly_duckdbkv_interface_t*)interface;
         infra_error_t err = duckdb_interface->iter_create(store->engine_handle, &new_iter->engine_iter);
         if (err != INFRA_OK) {
             infra_free(new_iter);
@@ -284,10 +284,10 @@ infra_error_t poly_memkv_iter_next(poly_memkv_iter_t* iter, char** key, size_t* 
 
     // 调用对应引擎的迭代器
     if (iter->store->config.engine_type == POLY_MEMKV_ENGINE_SQLITE) {
-        const poly_sqlite_interface_t* sqlite_interface = (const poly_sqlite_interface_t*)interface;
+        const poly_sqlitekv_interface_t* sqlite_interface = (const poly_sqlitekv_interface_t*)interface;
         return sqlite_interface->iter_next(iter->engine_iter, key, value, value_len);
     } else {
-        const poly_duckdb_interface_t* duckdb_interface = (const poly_duckdb_interface_t*)interface;
+        const poly_duckdbkv_interface_t* duckdb_interface = (const poly_duckdbkv_interface_t*)interface;
         return duckdb_interface->iter_next(iter->engine_iter, key, value, value_len);
     }
 }
@@ -305,10 +305,10 @@ void poly_memkv_iter_destroy(poly_memkv_iter_t* iter) {
 
     // 销毁引擎迭代器
     if (iter->store->config.engine_type == POLY_MEMKV_ENGINE_SQLITE) {
-        const poly_sqlite_interface_t* sqlite_interface = (const poly_sqlite_interface_t*)interface;
+        const poly_sqlitekv_interface_t* sqlite_interface = (const poly_sqlitekv_interface_t*)interface;
         sqlite_interface->iter_destroy(iter->engine_iter);
     } else {
-        const poly_duckdb_interface_t* duckdb_interface = (const poly_duckdb_interface_t*)interface;
+        const poly_duckdbkv_interface_t* duckdb_interface = (const poly_duckdbkv_interface_t*)interface;
         duckdb_interface->iter_destroy(iter->engine_iter);
     }
 

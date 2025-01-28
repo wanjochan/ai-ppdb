@@ -46,8 +46,8 @@ rm -vf "${BUILD_DIR}/poly/libpoly.a"
 
 # 定义源文件
 POLY_SOURCES=(
-    "${SRC_DIR}/internal/poly/poly_sqlite.c"
-    "${SRC_DIR}/internal/poly/poly_duckdb.c"
+    "${SRC_DIR}/internal/poly/poly_sqlitekv.c"
+    "${SRC_DIR}/internal/poly/poly_duckdbkv.c"
     "${SRC_DIR}/internal/poly/poly_memkv.c"
 )
 
