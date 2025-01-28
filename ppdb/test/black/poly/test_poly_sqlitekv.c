@@ -1,4 +1,4 @@
-#include "internal/poly/poly_sqlite.h"
+#include "internal/poly/poly_sqlitekv.h"
 #include "internal/infra/infra_core.h"
 #include "test/white/framework/test_framework.h"
 
@@ -107,6 +107,7 @@ static void test_sqlite_transaction(void) {
     infra_error_t err;
     const char* key = "test_key";
     const char* value = "test_value";
+    const char* new_value = "newvalue";
     void* retrieved_value;
     size_t value_len;
 
@@ -127,7 +128,7 @@ static void test_sqlite_transaction(void) {
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 在事务中修改数据
-    err = g_sqlite_interface.exec(db, "UPDATE kv_store SET value = X'6E657776616C7565' WHERE key = 'test_key';");
+    err = g_sqlite_interface.set(db, key, strlen(key), new_value, strlen(new_value) + 1);
     TEST_ASSERT_EQUAL(err, INFRA_OK);
 
     // 提交事务

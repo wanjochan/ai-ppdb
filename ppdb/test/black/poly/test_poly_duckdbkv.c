@@ -1,4 +1,4 @@
-#include "internal/poly/poly_duckdb.h"
+#include "internal/poly/poly_duckdbkv.h"
 #include "internal/infra/infra_core.h"
 #include "test/white/framework/test_framework.h"
 

@@ -1,3 +1,4 @@
+#include "internal/poly/poly_duckdbkv.h"
 #include "internal/poly/poly_duckdb.h"
 #include "internal/poly/poly_plugin.h"
 

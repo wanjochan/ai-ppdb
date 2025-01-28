@@ -1,7 +1,7 @@
 #include "internal/poly/poly_memkv.h"
 #include "internal/infra/infra_core.h"
-#include "internal/poly/poly_sqlite.h"
-#include "internal/poly/poly_duckdb.h"
+#include "internal/poly/poly_sqlitekv.h"
+#include "internal/poly/poly_duckdbkv.h"
 
 //-----------------------------------------------------------------------------
 // Static functions
