@@ -18,23 +18,6 @@ fi
 # 添加开始时间统计
 start_time=$(date +%s)
 
-# 检查sqlite3.h和duckdb.h是否存在
-if [ ! -f "${PPDB_DIR}/vendor/sqlite3/sqlite3.h" ]; then
-    echo -e "${RED}Error: sqlite3.h not found in ${PPDB_DIR}/vendor/sqlite3/${NC}"
-    exit 1
-fi
-
-if [ ! -f "${PPDB_DIR}/vendor/duckdb/duckdb.h" ]; then
-    echo -e "${RED}Error: duckdb.h not found in ${PPDB_DIR}/vendor/duckdb/${NC}" 
-    exit 1
-fi
-
-# 设置颜色输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
 # 创建构建目录（如果不存在）
 mkdir -p "${BUILD_DIR}/poly"
 
@@ -49,10 +32,11 @@ SRC_FILES=(
     "${SRC_DIR}/internal/poly/poly_memkv.c"
     "${SRC_DIR}/internal/poly/poly_memkv_cmd.c"
     "${SRC_DIR}/internal/poly/poly_db.c"
+    "${SRC_DIR}/internal/poly/poly_plugin.c"
 )
 
-# 设置最大并发数
-MAX_JOBS=1
+# 设置最大并发数（根据CPU核心数）
+MAX_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
 
 # 编译函数
 compile_file() {
@@ -86,6 +70,11 @@ for src in "${SRC_FILES[@]}"; do
     while [ ${current_jobs} -ge ${MAX_JOBS} ]; do
         for i in ${!pids[@]}; do
             if ! kill -0 ${pids[i]} 2>/dev/null; then
+                wait ${pids[i]}
+                if [ $? -ne 0 ]; then
+                    echo -e "${RED}Error: Compilation failed${NC}"
+                    exit 1
+                fi
                 unset pids[i]
                 let current_jobs--
             fi
@@ -100,17 +89,15 @@ for src in "${SRC_FILES[@]}"; do
 done
 
 # 等待所有剩余的编译进程完成
-failed=0
 for pid in ${pids[@]}; do
     if [ ! -z "$pid" ]; then
-        wait $pid || let "failed+=1"
+        wait $pid
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Error: Compilation failed${NC}"
+            exit 1
+        fi
     fi
 done
-
-if [ "$failed" -ne 0 ]; then
-    echo -e "${RED}Error: $failed compilation(s) failed${NC}"
-    exit 1
-fi
 
 # # 创建静态库（暂时不需要）
 # echo -e "${GREEN}Creating static library...${NC}"

@@ -113,38 +113,7 @@ rm -f "${BUILD_DIR}/test/black/poly/test_poly_memkv"
 # echo "sh build_poly.sh"
 # sh "$(dirname "$0")/build_poly.sh"
 
-# 编译实现文件 (?? not by build_poly.sh ???)
-SQLITE_IMPL_OBJ="${BUILD_DIR}/test/black/poly/poly_sqlitekv.o"
-SQLITE_IMPL_SRC="${PPDB_DIR}/src/internal/poly/poly_sqlitekv.c"
-if need_rebuild "$SQLITE_IMPL_OBJ" "$SQLITE_IMPL_SRC"; then
-    echo -e "${GREEN}Building SQLite implementation...${NC}"
-    ${CC} ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}/vendor/sqlite3" \
-        "$SQLITE_IMPL_SRC" \
-        -c -o "$SQLITE_IMPL_OBJ"
-    handle_error $? "Failed to build SQLite implementation"
-else
-    echo -e "${YELLOW}SQLite implementation is up to date, skipping build${NC}"
-fi
 
-DUCKDB_IMPL_OBJ="${BUILD_DIR}/test/black/poly/poly_duckdbkv.o"
-DUCKDB_IMPL_SRC="${PPDB_DIR}/src/internal/poly/poly_duckdbkv.c"
-if need_rebuild "$DUCKDB_IMPL_OBJ" "$DUCKDB_IMPL_SRC"; then
-    echo -e "${GREEN}Building DuckDB implementation...${NC}"
-    ${CC} ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}/vendor/duckdb" \
-        "$DUCKDB_IMPL_SRC" \
-        -c -o "$DUCKDB_IMPL_OBJ"
-    handle_error $? "Failed to build DuckDB implementation"
-else
-    echo -e "${YELLOW}DuckDB implementation is up to date, skipping build${NC}"
-fi
 
 MEMKV_IMPL_OBJ="${BUILD_DIR}/test/black/poly/poly_memkv.o"
 MEMKV_IMPL_SRC="${PPDB_DIR}/src/internal/poly/poly_memkv.c"
@@ -282,7 +251,7 @@ handle_error $? "Failed to link poly_db test"
 # 编译测试文件
 SQLITE_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_sqlitekv"
 SQLITE_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_sqlitekv.c"
-if need_rebuild "$SQLITE_TEST_BIN" "$SQLITE_TEST_SRC" "$SQLITE_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ"; then
+if need_rebuild "$SQLITE_TEST_BIN" "$SQLITE_TEST_SRC" "$MEMKV_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ"; then
     echo -e "${GREEN}Building SQLite tests...${NC}"
     ${CC} ${CFLAGS} \
         -I"${PPDB_DIR}" \
@@ -290,7 +259,7 @@ if need_rebuild "$SQLITE_TEST_BIN" "$SQLITE_TEST_SRC" "$SQLITE_IMPL_OBJ" "$TEST_
         -I"${PPDB_DIR}/src" \
         -I"${PPDB_DIR}/vendor/sqlite3" \
         "$SQLITE_TEST_SRC" \
-        "$SQLITE_IMPL_OBJ" \
+        "$MEMKV_IMPL_OBJ" \
         "$TEST_FRAMEWORK_OBJ" \
         "$SQLITE_OBJ" \
         "${BUILD_DIR}/infra/libinfra.a" \
@@ -302,7 +271,7 @@ fi
 
 DUCKDB_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_duckdbkv"
 DUCKDB_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_duckdbkv.c"
-if need_rebuild "$DUCKDB_TEST_BIN" "$DUCKDB_TEST_SRC" "$DUCKDB_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ"; then
+if need_rebuild "$DUCKDB_TEST_BIN" "$DUCKDB_TEST_SRC" "$MEMKV_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ"; then
     echo -e "${GREEN}Building DuckDB tests...${NC}"
     ${CC} ${CFLAGS} \
         -I"${PPDB_DIR}" \
@@ -310,7 +279,7 @@ if need_rebuild "$DUCKDB_TEST_BIN" "$DUCKDB_TEST_SRC" "$DUCKDB_IMPL_OBJ" "$TEST_
         -I"${PPDB_DIR}/src" \
         -I"${PPDB_DIR}/vendor/duckdb" \
         "$DUCKDB_TEST_SRC" \
-        "$DUCKDB_IMPL_OBJ" \
+        "$MEMKV_IMPL_OBJ" \
         "$TEST_FRAMEWORK_OBJ" \
         "${BUILD_DIR}/infra/libinfra.a" \
         -o "$DUCKDB_TEST_BIN"

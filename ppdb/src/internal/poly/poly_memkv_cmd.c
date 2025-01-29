@@ -1,8 +1,8 @@
 #include "internal/poly/poly_memkv.h"
 #include "internal/poly/poly_cmdline.h"
 #include "internal/poly/poly_plugin.h"
-#include "internal/poly/poly_sqlite.h"
-#include "internal/poly/poly_duckdb.h"
+#include "internal/poly/poly_db.h"
+#include "internal/infra/infra_error.h"
 
 // 全局插件管理器
 static poly_plugin_mgr_t* g_plugin_mgr = NULL;
@@ -10,6 +10,9 @@ static poly_plugin_t* g_current_plugin = NULL;
 
 // 在文件开头添加外部声明
 extern const poly_builtin_plugin_t g_sqlite_plugin;
+
+// 全局变量
+static poly_memkv_db_t* g_db = NULL;
 
 // 帮助信息
 static const char* MEMKV_HELP = 
@@ -19,7 +22,7 @@ static const char* MEMKV_HELP =
     "  memkv [options] <command> [args...]\n"
     "\n"
     "Options:\n"
-    "  --vendor=<name>    Storage vendor (sqlite|duckdb), default: sqlite\n"
+    "  --vendor=<n>    Storage vendor (sqlite|duckdb), default: sqlite\n"
     "  --db=<path>       Database path\n"
     "\n"
     "Commands:\n"
@@ -70,152 +73,92 @@ static infra_error_t load_vendor_plugin(const char* vendor) {
     return INFRA_ERROR_INVALID_PARAM;
 }
 
-// 命令处理函数
-static infra_error_t cmd_get(int argc, char** argv) {
-    if (argc < 2) {
-        printf("Usage: get <key>\n");
+// 公共操作结构体
+typedef struct {
+    poly_memkv_db_t* db;
+} db_context_t;
+
+// 打开数据库上下文
+static infra_error_t open_db_context(const char* vendor, const char* db_path, db_context_t* ctx) {
+    if (!ctx || !vendor || !db_path) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    // 配置数据库
+    poly_memkv_config_t config = {0};
+    config.engine = strcmp(vendor, "duckdb") == 0 ? POLY_MEMKV_ENGINE_DUCKDB : POLY_MEMKV_ENGINE_SQLITE;
+    config.url = db_path;
+    config.allow_fallback = true;
+
+    // 创建数据库
+    return poly_memkv_create(&config, &ctx->db);
+}
+
+// 关闭数据库上下文
+static void close_db_context(db_context_t* ctx) {
+    if (ctx && ctx->db) {
+        poly_memkv_destroy(ctx->db);
+        ctx->db = NULL;
+    }
+}
+
+// 命令处理函数
+static infra_error_t cmd_get(int argc, char** argv) {
+    if (argc < 2) return INFRA_ERROR_INVALID_PARAM;
+    
     const char* vendor = get_option_value(argc, argv, "vendor", "sqlite");
     const char* db_path = get_option_value(argc, argv, "db", "memkv.db");
     const char* key = argv[1];
 
-    // 加载插件
-    infra_error_t err = load_vendor_plugin(vendor);
+    db_context_t ctx = {0};
+    infra_error_t err = open_db_context(vendor, db_path, &ctx);
     if (err != INFRA_OK) return err;
 
-    // 打开数据库
-    void* db;
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->open(db_path, (poly_sqlitekv_db_t**)&db);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->open(db_path, (poly_duckdbkv_db_t**)&db);
-    }
-    if (err != INFRA_OK) return err;
-
-    // 获取数据
-    void* value;
-    size_t value_len;
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->get(db, key, strlen(key), &value, &value_len);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->get(db, key, strlen(key), &value, &value_len);
-    }
+    void* value = NULL;
+    size_t value_len = 0;
+    err = poly_memkv_get(ctx.db, key, &value, &value_len);
 
     if (err == INFRA_OK) {
         printf("%.*s\n", (int)value_len, (char*)value);
         infra_free(value);
-    } else if (err == INFRA_ERROR_NOT_FOUND) {
+    } else if (err == POLY_MEMKV_ERROR_KEY_NOT_FOUND) {
         printf("Key not found: %s\n", key);
     }
 
-    // 关闭数据库
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        sqlite->close(db);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        duckdb->close(db);
-    }
-
+    close_db_context(&ctx);
     return err;
 }
 
 static infra_error_t cmd_put(int argc, char** argv) {
-    if (argc < 3) {
-        printf("Usage: put <key> <value>\n");
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+    if (argc < 3) return INFRA_ERROR_INVALID_PARAM;
 
     const char* vendor = get_option_value(argc, argv, "vendor", "sqlite");
     const char* db_path = get_option_value(argc, argv, "db", "memkv.db");
     const char* key = argv[1];
     const char* value = argv[2];
 
-    // 加载插件
-    infra_error_t err = load_vendor_plugin(vendor);
+    db_context_t ctx = {0};
+    infra_error_t err = open_db_context(vendor, db_path, &ctx);
     if (err != INFRA_OK) return err;
 
-    // 打开数据库
-    void* db;
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->open(db_path, (poly_sqlitekv_db_t**)&db);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->open(db_path, (poly_duckdbkv_db_t**)&db);
-    }
-    if (err != INFRA_OK) return err;
-
-    // 存储数据
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->put(db, key, strlen(key), value, strlen(value));
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->put(db, key, strlen(key), value, strlen(value));
-    }
-
-    // 关闭数据库
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        sqlite->close(db);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        duckdb->close(db);
-    }
-
+    err = poly_memkv_set(ctx.db, key, value, strlen(value));
+    close_db_context(&ctx);
     return err;
 }
 
 static infra_error_t cmd_del(int argc, char** argv) {
-    if (argc < 2) {
-        printf("Usage: del <key>\n");
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+    if (argc < 2) return INFRA_ERROR_INVALID_PARAM;
 
     const char* vendor = get_option_value(argc, argv, "vendor", "sqlite");
     const char* db_path = get_option_value(argc, argv, "db", "memkv.db");
     const char* key = argv[1];
 
-    // 加载插件
-    infra_error_t err = load_vendor_plugin(vendor);
+    db_context_t ctx = {0};
+    infra_error_t err = open_db_context(vendor, db_path, &ctx);
     if (err != INFRA_OK) return err;
 
-    // 打开数据库
-    void* db;
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->open(db_path, (poly_sqlitekv_db_t**)&db);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->open(db_path, (poly_duckdbkv_db_t**)&db);
-    }
-    if (err != INFRA_OK) return err;
-
-    // 删除数据
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->del(db, key, strlen(key));
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->del(db, key, strlen(key));
-    }
-
-    // 关闭数据库
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        sqlite->close(db);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        duckdb->close(db);
-    }
-
+    err = poly_memkv_del(ctx.db, key);
+    close_db_context(&ctx);
     return err;
 }
 
@@ -223,70 +166,40 @@ static infra_error_t cmd_list(int argc, char** argv) {
     const char* vendor = get_option_value(argc, argv, "vendor", "sqlite");
     const char* db_path = get_option_value(argc, argv, "db", "memkv.db");
 
-    // 加载插件
-    infra_error_t err = load_vendor_plugin(vendor);
+    db_context_t ctx = {0};
+    infra_error_t err = open_db_context(vendor, db_path, &ctx);
     if (err != INFRA_OK) return err;
 
-    // 打开数据库
-    void* db;
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->open(db_path, (poly_sqlitekv_db_t**)&db);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->open(db_path, (poly_duckdbkv_db_t**)&db);
+    poly_memkv_iter_t* iter = NULL;
+    err = poly_memkv_iter_create(ctx.db, &iter);
+    if (err != INFRA_OK) {
+        close_db_context(&ctx);
+        return err;
     }
-    if (err != INFRA_OK) return err;
 
-    // 创建迭代器
-    void* iter;
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        err = sqlite->iter_create(db, (poly_sqlitekv_iter_t**)&iter);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        err = duckdb->iter_create(db, (poly_duckdbkv_iter_t**)&iter);
-    }
-    if (err != INFRA_OK) goto cleanup;
-
-    // 遍历数据
-    void* key;
-    size_t key_len;
-    void* value;
-    size_t value_len;
+    char* key = NULL;
+    void* value = NULL;
+    size_t value_len = 0;
 
     while (1) {
-        if (strcmp(vendor, "sqlite") == 0) {
-            sqlite_interface_t* sqlite = g_current_plugin->interface;
-            err = sqlite->iter_next(iter, &key, &key_len, &value, &value_len);
-        } else {
-            duckdb_interface_t* duckdb = g_current_plugin->interface;
-            err = duckdb->iter_next(iter, &key, &key_len, &value, &value_len);
-        }
-
-        if (err == INFRA_ERROR_NOT_FOUND) {
+        err = poly_memkv_iter_next(iter, &key, &value, &value_len);
+        if (err == POLY_MEMKV_ERROR_KEY_NOT_FOUND) {
+            err = INFRA_OK;
             break;
-        } else if (err != INFRA_OK) {
-            goto cleanup;
         }
+        if (err != INFRA_OK) break;
 
-        printf("%.*s: %.*s\n", (int)key_len, (char*)key, (int)value_len, (char*)value);
+        printf("%s: %.*s\n", key, (int)value_len, (char*)value);
         infra_free(key);
         infra_free(value);
+        key = NULL;
+        value = NULL;
     }
 
-cleanup:
-    // 销毁迭代器
-    if (strcmp(vendor, "sqlite") == 0) {
-        sqlite_interface_t* sqlite = g_current_plugin->interface;
-        sqlite->iter_destroy(iter);
-        sqlite->close(db);
-    } else {
-        duckdb_interface_t* duckdb = g_current_plugin->interface;
-        duckdb->iter_destroy(iter);
-        duckdb->close(db);
-    }
-
+    if (key) infra_free(key);
+    if (value) infra_free(value);
+    poly_memkv_iter_destroy(iter);
+    close_db_context(&ctx);
     return err;
 }
 
@@ -336,33 +249,29 @@ static const poly_cmd_t memkv_commands[] = {
 
 // 初始化memkv命令行
 infra_error_t poly_memkv_cmd_init(void) {
-    // 创建插件管理器
-    infra_error_t err = poly_plugin_mgr_create(&g_plugin_mgr);
-    if (err != INFRA_OK) return err;
-
-    // 注册命令
-    for (size_t i = 0; i < sizeof(memkv_commands) / sizeof(memkv_commands[0]); i++) {
-        err = poly_cmdline_register(&memkv_commands[i]);
-        if (err != INFRA_OK) {
-            poly_plugin_mgr_destroy(g_plugin_mgr);
-            return err;
-        }
-    }
-
     return INFRA_OK;
 }
 
-// 清理memkv命令行
-infra_error_t poly_memkv_cmd_cleanup(void) {
-    if (g_current_plugin) {
-        poly_plugin_mgr_unload(g_plugin_mgr, g_current_plugin);
-        g_current_plugin = NULL;
+void poly_memkv_cmd_cleanup(void) {
+    if (g_db) {
+        poly_memkv_destroy(g_db);
+        g_db = NULL;
+    }
+}
+
+// 处理memkv命令
+infra_error_t poly_memkv_cmd_process(int argc, char* argv[]) {
+    if (argc < 2) {
+        return cmd_help(argc, argv);
     }
 
-    if (g_plugin_mgr) {
-        poly_plugin_mgr_destroy(g_plugin_mgr);
-        g_plugin_mgr = NULL;
+    const char* cmd = argv[1];
+    for (size_t i = 0; i < sizeof(memkv_commands) / sizeof(memkv_commands[0]); i++) {
+        if (strcmp(cmd, memkv_commands[i].name) == 0) {
+            return memkv_commands[i].handler(argc - 1, argv + 1);
+        }
     }
 
-    return INFRA_OK;
+    printf("Unknown command: %s\n", cmd);
+    return cmd_help(argc, argv);
 } 

@@ -74,4 +74,9 @@ poly_db_status_t poly_memkv_get_status(const poly_memkv_db_t* db);
 const char* poly_memkv_get_error_message(const poly_memkv_db_t* db);
 bool poly_memkv_is_degraded(const poly_memkv_db_t* db);
 
+// Engine management
+infra_error_t poly_memkv_switch_engine(poly_memkv_db_t* db,
+                                     poly_memkv_engine_t engine_type,
+                                     const poly_memkv_config_t* config);
+
 #endif // POLY_MEMKV_H 

@@ -97,7 +97,8 @@ test/white/
 
 - 测试流程
 
-```
+``` 下面的有些旧了，因为 win已经不用，现在是在 osx 下开发
+
 # 【热身】主要用于确认 cross9/cosmopolitan 工具链运作正常，运行后不管是否正常都算热身完毕，停下来等待下一步安排。
 .\pdpb\scripts\build_test42.bat
 
