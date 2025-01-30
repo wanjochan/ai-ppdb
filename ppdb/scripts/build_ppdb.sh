@@ -72,13 +72,33 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Building sqlite3..."
-if [ ! -f "${BUILD_DIR}/obj/sqlite3.o" ] || [ "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -nt "${BUILD_DIR}/obj/sqlite3.o" ]; then
-    "${CC}" ${CFLAGS} -c "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -o "${BUILD_DIR}/obj/sqlite3.o"
+SQLITE_LIB="${BUILD_DIR}/lib/libsqlite3.a"
+mkdir -p "${BUILD_DIR}/lib"
+
+# 只在静态库不存在或源文件更新时重新构建
+if [ ! -f "${SQLITE_LIB}" ] || [ "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -nt "${SQLITE_LIB}" ]; then
+    echo "Compiling sqlite3 static library..."
+    # 添加必要的编译选项
+    SQLITE_CFLAGS="${CFLAGS} -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_RTREE"
+    
+    "${CC}" ${SQLITE_CFLAGS} -c "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -o "${BUILD_DIR}/obj/sqlite3.o"
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to build sqlite3"
+        echo "Error: Failed to compile sqlite3"
         rm -f "${BUILD_DIR}/obj/sqlite3.o"
         exit 1
     fi
+    
+    # 创建静态库
+    "${AR}" rcs "${SQLITE_LIB}" "${BUILD_DIR}/obj/sqlite3.o"
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to create sqlite3 static library"
+        rm -f "${SQLITE_LIB}"
+        exit 1
+    fi
+    
+    echo "SQLite static library created successfully"
+else
+    echo "SQLite static library is up to date"
 fi
 
 # 增量编译源文件
@@ -145,7 +165,7 @@ done
 
 # 链接
 echo "Linking..."
-"${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${BUILD_DIR}/obj/sqlite3.o" "${BUILD_DIR}/poly/libpoly.a" -o "${BUILD_DIR}/ppdb_latest.exe"
+"${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${BUILD_DIR}/poly/libpoly.a" "${SQLITE_LIB}" -o "${BUILD_DIR}/ppdb_latest.exe"
 if [ $? -ne 0 ]; then
     echo "Error: Linking failed"
     rm -f "${BUILD_DIR}/ppdb_latest.exe"

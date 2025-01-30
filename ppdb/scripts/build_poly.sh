@@ -43,8 +43,36 @@ compile_file() {
     local src=$1
     local obj="${BUILD_DIR}/poly/$(basename "${src}" .c).o"
     
+    # 检查源文件是否存在
+    if [ ! -f "$src" ]; then
+        echo -e "${RED}Error: Source file ${src} not found${NC}"
+        return 1
+    fi
+
+    # 获取头文件依赖
+    local headers=$(${CC} -MM "${src}" -I"${PPDB_DIR}/include" -I"${SRC_DIR}" \
+        -I"${PPDB_DIR}/vendor/sqlite3" -I"${PPDB_DIR}/vendor/duckdb" | \
+        sed 's/.*: //' | tr ' \\' '\n' | grep '\.h$')
+    
     # 检查是否需要重新编译
-    if [ -f "$obj" ] && [ "$src" -ot "$obj" ]; then
+    local need_compile=0
+    if [ ! -f "$obj" ]; then
+        need_compile=1
+    else
+        # 检查源文件时间戳
+        if [ "$src" -nt "$obj" ]; then
+            need_compile=1
+        fi
+        # 检查所有头文件的时间戳
+        for header in $headers; do
+            if [ -f "$header" ] && [ "$header" -nt "$obj" ]; then
+                need_compile=1
+                break
+            fi
+        done
+    fi
+    
+    if [ $need_compile -eq 0 ]; then
         echo -e "${YELLOW}Skipping ${src} (up to date)${NC}"
         return 0
     fi

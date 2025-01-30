@@ -227,6 +227,7 @@ static void* handle_connection(void* arg) {
                         // 移动未完成的命令到缓冲区开始
                         buffer_used = conn->buffer + buffer_used - cmd_start;
                         memmove(conn->buffer, cmd_start, buffer_used);
+                        cmd_start = conn->buffer;
                     }
                     break;
                 }
@@ -257,8 +258,8 @@ static void* handle_connection(void* arg) {
                 cmd_start = value_start + value_len + 2;  // 跳过值和结尾的 \r\n
                 continue;  // 跳过 next_command
                 
-            } else if (sscanf(cmd_start, "get %s", key) == 1) {
-                // GET 命令
+            } else if (sscanf(cmd_start, "get %s", key) == 1 || sscanf(cmd_start, "gets %s", key) == 1) {
+                // GET/GETS 命令
                 void* value;
                 size_t value_len;
                 err = poly_memkv_get(conn->store, key, &value, &value_len);
@@ -267,15 +268,9 @@ static void* handle_connection(void* arg) {
                     char response[64];
                     int len = snprintf(response, sizeof(response), 
                                      "VALUE %s 0 %zu\r\n", key, value_len);
-                    if (send(infra_net_get_fd(conn->client), response, len, 0) < 0) {
-                        infra_free(value);
-                        goto cleanup;
-                    }
-                    if (send(infra_net_get_fd(conn->client), value, value_len, 0) < 0) {
-                        infra_free(value);
-                        goto cleanup;
-                    }
-                    if (send(infra_net_get_fd(conn->client), "\r\n", 2, 0) < 0) {
+                    if (send(infra_net_get_fd(conn->client), response, len, 0) < 0 ||
+                        send(infra_net_get_fd(conn->client), value, value_len, 0) < 0 ||
+                        send(infra_net_get_fd(conn->client), "\r\n", 2, 0) < 0) {
                         infra_free(value);
                         goto cleanup;
                     }
@@ -297,7 +292,7 @@ static void* handle_connection(void* arg) {
                 // 创建新的存储实例
                 poly_memkv_config_t config = {
                     .engine = conn->rule->engine,
-                    .url = conn->rule->db_path,
+                    .url = ":memory:",  // 使用内存存储
                     .max_key_size = MEMKV_MAX_KEY_SIZE,
                     .max_value_size = MEMKV_MAX_VALUE_SIZE,
                     .memory_limit = conn->rule->max_memory,
@@ -312,7 +307,13 @@ static void* handle_connection(void* arg) {
                     if (old_store) {
                         poly_memkv_destroy(old_store);
                     }
-                    if (send(infra_net_get_fd(conn->client), "OK\r\n", 4, 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), "OK\r\n", 4, 0) < 0) {
+                        if (conn->store) {
+                            poly_memkv_destroy(conn->store);
+                            conn->store = NULL;
+                        }
+                        goto cleanup;
+                    }
                 } else {
                     conn->store = old_store;  // 恢复旧存储
                     if (send(infra_net_get_fd(conn->client), "SERVER_ERROR\r\n", 14, 0) < 0) goto cleanup;
@@ -338,10 +339,10 @@ static void* handle_connection(void* arg) {
                         len = snprintf(response, sizeof(response), "%lld\r\n", new_value);
                         if (send(infra_net_get_fd(conn->client), response, len, 0) < 0) goto cleanup;
                     } else {
-                        if (send(infra_net_get_fd(conn->client), "ERROR\r\n", 7, 0) < 0) goto cleanup;
+                        if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) goto cleanup;
                     }
                 } else {
-                    if (send(infra_net_get_fd(conn->client), "ERROR\r\n", 7, 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) goto cleanup;
                 }
                 
             } else if (sscanf(cmd_start, "decr %s %s", key, bytes_str) == 2) {
@@ -360,10 +361,10 @@ static void* handle_connection(void* arg) {
                     if (err == INFRA_OK) {
                         if (send(infra_net_get_fd(conn->client), "0\r\n", 3, 0) < 0) goto cleanup;
                     } else {
-                        if (send(infra_net_get_fd(conn->client), "ERROR\r\n", 7, 0) < 0) goto cleanup;
+                        if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) goto cleanup;
                     }
                 } else {
-                    if (send(infra_net_get_fd(conn->client), "ERROR\r\n", 7, 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) goto cleanup;
                 }
                 
             } else {
