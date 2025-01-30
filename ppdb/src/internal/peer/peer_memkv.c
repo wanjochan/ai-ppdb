@@ -15,6 +15,7 @@
 #define MEMKV_MAX_VALUE_SIZE   (1024 * 1024)  // 1MB
 #define MEMKV_MIN_THREADS      32
 #define MEMKV_MAX_THREADS      512
+#define MEMKV_DEFAULT_PORT     11211
 
 //-----------------------------------------------------------------------------
 // Types
@@ -494,68 +495,26 @@ static infra_error_t service_thread(void) {
 
 // 初始化服务
 static infra_error_t memkv_init(const infra_config_t* config) {
-    if (!config) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
+    if (!config) return INFRA_ERROR_INVALID_PARAM;
 
-    // 如果已经初始化过，先清理
-    if (g_context.store) {
-        memkv_cleanup();
-    }
-
-    // 保存现有配置
-    uint16_t port = g_context.port ? g_context.port : 11211;  // 如果未设置则使用默认值
-    poly_memkv_engine_t engine = g_context.engine ? g_context.engine : POLY_MEMKV_ENGINE_SQLITE;  // 默认引擎
-    char* plugin_path = g_context.plugin_path;  // 保存插件路径
-    g_context.plugin_path = NULL;  // 防止被 memset 清除后释放
-    
     // 初始化上下文
-    memset(&g_context, 0, sizeof(g_context));
-    g_context.port = port;  // 恢复端口
-    g_context.engine = engine;  // 恢复引擎类型
-    g_context.plugin_path = plugin_path;  // 恢复插件路径
-    
-    // 创建线程池
-    infra_thread_pool_config_t pool_config = {
-        .min_threads = MEMKV_MIN_THREADS,
-        .max_threads = MEMKV_MAX_THREADS,
-        .queue_size = MEMKV_MAX_THREADS * 2  // 设置队列大小
-    };
-    infra_error_t err = infra_thread_pool_create(&pool_config, &g_context.thread_pool);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to create thread pool: %d", err);
-        return err;
-    }
-    
-    // 创建互斥锁
-    err = infra_mutex_create(&g_context.mutex);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to create mutex: %d", err);
-        infra_thread_pool_destroy(g_context.thread_pool);
-        return err;
-    }
-    
+    g_context.running = false;
+    g_context.port = MEMKV_DEFAULT_PORT;
+
     // 创建存储实例
-    poly_memkv_config_t config_memkv = {
+    poly_memkv_config_t store_config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .url = "sqlite::memory:",
         .max_key_size = MEMKV_MAX_KEY_SIZE,
         .max_value_size = MEMKV_MAX_VALUE_SIZE,
-        .engine = g_context.engine,
-        .plugin_path = g_context.plugin_path
+        .memory_limit = 0,
+        .enable_compression = false,
+        .plugin_path = NULL,
+        .allow_fallback = true,
+        .read_only = false
     };
-    
-    err = poly_memkv_create(&config_memkv, &g_context.store);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to create store: %d", err);
-        infra_mutex_destroy(&g_context.mutex);
-        infra_thread_pool_destroy(g_context.thread_pool);
-        return err;
-    }
-    
-    INFRA_LOG_INFO("MemKV service initialized with port %d and %s engine",
-        g_context.port,
-        g_context.engine == POLY_MEMKV_ENGINE_SQLITE ? "sqlite" : "duckdb");
-    
-    return INFRA_OK;
+
+    return poly_memkv_create(&store_config, &g_context.store);
 }
 
 // 启动服务
@@ -622,19 +581,6 @@ static infra_error_t memkv_cleanup(void) {
         g_context.store = NULL;
     }
     
-    if (g_context.thread_pool) {
-        infra_thread_pool_destroy(g_context.thread_pool);
-        g_context.thread_pool = NULL;
-    }
-    
-    if (g_context.plugin_path) {
-        free(g_context.plugin_path);
-        g_context.plugin_path = NULL;
-    }
-    
-    infra_mutex_destroy(&g_context.mutex);
-    
-    memset(&g_context, 0, sizeof(g_context));
     return INFRA_OK;
 }
 

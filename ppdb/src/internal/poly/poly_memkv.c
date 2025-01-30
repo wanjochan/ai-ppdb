@@ -1,25 +1,22 @@
-#include "internal/infra/infra_core.h"
 #include "internal/poly/poly_memkv.h"
-#include "internal/poly/poly_db.h"
+#include "internal/infra/infra_core.h"
 #include "internal/infra/infra_error.h"
-#include "internal/infra/infra_memory.h"
-#include "sqlite3.h"
+#include <string.h>
 
 //-----------------------------------------------------------------------------
-// Types and structures
-//-----------------------------------------------------------------------------
-
 // SQLite implementation
-typedef struct sqlite_impl {
-    sqlite3* db;
+//-----------------------------------------------------------------------------
+
+typedef struct {
     char* path;
 } sqlite_impl_t;
 
+//-----------------------------------------------------------------------------
 // DuckDB implementation
-typedef struct duckdb_impl {
+//-----------------------------------------------------------------------------
+
+typedef struct {
     void* handle;
-    void* db;
-    void* conn;
     char* path;
 } duckdb_impl_t;
 
@@ -99,7 +96,7 @@ static infra_error_t kv_del_internal(poly_db_t* db, const char* key, size_t key_
 }
 
 //-----------------------------------------------------------------------------
-// Public functions
+// Interface Implementation
 //-----------------------------------------------------------------------------
 
 // 创建 MemKV 实例
@@ -214,9 +211,9 @@ infra_error_t poly_memkv_iter_create(poly_memkv_db_t* db, poly_memkv_iter_t** it
     if (!new_iter) return INFRA_ERROR_NO_MEMORY;
     memset(new_iter, 0, sizeof(poly_memkv_iter_t));
 
-    // 查询所有键值对
-    const char* query = "SELECT key, value FROM kv_store ORDER BY key;";
-    infra_error_t err = poly_db_query(db->db, query, &new_iter->result);
+    // 执行查询
+    const char* sql = "SELECT key, value FROM kv_store ORDER BY key;";
+    infra_error_t err = poly_db_query(db->db, sql, &new_iter->result);
     if (err != INFRA_OK) {
         infra_free(new_iter);
         return err;
@@ -238,13 +235,16 @@ infra_error_t poly_memkv_iter_create(poly_memkv_db_t* db, poly_memkv_iter_t** it
 
 infra_error_t poly_memkv_iter_next(poly_memkv_iter_t* iter, char** key, void** value, size_t* value_len) {
     if (!iter || !key || !value || !value_len) return INFRA_ERROR_INVALID_PARAM;
-    if (iter->current_row >= iter->total_rows) return INFRA_ERROR_NOT_FOUND;
 
-    // 获取当前行的键
+    // 检查是否已经遍历完
+    if (iter->current_row >= iter->total_rows) {
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // 获取当前行的数据
     infra_error_t err = poly_db_result_get_string(iter->result, iter->current_row, 0, key);
     if (err != INFRA_OK) return err;
 
-    // 获取当前行的值
     err = poly_db_result_get_blob(iter->result, iter->current_row, 1, value, value_len);
     if (err != INFRA_OK) {
         infra_free(*key);
@@ -257,7 +257,11 @@ infra_error_t poly_memkv_iter_next(poly_memkv_iter_t* iter, char** key, void** v
 
 void poly_memkv_iter_destroy(poly_memkv_iter_t* iter) {
     if (!iter) return;
-    if (iter->result) poly_db_result_free(iter->result);
+
+    if (iter->result) {
+        poly_db_result_free(iter->result);
+    }
+
     infra_free(iter);
 }
 
@@ -295,9 +299,9 @@ infra_error_t poly_memkv_switch_engine(poly_memkv_db_t* db,
         return err;
     }
 
-    char* key = NULL;
-    void* value = NULL;
-    size_t value_len = 0;
+    char* key;
+    void* value;
+    size_t value_len;
     while (poly_memkv_iter_next(iter, &key, &value, &value_len) == INFRA_OK) {
         err = poly_memkv_set(new_db, key, value, value_len);
         infra_free(key);
@@ -311,16 +315,17 @@ infra_error_t poly_memkv_switch_engine(poly_memkv_db_t* db,
 
     poly_memkv_iter_destroy(iter);
 
-    // 交换实现
+    // 保存旧的实现和数据库
     void* old_impl = db->impl;
     poly_db_t* old_db = db->db;
+
+    // 切换到新的实现
     db->impl = new_db->impl;
     db->db = new_db->db;
     db->engine = new_db->engine;
     new_db->impl = old_impl;
     new_db->db = old_db;
-    poly_memkv_destroy(new_db);
 
+    poly_memkv_destroy(new_db);
     return INFRA_OK;
 }
-

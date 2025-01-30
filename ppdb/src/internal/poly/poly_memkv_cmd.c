@@ -11,7 +11,7 @@ static poly_plugin_t* g_current_plugin = NULL;
 // 在文件开头添加外部声明
 extern const poly_builtin_plugin_t g_sqlite_plugin;
 
-// 全局变量
+// 全局数据库实例
 static poly_memkv_db_t* g_db = NULL;
 
 // 帮助信息
@@ -79,26 +79,35 @@ typedef struct {
 } db_context_t;
 
 // 打开数据库上下文
-static infra_error_t open_db_context(const char* vendor, const char* db_path, db_context_t* ctx) {
-    if (!ctx || !vendor || !db_path) {
+static infra_error_t open_db_context(const char* vendor, db_context_t* ctx) {
+    if (!vendor || !ctx) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 配置数据库
-    poly_memkv_config_t config = {0};
-    config.engine = strcmp(vendor, "duckdb") == 0 ? POLY_MEMKV_ENGINE_DUCKDB : POLY_MEMKV_ENGINE_SQLITE;
-    config.url = db_path;
-    config.allow_fallback = true;
+    // 创建配置
+    poly_memkv_config_t config = {
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .url = "sqlite::memory:",
+        .max_key_size = 1024,
+        .max_value_size = 1024 * 1024,
+        .memory_limit = 0,
+        .enable_compression = false,
+        .plugin_path = NULL,
+        .allow_fallback = true,
+        .read_only = false
+    };
 
-    // 创建数据库
+    // 创建数据库实例
     return poly_memkv_create(&config, &ctx->db);
 }
 
 // 关闭数据库上下文
 static void close_db_context(db_context_t* ctx) {
-    if (ctx && ctx->db) {
-        poly_memkv_destroy(ctx->db);
-        ctx->db = NULL;
+    if (ctx) {
+        if (ctx->db) {
+            poly_memkv_destroy(ctx->db);
+            ctx->db = NULL;
+        }
     }
 }
 
@@ -111,7 +120,7 @@ static infra_error_t cmd_get(int argc, char** argv) {
     const char* key = argv[1];
 
     db_context_t ctx = {0};
-    infra_error_t err = open_db_context(vendor, db_path, &ctx);
+    infra_error_t err = open_db_context(vendor, &ctx);
     if (err != INFRA_OK) return err;
 
     void* value = NULL;
@@ -138,7 +147,7 @@ static infra_error_t cmd_put(int argc, char** argv) {
     const char* value = argv[2];
 
     db_context_t ctx = {0};
-    infra_error_t err = open_db_context(vendor, db_path, &ctx);
+    infra_error_t err = open_db_context(vendor, &ctx);
     if (err != INFRA_OK) return err;
 
     err = poly_memkv_set(ctx.db, key, value, strlen(value));
@@ -154,7 +163,7 @@ static infra_error_t cmd_del(int argc, char** argv) {
     const char* key = argv[1];
 
     db_context_t ctx = {0};
-    infra_error_t err = open_db_context(vendor, db_path, &ctx);
+    infra_error_t err = open_db_context(vendor, &ctx);
     if (err != INFRA_OK) return err;
 
     err = poly_memkv_del(ctx.db, key);
@@ -167,7 +176,7 @@ static infra_error_t cmd_list(int argc, char** argv) {
     const char* db_path = get_option_value(argc, argv, "db", "memkv.db");
 
     db_context_t ctx = {0};
-    infra_error_t err = open_db_context(vendor, db_path, &ctx);
+    infra_error_t err = open_db_context(vendor, &ctx);
     if (err != INFRA_OK) return err;
 
     poly_memkv_iter_t* iter = NULL;
