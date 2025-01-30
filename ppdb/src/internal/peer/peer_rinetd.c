@@ -214,17 +214,40 @@ static void* handle_connection(void* arg) {
         return NULL;
     }
 
-    INFRA_LOG_DEBUG("Started forwarding: %s:%d -> %s:%d",
-        conn->rule->src_addr, conn->rule->src_port,
-        conn->rule->dst_addr, conn->rule->dst_port);
+    INFRA_LOG_DEBUG("Started connection handling: %s:%d", 
+        conn->rule->src_addr, conn->rule->src_port);
 
-    // 设置非阻塞模式
+    // 设置客户端socket为非阻塞模式
     infra_net_set_nonblock(conn->client, true);
-    infra_net_set_nonblock(conn->server, true);
+    infra_net_set_timeout(conn->client, 30000);  // 30秒超时
 
-    // 设置socket超时（30秒）
-    infra_net_set_timeout(conn->client, 30000);  // 30秒 = 30000毫秒
-    infra_net_set_timeout(conn->server, 30000);
+    // 创建服务器连接
+    infra_socket_t server = NULL;
+    infra_config_t config = {0};
+    infra_error_t err = infra_net_create(&server, false, &config);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create server socket: %d", err);
+        goto cleanup;
+    }
+
+    // 连接到目标服务器
+    infra_net_addr_t addr = {0};
+    addr.host = conn->rule->dst_addr;
+    addr.port = conn->rule->dst_port;
+    err = infra_net_connect(&addr, &server, &config);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to connect to server %s:%d: %d", 
+            addr.host, addr.port, err);
+        goto cleanup;
+    }
+
+    INFRA_LOG_INFO("Connected to server %s:%d", addr.host, addr.port);
+
+    // 设置服务器socket为非阻塞模式
+    infra_net_set_nonblock(server, true);
+    infra_net_set_timeout(server, 30000);  // 30秒超时
+
+    conn->server = server;
 
     // 连接状态
     bool client_closed = false;
@@ -259,7 +282,7 @@ static void* handle_connection(void* arg) {
 
         // 处理客户端到服务器的数据
         if (!client_closed && (polls[0].revents & POLLIN)) {
-            infra_error_t err = forward_data(conn->client, conn->server, conn->buffer, "C->S");
+            err = forward_data(conn->client, conn->server, conn->buffer, "C->S");
             if (err == INFRA_ERROR_CLOSED) {
                 INFRA_LOG_DEBUG("Client closed connection");
                 client_closed = true;
@@ -271,7 +294,7 @@ static void* handle_connection(void* arg) {
 
         // 处理服务器到客户端的数据
         if (!server_closed && (polls[1].revents & POLLIN)) {
-            infra_error_t err = forward_data(conn->server, conn->client, conn->buffer, "S->C");
+            err = forward_data(conn->server, conn->client, conn->buffer, "S->C");
             if (err == INFRA_ERROR_CLOSED) {
                 INFRA_LOG_DEBUG("Server closed connection");
                 server_closed = true;
@@ -282,9 +305,9 @@ static void* handle_connection(void* arg) {
         }
     }
 
+cleanup:
     // 清理连接
-    INFRA_LOG_DEBUG("Cleaning up connection after %s", 
-        idle_count >= MAX_IDLE ? "idle timeout" : "normal close");
+    INFRA_LOG_DEBUG("Cleaning up connection");
     
     if (conn->client) {
         infra_net_shutdown(conn->client, INFRA_NET_SHUTDOWN_BOTH);
@@ -466,42 +489,17 @@ infra_error_t rinetd_start(void) {
             INFRA_LOG_INFO("Accepted connection from %s:%d for rule %d", 
                 client_addr.host, client_addr.port, i);
 
-            // 创建服务器连接
-            infra_socket_t server = NULL;
-            infra_config_t config = {0};
-            err = infra_net_create(&server, false, &config);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to create server socket: %d", err);
-                infra_net_close(client);
-                continue;
-            }
-
-            // 连接到目标服务器
-            infra_net_addr_t addr = {0};
-            addr.host = g_context.rules[i].dst_addr;
-            addr.port = g_context.rules[i].dst_port;
-            err = infra_net_connect(&addr, &server, &config);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to connect to server: %d", err);
-                infra_net_close(client);
-                infra_net_close(server);
-                continue;
-            }
-
-            INFRA_LOG_INFO("Connected to server %s:%d for rule %d", 
-                addr.host, addr.port, i);
-
             // 创建连接结构
             rinetd_conn_t* conn = malloc(sizeof(rinetd_conn_t));
             if (!conn) {
                 INFRA_LOG_ERROR("Failed to allocate connection");
                 infra_net_close(client);
-                infra_net_close(server);
                 continue;
             }
 
+            // 初始化连接结构
+            memset(conn, 0, sizeof(rinetd_conn_t));
             conn->client = client;
-            conn->server = server;
             conn->rule = &g_context.rules[i];
 
             // 提交到线程池
@@ -509,7 +507,6 @@ infra_error_t rinetd_start(void) {
             if (err != INFRA_OK) {
                 INFRA_LOG_ERROR("Failed to submit connection to thread pool: %d", err);
                 infra_net_close(client);
-                infra_net_close(server);
                 free(conn);
                 continue;
             }
