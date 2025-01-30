@@ -16,7 +16,7 @@ typedef struct {
 static mem_stats_t g_stats = {0};
 
 // 测试初始化
-static void test_memory_init(void) {
+static void setup_test(void) {
     // 确保系统未初始化
     TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
 
@@ -37,13 +37,27 @@ static void test_memory_init(void) {
 }
 
 // 测试清理
-static void test_memory_cleanup(void) {
+static void teardown_test(void) {
     infra_cleanup();
     TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
 }
 
+// 测试初始化
+static void test_memory_init(void) {
+    setup_test();
+    teardown_test();
+}
+
+// 测试清理
+static void test_memory_cleanup(void) {
+    setup_test();
+    teardown_test();
+}
+
 // 基本内存分配测试
 static void test_memory_basic(void) {
+    setup_test();
+    
     // 测试基本分配和释放
     void* ptr = infra_malloc(100);
     TEST_ASSERT(ptr != NULL);
@@ -59,10 +73,13 @@ static void test_memory_basic(void) {
     ptr = infra_malloc(1024 * 1024);
     TEST_ASSERT(ptr != NULL);
     infra_free(ptr);
+    
+    teardown_test();
 }
 
 // 内存操作测试
 static void test_memory_operations(void) {
+    setup_test();
     // 测试memset
     void* ptr = infra_malloc(100);
     TEST_ASSERT(ptr != NULL);
@@ -79,10 +96,13 @@ static void test_memory_operations(void) {
     
     infra_free(ptr);
     infra_free(dest);
+    
+    teardown_test();
 }
 
 // 内存性能测试
 static void test_memory_performance(void) {
+    setup_test();
     const int iterations = 1000;
     const int sizes[] = {8, 16, 32, 64, 128, 256, 512, 1024};
     const int num_sizes = sizeof(sizes) / sizeof(sizes[0]);
@@ -106,10 +126,13 @@ static void test_memory_performance(void) {
     infra_time_t end = infra_time_monotonic();
     double time_spent = (double)(end - start) / 1000000.0;  // Convert to seconds
     TEST_ASSERT(time_spent < 30.0);  // 性能测试应在30秒内完成
+    
+    teardown_test();
 }
 
 // 内存压力测试
 static void test_memory_stress(void) {
+    setup_test();
     const int iterations = 100;
     const int max_allocs = 1000;
     void* ptrs[1000];
@@ -133,10 +156,14 @@ static void test_memory_stress(void) {
             infra_free(ptrs[j]);
         }
     }
+    
+    teardown_test();
 }
 
 // 内存保护测试
 static void test_memory_protection(void) {
+    setup_test();
+    
     // 分配一页内存
     const size_t page_size = 4096;
     void* ptr = infra_mem_map(NULL, page_size, INFRA_PROT_READ | INFRA_PROT_WRITE);
@@ -160,6 +187,8 @@ static void test_memory_protection(void) {
     
     // 清理
     TEST_ASSERT(infra_mem_unmap(ptr, page_size) == INFRA_OK);
+    
+    teardown_test();
 }
 
 int main(void) {
@@ -182,4 +211,4 @@ int main(void) {
     TEST_END();
 
     return 0;
-} 
+}

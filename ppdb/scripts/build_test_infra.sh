@@ -7,7 +7,7 @@ START_TIME=$(date +%s.%N)
 TEST_MODULE="$1"
 
 # 设置测试文件列表
-TEST_FILES="test_memory.c test_log.c test_sync.c test_error.c test_memory_pool.c test_net.c test_mux.c"
+TEST_FILES="test_memory.c test_log.c test_sync.c test_error.c test_memory_pool.c test_net.c test_mux.c test_gc.c"
 
 # 如果没有指定测试模块，显示可用的测试模块
 if [ -z "$TEST_MODULE" ]; then
@@ -80,14 +80,15 @@ mkdir -p "${BUILD_DIR}/test/white/infra"
 
 # 如果指定了测试模块，则只构建该模块的测试
 if [ ! -z "$TEST_MODULE" ]; then
-    if [ -f "${PPDB_DIR}/test/white/infra/test_${TEST_MODULE}.c" ]; then
-        TEST_FILES="test_${TEST_MODULE}.c"
+    TEST_FILE="test_${TEST_MODULE}.c"
+    if [ -f "${PPDB_DIR}/test/white/infra/${TEST_FILE}" ]; then
+        TEST_FILES="${TEST_FILE}"
         echo "Building only ${TEST_MODULE} module tests..."
     else
         echo "Error: Test module '${TEST_MODULE}' not found"
         echo "Available modules:"
         for f in $TEST_FILES; do
-            echo "    ${f%.c}"
+            echo "    ${f%.c}" | sed 's/test_//'
         done
         exit 1
     fi

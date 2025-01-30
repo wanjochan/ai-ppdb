@@ -1,6 +1,6 @@
 #ifndef POLY_DB_H
 #define POLY_DB_H
-
+#include "internal/infra/infra_core.h"
 #include "internal/infra/infra_error.h"
 
 // Forward declarations
@@ -49,5 +49,6 @@ infra_error_t poly_db_result_get_string(poly_db_result_t* result, size_t row, si
 // Status functions
 poly_db_status_t poly_db_get_status(const poly_db_t* db);
 const char* poly_db_get_error_message(const poly_db_t* db);
+poly_db_type_t poly_db_get_type(const poly_db_t* db);
 
 #endif // POLY_DB_H

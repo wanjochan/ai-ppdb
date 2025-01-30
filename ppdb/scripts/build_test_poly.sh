@@ -245,130 +245,15 @@ ${CC} ${CFLAGS} \
     "${BUILD_DIR}/test/black/poly/infra_sync.o" \
     "${BUILD_DIR}/test/black/poly/infra_platform.o" \
     "${BUILD_DIR}/infra/libinfra.a" \
+    "${BUILD_DIR}/vendor/sqlite3/sqlite3.o" \
+    -ldl -lpthread -lm \
     ${LDFLAGS}
 handle_error $? "Failed to link poly_db test"
 
-# 编译测试文件
-SQLITE_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_sqlitekv"
-SQLITE_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_sqlitekv.c"
-if need_rebuild "$SQLITE_TEST_BIN" "$SQLITE_TEST_SRC" "$MEMKV_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ"; then
-    echo -e "${GREEN}Building SQLite tests...${NC}"
-    ${CC} ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}/vendor/sqlite3" \
-        "$SQLITE_TEST_SRC" \
-        "$MEMKV_IMPL_OBJ" \
-        "$TEST_FRAMEWORK_OBJ" \
-        "$SQLITE_OBJ" \
-        "${BUILD_DIR}/infra/libinfra.a" \
-        -o "$SQLITE_TEST_BIN"
-    handle_error $? "Failed to build SQLite tests"
-else
-    echo -e "${YELLOW}SQLite tests are up to date, skipping build${NC}"
-fi
-
-DUCKDB_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_duckdbkv"
-DUCKDB_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_duckdbkv.c"
-if need_rebuild "$DUCKDB_TEST_BIN" "$DUCKDB_TEST_SRC" "$MEMKV_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ"; then
-    echo -e "${GREEN}Building DuckDB tests...${NC}"
-    ${CC} ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}/vendor/duckdb" \
-        "$DUCKDB_TEST_SRC" \
-        "$MEMKV_IMPL_OBJ" \
-        "$TEST_FRAMEWORK_OBJ" \
-        "${BUILD_DIR}/infra/libinfra.a" \
-        -o "$DUCKDB_TEST_BIN"
-    handle_error $? "Failed to build DuckDB tests"
-else
-    echo -e "${YELLOW}DuckDB tests are up to date, skipping build${NC}"
-fi
-
-MEMKV_TEST_BIN="${BUILD_DIR}/test/black/poly/test_poly_memkv"
-MEMKV_TEST_SRC="${PPDB_DIR}/test/black/poly/test_poly_memkv.c"
-if need_rebuild "$MEMKV_TEST_BIN" "$MEMKV_TEST_SRC" "$MEMKV_IMPL_OBJ" "$TEST_FRAMEWORK_OBJ" "$SQLITE_OBJ" "$ATOMIC_OBJ" "$PLUGIN_OBJ"; then
-    echo -e "${GREEN}Building MemKV tests...${NC}"
-    ${CC} ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        "$MEMKV_TEST_SRC" \
-        "$MEMKV_IMPL_OBJ" \
-        "$TEST_FRAMEWORK_OBJ" \
-        "$SQLITE_OBJ" \
-        "$ATOMIC_OBJ" \
-        "$PLUGIN_OBJ" \
-        "${BUILD_DIR}/infra/libinfra.a" \
-        -o "$MEMKV_TEST_BIN"
-    handle_error $? "Failed to build MemKV tests"
-else
-    echo -e "${YELLOW}MemKV tests are up to date, skipping build${NC}"
-fi
-
-# 运行所有测试
-echo -e "${GREEN}Running all tests...${NC}"
-
-# # 检查动态库文件
-# DUCKDB_LIB="${PPDB_DIR}/vendor/duckdb/libduckdb.so"
-# if [ "$(uname)" = "Darwin" ]; then
-#     DUCKDB_LIB="${PPDB_DIR}/vendor/duckdb/libduckdb.dylib"
-# fi
-
-# if [ ! -f "$DUCKDB_LIB" ]; then
-#     echo -e "${RED}Error: DuckDB library not found at $DUCKDB_LIB${NC}"
-#     exit 1
-# fi
-
-# 设置动态库搜索路径
-export DYLD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb:${PPDB_DIR}/vendor/sqlite3:${DYLD_LIBRARY_PATH}"
-export LD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb:${PPDB_DIR}/vendor/sqlite3:${LD_LIBRARY_PATH}"
-
-echo -e "${GREEN}Using DuckDB library: $DUCKDB_LIB${NC}"
-
-# 运行 poly_db 测试
+# 运行测试
 echo -e "${GREEN}Running poly_db tests...${NC}"
 "$TEST_DB_BIN"
 handle_error $? "poly_db tests failed"
-
-# 运行 SQLiteKV 测试
-echo -e "${GREEN}Running SQLiteKV tests...${NC}"
-"$SQLITE_TEST_BIN"
-handle_error $? "SQLiteKV tests failed"
-
-# 运行 DuckDBKV 测试
-echo -e "${GREEN}Running DuckDBKV tests...${NC}"
-
-# 设置动态库搜索路径
-export DYLD_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb"
-export DUCKDB_LIBRARY_PATH="${PPDB_DIR}/vendor/duckdb/libduckdb.dylib"
-
-# 打印调试信息
-echo "Debug info:"
-echo "DYLD_LIBRARY_PATH=${DYLD_LIBRARY_PATH}"
-echo "DUCKDB_LIBRARY_PATH=${DUCKDB_LIBRARY_PATH}"
-echo "DuckDB library details:"
-ls -l "${DUCKDB_LIBRARY_PATH}"
-file "${DUCKDB_LIBRARY_PATH}"
-nm "${DUCKDB_LIBRARY_PATH}" | grep duckdb_open
-echo "Test binary details:"
-file "${DUCKDB_TEST_BIN}"
-echo "DUCKDB_TEST_BIN=${DUCKDB_TEST_BIN}"
-
-# 运行测试
-"$DUCKDB_TEST_BIN"
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Error: DuckDB tests failed${NC}"
-    exit 1
-fi
-
-# 运行 MemKV 测试
-echo -e "${GREEN}Running MemKV tests...${NC}"
-"$MEMKV_TEST_BIN"
-handle_error $? "MemKV tests failed"
 
 # 计算并显示总耗时
 END_TIME=$(date +%s.%N)

@@ -30,6 +30,7 @@ INFRA_SOURCES=(
     "${SRC_DIR}/internal/infra/infra_net.c"
     "${SRC_DIR}/internal/infra/infra_platform.c"
     "${SRC_DIR}/internal/infra/infra_sync.c"
+    "${SRC_DIR}/internal/infra/infra_gc.c"
 )
 
 # TODO if FLAG_BUILD_CLEAN...
