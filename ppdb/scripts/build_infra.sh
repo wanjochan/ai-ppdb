@@ -46,8 +46,37 @@ compile_file() {
     local src=$1
     local obj="${BUILD_DIR}/infra/$(basename "${src}" .c).o"
     
+    # 检查源文件是否存在
+    if [ ! -f "$src" ]; then
+        echo -e "${RED}Error: Source file ${src} not found${NC}"
+        return 1
+    fi
+
+    # 获取头文件依赖
+    local headers=$(${CC} -MM "${src}" -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${TOOLCHAIN_DIR}/include" | grep -o '[^ ]*\.h')
+    
     # 检查是否需要重新编译
-    if [ -f "$obj" ] && [ "$src" -ot "$obj" ]; then
+    local need_compile=0
+    if [ ! -f "$obj" ]; then
+        need_compile=1
+    else
+        # 检查源文件时间戳
+        if [ "$src" -nt "$obj" ]; then
+            need_compile=1
+        fi
+        # 检查所有头文件的时间戳
+        for header in $headers; do
+            # 在不同的include路径中查找头文件
+            for inc_path in "${PPDB_DIR}/include" "${SRC_DIR}" "${TOOLCHAIN_DIR}/include"; do
+                if [ -f "${inc_path}/${header}" ] && [ "${inc_path}/${header}" -nt "$obj" ]; then
+                    need_compile=1
+                    break 2
+                fi
+            done
+        done
+    fi
+    
+    if [ $need_compile -eq 0 ]; then
         echo -e "${YELLOW}Skipping ${src} (up to date)${NC}"
         return 0
     fi

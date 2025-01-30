@@ -1,8 +1,7 @@
 #include "framework/test_framework.h"
 #include "internal/infra/infra_gc.h"
+#include "internal/infra/infra_core.h"
 #include "internal/infra/infra_memory.h"
-#include <string.h>
-#include <stdio.h>
 
 // 测试函数声明
 static void test_gc_init(void);
