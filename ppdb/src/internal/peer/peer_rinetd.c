@@ -17,6 +17,7 @@
 #define RINETD_MIN_THREADS 32           // 最小线程数
 #define RINETD_MAX_THREADS 512         // 最大线程数
 #define RINETD_MAX_RULES 128           // 最大规则数
+#define RINETD_MAX_EVENTS 1024         // 最大事件数
 
 //-----------------------------------------------------------------------------
 // Types
@@ -64,6 +65,8 @@ typedef struct {
     infra_mutex_t* mutex;               // 全局互斥锁
     rinetd_session_t* active_sessions;  // 活跃会话数组
     int session_count;                  // 会话数量
+    struct pollfd* polls;               // poll 事件数组
+    int poll_count;                     // poll 事件数量
 } rinetd_context_t;
 
 //-----------------------------------------------------------------------------
@@ -133,6 +136,8 @@ static struct {
     int rule_count;                          // 当前规则数量
     infra_socket_t listeners[RINETD_MAX_RULES];  // 每个规则对应一个监听器
     infra_thread_pool_t* pool;
+    struct pollfd* polls;                    // poll事件数组
+    int poll_count;                          // poll事件数量
 } g_context = {0};
 
 //-----------------------------------------------------------------------------
@@ -227,29 +232,21 @@ static void* handle_connection(void* arg) {
     int idle_count = 0;
     const int MAX_IDLE = 600;  // 最大空闲次数（约60秒）
 
+    // 创建 poll 事件数组
+    struct pollfd polls[2] = {0};
+    polls[0].fd = infra_net_get_fd(conn->client);
+    polls[1].fd = infra_net_get_fd(conn->server);
+
     while (g_context.running && !client_closed && !server_closed && idle_count < MAX_IDLE) {
-        fd_set readfds;
-        FD_ZERO(&readfds);
+        // 设置 poll 事件
+        polls[0].events = POLLIN;
+        polls[1].events = POLLIN;
 
-        // 设置文件描述符
-        int client_fd = infra_net_get_fd(conn->client);
-        int server_fd = infra_net_get_fd(conn->server);
-        
-        if (!client_closed) {
-            FD_SET(client_fd, &readfds);
-        }
-        if (!server_closed) {
-            FD_SET(server_fd, &readfds);
-        }
-
-        // 设置超时
-        struct timeval tv = {.tv_sec = 0, .tv_usec = 100000};  // 100ms
-        int max_fd = (client_fd > server_fd) ? client_fd : server_fd;
-
-        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
+        // 等待事件
+        int ready = poll(polls, 2, 100);  // 100ms timeout
         if (ready < 0) {
             if (errno == EINTR) continue;
-            INFRA_LOG_ERROR("Select failed: %d", errno);
+            INFRA_LOG_ERROR("Poll failed: %d", errno);
             break;
         }
         
@@ -261,7 +258,7 @@ static void* handle_connection(void* arg) {
         idle_count = 0;  // 重置空闲计数
 
         // 处理客户端到服务器的数据
-        if (!client_closed && FD_ISSET(client_fd, &readfds)) {
+        if (!client_closed && (polls[0].revents & POLLIN)) {
             infra_error_t err = forward_data(conn->client, conn->server, conn->buffer, "C->S");
             if (err == INFRA_ERROR_CLOSED) {
                 INFRA_LOG_DEBUG("Client closed connection");
@@ -273,7 +270,7 @@ static void* handle_connection(void* arg) {
         }
 
         // 处理服务器到客户端的数据
-        if (!server_closed && FD_ISSET(server_fd, &readfds)) {
+        if (!server_closed && (polls[1].revents & POLLIN)) {
             infra_error_t err = forward_data(conn->server, conn->client, conn->buffer, "S->C");
             if (err == INFRA_ERROR_CLOSED) {
                 INFRA_LOG_DEBUG("Server closed connection");
@@ -346,6 +343,13 @@ infra_error_t rinetd_cleanup(void) {
     }
     g_context.rule_count = 0;
 
+    // 清理 poll 事件数组
+    if (g_context.polls) {
+        free(g_context.polls);
+        g_context.polls = NULL;
+    }
+    g_context.poll_count = 0;
+
     return INFRA_OK;
 }
 
@@ -415,38 +419,39 @@ infra_error_t rinetd_start(void) {
         }
     }
 
+    // 初始化 poll 事件数组
+    g_context.polls = malloc(sizeof(struct pollfd) * g_context.rule_count);
+    if (!g_context.polls) {
+        INFRA_LOG_ERROR("Failed to allocate poll events");
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
     // 设置运行标志
     g_context.running = true;
 
     // 在前台运行
     INFRA_LOG_INFO("Starting rinetd service in foreground with %d rules", g_context.rule_count);
+    
+    // 初始化 poll 事件
+    for (int i = 0; i < g_context.rule_count; i++) {
+        g_context.polls[i].fd = infra_net_get_fd(g_context.listeners[i]);
+        g_context.polls[i].events = POLLIN;
+    }
+    g_context.poll_count = g_context.rule_count;
+
     while (g_context.running) {
-        // 等待所有监听器的连接
-        fd_set readfds;
-        FD_ZERO(&readfds);
-        int max_fd = -1;
-
-        // 设置所有监听器的文件描述符
-        for (int i = 0; i < g_context.rule_count; i++) {
-            int fd = infra_net_get_fd(g_context.listeners[i]);
-            FD_SET(fd, &readfds);
-            if (fd > max_fd) max_fd = fd;
-        }
-
-        // 设置超时
-        struct timeval tv = {.tv_sec = 1, .tv_usec = 0};  // 1秒超时
-        int ready = select(max_fd + 1, &readfds, NULL, NULL, &tv);
+        // 等待连接
+        int ready = poll(g_context.polls, g_context.poll_count, 1000);  // 1秒超时
         if (ready < 0) {
             if (errno == EINTR) continue;
-            INFRA_LOG_ERROR("Select failed: %d", errno);
+            INFRA_LOG_ERROR("Poll failed: %d", errno);
             break;
         }
         if (ready == 0) continue;  // 超时，继续循环
 
         // 检查每个监听器
         for (int i = 0; i < g_context.rule_count; i++) {
-            int fd = infra_net_get_fd(g_context.listeners[i]);
-            if (!FD_ISSET(fd, &readfds)) continue;
+            if (!(g_context.polls[i].revents & POLLIN)) continue;
 
             // 接受连接
             infra_socket_t client = NULL;
@@ -716,5 +721,3 @@ infra_error_t rinetd_save_config(const char* path) {
     INFRA_LOG_INFO("Saved %d rules to %s", g_context.rule_count, path);
     return INFRA_OK;
 } 
-
-
