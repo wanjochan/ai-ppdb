@@ -1,6 +1,4 @@
-// #include "internal/peer/peer_rinetd.h"
-
-//rinet: tiny ports forwarding
+//rinet: ports forwarding
 
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_sync.h"
