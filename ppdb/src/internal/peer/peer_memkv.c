@@ -35,6 +35,14 @@ typedef struct memkv_rule {
     bool read_only;                      // 只读模式
 } memkv_rule_t;
 
+// 键值对元数据
+typedef struct memkv_item {
+    time_t expiry;                       // 过期时间
+    uint32_t flags;                      // 标志位
+    size_t value_len;                    // 值长度
+    char value[];                        // 值数据
+} memkv_item_t;
+
 // 连接上下文
 typedef struct memkv_conn {
     infra_socket_t client;              // 客户端socket
@@ -75,7 +83,16 @@ static infra_error_t memkv_stop(void);
 static bool memkv_is_running(void);
 static infra_error_t memkv_cmd_handler(int argc, char* argv[]);
 
-// Forward declarations
+// Helper functions
+static infra_error_t load_config(const char* config_path);
+static void* handle_connection(void* arg);
+
+// Storage functions
+static bool is_key_expired(poly_memkv_db_t* db, const char* key);
+static infra_error_t set_with_expiry(poly_memkv_db_t* db, const char* key, const void* value, 
+                                    size_t value_len, uint32_t flags, time_t expiry);
+static infra_error_t get_with_expiry(poly_memkv_db_t* db, const char* key, void** value, 
+                                    size_t* value_len, uint32_t* flags);
 static infra_error_t poly_memkv_counter_op(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
 static infra_error_t poly_memkv_incr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
 static infra_error_t poly_memkv_decr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
@@ -155,6 +172,8 @@ static void* handle_connection(void* arg) {
     infra_error_t err = poly_memkv_create(&config, &conn->store);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to create storage instance: %d", err);
+        const char* error = "SERVER_ERROR failed to create storage\r\n";
+        send(infra_net_get_fd(conn->client), error, strlen(error), 0);
         goto cleanup;
     }
 
@@ -179,7 +198,10 @@ static void* handle_connection(void* arg) {
                 // 非阻塞模式下无数据可读
                 continue;
             }
-            // 其他错误
+            // 其他错误，但不退出服务
+            INFRA_LOG_ERROR("Read error: %d", errno);
+            const char* error = "SERVER_ERROR read failed\r\n";
+            send(infra_net_get_fd(conn->client), error, strlen(error), 0);
             break;
         }
 
@@ -212,9 +234,15 @@ static void* handle_connection(void* arg) {
             if (sscanf(cmd_start, "set %s %s %s %s", key, flags_str, exptime_str, bytes_str) == 4) {
                 // SET 命令
                 value_len = atoi(bytes_str);
+                uint32_t flags = atoi(flags_str);
+                time_t expiry = atoi(exptime_str);
+                
                 if (value_len > MEMKV_MAX_VALUE_SIZE) {
                     const char* error = "CLIENT_ERROR value too large\r\n";
-                    if (send(infra_net_get_fd(conn->client), error, strlen(error), 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), error, strlen(error), 0) < 0) {
+                        INFRA_LOG_ERROR("Failed to send error response");
+                        break;
+                    }
                     goto next_command;
                 }
                 
@@ -235,59 +263,74 @@ static void* handle_connection(void* arg) {
                 // 验证数据块结尾的 \r\n
                 if (value_start[value_len] != '\r' || value_start[value_len + 1] != '\n') {
                     const char* error = "CLIENT_ERROR bad data chunk\r\n";
-                    if (send(infra_net_get_fd(conn->client), error, strlen(error), 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), error, strlen(error), 0) < 0) {
+                        INFRA_LOG_ERROR("Failed to send error response");
+                        break;
+                    }
                     goto next_command;
                 }
 
-                // 临时存储值，因为它可能包含二进制数据
-                char* value_buf = malloc(value_len);
-                if (!value_buf) {
-                    const char* error = "SERVER_ERROR out of memory\r\n";
-                    if (send(infra_net_get_fd(conn->client), error, strlen(error), 0) < 0) goto cleanup;
-                    goto next_command;
-                }
-                memcpy(value_buf, value_start, value_len);
-                
                 // 存储值
-                err = poly_memkv_set(conn->store, key, value_buf, value_len);
-                free(value_buf);
+                err = set_with_expiry(conn->store, key, value_start, value_len, flags, expiry);
+                if (err != INFRA_OK) {
+                    const char* error = "SERVER_ERROR\r\n";
+                    if (send(infra_net_get_fd(conn->client), error, strlen(error), 0) < 0) {
+                        INFRA_LOG_ERROR("Failed to send error response");
+                        break;
+                    }
+                    goto next_command;
+                }
 
-                const char* response = (err == INFRA_OK) ? "STORED\r\n" : "SERVER_ERROR\r\n";
-                if (send(infra_net_get_fd(conn->client), response, strlen(response), 0) < 0) goto cleanup;
+                const char* response = "STORED\r\n";
+                if (send(infra_net_get_fd(conn->client), response, strlen(response), 0) < 0) {
+                    INFRA_LOG_ERROR("Failed to send response");
+                    break;
+                }
                 
                 cmd_start = value_start + value_len + 2;  // 跳过值和结尾的 \r\n
                 continue;  // 跳过 next_command
                 
             } else if (sscanf(cmd_start, "get %s", key) == 1 || sscanf(cmd_start, "gets %s", key) == 1) {
                 // GET/GETS 命令
-                void* value;
-                size_t value_len;
-                err = poly_memkv_get(conn->store, key, &value, &value_len);
+                void* value = NULL;
+                size_t value_len = 0;
+                uint32_t flags = 0;
+                err = get_with_expiry(conn->store, key, &value, &value_len, &flags);
                 
                 if (err == INFRA_OK && value != NULL) {
                     char response[64];
                     int len = snprintf(response, sizeof(response), 
-                                     "VALUE %s 0 %zu\r\n", key, value_len);
+                                     "VALUE %s %u %zu\r\n", key, flags, value_len);
                     if (send(infra_net_get_fd(conn->client), response, len, 0) < 0 ||
                         send(infra_net_get_fd(conn->client), value, value_len, 0) < 0 ||
                         send(infra_net_get_fd(conn->client), "\r\n", 2, 0) < 0) {
-                        infra_free(value);
-                        goto cleanup;
+                        free(value);
+                        INFRA_LOG_ERROR("Failed to send response");
+                        break;
                     }
-                    infra_free(value);
+                    free(value);
                 }
-                if (send(infra_net_get_fd(conn->client), "END\r\n", 5, 0) < 0) goto cleanup;
+                
+                // 必须发送 END 标记
+                if (send(infra_net_get_fd(conn->client), "END\r\n", 5, 0) < 0) {
+                    INFRA_LOG_ERROR("Failed to send END marker");
+                    break;
+                }
                 
             } else if (sscanf(cmd_start, "delete %s", key) == 1) {
                 // DELETE 命令
                 err = poly_memkv_del(conn->store, key);
                 const char* response = (err == INFRA_OK) ? "DELETED\r\n" : "NOT_FOUND\r\n";
-                if (send(infra_net_get_fd(conn->client), response, strlen(response), 0) < 0) goto cleanup;
+                if (send(infra_net_get_fd(conn->client), response, strlen(response), 0) < 0) {
+                    INFRA_LOG_ERROR("Failed to send response");
+                    break;
+                }
                 
             } else if (strncmp(cmd_start, "flush_all", 9) == 0) {
                 // FLUSH_ALL 命令 - 清空所有数据
-                poly_memkv_db_t* old_store = conn->store;
-                conn->store = NULL;
+                if (conn->store) {
+                    poly_memkv_destroy(conn->store);
+                }
 
                 // 创建新的存储实例
                 poly_memkv_config_t config = {
@@ -304,19 +347,16 @@ static void* handle_connection(void* arg) {
                 
                 err = poly_memkv_create(&config, &conn->store);
                 if (err == INFRA_OK) {
-                    if (old_store) {
-                        poly_memkv_destroy(old_store);
-                    }
                     if (send(infra_net_get_fd(conn->client), "OK\r\n", 4, 0) < 0) {
-                        if (conn->store) {
-                            poly_memkv_destroy(conn->store);
-                            conn->store = NULL;
-                        }
-                        goto cleanup;
+                        INFRA_LOG_ERROR("Failed to send response");
+                        break;
                     }
                 } else {
-                    conn->store = old_store;  // 恢复旧存储
-                    if (send(infra_net_get_fd(conn->client), "SERVER_ERROR\r\n", 14, 0) < 0) goto cleanup;
+                    INFRA_LOG_ERROR("Failed to create new storage after flush");
+                    if (send(infra_net_get_fd(conn->client), "SERVER_ERROR\r\n", 14, 0) < 0) {
+                        INFRA_LOG_ERROR("Failed to send error response");
+                        break;
+                    }
                 }
                 
             } else if (sscanf(cmd_start, "incr %s %s", key, bytes_str) == 2) {
@@ -327,9 +367,12 @@ static void* handle_connection(void* arg) {
                 if (err == INFRA_OK) {
                     char response[32];
                     int len = snprintf(response, sizeof(response), "%lld\r\n", new_value);
-                    if (send(infra_net_get_fd(conn->client), response, len, 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), response, len, 0) < 0) {
+                        INFRA_LOG_ERROR("Failed to send response");
+                        break;
+                    }
                 } else if (err == INFRA_ERROR_NOT_FOUND) {
-                    // 如果键不存在，从增量值开始
+                    // 如果键不存在，从 0 开始
                     new_value = delta;
                     char value_str[32];
                     int len = snprintf(value_str, sizeof(value_str), "%lld", new_value);
@@ -337,12 +380,21 @@ static void* handle_connection(void* arg) {
                     if (err == INFRA_OK) {
                         char response[32];
                         len = snprintf(response, sizeof(response), "%lld\r\n", new_value);
-                        if (send(infra_net_get_fd(conn->client), response, len, 0) < 0) goto cleanup;
+                        if (send(infra_net_get_fd(conn->client), response, len, 0) < 0) {
+                            INFRA_LOG_ERROR("Failed to send response");
+                            break;
+                        }
                     } else {
-                        if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) goto cleanup;
+                        if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) {
+                            INFRA_LOG_ERROR("Failed to send error response");
+                            break;
+                        }
                     }
                 } else {
-                    if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) {
+                        INFRA_LOG_ERROR("Failed to send error response");
+                        break;
+                    }
                 }
                 
             } else if (sscanf(cmd_start, "decr %s %s", key, bytes_str) == 2) {
@@ -353,23 +405,40 @@ static void* handle_connection(void* arg) {
                 if (err == INFRA_OK) {
                     char response[32];
                     int len = snprintf(response, sizeof(response), "%lld\r\n", new_value);
-                    if (send(infra_net_get_fd(conn->client), response, len, 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), response, len, 0) < 0) {
+                        INFRA_LOG_ERROR("Failed to send response");
+                        break;
+                    }
                 } else if (err == INFRA_ERROR_NOT_FOUND) {
                     // 如果键不存在，从 0 开始
                     new_value = 0;
-                    err = poly_memkv_set(conn->store, key, "0", 1);
+                    char value_str[32];
+                    int len = snprintf(value_str, sizeof(value_str), "%lld", new_value);
+                    err = poly_memkv_set(conn->store, key, value_str, len);
                     if (err == INFRA_OK) {
-                        if (send(infra_net_get_fd(conn->client), "0\r\n", 3, 0) < 0) goto cleanup;
+                        if (send(infra_net_get_fd(conn->client), "0\r\n", 3, 0) < 0) {
+                            INFRA_LOG_ERROR("Failed to send response");
+                            break;
+                        }
                     } else {
-                        if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) goto cleanup;
+                        if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) {
+                            INFRA_LOG_ERROR("Failed to send error response");
+                            break;
+                        }
                     }
                 } else {
-                    if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) goto cleanup;
+                    if (send(infra_net_get_fd(conn->client), "NOT_FOUND\r\n", 11, 0) < 0) {
+                        INFRA_LOG_ERROR("Failed to send error response");
+                        break;
+                    }
                 }
                 
             } else {
                 // 未知命令
-                if (send(infra_net_get_fd(conn->client), "ERROR\r\n", 7, 0) < 0) goto cleanup;
+                if (send(infra_net_get_fd(conn->client), "ERROR\r\n", 7, 0) < 0) {
+                    INFRA_LOG_ERROR("Failed to send error response");
+                    break;
+                }
             }
             
 next_command:
@@ -779,19 +848,49 @@ infra_error_t memkv_cmd_handler(int argc, char* argv[]) {
     if (should_start) {
         // 加载配置
         if (!config_path) {
-            INFRA_LOG_ERROR("Config file not specified");
-            return INFRA_ERROR_INVALID_PARAM;
-        }
+            // 使用默认配置
+            memkv_rule_t* rule = &g_context.rules[0];
+            memset(rule, 0, sizeof(memkv_rule_t));
+            strncpy(rule->bind_addr, "127.0.0.1", sizeof(rule->bind_addr) - 1);
+            rule->bind_port = MEMKV_DEFAULT_PORT;
+            rule->engine = POLY_MEMKV_ENGINE_SQLITE;
+            rule->db_path = strdup(":memory:");
+            rule->max_memory = 0;  // 无限制
+            rule->enable_compression = false;
+            rule->read_only = false;
+            g_context.rule_count = 1;
+            INFRA_LOG_INFO("Using default configuration");
+        } else {
+            err = load_config(config_path);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to load config: %d, using default configuration", err);
+                // 使用默认配置
+                memkv_rule_t* rule = &g_context.rules[0];
+                memset(rule, 0, sizeof(memkv_rule_t));
+                strncpy(rule->bind_addr, "127.0.0.1", sizeof(rule->bind_addr) - 1);
+                rule->bind_port = MEMKV_DEFAULT_PORT;
+                rule->engine = POLY_MEMKV_ENGINE_SQLITE;
+                rule->db_path = strdup(":memory:");
+                rule->max_memory = 0;  // 无限制
+                rule->enable_compression = false;
+                rule->read_only = false;
+                g_context.rule_count = 1;
+            }
 
-        err = load_config(config_path);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to load config: %d", err);
-            return err;
-        }
-
-        if (g_context.rule_count == 0) {
-            INFRA_LOG_ERROR("No valid rules found in config");
-            return INFRA_ERROR_INVALID_PARAM;
+            if (g_context.rule_count == 0) {
+                INFRA_LOG_ERROR("No valid rules found in config, using default configuration");
+                // 使用默认配置
+                memkv_rule_t* rule = &g_context.rules[0];
+                memset(rule, 0, sizeof(memkv_rule_t));
+                strncpy(rule->bind_addr, "127.0.0.1", sizeof(rule->bind_addr) - 1);
+                rule->bind_port = MEMKV_DEFAULT_PORT;
+                rule->engine = POLY_MEMKV_ENGINE_SQLITE;
+                rule->db_path = strdup(":memory:");
+                rule->max_memory = 0;  // 无限制
+                rule->enable_compression = false;
+                rule->read_only = false;
+                g_context.rule_count = 1;
+            }
         }
 
         // 启动服务
@@ -849,14 +948,15 @@ infra_error_t peer_memkv_get(poly_memkv_db_t* db, const char* key, void** value,
     if (!db) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    return poly_memkv_get(db, key, value, value_len);
+    uint32_t flags;
+    return get_with_expiry(db, key, value, value_len, &flags);
 }
 
 infra_error_t peer_memkv_set(poly_memkv_db_t* db, const char* key, const void* value, size_t value_len) {
     if (!db) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    return poly_memkv_set(db, key, value, value_len);
+    return set_with_expiry(db, key, value, value_len, 0, 0);
 }
 
 infra_error_t peer_memkv_del(poly_memkv_db_t* db, const char* key) {
@@ -889,7 +989,41 @@ infra_error_t peer_memkv_iter_next(poly_memkv_iter_t* iter, char** key, void** v
     if (!iter) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    return poly_memkv_iter_next(iter, key, value, value_len);
+    
+    // 获取下一个键值对
+    infra_error_t err = poly_memkv_iter_next(iter, key, value, value_len);
+    if (err != INFRA_OK) {
+        return err;
+    }
+    
+    // 如果值包含元数据，需要提取实际的值
+    if (*value && *value_len >= sizeof(memkv_item_t)) {
+        memkv_item_t* item = (memkv_item_t*)*value;
+        
+        // 检查是否过期
+        if (item->expiry > 0 && item->expiry <= time(NULL)) {
+            infra_free(*value);
+            *value = NULL;
+            *value_len = 0;
+            return INFRA_ERROR_NOT_FOUND;
+        }
+        
+        // 提取实际的值
+        void* real_value = malloc(item->value_len);
+        if (!real_value) {
+            infra_free(*value);
+            *value = NULL;
+            *value_len = 0;
+            return INFRA_ERROR_NO_MEMORY;
+        }
+        
+        memcpy(real_value, item->value, item->value_len);
+        infra_free(*value);
+        *value = real_value;
+        *value_len = item->value_len;
+    }
+    
+    return INFRA_OK;
 }
 
 void peer_memkv_iter_destroy(poly_memkv_iter_t* iter) {
@@ -904,24 +1038,38 @@ static infra_error_t poly_memkv_counter_op(poly_memkv_db_t* db, const char* key,
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    void* value;
-    size_t value_len;
-    infra_error_t err = poly_memkv_get(db, key, &value, &value_len);
+    void* value = NULL;
+    size_t value_len = 0;
+    uint32_t flags = 0;
+    infra_error_t err = get_with_expiry(db, key, &value, &value_len, &flags);
     
-    int64_t current = 0;
-    if (err == INFRA_OK && value) {
-        // 尝试将值转换为数字
-        char* end;
-        current = strtoll(value, &end, 10);
-        if (*end != '\0') {
-            // 非数字值
-            infra_free(value);
-            return INFRA_ERROR_INVALID_PARAM;
-        }
-        infra_free(value);
-    } else if (err != INFRA_OK && err != INFRA_ERROR_NOT_FOUND) {
+    if (err == INFRA_ERROR_NOT_FOUND) {
         return err;
     }
+    
+    if (err != INFRA_OK || !value) {
+        return err;
+    }
+    
+    // 尝试将值转换为数字
+    char* str_value = malloc(value_len + 1);
+    if (!str_value) {
+        free(value);
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    memcpy(str_value, value, value_len);
+    str_value[value_len] = '\0';
+    free(value);
+    
+    // 尝试将值转换为数字
+    char* end;
+    int64_t current = strtoll(str_value, &end, 10);
+    if (*end != '\0') {
+        // 非数字值
+        free(str_value);
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+    free(str_value);
     
     // 应用增量
     *new_value = current + delta;
@@ -934,7 +1082,8 @@ static infra_error_t poly_memkv_counter_op(poly_memkv_db_t* db, const char* key,
         return INFRA_ERROR_NO_MEMORY;
     }
     
-    err = poly_memkv_set(db, key, buf, len);
+    // 保持原有的过期时间和标志位
+    err = set_with_expiry(db, key, buf, len, flags, 0);
     if (err != INFRA_OK) {
         return err;
     }
@@ -952,7 +1101,11 @@ static infra_error_t poly_memkv_incr(poly_memkv_db_t* db, const char* key, int64
         if (len < 0 || len >= sizeof(buf)) {
             return INFRA_ERROR_NO_MEMORY;
         }
-        return poly_memkv_set(db, key, buf, len);
+        err = set_with_expiry(db, key, buf, len, 0, 0);
+        if (err != INFRA_OK) {
+            return err;
+        }
+        return INFRA_OK;
     }
     return err;
 }
@@ -962,7 +1115,80 @@ static infra_error_t poly_memkv_decr(poly_memkv_db_t* db, const char* key, int64
     if (err == INFRA_ERROR_NOT_FOUND) {
         // 如果键不存在，从 0 开始
         *new_value = 0;
-        return poly_memkv_set(db, key, "0", 1);
+        return set_with_expiry(db, key, "0", 1, 0, 0);
     }
     return err;
+}
+
+// 检查键是否过期
+static bool is_key_expired(poly_memkv_db_t* db, const char* key) {
+    void* value = NULL;
+    size_t value_len = 0;
+    infra_error_t err = poly_memkv_get(db, key, &value, &value_len);
+    
+    if (err != INFRA_OK || !value || value_len < sizeof(memkv_item_t)) {
+        if (value) infra_free(value);
+        return true;
+    }
+    
+    memkv_item_t* item = (memkv_item_t*)value;
+    bool expired = (item->expiry > 0 && item->expiry <= time(NULL));
+    infra_free(value);
+    
+    if (expired) {
+        // 删除过期的键
+        poly_memkv_del(db, key);
+    }
+    
+    return expired;
+}
+
+// 设置键值对
+static infra_error_t set_with_expiry(poly_memkv_db_t* db, const char* key, const void* value, 
+                                    size_t value_len, uint32_t flags, time_t expiry) {
+    size_t total_len = sizeof(memkv_item_t) + value_len;
+    memkv_item_t* item = malloc(total_len);
+    if (!item) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    
+    item->expiry = expiry > 0 ? time(NULL) + expiry : 0;
+    item->flags = flags;
+    item->value_len = value_len;
+    memcpy(item->value, value, value_len);
+    
+    infra_error_t err = poly_memkv_set(db, key, item, total_len);
+    free(item);
+    return err;
+}
+
+// 获取键值对
+static infra_error_t get_with_expiry(poly_memkv_db_t* db, const char* key, void** value, 
+                                    size_t* value_len, uint32_t* flags) {
+    if (is_key_expired(db, key)) {
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    void* raw_value = NULL;
+    size_t raw_len = 0;
+    infra_error_t err = poly_memkv_get(db, key, &raw_value, &raw_len);
+    
+    if (err != INFRA_OK || !raw_value || raw_len < sizeof(memkv_item_t)) {
+        if (raw_value) infra_free(raw_value);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    memkv_item_t* item = (memkv_item_t*)raw_value;
+    if (flags) *flags = item->flags;
+    
+    *value_len = item->value_len;
+    *value = malloc(*value_len);
+    if (!*value) {
+        infra_free(raw_value);
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    
+    memcpy(*value, item->value, *value_len);
+    infra_free(raw_value);
+    return INFRA_OK;
 }
