@@ -23,14 +23,6 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
         .level = INFRA_LOG_LEVEL_INFO,
         .log_file = NULL
     },
-    //.ds = {
-    //    .hash_initial_size = 16,
-    //    .hash_load_factor = 75
-    //},
-    //.mux = {
-    //    .max_events = 1024,
-    //    .edge_trigger = false
-    //},
     .net = {
         .flags = 0,  // 默认使用阻塞模式
         .connect_timeout_ms = 1000,  // 1秒连接超时
@@ -54,10 +46,6 @@ infra_global_t g_infra = {
         .callback = NULL,
         .mutex = NULL
     },
-    //.ds = {
-    //    .hash_initial_size = INFRA_DEFAULT_CONFIG.ds.hash_initial_size,
-    //    .hash_load_factor = INFRA_DEFAULT_CONFIG.ds.hash_load_factor
-    //},
 };
 
 // 自动初始化
@@ -131,6 +119,9 @@ infra_error_t infra_config_validate(const infra_config_t* config) {
     return INFRA_OK;
 }
 
+// 运行时更新配置
+// 注意：目前仅支持更新日志相关配置（log level和log file）
+// 其他配置项（如内存池、数据结构等）必须在初始化时通过 infra_init_with_config 设置
 infra_error_t infra_config_apply(const infra_config_t* config) {
     if (!config) {
         return INFRA_ERROR_INVALID_PARAM;
@@ -307,39 +298,7 @@ infra_error_t infra_get_status(infra_status_t* status) {
 // Memory Management
 //-----------------------------------------------------------------------------
 
-// 内存管理函数已迁移到 infra_memory.c
-
-//-----------------------------------------------------------------------------
-// String Operations
-//-----------------------------------------------------------------------------
-
-size_t infra_strlen(const char* s) {
-    return strlen(s);
-}
-
-char* infra_strcpy(char* dest, const char* src) {
-    return strcpy(dest, src);
-}
-
-char* infra_strncpy(char* dest, const char* src, size_t n) {
-    return strncpy(dest, src, n);
-}
-
-char* infra_strcat(char* dest, const char* src) {
-    return strcat(dest, src);
-}
-
-char* infra_strncat(char* dest, const char* src, size_t n) {
-    return strncat(dest, src, n);
-}
-
-int infra_strcmp(const char* s1, const char* s2) {
-    return strcmp(s1, s2);
-}
-
-int infra_strncmp(const char* s1, const char* s2, size_t n) {
-    return strncmp(s1, s2, n);
-}
+// 注意：简单字符串操作函数已移至 infra_core.h 作为内联函数
 
 char* infra_strdup(const char* s) {
     size_t len = infra_strlen(s) + 1;
@@ -361,17 +320,7 @@ char* infra_strndup(const char* s, size_t n) {
     return new_str;
 }
 
-char* infra_strchr(const char* s, int c) {
-    return strchr(s, c);
-}
-
-char* infra_strrchr(const char* s, int c) {
-    return strrchr(s, c);
-}
-
-char* infra_strstr(const char* haystack, const char* needle) {
-    return strstr(haystack, needle);
-}
+// 内存管理函数已迁移到 infra_memory.c
 
 //-----------------------------------------------------------------------------
 // Buffer Operations

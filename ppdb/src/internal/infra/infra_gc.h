@@ -1,9 +1,9 @@
 #ifndef INFRA_GC_H
 #define INFRA_GC_H
 
+//TODO gc with memory? or memory_gc ?
+
 #include "infra_error.h"
-#include <stdbool.h>
-#include <stddef.h>
 
 // GC配置
 typedef struct {

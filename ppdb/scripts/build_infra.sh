@@ -53,7 +53,7 @@ compile_file() {
     fi
 
     # 获取头文件依赖
-    local headers=$(${CC} -MM "${src}" -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${TOOLCHAIN_DIR}/include" | grep -o '[^ ]*\.h')
+    local headers=$(${CC} -MM "${src}" -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${TOOLCHAIN_DIR}/include" | sed 's/.*: //' | tr ' \\' '\n' | grep '\.h$')
     
     # 检查是否需要重新编译
     local need_compile=0
@@ -66,13 +66,10 @@ compile_file() {
         fi
         # 检查所有头文件的时间戳
         for header in $headers; do
-            # 在不同的include路径中查找头文件
-            for inc_path in "${PPDB_DIR}/include" "${SRC_DIR}" "${TOOLCHAIN_DIR}/include"; do
-                if [ -f "${inc_path}/${header}" ] && [ "${inc_path}/${header}" -nt "$obj" ]; then
-                    need_compile=1
-                    break 2
-                fi
-            done
+            if [ -f "$header" ] && [ "$header" -nt "$obj" ]; then
+                need_compile=1
+                break
+            fi
         done
     fi
     
