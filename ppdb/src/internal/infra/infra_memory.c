@@ -206,16 +206,13 @@ static void reset_memory_state(void) {
 }
 
 infra_error_t infra_memory_init(const infra_memory_config_t* config) {
+    if (g_memory.initialized) {
+        return INFRA_ERROR_ALREADY_INITIALIZED;
+    }
+
     if (!config) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-
-    if (g_memory.initialized) {
-        return INFRA_ERROR_ALREADY_EXISTS;
-    }
-
-    // 重置状态
-    reset_memory_state();
 
     // 复制配置
     g_memory.config = *config;
@@ -226,27 +223,35 @@ infra_error_t infra_memory_init(const infra_memory_config_t* config) {
         return err;
     }
 
-    // 如果使用内存池，初始化内存池
-    if (config->use_memory_pool) {
+    // 初始化内存池
+    if (g_memory.config.use_memory_pool) {
         if (!initialize_pool()) {
-            infra_mutex_destroy(&g_memory.mutex);
+            infra_mutex_destroy(g_memory.mutex);
             return INFRA_ERROR_NO_MEMORY;
         }
     }
 
-    // 如果使用GC，初始化GC
-    if (config->use_gc) {
+#ifdef INFRA_USE_GC
+    // 初始化GC
+    if (g_memory.config.use_gc) {
         // 获取栈底位置（这里使用一个局部变量的地址作为近似）
         void* stack_bottom = &err;
         err = infra_gc_init_with_stack(&config->gc_config, stack_bottom);
         if (err != INFRA_OK) {
-            if (config->use_memory_pool) {
+            if (g_memory.config.use_memory_pool) {
                 cleanup_pool();
             }
-            infra_mutex_destroy(&g_memory.mutex);
+            infra_mutex_destroy(g_memory.mutex);
             return err;
         }
     }
+#else
+    // 如果没有GC支持，强制关闭GC
+    g_memory.config.use_gc = false;
+#endif
+
+    // 重置统计信息
+    reset_memory_state();
 
     g_memory.initialized = true;
     return INFRA_OK;
@@ -316,10 +321,13 @@ static void* allocate_memory(size_t size) {
 
     void* ptr = NULL;
     
+#ifdef INFRA_USE_GC
     if (g_memory.config.use_gc) {
         // 使用GC分配内存
         ptr = infra_gc_alloc(size);
-    } else if (g_memory.config.use_memory_pool) {
+    } else
+#endif
+    if (g_memory.config.use_memory_pool) {
         // 使用内存池分配内存
         ptr = allocate_from_pool(size);
     } else {
@@ -342,10 +350,13 @@ static void free_memory(void* ptr) {
         return;
     }
 
+#ifdef INFRA_USE_GC
     if (g_memory.config.use_gc) {
         // 使用GC时，free是可选的
         // 实际的内存释放会在GC时进行
-    } else if (g_memory.config.use_memory_pool) {
+    } else
+#endif
+    if (g_memory.config.use_memory_pool) {
         memory_block_t* block = get_block_header(ptr);
         if (block->is_used) {
             block->is_used = false;
@@ -439,6 +450,17 @@ void infra_free(void* ptr) {
 //-----------------------------------------------------------------------------
 // Memory Operations
 //-----------------------------------------------------------------------------
+
+#ifndef INFRA_USE_GC
+// 空的 GC 实现
+void* infra_gc_alloc(size_t size) {
+    return NULL;
+}
+
+infra_error_t infra_gc_init_with_stack(const infra_gc_config_t* config, void* stack_bottom) {
+    return INFRA_ERROR_NOT_SUPPORTED;
+}
+#endif
 
 void* infra_memset(void* s, int c, size_t n) {
     return memset(s, c, n);

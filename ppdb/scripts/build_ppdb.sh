@@ -11,7 +11,7 @@ mkdir -p "${BUILD_DIR}/obj"
 
 # 设置条件编译选项
 ENABLE_RINETD=1
-ENABLE_MEMKV=1
+ENABLE_MEMKV=0
 
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
@@ -30,7 +30,8 @@ echo remove "${BUILD_DIR}/ppdb_latest.exe"
 rm -f "${BUILD_DIR}/ppdb_latest.exe"
 rm -f "${PPDB_DIR}/ppdb_latest.exe"
 echo "Building ppdb..."
-# 准备源文件列表
+
+# 准备基础源文件列表
 SOURCES=(
     "${SRC_DIR}/internal/infra/infra_core.c"
     "${SRC_DIR}/internal/infra/infra_memory.c"
@@ -41,7 +42,6 @@ SOURCES=(
     "${SRC_DIR}/internal/poly/poly_cmdline.c"
     "${SRC_DIR}/internal/poly/poly_atomic.c"
     "${SRC_DIR}/internal/poly/poly_plugin.c"
-    "${SRC_DIR}/internal/poly/poly_memkv.c"
     "${SRC_DIR}/internal/peer/peer_service.c"
     "${SRC_DIR}/ppdb/ppdb.c"
 )
@@ -53,6 +53,7 @@ fi
 
 if [ "${ENABLE_MEMKV}" = "1" ]; then
     SOURCES+=("${SRC_DIR}/internal/peer/peer_memkv.c")
+    SOURCES+=("${SRC_DIR}/internal/poly/poly_memkv.c")
 fi
 
 # 获取 CPU 核心数

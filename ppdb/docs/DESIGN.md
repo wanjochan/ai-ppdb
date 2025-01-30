@@ -112,10 +112,8 @@ sh ppdb/scripts/build_test_infra.sh [module]
   - norun参数：只构建不运行测试
 
 # 构建 ppdb 产品
-.\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）
-  里面会复制 ppdb.exe 到 .\ppdb\ppdb_latest.exe
-
-  .\ppdb\scripts\build_ppdb.bat
+rm -rf ppdb/build
+sh ppdb/scripts/build_ppdb.sh
 
 ## rinetd
   .\ppdb\ppdb_latest.exe --log-level=5 rinetd --start
