@@ -33,20 +33,20 @@ typedef struct memkv_context {
     uint16_t port;
     infra_thread_pool_t* thread_pool;
     infra_mutex_t mutex;
-    poly_memkv_t* store;
-    poly_memkv_engine_type_t engine;
+    poly_memkv_db_t* store;
+    poly_memkv_engine_t engine;
     char* plugin_path;
 } memkv_context_t;
 
 // Peer Memory KV Store handle implementation
-struct peer_memkv_db {
+typedef struct peer_memkv_db {
     poly_memkv_db_t* db;  // Underlying poly_memkv handle
-};
+} peer_memkv_db_t;
 
 // Peer Memory KV Store iterator implementation
-struct peer_memkv_iter {
+typedef struct peer_memkv_iter {
     poly_memkv_iter_t* iter;  // Underlying poly_memkv iterator
-};
+} peer_memkv_iter_t;
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
@@ -59,6 +59,11 @@ static infra_error_t memkv_start(void);
 static infra_error_t memkv_stop(void);
 static bool memkv_is_running(void);
 static infra_error_t memkv_cmd_handler(int argc, char* argv[]);
+
+// Forward declarations
+static infra_error_t poly_memkv_counter_op(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
+static infra_error_t poly_memkv_incr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
+static infra_error_t poly_memkv_decr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
 
 //-----------------------------------------------------------------------------
 // Command Line Options
@@ -500,7 +505,7 @@ static infra_error_t memkv_init(const infra_config_t* config) {
 
     // 保存现有配置
     uint16_t port = g_context.port ? g_context.port : 11211;  // 如果未设置则使用默认值
-    poly_memkv_engine_type_t engine = g_context.engine ? g_context.engine : POLY_MEMKV_ENGINE_SQLITE;  // 默认引擎
+    poly_memkv_engine_t engine = g_context.engine ? g_context.engine : POLY_MEMKV_ENGINE_SQLITE;  // 默认引擎
     char* plugin_path = g_context.plugin_path;  // 保存插件路径
     g_context.plugin_path = NULL;  // 防止被 memset 清除后释放
     
@@ -534,7 +539,7 @@ static infra_error_t memkv_init(const infra_config_t* config) {
     poly_memkv_config_t config_memkv = {
         .max_key_size = MEMKV_MAX_KEY_SIZE,
         .max_value_size = MEMKV_MAX_VALUE_SIZE,
-        .engine_type = g_context.engine,
+        .engine = g_context.engine,
         .plugin_path = g_context.plugin_path
     };
     
@@ -650,7 +655,7 @@ infra_error_t memkv_cmd_handler(int argc, char* argv[]) {
     // 解析命令行参数
     bool should_start = false;
     uint16_t new_port = 11211;  // 默认端口
-    poly_memkv_engine_type_t new_engine = POLY_MEMKV_ENGINE_SQLITE;  // 默认引擎
+    poly_memkv_engine_t new_engine = POLY_MEMKV_ENGINE_SQLITE;  // 默认引擎
     char* new_plugin_path = NULL;
     
     for (int i = 1; i < argc; i++) {
@@ -773,88 +778,135 @@ infra_error_t memkv_cmd_handler(int argc, char* argv[]) {
     return INFRA_OK;
 }
 
-infra_error_t peer_memkv_open(peer_memkv_db_t** db, const char* path) {
+infra_error_t peer_memkv_open(poly_memkv_db_t** db, const char* path) {
     if (!db || !path) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-
-    peer_memkv_db_t* peer_db = infra_malloc(sizeof(peer_memkv_db_t));
-    if (!peer_db) {
+    
+    poly_memkv_db_t* new_db = infra_malloc(sizeof(poly_memkv_db_t));
+    if (!new_db) {
         return INFRA_ERROR_NO_MEMORY;
     }
-
-    // Default to SQLite engine for now
-    infra_error_t err = poly_memkv_open(&peer_db->db, path, POLY_MEMKV_ENGINE_SQLITE);
+    
+    // 初始化数据库
+    poly_memkv_config_t config = {
+        .url = path,
+        .engine = POLY_MEMKV_ENGINE_SQLITE,
+        .max_key_size = MEMKV_MAX_KEY_SIZE,
+        .max_value_size = MEMKV_MAX_VALUE_SIZE,
+        .memory_limit = 0,  // 无限制
+        .enable_compression = false,
+        .plugin_path = NULL,
+        .allow_fallback = true,
+        .read_only = false
+    };
+    
+    infra_error_t err = poly_memkv_create(&config, db);
     if (err != INFRA_OK) {
-        infra_free(peer_db);
+        infra_free(new_db);
         return err;
     }
-
-    *db = peer_db;
+    
     return INFRA_OK;
 }
 
-void peer_memkv_close(peer_memkv_db_t* db) {
-    if (!db) return;
-    if (db->db) {
-        poly_memkv_close(db->db);
+void peer_memkv_close(poly_memkv_db_t* db) {
+    if (db) {
+        poly_memkv_destroy(db);
     }
-    infra_free(db);
 }
 
-infra_error_t peer_memkv_get(peer_memkv_db_t* db, const char* key, void** value, size_t* value_len) {
-    if (!db || !key || !value || !value_len) {
+infra_error_t peer_memkv_get(poly_memkv_db_t* db, const char* key, void** value, size_t* value_len) {
+    if (!db) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    return poly_memkv_get(db->db, key, value, value_len);
+    return poly_memkv_get(db, key, value, value_len);
 }
 
-infra_error_t peer_memkv_set(peer_memkv_db_t* db, const char* key, const void* value, size_t value_len) {
-    if (!db || !key || !value) {
+infra_error_t peer_memkv_set(poly_memkv_db_t* db, const char* key, const void* value, size_t value_len) {
+    if (!db) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    return poly_memkv_set(db->db, key, value, value_len);
+    return poly_memkv_set(db, key, value, value_len);
 }
 
-infra_error_t peer_memkv_del(peer_memkv_db_t* db, const char* key) {
-    if (!db || !key) {
+infra_error_t peer_memkv_del(poly_memkv_db_t* db, const char* key) {
+    if (!db) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    return poly_memkv_del(db->db, key);
+    return poly_memkv_del(db, key);
 }
 
-infra_error_t peer_memkv_iter_create(peer_memkv_db_t* db, peer_memkv_iter_t** iter) {
+infra_error_t peer_memkv_iter_create(poly_memkv_db_t* db, poly_memkv_iter_t** iter) {
     if (!db || !iter) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-
-    peer_memkv_iter_t* peer_iter = infra_malloc(sizeof(peer_memkv_iter_t));
-    if (!peer_iter) {
+    
+    poly_memkv_iter_t* new_iter = infra_malloc(sizeof(poly_memkv_iter_t));
+    if (!new_iter) {
         return INFRA_ERROR_NO_MEMORY;
     }
-
-    infra_error_t err = poly_memkv_iter_create(db->db, &peer_iter->iter);
+    
+    infra_error_t err = poly_memkv_iter_create(db, iter);
     if (err != INFRA_OK) {
-        infra_free(peer_iter);
+        infra_free(new_iter);
         return err;
     }
-
-    *iter = peer_iter;
+    
     return INFRA_OK;
 }
 
-infra_error_t peer_memkv_iter_next(peer_memkv_iter_t* iter, char** key, void** value, size_t* value_len) {
-    if (!iter || !key || !value || !value_len) {
+infra_error_t peer_memkv_iter_next(poly_memkv_iter_t* iter, char** key, void** value, size_t* value_len) {
+    if (!iter) {
         return INFRA_ERROR_INVALID_PARAM;
     }
-    return poly_memkv_iter_next(iter->iter, key, value, value_len);
+    return poly_memkv_iter_next(iter, key, value, value_len);
 }
 
-void peer_memkv_iter_destroy(peer_memkv_iter_t* iter) {
-    if (!iter) return;
-    if (iter->iter) {
-        poly_memkv_iter_destroy(iter->iter);
+void peer_memkv_iter_destroy(poly_memkv_iter_t* iter) {
+    if (iter) {
+        poly_memkv_iter_destroy(iter);
     }
-    infra_free(iter);
 }
 
+// 实现 incr/decr 功能
+static infra_error_t poly_memkv_counter_op(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value) {
+    void* value = NULL;
+    size_t value_len = 0;
+    infra_error_t err;
+    
+    // 获取当前值
+    err = poly_memkv_get(db, key, &value, &value_len);
+    if (err != INFRA_OK && err != INFRA_ERROR_NOT_FOUND) {
+        return err;
+    }
+    
+    int64_t current = 0;
+    if (err == INFRA_OK && value) {
+        // 转换为数字
+        char* end;
+        current = strtoll(value, &end, 10);
+        if (*end != '\0') {
+            free(value);
+            return INFRA_ERROR_INVALID_FORMAT;
+        }
+        free(value);
+    }
+    
+    // 计算新值
+    current += delta;
+    *new_value = current;
+    
+    // 转换回字符串并存储
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)current);
+    return poly_memkv_set(db, key, buf, strlen(buf));
+}
+
+static infra_error_t poly_memkv_incr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value) {
+    return poly_memkv_counter_op(db, key, delta, new_value);
+}
+
+static infra_error_t poly_memkv_decr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value) {
+    return poly_memkv_counter_op(db, key, -delta, new_value);
+}

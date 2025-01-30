@@ -11,7 +11,7 @@ mkdir -p "${BUILD_DIR}/obj"
 
 # 设置条件编译选项
 ENABLE_RINETD=1
-ENABLE_MEMKV=0
+ENABLE_MEMKV=1
 
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
@@ -63,7 +63,14 @@ else
     JOBS=$(nproc)
 fi
 
-# 编译第三方库(TODO call build_poly.sh instead)
+# 编译第三方库
+echo "Building poly library..."
+sh "$(dirname "$0")/build_poly.sh"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to build poly library"
+    exit 1
+fi
+
 echo "Building sqlite3..."
 if [ ! -f "${BUILD_DIR}/obj/sqlite3.o" ] || [ "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -nt "${BUILD_DIR}/obj/sqlite3.o" ]; then
     "${CC}" ${CFLAGS} -c "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -o "${BUILD_DIR}/obj/sqlite3.o"
@@ -138,7 +145,7 @@ done
 
 # 链接
 echo "Linking..."
-"${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${BUILD_DIR}/obj/sqlite3.o" -o "${BUILD_DIR}/ppdb_latest.exe"
+"${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${BUILD_DIR}/obj/sqlite3.o" "${BUILD_DIR}/poly/libpoly.a" -o "${BUILD_DIR}/ppdb_latest.exe"
 if [ $? -ne 0 ]; then
     echo "Error: Linking failed"
     rm -f "${BUILD_DIR}/ppdb_latest.exe"

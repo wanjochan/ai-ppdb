@@ -99,16 +99,16 @@ for pid in ${pids[@]}; do
     fi
 done
 
-# # 创建静态库（暂时不需要）
-# echo -e "${GREEN}Creating static library...${NC}"
-# "${AR}" rcs "${BUILD_DIR}/poly/libpoly.a" "${BUILD_DIR}"/poly/*.o
-# if [ $? -ne 0 ]; then
-#     echo -e "${RED}Error: Failed to create static library${NC}"
-#     exit 1
-# fi
+# 创建静态库
+echo -e "${GREEN}Creating static library...${NC}"
+"${AR}" rcs "${BUILD_DIR}/poly/libpoly.a" "${BUILD_DIR}"/poly/*.o
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Error: Failed to create static library${NC}"
+    exit 1
+fi
 
-# echo -e "${GREEN}Build complete.${NC}"
-# ls -lh "${BUILD_DIR}/poly/libpoly.a"
+echo -e "${GREEN}Build complete.${NC}"
+ls -lh "${BUILD_DIR}/poly/libpoly.a"
 
 # 在文件末尾添加编译时间统计
 end_time=$(date +%s)
