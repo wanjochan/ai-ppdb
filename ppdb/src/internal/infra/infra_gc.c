@@ -151,6 +151,12 @@ void infra_gc_collect(void) {
 static void mark_phase(void) {
     // 扫描栈
     scan_stack();
+    
+    // 扫描全局区域（TODO：需要注册全局根）
+    // scan_global_roots();
+    
+    // 扫描寄存器（TODO：需要平台相关实现）
+    // scan_registers();
 }
 
 // 扫描栈空间
@@ -161,6 +167,10 @@ static void scan_stack(void) {
     // 确保正确的扫描方向
     void* start = stack_var < gc_state.stack_bottom ? stack_var : gc_state.stack_bottom;
     void* end = stack_var < gc_state.stack_bottom ? gc_state.stack_bottom : stack_var;
+
+    if (gc_state.enable_debug) {
+        INFRA_LOG_DEBUG("GC: Scanning stack from %p to %p", start, end);
+    }
 
     scan_memory_region(start, end);
 }
@@ -182,6 +192,10 @@ static void mark_object(void* ptr) {
     infra_gc_header_t* header = get_header(ptr);
     if (!header || header->marked) return;
 
+    if (gc_state.enable_debug) {
+        INFRA_LOG_DEBUG("GC: Marking object at %p (size: %zu)", ptr, header->size);
+    }
+
     // 标记对象为存活
     header->marked = true;
 
@@ -200,18 +214,33 @@ static void sweep_phase(void) {
         infra_gc_header_t* header = *current;
         
         if (!header->marked) {
-            // 对象未标记，需要释放
-            *current = header->next;
-            gc_state.total_size -= header->size;
+            // 对象未被标记，需要释放
+            *current = header->next;  // 从链表中移除
+            
+            if (gc_state.enable_debug) {
+                INFRA_LOG_DEBUG("GC: Freeing unmarked object at %p (size: %zu)", 
+                              get_user_ptr(header), header->size);
+            }
+            
             freed_size += header->size;
             freed_count++;
+            
+            // 更新统计信息
+            gc_state.total_size -= header->size;
             gc_state.stats.current_allocated -= header->size;
             gc_state.stats.total_freed += header->size;
+            
+            // 释放内存
             infra_free(header);
         } else {
-            // 对象已标记，保留到下一轮
+            // 对象被标记，清除标记以备下次GC
+            header->marked = false;
             current = &header->next;
         }
+    }
+    
+    if (gc_state.enable_debug) {
+        INFRA_LOG_DEBUG("GC: Swept %zu objects, freed %zu bytes", freed_count, freed_size);
     }
 }
 

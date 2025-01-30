@@ -56,8 +56,25 @@ static void test_memory_cleanup(void) {
 
 // 基本内存分配测试
 static void test_memory_basic(void) {
-    setup_test();
-    
+    // 确保系统未初始化
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
+
+    // 初始化默认配置
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK);
+
+    // 修改内存配置
+    config.memory.use_memory_pool = false;  // 使用系统内存
+    config.memory.pool_initial_size = 1024 * 1024;  // 1MB
+    config.memory.pool_alignment = sizeof(void*);
+    config.memory.use_gc = false;  // 不使用 GC
+
+    // 初始化infra系统
+    err = infra_init_with_config(INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(infra_is_initialized(INFRA_INIT_MEMORY));
+
     // 测试基本分配和释放
     void* ptr = infra_malloc(100);
     TEST_ASSERT(ptr != NULL);
@@ -74,12 +91,32 @@ static void test_memory_basic(void) {
     TEST_ASSERT(ptr != NULL);
     infra_free(ptr);
     
-    teardown_test();
+    // 清理
+    infra_cleanup();
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
 }
 
 // 内存操作测试
 static void test_memory_operations(void) {
-    setup_test();
+    // 确保系统未初始化
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
+
+    // 初始化默认配置
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK);
+
+    // 修改内存配置
+    config.memory.use_memory_pool = false;  // 使用系统内存
+    config.memory.pool_initial_size = 1024 * 1024;  // 1MB
+    config.memory.pool_alignment = sizeof(void*);
+    config.memory.use_gc = false;  // 不使用 GC
+
+    // 初始化infra系统
+    err = infra_init_with_config(INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(infra_is_initialized(INFRA_INIT_MEMORY));
+
     // 测试memset
     void* ptr = infra_malloc(100);
     TEST_ASSERT(ptr != NULL);
@@ -97,12 +134,32 @@ static void test_memory_operations(void) {
     infra_free(ptr);
     infra_free(dest);
     
-    teardown_test();
+    // 清理
+    infra_cleanup();
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
 }
 
 // 内存性能测试
 static void test_memory_performance(void) {
-    setup_test();
+    // 确保系统未初始化
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
+
+    // 初始化默认配置
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK);
+
+    // 修改内存配置
+    config.memory.use_memory_pool = false;  // 使用系统内存
+    config.memory.pool_initial_size = 1024 * 1024;  // 1MB
+    config.memory.pool_alignment = sizeof(void*);
+    config.memory.use_gc = false;  // 不使用 GC
+
+    // 初始化infra系统
+    err = infra_init_with_config(INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(infra_is_initialized(INFRA_INIT_MEMORY));
+
     const int iterations = 1000;
     const int sizes[] = {8, 16, 32, 64, 128, 256, 512, 1024};
     const int num_sizes = sizeof(sizes) / sizeof(sizes[0]);
@@ -127,12 +184,32 @@ static void test_memory_performance(void) {
     double time_spent = (double)(end - start) / 1000000.0;  // Convert to seconds
     TEST_ASSERT(time_spent < 30.0);  // 性能测试应在30秒内完成
     
-    teardown_test();
+    // 清理
+    infra_cleanup();
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
 }
 
 // 内存压力测试
 static void test_memory_stress(void) {
-    setup_test();
+    // 确保系统未初始化
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
+
+    // 初始化默认配置
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK);
+
+    // 修改内存配置
+    config.memory.use_memory_pool = false;  // 使用系统内存
+    config.memory.pool_initial_size = 1024 * 1024;  // 1MB
+    config.memory.pool_alignment = sizeof(void*);
+    config.memory.use_gc = false;  // 不使用 GC
+
+    // 初始化infra系统
+    err = infra_init_with_config(INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK);
+    TEST_ASSERT(infra_is_initialized(INFRA_INIT_MEMORY));
+
     const int iterations = 100;
     const int max_allocs = 1000;
     void* ptrs[1000];
@@ -157,7 +234,9 @@ static void test_memory_stress(void) {
         }
     }
     
-    teardown_test();
+    // 清理
+    infra_cleanup();
+    TEST_ASSERT(!infra_is_initialized(INFRA_INIT_MEMORY));
 }
 
 // 内存保护测试

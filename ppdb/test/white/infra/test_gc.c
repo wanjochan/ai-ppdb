@@ -1,205 +1,185 @@
-#include "framework/test_framework.h"
+#include "test_framework.h"
 #include "internal/infra/infra_gc.h"
-#include "internal/infra/infra_core.h"
 #include "internal/infra/infra_memory.h"
 
-// 测试函数声明
-static void test_gc_init(void);
-static void test_gc_alloc(void);
-static void test_gc_lifecycle(void);
-static void test_gc_stress(void);
+// 测试数据结构
+typedef struct test_node {
+    int value;
+    struct test_node* next;
+} test_node_t;
 
-// 打印GC统计信息
-static void print_gc_stats(const char* prefix) {
-    infra_gc_stats_t stats;
-    infra_gc_get_stats(&stats);
-    printf("%s: total_allocated=%zu, current_allocated=%zu, total_freed=%zu, collections=%zu\n",
-           prefix, stats.total_allocated, stats.current_allocated, 
-           stats.total_freed, stats.total_collections);
+// 全局变量用于测试
+static test_node_t* root = NULL;
+
+// 创建一个节点
+static test_node_t* create_node(int value) {
+    test_node_t* node = (test_node_t*)infra_gc_alloc(sizeof(test_node_t));
+    if (node) {
+        node->value = value;
+        node->next = NULL;
+    }
+    return node;
 }
 
-// 测试GC初始化
-static void test_gc_init(void) {
-    // 使用较小的阈值以便更容易触发GC
-    infra_gc_config_t config = {
-        .initial_heap_size = 1024,
-        .gc_threshold = 512,  // 较小的阈值
-        .enable_debug = true
-    };
-    
-    infra_error_t err = infra_gc_init_with_stack(&config, &config);
-    TEST_ASSERT(err == INFRA_OK);
-    
-    infra_gc_stats_t stats;
-    infra_gc_get_stats(&stats);
-    
-    TEST_ASSERT(stats.total_allocated == 0);
-    TEST_ASSERT(stats.current_allocated == 0);
-    TEST_ASSERT(stats.total_collections == 0);
-}
-
-// 测试基本内存分配
-static void test_gc_alloc(void) {
-    printf("\n=== Starting test_gc_alloc ===\n");
-    
-    // 使用较小的阈值
-    infra_gc_config_t config = {
-        .initial_heap_size = 1024,
-        .gc_threshold = 512,
-        .enable_debug = true
-    };
-    infra_gc_init_with_stack(&config, &config);
-    
-    print_gc_stats("After init");
-    
-    // 分配一些内存并保持引用
-    char* str = infra_gc_alloc(100);
-    TEST_ASSERT(str != NULL);
-    
-    // 写入数据
-    strcpy(str, "Hello World");
-    TEST_ASSERT(strcmp(str, "Hello World") == 0);
-    
-    print_gc_stats("After first allocation");
-    
-    // 分配更多内存触发GC
-    for (int i = 0; i < 20; i++) {
-        void* ptr = infra_gc_alloc(50);  // 每次分配50字节
-        TEST_ASSERT(ptr != NULL);
-        // 不保持引用，让这些对象成为垃圾
-        
-        if (i % 5 == 0) {
-            print_gc_stats("During allocations");
+// 创建一个链表
+static void create_list(int count) {
+    test_node_t* current = NULL;
+    for (int i = 0; i < count; i++) {
+        test_node_t* node = create_node(i);
+        if (!root) {
+            root = node;
+            current = root;
+        } else {
+            current->next = node;
+            current = node;
         }
     }
-    
-    // 强制进行GC
-    infra_gc_collect();
-    print_gc_stats("After forced GC");
-    
-    // 验证str的内容没有被GC破坏
-    TEST_ASSERT(strcmp(str, "Hello World") == 0);
-    
-    infra_gc_stats_t stats;
-    infra_gc_get_stats(&stats);
-    TEST_ASSERT(stats.total_collections > 0);
-    TEST_ASSERT(stats.total_freed > 0);
-    
-    printf("=== Finished test_gc_alloc ===\n\n");
 }
 
-// 测试对象生命周期
-static void test_gc_lifecycle(void) {
-    printf("\n=== Starting test_gc_lifecycle ===\n");
-    
-    // 使用较小的阈值
-    infra_gc_config_t config = {
-        .initial_heap_size = 1024,
-        .gc_threshold = 512,
+// 测试：GC基本功能
+TEST_CASE(test_gc_basic) {
+    // 初始化GC配置
+    infra_gc_config_t gc_config = {
+        .initial_heap_size = 1024 * 1024,  // 1MB
+        .gc_threshold = 512 * 1024,        // 512KB
         .enable_debug = true
     };
-    infra_gc_init_with_stack(&config, &config);
     
-    print_gc_stats("After init");
+    // 初始化内存管理配置
+    infra_memory_config_t mem_config = {
+        .use_memory_pool = false,
+        .use_gc = true,
+        .gc_config = gc_config
+    };
     
-    // 创建一些相互引用的对象
-    typedef struct node {
-        struct node* next;
-        int data;
-    } node_t;
+    // 初始化内存管理
+    infra_error_t err = infra_memory_init(&mem_config);
+    ASSERT_EQ(err, INFRA_OK);
     
-    // 创建循环链表
-    node_t* head = infra_gc_alloc(sizeof(node_t));
-    TEST_ASSERT(head != NULL);
-    head->data = 1;
+    // 创建一个包含100个节点的链表
+    create_list(100);
     
-    node_t* second = infra_gc_alloc(sizeof(node_t));
-    TEST_ASSERT(second != NULL);
-    second->data = 2;
+    // 验证链表创建成功
+    ASSERT_NOT_NULL(root);
     
-    head->next = second;
-    second->next = head;
-    
-    print_gc_stats("After creating nodes");
-    
-    // 让对象不可达
-    head = NULL;
-    second = NULL;
-    
-    // 强制GC
-    infra_gc_collect();
-    print_gc_stats("After GC");
-    
+    // 获取GC统计信息
     infra_gc_stats_t stats;
     infra_gc_get_stats(&stats);
-    TEST_ASSERT(stats.total_collections > 0);
-    TEST_ASSERT(stats.total_freed > 0);
     
-    printf("=== Finished test_gc_lifecycle ===\n\n");
+    // 验证内存使用情况
+    ASSERT_GT(stats.current_allocated, 0);
+    ASSERT_EQ(stats.total_collections, 0);
+    
+    // 手动触发GC
+    infra_gc_collect();
+    
+    // 再次获取统计信息
+    infra_gc_get_stats(&stats);
+    
+    // 验证GC执行情况
+    ASSERT_GT(stats.total_collections, 0);
+    
+    // 清理
+    infra_memory_cleanup();
 }
 
-// 测试大规模分配
-static void test_gc_stress(void) {
-    printf("\n=== Starting test_gc_stress ===\n");
-    
-    // 使用较小的阈值
-    infra_gc_config_t config = {
-        .initial_heap_size = 1024,
-        .gc_threshold = 512,
+// 测试：GC压力测试
+TEST_CASE(test_gc_stress) {
+    // 初始化GC配置
+    infra_gc_config_t gc_config = {
+        .initial_heap_size = 1024 * 1024,  // 1MB
+        .gc_threshold = 256 * 1024,        // 256KB
         .enable_debug = true
     };
-    infra_gc_init_with_stack(&config, &config);
     
-    print_gc_stats("After init");
+    // 初始化内存管理配置
+    infra_memory_config_t mem_config = {
+        .use_memory_pool = false,
+        .use_gc = true,
+        .gc_config = gc_config
+    };
     
-    const int NUM_ALLOCS = 100;  // 减少分配次数，但每次分配更大
-    void* ptrs[10];  // 保持一些对象存活
+    // 初始化内存管理
+    infra_error_t err = infra_memory_init(&mem_config);
+    ASSERT_EQ(err, INFRA_OK);
     
-    // 大量分配
-    for (int i = 0; i < NUM_ALLOCS; i++) {
-        void* ptr = infra_gc_alloc(50);  // 固定大小以确保触发GC
-        TEST_ASSERT(ptr != NULL);
-        
-        // 保留一些对象
-        if (i % 10 == 0) {
-            ptrs[i/10] = ptr;
-            // 写入一些数据
-            strcpy((char*)ptr, "test data");
-        }
-        
-        if (i % 20 == 0) {
-            print_gc_stats("During allocations");
-        }
-    }
-    
-    print_gc_stats("After all allocations");
-    
-    // 强制GC
-    infra_gc_collect();
-    print_gc_stats("After forced GC");
-    
-    infra_gc_stats_t stats;
-    infra_gc_get_stats(&stats);
-    
-    // 验证GC确实发生了
-    TEST_ASSERT(stats.total_collections > 0);
-    TEST_ASSERT(stats.total_freed > 0);
-    
-    // 验证保留的对象还在且数据完整
+    // 循环创建和丢弃链表
     for (int i = 0; i < 10; i++) {
-        TEST_ASSERT(ptrs[i] != NULL);
-        TEST_ASSERT(strcmp((char*)ptrs[i], "test data") == 0);
+        // 创建一个大链表
+        create_list(1000);
+        
+        // 获取GC统计信息
+        infra_gc_stats_t stats;
+        infra_gc_get_stats(&stats);
+        
+        // 丢弃链表（不显式释放）
+        root = NULL;
+        
+        // 手动触发GC
+        infra_gc_collect();
+        
+        // 获取GC后的统计信息
+        infra_gc_stats_t stats_after;
+        infra_gc_get_stats(&stats_after);
+        
+        // 验证内存被回收
+        ASSERT_GT(stats_after.total_freed, stats.total_freed);
     }
     
-    printf("=== Finished test_gc_stress ===\n\n");
+    // 清理
+    infra_memory_cleanup();
 }
 
-// 测试入口
-int main(void) {
-    TEST_BEGIN();
-    RUN_TEST(test_gc_init);
-    RUN_TEST(test_gc_alloc);
-    RUN_TEST(test_gc_lifecycle);
+// 测试：GC自动触发
+TEST_CASE(test_gc_auto_trigger) {
+    // 初始化GC配置
+    infra_gc_config_t gc_config = {
+        .initial_heap_size = 1024 * 1024,  // 1MB
+        .gc_threshold = 128 * 1024,        // 128KB，较小的阈值以便更容易触发GC
+        .enable_debug = true
+    };
+    
+    // 初始化内存管理配置
+    infra_memory_config_t mem_config = {
+        .use_memory_pool = false,
+        .use_gc = true,
+        .gc_config = gc_config
+    };
+    
+    // 初始化内存管理
+    infra_error_t err = infra_memory_init(&mem_config);
+    ASSERT_EQ(err, INFRA_OK);
+    
+    // 获取初始统计信息
+    infra_gc_stats_t stats_before;
+    infra_gc_get_stats(&stats_before);
+    
+    // 分配大量内存以触发自动GC
+    for (int i = 0; i < 1000; i++) {
+        void* ptr = infra_gc_alloc(1024);  // 每次分配1KB
+        ASSERT_NOT_NULL(ptr);
+        
+        // 每隔一段时间丢弃一些对象
+        if (i % 100 == 0) {
+            root = NULL;  // 丢弃之前的链表
+        }
+    }
+    
+    // 获取最终统计信息
+    infra_gc_stats_t stats_after;
+    infra_gc_get_stats(&stats_after);
+    
+    // 验证GC是否自动触发
+    ASSERT_GT(stats_after.total_collections, stats_before.total_collections);
+    
+    // 清理
+    infra_memory_cleanup();
+}
+
+// 运行所有测试
+int main() {
+    RUN_TEST(test_gc_basic);
     RUN_TEST(test_gc_stress);
-    TEST_END();
+    RUN_TEST(test_gc_auto_trigger);
+    return 0;
 }

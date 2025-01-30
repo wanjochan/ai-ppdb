@@ -206,48 +206,45 @@ static void reset_memory_state(void) {
 }
 
 infra_error_t infra_memory_init(const infra_memory_config_t* config) {
-    // 检查参数
     if (!config) {
-        reset_memory_state();
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 检查重复初始化
     if (g_memory.initialized) {
-        return INFRA_ERROR_EXISTS;
-    }
-
-    // 验证内存池参数
-    if (config->use_memory_pool) {
-        if (config->pool_initial_size == 0 || 
-            config->pool_alignment == 0 || 
-            config->pool_alignment < sizeof(void*) || 
-            (config->pool_alignment & (config->pool_alignment - 1)) != 0 ||
-            config->pool_initial_size < MIN_BLOCK_SIZE) {
-            reset_memory_state();
-            return INFRA_ERROR_INVALID_PARAM;
-        }
+        return INFRA_ERROR_ALREADY_EXISTS;
     }
 
     // 重置状态
     reset_memory_state();
 
-    // 初始化互斥锁
+    // 复制配置
+    g_memory.config = *config;
+
+    // 创建互斥锁
     infra_error_t err = infra_mutex_create(&g_memory.mutex);
     if (err != INFRA_OK) {
-        reset_memory_state();
         return err;
     }
 
-    // 保存配置
-    g_memory.config = *config;
-
-    // 如果启用内存池，初始化它
+    // 如果使用内存池，初始化内存池
     if (config->use_memory_pool) {
         if (!initialize_pool()) {
-            infra_mutex_destroy(g_memory.mutex);
-            reset_memory_state();
+            infra_mutex_destroy(&g_memory.mutex);
             return INFRA_ERROR_NO_MEMORY;
+        }
+    }
+
+    // 如果使用GC，初始化GC
+    if (config->use_gc) {
+        // 获取栈底位置（这里使用一个局部变量的地址作为近似）
+        void* stack_bottom = &err;
+        err = infra_gc_init_with_stack(&config->gc_config, stack_bottom);
+        if (err != INFRA_OK) {
+            if (config->use_memory_pool) {
+                cleanup_pool();
+            }
+            infra_mutex_destroy(&g_memory.mutex);
+            return err;
         }
     }
 
@@ -313,104 +310,61 @@ infra_error_t infra_memory_get_stats(infra_memory_stats_t* stats) {
 //-----------------------------------------------------------------------------
 
 static void* allocate_memory(size_t size) {
-    if (size == 0) {
-        size = 1;  // 确保至少分配1字节
+    if (!g_memory.initialized) {
+        return NULL;
     }
 
     void* ptr = NULL;
     
-    if (g_memory.config.use_memory_pool) {
-        // 计算对齐后的大小，确保包含额外的对齐空间
-        size_t aligned_size = ALIGN_SIZE(size + g_memory.config.pool_alignment - 1, g_memory.config.pool_alignment);
-        
-        // 查找合适的空闲块
-        memory_block_t* block = find_free_block(aligned_size);
-        if (block) {
-            // 如果块太大，进行分割
-            if (block->size > aligned_size + sizeof(memory_block_t) + MIN_BLOCK_SIZE) {
-                // 确保新块的起始地址也是对齐的
-                char* new_block_addr = (char*)(block + 1) + aligned_size;
-                new_block_addr = (char*)ALIGN_SIZE((uintptr_t)new_block_addr, g_memory.config.pool_alignment);
-                
-                memory_block_t* new_block = (memory_block_t*)new_block_addr;
-                new_block->size = block->size - aligned_size - sizeof(memory_block_t);
-                new_block->is_used = false;
-                new_block->next = block->next;
-                block->next = new_block;
-                block->size = aligned_size;  // 存储对齐后的大小
-                block->original_size = size;  // 存储原始大小
-                g_memory.pool.block_count++;
-            } else {
-                block->original_size = size;  // 存储原始大小
-            }
-            block->is_used = true;
-            g_memory.pool.used_size += aligned_size;
-            g_memory.stats.current_usage += size;  // 使用原始大小
-            
-            // 确保返回的指针是对齐的
-            char* aligned_ptr = (char*)(block + 1);
-            aligned_ptr = (char*)ALIGN_SIZE((uintptr_t)aligned_ptr, g_memory.config.pool_alignment);
-            ptr = aligned_ptr;
-        }
+    if (g_memory.config.use_gc) {
+        // 使用GC分配内存
+        ptr = infra_gc_alloc(size);
+    } else if (g_memory.config.use_memory_pool) {
+        // 使用内存池分配内存
+        ptr = allocate_from_pool(size);
     } else {
-        // 系统内存分配
-        size_t total_size = size + sizeof(size_t) + g_memory.config.pool_alignment - 1;
-        if (total_size > size) {  // 检查溢出
-            size_t* block = (size_t*)malloc(total_size);
-            if (block) {
-                // 确保数据部分是对齐的
-                void* aligned_ptr = (void*)ALIGN_SIZE((uintptr_t)(block + 1), g_memory.config.pool_alignment);
-                block = (size_t*)aligned_ptr - 1;
-                *block = size;
-                ptr = aligned_ptr;
-                g_memory.stats.current_usage += size;
+        // 使用系统分配器
+        ptr = malloc(size);
+        if (ptr) {
+            g_memory.stats.current_usage += size;
+            g_memory.stats.total_allocations++;
+            if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
+                g_memory.stats.peak_usage = g_memory.stats.current_usage;
             }
         }
-    }
-
-    if (ptr && g_memory.stats.current_usage > g_memory.stats.peak_usage) {
-        g_memory.stats.peak_usage = g_memory.stats.current_usage;
     }
 
     return ptr;
 }
 
 static void free_memory(void* ptr) {
-    if (!ptr) {
+    if (!ptr || !g_memory.initialized) {
         return;
     }
 
-    if (g_memory.config.use_memory_pool) {
+    if (g_memory.config.use_gc) {
+        // 使用GC时，free是可选的
+        // 实际的内存释放会在GC时进行
+    } else if (g_memory.config.use_memory_pool) {
         memory_block_t* block = get_block_header(ptr);
-        if (block && block->is_used && 
-            (char*)block >= (char*)g_memory.pool.pool_start && 
-            (char*)block < (char*)g_memory.pool.pool_start + g_memory.pool.pool_size) {
-            size_t aligned_size = block->size;  // 已经是对齐后的大小
-            size_t original_size = block->original_size;  // 获取原始大小
+        if (block->is_used) {
             block->is_used = false;
-            g_memory.pool.used_size -= aligned_size;
-            g_memory.stats.current_usage -= original_size;  // 使用原始大小
+            g_memory.pool.used_size -= (block->size + sizeof(memory_block_t));
+            g_memory.stats.current_usage -= block->size;
             try_merge_blocks();
         }
     } else {
-        size_t* block = (size_t*)ptr - 1;
-        size_t size = *block;
-        g_memory.stats.current_usage -= size;
-        free(block);
+        free(ptr);
     }
 }
 
-void* infra_malloc(size_t size)
-{
+void* infra_malloc(size_t size) {
     if (!g_memory.initialized) {
         return NULL;
     }
 
     infra_mutex_lock(g_memory.mutex);
     void* ptr = allocate_memory(size);
-    if (ptr) {
-        g_memory.stats.total_allocations++;
-    }
     infra_mutex_unlock(g_memory.mutex);
     return ptr;
 }
@@ -420,16 +374,18 @@ void* infra_calloc(size_t nmemb, size_t size) {
         return NULL;
     }
 
-    if (nmemb == 0 || size == 0) {
+    // 检查乘法溢出
+    size_t total_size;
+    if (__builtin_mul_overflow(nmemb, size, &total_size)) {
         return NULL;
     }
 
-    size_t total_size = nmemb * size;
-    void* ptr = infra_malloc(total_size);
+    infra_mutex_lock(g_memory.mutex);
+    void* ptr = allocate_memory(total_size);
     if (ptr) {
-        infra_memset(ptr, 0, total_size);
+        memset(ptr, 0, total_size);
     }
-
+    infra_mutex_unlock(g_memory.mutex);
     return ptr;
 }
 
@@ -438,79 +394,40 @@ void* infra_realloc(void* ptr, size_t size) {
         return NULL;
     }
 
-    if (size == 0) {
-        if (ptr) {
-            infra_free(ptr);
-        }
-        return NULL;
-    }
-
     if (!ptr) {
         return infra_malloc(size);
     }
 
-    infra_mutex_lock(g_memory.mutex);
-
-    void* new_ptr = NULL;
-    if (g_memory.config.use_memory_pool && 
-        ptr >= g_memory.pool.pool_start && 
-        ptr < (void*)((char*)g_memory.pool.pool_start + g_memory.pool.pool_size)) {
-        // 如果是内存池中的内存
-        memory_block_t* block = get_block_header(ptr);
-        if (block->is_used) {
-            size_t old_size = block->size;
-            size_t aligned_old_size = ALIGN_SIZE(old_size, g_memory.config.pool_alignment);
-            size_t aligned_new_size = ALIGN_SIZE(size, g_memory.config.pool_alignment);
-            
-            if (aligned_new_size <= block->size) {
-                // 如果当前块足够大，直接使用
-                block = split_block(block, aligned_new_size);
-                new_ptr = ptr;
-                // 更新统计信息
-                g_memory.pool.used_size = g_memory.pool.used_size - aligned_old_size + aligned_new_size;
-                g_memory.stats.current_usage = g_memory.stats.current_usage - aligned_old_size + aligned_new_size;
-            } else {
-                // 否则分配新块并复制
-                new_ptr = allocate_from_pool(size);
-                if (new_ptr) {
-                    infra_memcpy(new_ptr, ptr, old_size);
-                    // 释放旧块
-                    block->is_used = false;
-                    g_memory.pool.used_size -= aligned_old_size;
-                    g_memory.stats.current_usage -= aligned_old_size;
-                    try_merge_blocks();
-                }
-            }
-        }
-    } else if (ptr > (void*)sizeof(size_t)) {
-        // 如果是系统分配的内存
-        size_t* size_ptr = (size_t*)ptr - 1;
-        if (size_ptr && *size_ptr > 0 && *size_ptr <= SIZE_MAX - sizeof(size_t)) {
-            size_t old_size = *size_ptr;
-            size_t total_size = sizeof(size_t) + size;
-            
-            if (total_size > size) {  // 检查溢出
-                size_t* new_block = (size_t*)realloc(size_ptr, total_size);
-                if (new_block) {
-                    *new_block = size;  // 更新大小信息
-                    new_ptr = new_block + 1;
-                    // 更新统计信息
-                    g_memory.stats.current_usage = g_memory.stats.current_usage - old_size + size;
-                    g_memory.stats.total_allocations++;
-                    if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
-                        g_memory.stats.peak_usage = g_memory.stats.current_usage;
-                    }
-                }
-            }
-        }
+    if (size == 0) {
+        infra_free(ptr);
+        return NULL;
     }
 
+    infra_mutex_lock(g_memory.mutex);
+    void* new_ptr = allocate_memory(size);
+    if (new_ptr) {
+        // 获取原始块的大小
+        size_t old_size;
+        if (g_memory.config.use_memory_pool) {
+            memory_block_t* block = get_block_header(ptr);
+            old_size = block->size;
+        } else {
+            // 对于系统分配器，我们无法获取原始大小
+            // 这里使用新的大小作为复制大小
+            old_size = size;
+        }
+
+        // 复制数据
+        memcpy(new_ptr, ptr, (old_size < size) ? old_size : size);
+        free_memory(ptr);
+    }
     infra_mutex_unlock(g_memory.mutex);
+
     return new_ptr;
 }
 
 void infra_free(void* ptr) {
-    if (!g_memory.initialized || !ptr) {
+    if (!ptr || !g_memory.initialized) {
         return;
     }
 
@@ -539,29 +456,18 @@ int infra_memcmp(const void* s1, const void* s2, size_t n) {
     return memcmp(s1, s2, n);
 }
 
-void* infra_mem_map(void *addr, size_t size, int prot)
-{
-    if (size == 0) {
-        return NULL;
-    }
-
-    void *mem = mmap(addr, size, prot, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (mem == MAP_FAILED) {
-        return NULL;
-    }
-    return mem;
+void* infra_mem_map(void* addr, size_t size, int prot) {
+    return mmap(addr, size, prot, MAP_PRIVATE | MAP_ANON, -1, 0);
 }
 
-infra_error_t infra_mem_unmap(void *addr, size_t size)
-{
+infra_error_t infra_mem_unmap(void* addr, size_t size) {
     if (munmap(addr, size) != 0) {
         return INFRA_ERROR_NO_MEMORY;
     }
     return INFRA_OK;
 }
 
-infra_error_t infra_mem_protect(void* addr, size_t size, int prot)
-{
+infra_error_t infra_mem_protect(void* addr, size_t size, int prot) {
     if (!addr || size == 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
