@@ -1,7 +1,7 @@
 #include "infra_gc.h"
 #include "infra_memory.h"
 #include "infra_core.h"
-#include <stdint.h>
+
 
 // GC状态
 typedef struct {

@@ -295,32 +295,107 @@ infra_error_t infra_get_status(infra_status_t* status) {
 }
 
 //-----------------------------------------------------------------------------
-// Memory Management
+// String Operations
 //-----------------------------------------------------------------------------
 
-// 注意：简单字符串操作函数已移至 infra_core.h 作为内联函数
+size_t infra_strlen(const char* s) {
+    if (!s) {
+        return 0;
+    }
+    return strlen(s);
+}
+
+char* infra_strcpy(char* dest, const char* src) {
+    if (!dest || !src) {
+        return NULL;
+    }
+    return strcpy(dest, src);
+}
+
+char* infra_strncpy(char* dest, const char* src, size_t n) {
+    if (!dest || !src) {
+        return NULL;
+    }
+    return strncpy(dest, src, n);
+}
+
+char* infra_strcat(char* dest, const char* src) {
+    if (!dest || !src) {
+        return NULL;
+    }
+    return strcat(dest, src);
+}
+
+char* infra_strncat(char* dest, const char* src, size_t n) {
+    if (!dest || !src) {
+        return NULL;
+    }
+    return strncat(dest, src, n);
+}
+
+int infra_strcmp(const char* s1, const char* s2) {
+    if (!s1 || !s2) {
+        return s1 == s2 ? 0 : (s1 ? 1 : -1);
+    }
+    return strcmp(s1, s2);
+}
+
+int infra_strncmp(const char* s1, const char* s2, size_t n) {
+    if (!s1 || !s2) {
+        return s1 == s2 ? 0 : (s1 ? 1 : -1);
+    }
+    return strncmp(s1, s2, n);
+}
+
+char* infra_strchr(const char* s, int c) {
+    if (!s) {
+        return NULL;
+    }
+    return strchr(s, c);
+}
+
+char* infra_strrchr(const char* s, int c) {
+    if (!s) {
+        return NULL;
+    }
+    return strrchr(s, c);
+}
+
+char* infra_strstr(const char* haystack, const char* needle) {
+    if (!haystack || !needle) {
+        return NULL;
+    }
+    return strstr(haystack, needle);
+}
 
 char* infra_strdup(const char* s) {
-    size_t len = infra_strlen(s) + 1;
-    char* new_str = infra_malloc(len);
-    if (new_str) {
-        infra_memcpy(new_str, s, len);
+    if (!s) {
+        return NULL;
     }
-    return new_str;
+    size_t len = infra_strlen(s);
+    char* new_str = (char*)infra_malloc(len + 1);
+    if (!new_str) {
+        return NULL;
+    }
+    return infra_strcpy(new_str, s);
 }
 
 char* infra_strndup(const char* s, size_t n) {
-    size_t len = infra_strlen(s);
-    if (len > n) len = n;
-    char* new_str = infra_malloc(len + 1);
-    if (new_str) {
-        infra_memcpy(new_str, s, len);
-        new_str[len] = '\0';
+    if (!s) {
+        return NULL;
     }
+    size_t len = infra_strlen(s);
+    if (len > n) {
+        len = n;
+    }
+    char* new_str = (char*)infra_malloc(len + 1);
+    if (!new_str) {
+        return NULL;
+    }
+    infra_strncpy(new_str, s, len);
+    new_str[len] = '\0';
     return new_str;
 }
-
-// 内存管理函数已迁移到 infra_memory.c
 
 //-----------------------------------------------------------------------------
 // Buffer Operations

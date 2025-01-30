@@ -170,11 +170,11 @@ char* infra_strcat(char* dest, const char* src);
 char* infra_strncat(char* dest, const char* src, size_t n);
 int infra_strcmp(const char* s1, const char* s2);
 int infra_strncmp(const char* s1, const char* s2, size_t n);
-char* infra_strdup(const char* s);
-char* infra_strndup(const char* s, size_t n);
 char* infra_strchr(const char* s, int c);
 char* infra_strrchr(const char* s, int c);
 char* infra_strstr(const char* haystack, const char* needle);
+char* infra_strdup(const char* s);
+char* infra_strndup(const char* s, size_t n);
 
 //-----------------------------------------------------------------------------
 // List Operations
@@ -393,49 +393,5 @@ infra_error_t infra_file_size(INFRA_CORE_Handle_t handle, size_t* size);
 infra_error_t infra_file_remove(const char* path);
 infra_error_t infra_file_rename(const char* old_path, const char* new_path);
 infra_error_t infra_file_exists(const char* path, bool* exists);
-
-//-----------------------------------------------------------------------------
-// String Operations (Inline)
-//-----------------------------------------------------------------------------
-
-inline size_t infra_strlen(const char* s) {
-    return strlen(s);
-}
-
-inline char* infra_strcpy(char* dest, const char* src) {
-    return strcpy(dest, src);
-}
-
-inline char* infra_strncpy(char* dest, const char* src, size_t n) {
-    return strncpy(dest, src, n);
-}
-
-inline char* infra_strcat(char* dest, const char* src) {
-    return strcat(dest, src);
-}
-
-inline char* infra_strncat(char* dest, const char* src, size_t n) {
-    return strncat(dest, src, n);
-}
-
-inline int infra_strcmp(const char* s1, const char* s2) {
-    return strcmp(s1, s2);
-}
-
-inline int infra_strncmp(const char* s1, const char* s2, size_t n) {
-    return strncmp(s1, s2, n);
-}
-
-inline char* infra_strchr(const char* s, int c) {
-    return strchr(s, c);
-}
-
-inline char* infra_strrchr(const char* s, int c) {
-    return strrchr(s, c);
-}
-
-inline char* infra_strstr(const char* haystack, const char* needle) {
-    return strstr(haystack, needle);
-}
 
 #endif /* INFRA_CORE_H */

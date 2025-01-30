@@ -41,6 +41,7 @@ typedef enum {
     INFRA_ERROR_QUERY_FAILED = -28, //
     INFRA_ERROR_INVALID_URL = -29, //
     INFRA_ERROR_OPEN_FAILED = -30, //
+    INFRA_ERROR_ALREADY_INITIALIZED = -31, // 系统已初始化
     INFRA_ERROR_MAX
 } infra_error_t;
 

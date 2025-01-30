@@ -524,33 +524,18 @@ void infra_free(void* ptr) {
 //-----------------------------------------------------------------------------
 
 void* infra_memset(void* s, int c, size_t n) {
-    if (!s || n == 0) {
-        return s;
-    }
     return memset(s, c, n);
 }
 
 void* infra_memcpy(void* dest, const void* src, size_t n) {
-    if (!dest || !src || n == 0) {
-        return dest;
-    }
     return memcpy(dest, src, n);
 }
 
 void* infra_memmove(void* dest, const void* src, size_t n) {
-    if (!dest || !src || n == 0) {
-        return dest;
-    }
     return memmove(dest, src, n);
 }
 
 int infra_memcmp(const void* s1, const void* s2, size_t n) {
-    if (!s1 || !s2) {
-        return s1 ? 1 : (s2 ? -1 : 0);
-    }
-    if (n == 0) {
-        return 0;
-    }
     return memcmp(s1, s2, n);
 }
 
