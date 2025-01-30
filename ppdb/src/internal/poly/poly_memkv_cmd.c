@@ -87,7 +87,7 @@ static infra_error_t open_db_context(const char* vendor, db_context_t* ctx) {
     // 创建配置
     poly_memkv_config_t config = {
         .engine = POLY_MEMKV_ENGINE_SQLITE,
-        .url = "sqlite::memory:",
+        .url = ":memory:",
         .max_key_size = 1024,
         .max_value_size = 1024 * 1024,
         .memory_limit = 0,

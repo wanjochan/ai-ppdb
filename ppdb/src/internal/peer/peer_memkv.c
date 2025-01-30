@@ -111,245 +111,158 @@ static memkv_context_t g_context = {0};  // 静态初始化为 0
 // Helper Functions
 //-----------------------------------------------------------------------------
 
-// 读取命令
-static infra_error_t read_command(memkv_conn_t* conn, char* cmd, size_t cmd_size,
-    char* key, size_t key_size, char* data, size_t data_size,
-    size_t* data_len, uint32_t* flags, uint32_t* exptime) {
-    size_t pos = 0;
-    bool found_cr = false;
-    infra_error_t err;
-    size_t recv_size;
-
-    // 读取命令行直到 \r\n
-    while (pos < sizeof(conn->buffer) - 1) {
-        recv_size = 0;
-        err = infra_net_recv(conn->sock, conn->buffer + pos, 1, &recv_size);
-        if (err != INFRA_OK) return err;
-        if (recv_size == 0) return INFRA_ERROR_CLOSED;
-
-        if (conn->buffer[pos] == '\r') {
-            found_cr = true;
-        } else if (found_cr && conn->buffer[pos] == '\n') {
-            conn->buffer[pos - 1] = '\0';  // 去掉 \r\n
-            break;
-        } else {
-            found_cr = false;
-        }
-        pos++;
-    }
-
-    // 解析命令行
-    char* token = strtok(conn->buffer, " ");
-    if (!token) return INFRA_ERROR_INVALID_PARAM;
-    strncpy(cmd, token, cmd_size - 1);
-    cmd[cmd_size - 1] = '\0';
-
-    // 解析 key
-    token = strtok(NULL, " ");
-    if (!token) return INFRA_ERROR_INVALID_PARAM;
-    strncpy(key, token, key_size - 1);
-    key[key_size - 1] = '\0';
-
-    // 如果是 set 命令，继续解析 flags、exptime 和 bytes
-    if (strcasecmp(cmd, "set") == 0) {
-        // 解析 flags
-        token = strtok(NULL, " ");
-        if (!token || sscanf(token, "%u", flags) != 1) {
-            return INFRA_ERROR_INVALID_PARAM;
-        }
-
-        // 解析 exptime
-        token = strtok(NULL, " ");
-        if (!token || sscanf(token, "%u", exptime) != 1) {
-            return INFRA_ERROR_INVALID_PARAM;
-        }
-
-        // 解析 bytes
-        token = strtok(NULL, " ");
-        if (!token || sscanf(token, "%zu", data_len) != 1) {
-            return INFRA_ERROR_INVALID_PARAM;
-        }
-
-        // 检查数据长度
-        if (*data_len >= data_size) {
-            return INFRA_ERROR_NO_MEMORY;
-        }
-
-        // 读取数据
-        size_t bytes_read = 0;
-        while (bytes_read < *data_len) {
-            recv_size = 0;
-            err = infra_net_recv(conn->sock, data + bytes_read, *data_len - bytes_read, &recv_size);
-            if (err != INFRA_OK) return err;
-            if (recv_size == 0) return INFRA_ERROR_CLOSED;
-            bytes_read += recv_size;
-        }
-
-        // 读取结尾的 \r\n
-        char end[2];
-        recv_size = 0;
-        err = infra_net_recv(conn->sock, end, 2, &recv_size);
-        if (err != INFRA_OK) return err;
-        if (recv_size != 2 || end[0] != '\r' || end[1] != '\n') {
-            return INFRA_ERROR_INVALID_PARAM;
-        }
-    } else if (strcasecmp(cmd, "incr") == 0 || strcasecmp(cmd, "decr") == 0) {
-        // 解析增量值
-        token = strtok(NULL, " ");
-        if (!token || sscanf(token, "%zu", data_len) != 1) {
-            *data_len = 1;  // 默认增量为 1
-        }
-    }
-
-    return INFRA_OK;
-}
-
-// 发送响应
-static infra_error_t send_response(memkv_conn_t* conn, const char* fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    int len = vsnprintf(conn->buffer, sizeof(conn->buffer) - 2, fmt, args);
-    va_end(args);
-
-    if (len < 0 || len >= sizeof(conn->buffer) - 2) {
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    conn->buffer[len] = '\r';
-    conn->buffer[len + 1] = '\n';
-    len += 2;
-
-    size_t sent = 0;
-    while (sent < len) {
-        size_t bytes = 0;
-        infra_error_t err = infra_net_send(conn->sock, conn->buffer + sent, len - sent, &bytes);
-        if (err != INFRA_OK) {
-            return err;
-        }
-        if (bytes == 0) {
-            return INFRA_ERROR_CLOSED;
-        }
-        sent += bytes;
-    }
-    return INFRA_OK;
-}
-
-// 发送数据块
-static infra_error_t send_data(memkv_conn_t* conn, const void* data, size_t len) {
-    size_t sent = 0;
-    while (sent < len) {
-        size_t bytes = 0;
-        infra_error_t err = infra_net_send(conn->sock, (const char*)data + sent, len - sent, &bytes);
-        if (err != INFRA_OK) {
-            return err;
-        }
-        if (bytes == 0) {
-            return INFRA_ERROR_CLOSED;
-        }
-        sent += bytes;
-    }
-    return INFRA_OK;
-}
-
-// 处理连接
-static void* handle_connection(void* arg) {
-    memkv_conn_t* conn = (memkv_conn_t*)arg;
-    if (!conn || !conn->sock) {
-        if (conn) free(conn);
-        return NULL;
-    }
-
-    char cmd[32];
-    char key[256];
-    char value[65536];
-    size_t value_len;
-    uint32_t flags = 0;
-    uint32_t exptime = 0;
-    infra_error_t err;
-
-    // 设置socket超时（30秒）
-    infra_net_set_timeout(conn->sock, 30000);
-
+// 处理客户端连接
+static void handle_client(int client_fd) {
+    char buffer[MEMKV_BUFFER_SIZE];
+    char* cmd_start = buffer;
+    ssize_t bytes_read;
+    size_t buffer_used = 0;
+    
     while (g_context.running) {
         // 读取命令
-        err = read_command(conn, cmd, sizeof(cmd), key, sizeof(key),
-            value, sizeof(value), &value_len, &flags, &exptime);
-        if (err != INFRA_OK) break;
+        bytes_read = recv(client_fd, buffer + buffer_used, 
+                         sizeof(buffer) - buffer_used - 1, 0);
+        if (bytes_read <= 0) {
+            if (bytes_read == 0) {
+                // 客户端关闭连接
+                break;
+            }
+            if (errno == EINTR) {
+                // 被信号中断，继续读取
+                continue;
+            }
+            // 其他错误
+            break;
+        }
 
-        // 处理命令
-        if (strcasecmp(cmd, "get") == 0) {
-            void* data = NULL;
-            size_t data_len;
-            err = poly_memkv_get(g_context.store, key, &data, &data_len);
-            if (err == INFRA_OK && data) {
-                err = send_response(conn, "VALUE %s %u %zu", key, flags, data_len);
-                if (err != INFRA_OK) {
-                    free(data);
+        buffer_used += bytes_read;
+        buffer[buffer_used] = '\0';
+        
+        // 处理所有完整的命令
+        while (cmd_start < buffer + buffer_used) {
+            char* cmd_end = strstr(cmd_start, "\r\n");
+            if (!cmd_end) {
+                // 命令不完整，等待更多数据
+                break;
+            }
+            *cmd_end = '\0';
+            
+            // 解析命令
+            char cmd[32] = {0};
+            char key[MEMKV_MAX_KEY_SIZE] = {0};
+            char flags_str[32] = {0};
+            char exptime_str[32] = {0};
+            char bytes_str[32] = {0};
+            size_t value_len = 0;
+            
+            // 处理不同类型的命令
+            if (sscanf(cmd_start, "set %s %s %s %s", key, flags_str, exptime_str, bytes_str) == 4) {
+                // SET 命令
+                value_len = atoi(bytes_str);
+                if (value_len > MEMKV_MAX_VALUE_SIZE) {
+                    const char* error = "CLIENT_ERROR value too large\r\n";
+                    send(client_fd, error, strlen(error), 0);
+                    goto next_command;
+                }
+                
+                // 检查是否有足够的数据
+                char* value_start = cmd_end + 2;
+                if (value_start + value_len + 2 > buffer + buffer_used) {
+                    // 数据不完整，等待更多数据
+                    *cmd_end = '\r';  // 恢复 \r\n
                     break;
                 }
-                err = send_data(conn, data, data_len);
-                if (err != INFRA_OK) {
-                    free(data);
-                    break;
+                
+                // 验证数据块结尾的 \r\n
+                if (value_start[value_len] != '\r' || value_start[value_len + 1] != '\n') {
+                    const char* error = "CLIENT_ERROR bad data chunk\r\n";
+                    send(client_fd, error, strlen(error), 0);
+                    goto next_command;
                 }
-                err = send_response(conn, "");
-                if (err != INFRA_OK) {
-                    free(data);
-                    break;
+                
+                // 存储值
+                infra_error_t err = poly_memkv_set(g_context.store, key, value_start, value_len);
+                if (err == INFRA_OK) {
+                    send(client_fd, "STORED\r\n", 8, 0);
+                } else {
+                    send(client_fd, "SERVER_ERROR\r\n", 14, 0);
                 }
-                err = send_response(conn, "END");
-                free(data);
-                if (err != INFRA_OK) break;
+                
+                cmd_start = value_start + value_len + 2;  // 跳过值和结尾的 \r\n
+                
+            } else if (sscanf(cmd_start, "get %s", key) == 1) {
+                // GET 命令
+                void* value;
+                size_t value_len;
+                infra_error_t err = poly_memkv_get(g_context.store, key, &value, &value_len);
+                
+                if (err == INFRA_OK) {
+                    char response[32];
+                    int len = snprintf(response, sizeof(response), 
+                                     "VALUE %s 0 %zu\r\n", key, value_len);
+                    send(client_fd, response, len, 0);
+                    send(client_fd, value, value_len, 0);
+                    send(client_fd, "\r\n", 2, 0);
+                    infra_free(value);
+                }
+                send(client_fd, "END\r\n", 5, 0);
+                
+            } else if (sscanf(cmd_start, "delete %s", key) == 1) {
+                // DELETE 命令
+                infra_error_t err = poly_memkv_del(g_context.store, key);
+                if (err == INFRA_OK) {
+                    send(client_fd, "DELETED\r\n", 9, 0);
+                } else {
+                    send(client_fd, "NOT_FOUND\r\n", 11, 0);
+                }
+                
+            } else if (strncmp(cmd_start, "flush_all", 9) == 0) {
+                // FLUSH_ALL 命令 - 清空所有数据
+                // 创建新的存储实例
+                poly_memkv_config_t config = {
+                    .engine = POLY_MEMKV_ENGINE_SQLITE,
+                    .url = ":memory:",
+                    .max_key_size = MEMKV_MAX_KEY_SIZE,
+                    .max_value_size = MEMKV_MAX_VALUE_SIZE,
+                    .memory_limit = 0,
+                    .enable_compression = false,
+                    .plugin_path = NULL,
+                    .allow_fallback = true,
+                    .read_only = false
+                };
+                
+                poly_memkv_db_t* new_store = NULL;
+                infra_error_t err = poly_memkv_create(&config, &new_store);
+                if (err == INFRA_OK) {
+                    poly_memkv_db_t* old_store = g_context.store;
+                    g_context.store = new_store;
+                    poly_memkv_destroy(old_store);
+                    send(client_fd, "OK\r\n", 4, 0);
+                } else {
+                    send(client_fd, "SERVER_ERROR\r\n", 14, 0);
+                }
+                
             } else {
-                err = send_response(conn, "END");
-                if (err != INFRA_OK) break;
+                // 未知命令
+                send(client_fd, "ERROR\r\n", 7, 0);
             }
+            
+next_command:
+            cmd_start = cmd_end + 2;
         }
-        else if (strcasecmp(cmd, "set") == 0) {
-            err = poly_memkv_set(g_context.store, key, value, value_len);
-            if (err == INFRA_OK) {
-                err = send_response(conn, "STORED");
-            } else {
-                err = send_response(conn, "NOT_STORED");
-            }
-            if (err != INFRA_OK) break;
-        }
-        else if (strcasecmp(cmd, "delete") == 0) {
-            err = poly_memkv_del(g_context.store, key);
-            if (err == INFRA_OK) {
-                err = send_response(conn, "DELETED");
-            } else {
-                err = send_response(conn, "NOT_FOUND");
-            }
-            if (err != INFRA_OK) break;
-        }
-        else if (strcasecmp(cmd, "incr") == 0 || strcasecmp(cmd, "decr") == 0) {
-            uint64_t new_value;
-            if (strcasecmp(cmd, "incr") == 0) {
-                err = poly_memkv_incr(g_context.store, key, value_len, &new_value);
-            } else {
-                err = poly_memkv_decr(g_context.store, key, value_len, &new_value);
-            }
-            if (err == INFRA_OK) {
-                err = send_response(conn, "%lu", new_value);
-            } else {
-                err = send_response(conn, "NOT_FOUND");
-            }
-            if (err != INFRA_OK) break;
-        }
-        else if (strcasecmp(cmd, "flush_all") == 0) {
-            err = send_response(conn, "OK");
-            if (err != INFRA_OK) break;
-        }
-        else {
-            err = send_response(conn, "ERROR");
-            if (err != INFRA_OK) break;
+        
+        // 移动未完成的命令到缓冲区开始
+        if (cmd_start < buffer + buffer_used) {
+            buffer_used = buffer + buffer_used - cmd_start;
+            memmove(buffer, cmd_start, buffer_used);
+            cmd_start = buffer;
+        } else {
+            buffer_used = 0;
+            cmd_start = buffer;
         }
     }
-
-    infra_net_close(conn->sock);
-    free(conn);
-    return NULL;
+    
+    close(client_fd);
 }
 
 // 服务线程
@@ -450,36 +363,22 @@ static infra_error_t service_thread(void) {
 
         // 检查是否有新连接
         if (FD_ISSET(infra_net_get_fd(listen_sock), &readfds)) {
-            // 创建连接结构
-            memkv_conn_t* conn = malloc(sizeof(memkv_conn_t));
-            if (!conn) {
-                INFRA_LOG_ERROR("Failed to allocate connection");
-                continue;
-            }
-            memset(conn, 0, sizeof(memkv_conn_t));  // 清零内存
-
             // 接受新连接
-            err = infra_net_accept(listen_sock, &conn->sock, &conn->addr);
+            infra_socket_t client_sock;
+            infra_net_addr_t client_addr;
+            err = infra_net_accept(listen_sock, &client_sock, &client_addr);
             if (err != INFRA_OK) {
                 if (err == INFRA_ERROR_WOULD_BLOCK || err == INFRA_ERROR_TIMEOUT) {
-                    free(conn);
                     continue;
                 }
                 INFRA_LOG_ERROR("Failed to accept connection: %d", err);
-                free(conn);
                 continue;
             }
 
-            INFRA_LOG_INFO("Accepted connection from %s:%d", conn->addr.host, conn->addr.port);
+            INFRA_LOG_INFO("Accepted connection from %s:%d", client_addr.host, client_addr.port);
 
-            // 提交到线程池处理
-            err = infra_thread_pool_submit(g_context.thread_pool, handle_connection, conn);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to submit connection to thread pool: %d", err);
-                infra_net_close(conn->sock);
-                free(conn);
-                continue;
-            }
+            // 处理客户端连接
+            handle_client(infra_net_get_fd(client_sock));
         }
     }
 
@@ -504,7 +403,7 @@ static infra_error_t memkv_init(const infra_config_t* config) {
     // 创建存储实例
     poly_memkv_config_t store_config = {
         .engine = POLY_MEMKV_ENGINE_SQLITE,
-        .url = "sqlite::memory:",
+        .url = ":memory:",  // 修复 SQLite URL
         .max_key_size = MEMKV_MAX_KEY_SIZE,
         .max_value_size = MEMKV_MAX_VALUE_SIZE,
         .memory_limit = 0,
