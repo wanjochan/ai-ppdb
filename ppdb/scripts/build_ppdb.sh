@@ -167,7 +167,11 @@ done
 
 # 链接
 echo "Linking..."
-"${CC}" ${LDFLAGS} "${OBJECTS[@]}" -L"${BUILD_DIR}/poly" -lpoly -L"${BUILD_DIR}/lib" -lsqlite3 -L"${BUILD_DIR}/infra" -linfra -o "${BUILD_DIR}/ppdb_latest.exe"
+"${CC}" ${LDFLAGS} "${OBJECTS[@]}" \
+    -L"${BUILD_DIR}/poly" -lpoly \
+    -L"${BUILD_DIR}/sqlite3" -lsqlite3 \
+    -L"${BUILD_DIR}/infra" -linfra \
+    -o "${BUILD_DIR}/ppdb_latest.exe"
 if [ $? -ne 0 ]; then
     echo "Error: Linking failed"
     rm -f "${BUILD_DIR}/ppdb_latest.exe"
