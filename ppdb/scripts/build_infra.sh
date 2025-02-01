@@ -32,6 +32,8 @@ INFRA_SOURCES=(
 # 编译源文件
 compile_files "${INFRA_SOURCES[@]}" "${BUILD_DIR}/infra" "infra"
 
+wait
+
 # 创建静态库
 echo -e "${GREEN}Creating static library...${NC}"
 "${AR}" rcs "${BUILD_DIR}/infra/libinfra.a" "${OBJECTS[@]}"

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+echo "=============================="
+
 # 加载通用构建脚本
 source "$(dirname "$0")/build_common.sh" || { echo "Error: Failed to load build_common.sh"; exit 1; }
 
