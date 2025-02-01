@@ -1,49 +1,58 @@
 #!/bin/bash
 
-# 加载通用构建脚本
-source "$(dirname "$0")/build_common.sh" || { echo "Error: Failed to load build_common.sh"; exit 1; }
+# 导入公共函数和环境变量
+source "$(dirname "$0")/build_env.sh"
+source "$(dirname "$0")/build_common.sh"
 
-# 设置颜色输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-# 创建构建目录（如果不存在）
-mkdir -p "${BUILD_DIR}/infra"
-
-# 编译所有 infra 源文件
-echo -e "${GREEN}Building infra library...${NC}"
-
-# 清理旧的库文件
-rm -vf "${BUILD_DIR}/infra/libinfra.a"
-
-# 定义源文件
+# 定义 infra 源文件
 INFRA_SOURCES=(
-    "${SRC_DIR}/internal/infra/infra_core.c"
-    "${SRC_DIR}/internal/infra/infra_memory.c"
-    "${SRC_DIR}/internal/infra/infra_error.c"
-    "${SRC_DIR}/internal/infra/infra_net.c"
-    "${SRC_DIR}/internal/infra/infra_platform.c"
-    "${SRC_DIR}/internal/infra/infra_sync.c"
-    "${SRC_DIR}/internal/infra/infra_gc.c"
+    "${INFRA_DIR}/infra_core.c"
+    "${INFRA_DIR}/infra_memory.c"
+    "${INFRA_DIR}/infra_error.c"
+    "${INFRA_DIR}/infra_net.c"
+    "${INFRA_DIR}/infra_platform.c"
+    "${INFRA_DIR}/infra_sync.c"
+    "${INFRA_DIR}/infra_gc.c"
 )
 
-# 编译源文件
-compile_files "${INFRA_SOURCES[@]}" "${BUILD_DIR}/infra" "infra"
+# 编译 infra 库
+build_infra() {
+    local build_dir="${BUILD_DIR}/infra"
+    local lib_file="${build_dir}/libinfra.a"
+    local infra_objects=()
 
-wait
+    # 创建构建目录
+    mkdir -p "${build_dir}"
 
-# 创建静态库
-echo -e "${GREEN}Creating static library...${NC}"
-"${AR}" rcs "${BUILD_DIR}/infra/libinfra.a" "${OBJECTS[@]}"
-if [ $? -ne 0 ]; then
-    echo -e "${RED}Error: Failed to create static library${NC}"
-    exit 1
-fi
+    # 清理旧的库文件
+    rm -f "${lib_file}"
 
-echo -e "${GREEN}Build complete.${NC}"
-ls -lh "${BUILD_DIR}/infra/libinfra.a"
-# sleep 3
-echo exit build_infra.sh
-exit 0
+    # 设置编译标志
+    CFLAGS="${CFLAGS} -I${PPDB_DIR}/src"
+
+    # 编译源文件
+    compile_files "${INFRA_SOURCES[@]}" "${build_dir}" "infra"
+    infra_objects=("${OBJECTS[@]}")
+
+    # 检查所有目标文件是否存在
+    for obj in "${infra_objects[@]}"; do
+        if [ ! -f "$obj" ]; then
+            echo "Error: Object file not found: $obj"
+            exit 1
+        fi
+    done
+
+    # 创建静态库
+    echo "Creating static library..."
+    "${AR}" rcs "${lib_file}" "${infra_objects[@]}"
+    if [ $? -ne 0 ]; then
+        echo "Failed to create infra library"
+        exit 1
+    fi
+
+    # 显示库文件信息
+    ls -lh "${lib_file}"
+}
+
+# 执行构建
+build_infra

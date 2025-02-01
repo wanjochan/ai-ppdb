@@ -19,10 +19,11 @@ typedef enum {
 
 // 服务状态
 typedef enum {
-    SERVICE_STATE_STOPPED = 0,
-    SERVICE_STATE_STARTING,
-    SERVICE_STATE_RUNNING,
-    SERVICE_STATE_STOPPING
+    SERVICE_STATE_UNKNOWN = 0,  // 未知状态
+    SERVICE_STATE_STOPPED,      // 已停止
+    SERVICE_STATE_STARTING,     // 正在启动
+    SERVICE_STATE_RUNNING,      // 正在运行
+    SERVICE_STATE_STOPPING      // 正在停止
 } peer_service_state_t;
 
 // 服务配置

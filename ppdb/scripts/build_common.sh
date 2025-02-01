@@ -89,13 +89,15 @@ compile_files() {
     local module_name="${@: -1}"
     local jobs=$(get_cpu_count)
     local pids=()
+    local local_objects=()
     
     # 创建构建目录（如果不存在）
     mkdir -p "${build_dir}"
     
     # 并行编译源文件
     for src in "${src_files[@]}"; do
-        obj="${build_dir}/$(basename "${src}" .c).o"
+        local obj="${build_dir}/$(basename "${src}" .c).o"
+        local_objects+=("$obj")
         if needs_rebuild "${src}" "${obj}"; then
             compile_core "${src}" "${obj}" "${CFLAGS}" &
             pids+=($!)
@@ -111,10 +113,6 @@ compile_files() {
     # 等待剩余的编译任务完成
     wait_for_pids "${pids[@]}"
     
-    # 收集目标文件
-    OBJECTS=()
-    for src in "${src_files[@]}"; do
-        obj="${build_dir}/$(basename "${src}" .c).o"
-        OBJECTS+=("${obj}")
-    done
+    # 导出目标文件列表
+    OBJECTS=("${local_objects[@]}")
 }

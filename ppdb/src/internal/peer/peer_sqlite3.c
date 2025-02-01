@@ -30,7 +30,7 @@ typedef struct {
     char db_path[SQLITE3_MAX_PATH_LEN]; // Database path
     infra_socket_t listener;            // Listener socket
     volatile bool running;              // Service running flag
-    infra_mutex_t mutex;                // Service mutex
+    infra_sem_t mutex;                  // Service mutex
     poly_poll_context_t* poll_ctx;      // Poll context
 } sqlite3_service_t;
 
@@ -95,12 +95,16 @@ static sqlite3_conn_t* sqlite3_conn_create(infra_socket_t client) {
     
     // Open database connection
     poly_db_config_t config = {
-        .path = g_service.db_path,
-        .flags = POLY_DB_OPEN_READWRITE
+        .type = POLY_DB_TYPE_SQLITE,
+        .url = g_service.db_path,
+        .max_memory = 0,
+        .read_only = false,
+        .plugin_path = NULL,
+        .allow_fallback = false
     };
     
     infra_error_t err = poly_db_open(&config, &conn->db);
-    if (err != INFRA_SUCCESS) {
+    if (err != INFRA_OK) {
         infra_free(conn);
         return NULL;
     }
@@ -145,13 +149,13 @@ static void handle_request_wrapper(void* args) {
     while (g_service.running) {
         size_t received = 0;
         infra_error_t err = infra_net_recv(conn->client, conn->buffer, sizeof(conn->buffer), &received);
-        if (err != INFRA_SUCCESS || received == 0) {
+        if (err != INFRA_OK || received == 0) {
             break;
         }
 
         // Execute SQL and send response
         err = poly_db_exec(conn->db, conn->buffer);
-        if (err != INFRA_SUCCESS) {
+        if (err != INFRA_OK) {
             const char* error_msg = "SQL execution failed\n";
             size_t sent;
             infra_net_send(conn->client, error_msg, strlen(error_msg), &sent);
@@ -184,7 +188,7 @@ static infra_error_t sqlite3_start(void) {
     }
 
     infra_error_t err = poly_poll_init(g_service.poll_ctx, &poll_config);
-    if (err != INFRA_SUCCESS) {
+    if (err != INFRA_OK) {
         infra_free(g_service.poll_ctx);
         g_service.poll_ctx = NULL;
         return err;
@@ -198,7 +202,7 @@ static infra_error_t sqlite3_start(void) {
 
     infra_socket_t listener;
     err = infra_net_create(&listener, false, NULL);
-    if (err != INFRA_SUCCESS) {
+    if (err != INFRA_OK) {
         poly_poll_cleanup(g_service.poll_ctx);
         infra_free(g_service.poll_ctx);
         g_service.poll_ctx = NULL;
@@ -207,7 +211,7 @@ static infra_error_t sqlite3_start(void) {
     g_service.listener = listener;
 
     err = infra_net_bind(g_service.listener, &addr);
-    if (err != INFRA_SUCCESS) {
+    if (err != INFRA_OK) {
         infra_net_close(g_service.listener);
         poly_poll_cleanup(g_service.poll_ctx);
         infra_free(g_service.poll_ctx);
@@ -216,7 +220,7 @@ static infra_error_t sqlite3_start(void) {
     }
 
     err = infra_net_listen(g_service.listener);
-    if (err != INFRA_SUCCESS) {
+    if (err != INFRA_OK) {
         infra_net_close(g_service.listener);
         poly_poll_cleanup(g_service.poll_ctx);
         infra_free(g_service.poll_ctx);
@@ -232,7 +236,7 @@ static infra_error_t sqlite3_start(void) {
     strcpy(listener_config.bind_addr, "0.0.0.0");
 
     err = poly_poll_add_listener(g_service.poll_ctx, &listener_config);
-    if (err != INFRA_SUCCESS) {
+    if (err != INFRA_OK) {
         infra_net_close(g_service.listener);
         poly_poll_cleanup(g_service.poll_ctx);
         infra_free(g_service.poll_ctx);
@@ -250,7 +254,7 @@ static infra_error_t sqlite3_start(void) {
 
 static infra_error_t sqlite3_stop(void) {
     if (!g_service.running) {
-        return INFRA_SUCCESS;
+        return INFRA_OK;
     }
     
     g_service.running = false;
@@ -267,12 +271,12 @@ static infra_error_t sqlite3_stop(void) {
         g_service.poll_ctx = NULL;
     }
     
-    return INFRA_SUCCESS;
+    return INFRA_OK;
 }
 
 static infra_error_t sqlite3_cleanup(void) {
     infra_sem_destroy(&g_service.mutex);
-    return INFRA_SUCCESS;
+    return INFRA_OK;
 }
 
 static bool sqlite3_is_running(void) {

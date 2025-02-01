@@ -3,6 +3,18 @@
 #include "internal/peer/peer_service.h"
 #include "internal/infra/infra_core.h"
 
+#ifdef DEV_RINETD
+#include "internal/peer/peer_rinetd.h"
+#endif
+
+#ifdef DEV_MEMKV
+#include "internal/peer/peer_memkv.h"
+#endif
+
+#ifdef DEV_SQLITE3
+#include "internal/peer/peer_sqlite3.h"
+#endif
+
 //-----------------------------------------------------------------------------
 // Service Registry Implementation
 //-----------------------------------------------------------------------------
@@ -10,6 +22,7 @@
 // 服务注册表
 static struct {
     peer_service_t* services[SERVICE_TYPE_COUNT];
+    bool initialized;
 } g_registry = {0};
 
 // 注册服务
@@ -67,20 +80,6 @@ peer_service_state_t peer_service_get_state(peer_service_type_t type) {
     peer_service_t* service = peer_service_get_by_type(type);
     return service ? service->state : SERVICE_STATE_STOPPED;
 } 
-
-#ifdef DEV_RINETD
-// #include "internal/peer/peer_rinetd.h"
-extern peer_service_t g_rinetd_service;
-#endif
-
-#ifdef DEV_SQLITE3
-extern peer_service_t g_sqlite3_service;
-#endif
-
-#ifdef DEV_MEMKV
-// #include "internal/peer/peer_memkv.h"
-extern peer_service_t g_memkv_service;
-#endif
 
 //-----------------------------------------------------------------------------
 // Global Options

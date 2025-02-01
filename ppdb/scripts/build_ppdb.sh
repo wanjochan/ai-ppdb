@@ -11,7 +11,6 @@ mkdir -p "${BUILD_DIR}/obj"
 # 设置条件编译选项
 ENABLE_RINETD=1
 ENABLE_MEMKV=1
-#ENABLE_SQLITE3=0
 
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
@@ -55,12 +54,9 @@ fi
 
 echo "Building ppdb..."
 # 准备源文件列表
-SOURCES=(
-    "${SRC_DIR}/internal/peer/peer_service.c"
-    "${SRC_DIR}/ppdb/ppdb.c"
-)
+SOURCES=()
 
-# 根据条件添加源文件
+# 先添加服务实现文件
 if [ "${ENABLE_RINETD}" = "1" ]; then
     SOURCES+=("${SRC_DIR}/internal/peer/peer_rinetd.c")
 fi
@@ -72,6 +68,12 @@ fi
 if [ "${ENABLE_SQLITE3}" = "1" ]; then
     SOURCES+=("${SRC_DIR}/internal/peer/peer_sqlite3.c")
 fi
+
+# 然后添加其他源文件
+SOURCES+=(
+    "${SRC_DIR}/internal/peer/peer_service.c"
+    "${SRC_DIR}/ppdb/ppdb.c"
+)
 
 # 编译源文件
 echo "Building sources..."
@@ -101,7 +103,22 @@ if [ ! -f "$INFRA_LIB" ]; then
     exit 1
 fi
 
-"${CC}" ${LDFLAGS} "${OBJECTS[@]}" \
+# 重新排序目标文件，确保服务实现在前面
+ORDERED_OBJECTS=()
+for src in "${SOURCES[@]}"; do
+    base=$(basename "${src}")
+    if [[ "$base" == "peer_rinetd.c" || "$base" == "peer_memkv.c" || "$base" == "peer_sqlite3.c" ]]; then
+        ORDERED_OBJECTS+=("${BUILD_DIR}/obj/$(basename "${src}" .c).o")
+    fi
+done
+for src in "${SOURCES[@]}"; do
+    base=$(basename "${src}")
+    if [[ "$base" != "peer_rinetd.c" && "$base" != "peer_memkv.c" && "$base" != "peer_sqlite3.c" ]]; then
+        ORDERED_OBJECTS+=("${BUILD_DIR}/obj/$(basename "${src}" .c).o")
+    fi
+done
+
+"${CC}" ${LDFLAGS} "${ORDERED_OBJECTS[@]}" \
     -L"${BUILD_DIR}/poly" -lpoly \
     -L"${BUILD_DIR}/infra" -linfra \
     -L"${BUILD_DIR}/sqlite3" -lsqlite3 \

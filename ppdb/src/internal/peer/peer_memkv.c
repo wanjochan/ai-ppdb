@@ -146,8 +146,8 @@ static void handle_request(memkv_conn_t* conn, char* request, size_t len);
 static void handle_client_command(memkv_conn_t* conn, const char* cmd);
 static void send_binary_error_response(memkv_conn_t* conn, const char* error_msg);
 static void handle_incr_command(memkv_conn_t* conn, const char* key, const char* value);
-memkv_conn_t* memkv_conn_create(infra_socket_t sock);
 static void memkv_conn_destroy(memkv_conn_t* conn);
+memkv_conn_t* memkv_conn_create(infra_socket_t sock);
 
 //-----------------------------------------------------------------------------
 // Helper Functions
