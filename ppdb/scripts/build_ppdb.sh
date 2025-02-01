@@ -11,6 +11,7 @@ mkdir -p "${BUILD_DIR}/obj"
 # 设置条件编译选项
 ENABLE_RINETD=1
 ENABLE_MEMKV=1
+#ENABLE_SQLITE3=0
 
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
@@ -55,8 +56,6 @@ fi
 echo "Building ppdb..."
 # 准备源文件列表
 SOURCES=(
-    # "${SRC_DIR}/internal/poly/poly_cmdline.c"
-    # "${SRC_DIR}/internal/poly/poly_atomic.c"
     "${SRC_DIR}/internal/peer/peer_service.c"
     "${SRC_DIR}/ppdb/ppdb.c"
 )
@@ -70,13 +69,38 @@ if [ "${ENABLE_MEMKV}" = "1" ]; then
     SOURCES+=("${SRC_DIR}/internal/peer/peer_memkv.c")
 fi
 
+if [ "${ENABLE_SQLITE3}" = "1" ]; then
+    SOURCES+=("${SRC_DIR}/internal/peer/peer_sqlite3.c")
+fi
+
 # 编译源文件
 echo "Building sources..."
+OBJECTS=()  # Initialize OBJECTS array
+for src in "${SOURCES[@]}"; do
+    obj="${BUILD_DIR}/obj/$(basename "${src}" .c).o"
+    OBJECTS+=("$obj")
+done
+
 compile_files "${SOURCES[@]}" "${BUILD_DIR}/obj" "ppdb"
+
 # 链接
 echo "Linking..."
-#wait # 等待编译完成
-# sleep 2
+
+# 检查所有目标文件是否存在
+for obj in "${OBJECTS[@]}"; do
+    if [ ! -f "$obj" ]; then
+        echo "Error: Object file not found: $obj"
+        exit 1
+    fi
+done
+
+# 检查 libinfra.a 是否存在
+INFRA_LIB="${BUILD_DIR}/infra/libinfra.a"
+if [ ! -f "$INFRA_LIB" ]; then
+    echo "Error: Infra library not found at $INFRA_LIB"
+    exit 1
+fi
+
 "${CC}" ${LDFLAGS} "${OBJECTS[@]}" \
     -L"${BUILD_DIR}/poly" -lpoly \
     -L"${BUILD_DIR}/infra" -linfra \

@@ -44,5 +44,6 @@ fi
 
 echo -e "${GREEN}Build complete.${NC}"
 ls -lh "${BUILD_DIR}/infra/libinfra.a"
-
+# sleep 3
+echo exit build_infra.sh
 exit 0

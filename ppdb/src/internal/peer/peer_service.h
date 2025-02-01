@@ -13,6 +13,7 @@ typedef enum {
     SERVICE_TYPE_UNKNOWN = 0,
     SERVICE_TYPE_MEMKV,
     SERVICE_TYPE_RINETD,
+    SERVICE_TYPE_SQLITE3,
     SERVICE_TYPE_COUNT
 } peer_service_type_t;
 
@@ -31,6 +32,7 @@ typedef struct {
     const poly_cmd_option_t* options;  // 命令行选项
     int option_count;                // 选项数量
     infra_config_t* config;          // 基础配置
+    const char* config_path;         // 配置文件路径
 } peer_service_config_t;
 
 // 服务接口

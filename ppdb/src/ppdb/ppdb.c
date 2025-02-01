@@ -73,6 +73,10 @@ peer_service_state_t peer_service_get_state(peer_service_type_t type) {
 extern peer_service_t g_rinetd_service;
 #endif
 
+#ifdef DEV_SQLITE3
+extern peer_service_t g_sqlite3_service;
+#endif
+
 #ifdef DEV_MEMKV
 // #include "internal/peer/peer_memkv.h"
 extern peer_service_t g_memkv_service;
@@ -106,12 +110,15 @@ static infra_error_t register_services(void) {
 
 #ifdef DEV_RINETD
     // Register Rinetd service
-    err = peer_service_register(&g_rinetd_service);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register rinetd service: %d", err);
+    if ((err = peer_service_register(&g_rinetd_service)) != INFRA_OK) {
         return err;
     }
-    INFRA_LOG_INFO("Registered rinetd service");
+#endif
+
+#ifdef DEV_SQLITE3
+    if ((err = peer_service_register(&g_sqlite3_service)) != INFRA_OK) {
+        return err;
+    }
 #endif
 
     return INFRA_OK;
@@ -153,6 +160,7 @@ static void print_usage(const char* program) {
     infra_printf("      --stop            Stop the service\n");
     infra_printf("      --status          Show service status\n");
 #endif
+
 }
 
 //-----------------------------------------------------------------------------
