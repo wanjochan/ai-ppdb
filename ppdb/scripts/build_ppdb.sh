@@ -148,6 +148,7 @@ compile_file() {
 for src in "${SOURCES[@]}"; do
     obj="${BUILD_DIR}/obj/$(basename "${src}" .c).o"
     OBJECTS+=("${obj}")
+    
     if [ ! -f "${obj}" ] || [ "${src}" -nt "${obj}" ]; then
         # 如果正在运行的任务数达到 CPU 核心数，等待一个任务完成
         while [ ${#PIDS[@]} -ge $JOBS ]; do

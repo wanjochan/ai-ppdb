@@ -1,9 +1,8 @@
-#include <poll.h>
 #include "internal/poly/poly_poll.h"
-#include "internal/infra/infra_memory.h"
-#include "internal/infra/infra_net.h"
-#include "internal/infra/infra_sync.h"
-#include "internal/infra/infra_core.h"
+// #include "internal/infra/infra_memory.h"
+// #include "internal/infra/infra_net.h"
+// #include "internal/infra/infra_sync.h"
+// #include "internal/infra/infra_core.h"
 
 // 初始化 poly_poll
 infra_error_t poly_poll_init(poly_poll_context_t* ctx, const poly_poll_config_t* config) {
