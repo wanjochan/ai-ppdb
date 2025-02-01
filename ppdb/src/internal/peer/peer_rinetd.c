@@ -92,8 +92,8 @@ static infra_error_t rinetd_save_config(const char* path);
 //-----------------------------------------------------------------------------
 
 // 服务实例
-static infra_config_t g_rinetd_default_config;
-static peer_service_config_t g_rinetd_service_config;
+infra_config_t g_rinetd_default_config;
+peer_service_config_t g_rinetd_service_config;
 peer_service_t g_rinetd_service;
 static rinetd_context_t g_context;
 

@@ -40,13 +40,20 @@ build_infra() {
             echo "Error: Object file not found: $obj"
             exit 1
         fi
+        echo "Found object file: $obj"
     done
 
     # 创建静态库
-    echo "Creating static library..."
+    echo "Creating static library: ${lib_file}"
     "${AR}" rcs "${lib_file}" "${infra_objects[@]}"
     if [ $? -ne 0 ]; then
         echo "Failed to create infra library"
+        exit 1
+    fi
+
+    # 验证库文件是否创建成功
+    if [ ! -f "${lib_file}" ]; then
+        echo "Error: Library file was not created: ${lib_file}"
         exit 1
     fi
 
