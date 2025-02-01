@@ -188,6 +188,27 @@ static void* handle_connection(void* arg) {
     memkv_conn_t* conn = (memkv_conn_t*)arg;
     infra_net_set_nonblock(conn->client, true);
     
+    // 初始化存储实例
+    poly_memkv_config_t config = {
+        .engine = conn->rule->engine,
+        .url = conn->rule->db_path,
+        .max_key_size = MEMKV_MAX_KEY_SIZE,
+        .max_value_size = MEMKV_MAX_VALUE_SIZE,
+        .memory_limit = conn->rule->max_memory,
+        .enable_compression = conn->rule->enable_compression,
+        .plugin_path = conn->rule->plugin_path,
+        .allow_fallback = true,
+        .read_only = conn->rule->read_only
+    };
+    
+    infra_error_t err = poly_memkv_create(&config, &conn->store);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create store: %d", err);
+        infra_net_close(conn->client);
+        free(conn);
+        return NULL;
+    }
+    
     struct pollfd pfds[1] = {{
         .fd = infra_net_get_fd(conn->client),  // 获取底层文件描述符
         .events = POLLIN | POLLOUT
@@ -1173,6 +1194,16 @@ static void handle_request(memkv_conn_t* conn, char* request, size_t len) {
         } else {
             ring_buffer_write(&conn->tx_buf, "NOT_FOUND\r\n", 11);
         }
+    } else if (strcmp(cmd, "flush_all") == 0) {
+        INFRA_LOG_DEBUG("FLUSH_ALL: Clearing all data");
+        
+        if (poly_memkv_flush_all(conn->store) == POLY_OK) {
+            INFRA_LOG_DEBUG("FLUSH_ALL: Successfully cleared all data");
+            ring_buffer_write(&conn->tx_buf, "OK\r\n", 4);
+        } else {
+            INFRA_LOG_ERROR("FLUSH_ALL: Failed to clear data");
+            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
+        }
     } else {
         ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
     }
@@ -1251,7 +1282,7 @@ static void handle_text_command(memkv_conn_t* conn, const char* cmd) {
 
     INFRA_LOG_DEBUG("Processing command: %s", op);
 
-    if (strcasecmp(op, "get") == 0) {
+    if (strcmp(op, "get") == 0) {
         if (sscanf(clean_cmd, "%*s %255s", key) < 1) {
             INFRA_LOG_ERROR("GET: Missing key");
             ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
@@ -1275,7 +1306,7 @@ static void handle_text_command(memkv_conn_t* conn, const char* cmd) {
             INFRA_LOG_DEBUG("GET: Key not found: [%s]", key);
         }
         ring_buffer_write(&conn->tx_buf, "END\r\n", 5);
-    } else if (strcasecmp(op, "set") == 0) {
+    } else if (strcmp(op, "set") == 0) {
         unsigned int flags;
         unsigned int exptime;
         unsigned int bytes;
@@ -1307,7 +1338,7 @@ static void handle_text_command(memkv_conn_t* conn, const char* cmd) {
             INFRA_LOG_ERROR("SET: Failed to store value");
             ring_buffer_write(&conn->tx_buf, "NOT_STORED\r\n", 12);
         }
-    } else if (strcasecmp(op, "delete") == 0) {
+    } else if (strcmp(op, "delete") == 0) {
         if (sscanf(clean_cmd, "%*s %255s", key) < 1) {
             INFRA_LOG_ERROR("DELETE: Missing key");
             ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
@@ -1323,7 +1354,7 @@ static void handle_text_command(memkv_conn_t* conn, const char* cmd) {
             INFRA_LOG_DEBUG("DELETE: Key not found");
             ring_buffer_write(&conn->tx_buf, "NOT_FOUND\r\n", 11);
         }
-    } else if (strcasecmp(op, "incr") == 0 || strcasecmp(op, "decr") == 0) {
+    } else if (strcmp(op, "incr") == 0 || strcmp(op, "decr") == 0) {
         unsigned long delta;
         if (sscanf(clean_cmd, "%*s %255s %lu", key, &delta) < 2) {
             INFRA_LOG_ERROR("%s: Invalid format", op);
@@ -1351,7 +1382,7 @@ static void handle_text_command(memkv_conn_t* conn, const char* cmd) {
         }
 
         unsigned long result;
-        if (strcasecmp(op, "incr") == 0) {
+        if (strcmp(op, "incr") == 0) {
             result = current + delta;
             INFRA_LOG_DEBUG("INCR: %lu + %lu = %lu", current, delta, result);
         } else {
@@ -1374,6 +1405,16 @@ static void handle_text_command(memkv_conn_t* conn, const char* cmd) {
         int response_len = snprintf(response, sizeof(response), "%lu\r\n", result);
         INFRA_LOG_DEBUG("%s: Sending response: [%.*s]", op, response_len-2, response);
         ring_buffer_write(&conn->tx_buf, response, response_len);
+    } else if (strcmp(op, "flush_all") == 0) {
+        INFRA_LOG_DEBUG("FLUSH_ALL: Clearing all data");
+        
+        if (poly_memkv_flush_all(conn->store) == POLY_OK) {
+            INFRA_LOG_DEBUG("FLUSH_ALL: Successfully cleared all data");
+            ring_buffer_write(&conn->tx_buf, "OK\r\n", 4);
+        } else {
+            INFRA_LOG_ERROR("FLUSH_ALL: Failed to clear data");
+            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
+        }
     } else {
         INFRA_LOG_ERROR("Unknown command: [%s]", op);
         ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);

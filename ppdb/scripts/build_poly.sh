@@ -26,6 +26,20 @@ SRC_FILES=(
 # 使用 build_common.sh 中的编译函数
 compile_files "${SRC_FILES[@]}" "${BUILD_DIR}/poly" "poly"
 
+# 等待所有编译任务完成
+wait
+
+# 确保所有目标文件都存在
+for obj in "${OBJECTS[@]}"; do
+    if [ ! -f "${obj}" ]; then
+        echo "-e Error: Object file not found: ${obj}"
+        exit 1
+    fi
+done
+
+# 确保 OBJECTS 数组被正确填充
+OBJECTS=("${BUILD_DIR}/poly/poly_memkv.o" "${BUILD_DIR}/poly/poly_memkv_cmd.o" "${BUILD_DIR}/poly/poly_db.o" "${BUILD_DIR}/poly/poly_plugin.o" "${BUILD_DIR}/poly/poly_poll.o")
+
 # 创建静态库
 echo "-e Creating static library..."
 "${AR}" rcs "${BUILD_DIR}/poly/libpoly.a" "${OBJECTS[@]}"

@@ -27,32 +27,6 @@ compile_core() {
     return $?
 }
 
-# 重构 parallel_compile
-parallel_compile() {
-    local sources=("$@")
-    local jobs=$(get_cpu_count)
-    local pids=()
-    local cflags="${CFLAGS}"
-    
-    for src in "${sources[@]}"; do
-        obj="${BUILD_DIR}/obj/$(basename "${src}" .c).o"
-        
-        if needs_rebuild "${src}" "${obj}"; then
-            #echo "parallel_compile ${src}..."
-            compile_core "${src}" "${obj}" "${cflags}" &
-            pids+=($!)
-            
-            # 控制并行度
-            while [ ${#pids[@]} -ge ${jobs} ]; do
-                wait_for_pids "${pids[@]}"
-                pids=()
-            done
-        fi
-    done
-    
-    wait_for_pids "${pids[@]}"
-}
-
 # 获取 CPU 核心数
 get_cpu_count() {
     if [ "$(uname)" = "Darwin" ]; then
@@ -108,14 +82,34 @@ wait_for_pids() {
     done
 }
 
-# 重构 compile_files
+# 并行编译函数
 compile_files() {
     local src_files=("${@:1:$#-2}")
     local build_dir="${@: -2:1}"
     local module_name="${@: -1}"
+    local jobs=$(get_cpu_count)
+    local pids=()
     
-    # 使用 parallel_compile 实现
-    parallel_compile "${src_files[@]}"
+    # 创建构建目录（如果不存在）
+    mkdir -p "${build_dir}"
+    
+    # 并行编译源文件
+    for src in "${src_files[@]}"; do
+        obj="${build_dir}/$(basename "${src}" .c).o"
+        if needs_rebuild "${src}" "${obj}"; then
+            compile_core "${src}" "${obj}" "${CFLAGS}" &
+            pids+=($!)
+            
+            # 控制并行度
+            while [ ${#pids[@]} -ge ${jobs} ]; do
+                wait_for_pids "${pids[@]}"
+                pids=()
+            done
+        fi
+    done
+    
+    # 等待剩余的编译任务完成
+    wait_for_pids "${pids[@]}"
     
     # 收集目标文件
     OBJECTS=()
@@ -123,4 +117,4 @@ compile_files() {
         obj="${build_dir}/$(basename "${src}" .c).o"
         OBJECTS+=("${obj}")
     done
-} 
+}

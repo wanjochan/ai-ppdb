@@ -339,3 +339,12 @@ infra_error_t poly_memkv_switch_engine(poly_memkv_db_t* db,
     poly_memkv_destroy(new_db);
     return INFRA_OK;
 }
+
+// 清空所有数据
+infra_error_t poly_memkv_flush_all(poly_memkv_db_t* db) {
+    if (!db) return INFRA_ERROR_INVALID_PARAM;
+    
+    // 执行清空表的SQL语句
+    const char* sql = "DELETE FROM kv_store;";
+    return poly_db_exec(db->db, sql);
+}

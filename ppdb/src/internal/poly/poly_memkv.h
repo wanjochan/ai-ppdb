@@ -64,6 +64,7 @@ infra_error_t poly_memkv_set(poly_memkv_db_t* db, const char* key, const void* v
 infra_error_t poly_memkv_del(poly_memkv_db_t* db, const char* key);
 infra_error_t poly_memkv_exec(poly_memkv_db_t* db, const char* sql);
 infra_error_t poly_memkv_expire(poly_memkv_db_t* db, const char* key, time_t expiry);
+infra_error_t poly_memkv_flush_all(poly_memkv_db_t* db);
 
 // Iterator functions
 infra_error_t poly_memkv_iter_create(poly_memkv_db_t* db, poly_memkv_iter_t** iter);
