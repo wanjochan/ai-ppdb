@@ -71,9 +71,10 @@ fi
 # 编译源文件
 echo "Building sources..."
 compile_files "${SOURCES[@]}" "${BUILD_DIR}/obj" "ppdb"
-
 # 链接
 echo "Linking..."
+#wait # 等待编译完成
+sleep 2
 "${CC}" ${LDFLAGS} "${OBJECTS[@]}" \
     -L"${BUILD_DIR}/poly" -lpoly \
     -L"${BUILD_DIR}/sqlite3" -lsqlite3 \

@@ -155,54 +155,6 @@ static void print_usage(const char* program) {
 #endif
 }
 
-static infra_error_t process_global_options(int argc, char** argv, infra_config_t* config) {
-    if (argc < 1 || !config) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    // Parse global options first
-    for (int i = 1; i < argc; i++) {
-        if (argv[i][0] != '-' || argv[i][1] != '-') {
-            continue;
-        }
-
-        const char* option = argv[i] + 2;  // Skip "--"
-        const char* value = strchr(option, '=');
-        if (value) {
-            size_t name_len = value - option;
-            value++;  // Skip '='
-            
-            if (strncmp(option, "log-level", name_len) == 0) {
-                if (*value == '\0') {  // Empty value
-                    INFRA_LOG_ERROR("--log-level requires a numeric value (0-5)");
-                    INFRA_LOG_ERROR("Example: ppdb --log-level=4 help");
-                    return INFRA_ERROR_INVALID_PARAM;
-                }
-
-                // Parse the numeric value
-                char* endptr;
-                long level = strtol(value, &endptr, 10);
-                
-                // Check for conversion errors
-                if (*endptr != '\0' || endptr == value) {
-                    INFRA_LOG_ERROR("Invalid log level: %s (must be a number)", value);
-                    return INFRA_ERROR_INVALID_PARAM;
-                }
-                
-                // Check value range
-                if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
-                    config->log.level = (int)level;
-                } else {
-                    INFRA_LOG_ERROR("Invalid log level: %ld (valid range: 0-5)", level);
-                    return INFRA_ERROR_INVALID_PARAM;
-                }
-            }
-        }
-    }
-
-    return INFRA_OK;
-}
-
 //-----------------------------------------------------------------------------
 // Main Entry
 //-----------------------------------------------------------------------------
@@ -218,10 +170,44 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Process global options
-    err = process_global_options(argc, argv, &config);
-    if (err != INFRA_OK) {
-        return 1;
+    // Process command line options
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-' || argv[i][1] != '-') {
+            continue;
+        }
+
+        const char* option = argv[i] + 2;  // Skip "--"
+        const char* value = strchr(option, '=');
+        if (value) {
+            size_t name_len = value - option;
+            value++;  // Skip '='
+
+            if (strncmp(option, "log-level", name_len) == 0) {
+                if (*value == '\0') {  // Empty value
+                    INFRA_LOG_ERROR("--log-level requires a numeric value (0-5)");
+                    INFRA_LOG_ERROR("Example: ppdb --log-level=4 help");
+                    return 1;
+                }
+
+                // Parse the numeric value
+                char* endptr;
+                long level = strtol(value, &endptr, 10);
+
+                // Check for conversion errors
+                if (*endptr != '\0' || endptr == value) {
+                    INFRA_LOG_ERROR("Invalid log level: %s (must be a number)", value);
+                    return 1;
+                }
+
+                // Check value range
+                if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
+                    config.log.level = (int)level;
+                } else {
+                    INFRA_LOG_ERROR("Invalid log level: %ld (valid range: 0-5)", level);
+                    return 1;
+                }
+            }
+        }
     }
 
     // Initialize infrastructure layer

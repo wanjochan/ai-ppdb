@@ -10,6 +10,9 @@ typedef struct poly_db poly_db_t;
 struct poly_db_result;
 typedef struct poly_db_result poly_db_result_t;
 
+struct poly_db_stmt;
+typedef struct poly_db_stmt poly_db_stmt_t;
+
 // Database type enumeration
 typedef enum poly_db_type {
     POLY_DB_TYPE_UNKNOWN = 0,
@@ -45,6 +48,15 @@ infra_error_t poly_db_result_free(poly_db_result_t* result);
 infra_error_t poly_db_result_row_count(poly_db_result_t* result, size_t* count);
 infra_error_t poly_db_result_get_blob(poly_db_result_t* result, size_t row, size_t col, void** data, size_t* size);
 infra_error_t poly_db_result_get_string(poly_db_result_t* result, size_t row, size_t col, char** str);
+
+// Statement interface functions
+infra_error_t poly_db_prepare(poly_db_t* db, const char* sql, poly_db_stmt_t** stmt);
+infra_error_t poly_db_stmt_finalize(poly_db_stmt_t* stmt);
+infra_error_t poly_db_stmt_step(poly_db_stmt_t* stmt);
+infra_error_t poly_db_bind_text(poly_db_stmt_t* stmt, int index, const char* text, size_t len);
+infra_error_t poly_db_bind_blob(poly_db_stmt_t* stmt, int index, const void* data, size_t len);
+infra_error_t poly_db_column_blob(poly_db_stmt_t* stmt, int col, void** data, size_t* size);
+infra_error_t poly_db_column_text(poly_db_stmt_t* stmt, int col, char** text);
 
 // Status functions
 poly_db_status_t poly_db_get_status(const poly_db_t* db);

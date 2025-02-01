@@ -23,6 +23,13 @@ SRC_FILES=(
     "${SRC_DIR}/internal/poly/poly_poll.c"
 )
 
+# 预先构建目标文件列表
+OBJECTS=()
+for src in "${SRC_FILES[@]}"; do
+    obj="${BUILD_DIR}/poly/$(basename "${src}" .c).o"
+    OBJECTS+=("${obj}")
+done
+
 # 使用 build_common.sh 中的编译函数
 compile_files "${SRC_FILES[@]}" "${BUILD_DIR}/poly" "poly"
 
@@ -37,14 +44,17 @@ for obj in "${OBJECTS[@]}"; do
     fi
 done
 
-# 确保 OBJECTS 数组被正确填充
-OBJECTS=("${BUILD_DIR}/poly/poly_memkv.o" "${BUILD_DIR}/poly/poly_memkv_cmd.o" "${BUILD_DIR}/poly/poly_db.o" "${BUILD_DIR}/poly/poly_plugin.o" "${BUILD_DIR}/poly/poly_poll.o")
-
 # 创建静态库
 echo "-e Creating static library..."
 "${AR}" rcs "${BUILD_DIR}/poly/libpoly.a" "${OBJECTS[@]}"
 if [ $? -ne 0 ]; then
     echo "-e Error: Failed to create static library"
+    exit 1
+fi
+
+# 确保静态库已创建
+if [ ! -f "${BUILD_DIR}/poly/libpoly.a" ]; then
+    echo "-e Error: Static library not created"
     exit 1
 fi
 

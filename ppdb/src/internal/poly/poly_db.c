@@ -54,6 +54,12 @@ typedef struct poly_db_result {
     void* internal_result;
 } poly_db_result_t;
 
+// 预处理语句结构体
+typedef struct poly_db_stmt {
+    poly_db_t* db;
+    void* internal_stmt;
+} poly_db_stmt_t;
+
 // 多态数据库结构体
 typedef struct poly_db {
     poly_db_type_t type;
@@ -64,6 +70,14 @@ typedef struct poly_db {
     infra_error_t (*result_row_count)(poly_db_result_t* result, size_t* count);
     infra_error_t (*result_get_blob)(poly_db_result_t* result, size_t row, size_t col, void** data, size_t* size);
     infra_error_t (*result_get_string)(poly_db_result_t* result, size_t row, size_t col, char** str);
+    // 预处理语句相关函数
+    infra_error_t (*prepare)(poly_db_t* db, const char* sql, poly_db_stmt_t** stmt);
+    infra_error_t (*stmt_finalize)(poly_db_stmt_t* stmt);
+    infra_error_t (*stmt_step)(poly_db_stmt_t* stmt);
+    infra_error_t (*bind_text)(poly_db_stmt_t* stmt, int index, const char* text, size_t len);
+    infra_error_t (*bind_blob)(poly_db_stmt_t* stmt, int index, const void* data, size_t len);
+    infra_error_t (*column_blob)(poly_db_stmt_t* stmt, int col, void** data, size_t* size);
+    infra_error_t (*column_text)(poly_db_stmt_t* stmt, int col, char** text);
 } poly_db_t;
 
 // 修改错误码（稍后再清理）
@@ -380,64 +394,296 @@ static void sqlite_close(poly_db_t* db) {
     infra_free(db);
 }
 
-// 修改 poly_db_open 函数
+// SQLite 预处理语句相关函数
+static infra_error_t sqlite_prepare(poly_db_t* db, const char* sql, poly_db_stmt_t** stmt) {
+    if (!db || !sql || !stmt) return INFRA_ERROR_INVALID_PARAM;
+    sqlite_impl_t* impl = (sqlite_impl_t*)db->impl;
+
+    poly_db_stmt_t* new_stmt = infra_malloc(sizeof(poly_db_stmt_t));
+    if (!new_stmt) return INFRA_ERROR_NO_MEMORY;
+
+    sqlite3_stmt* sqlite_stmt = NULL;
+    int rc = sqlite3_prepare_v2(impl->db, sql, -1, &sqlite_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        infra_free(new_stmt);
+        return INFRA_ERROR_QUERY_FAILED;
+    }
+
+    new_stmt->db = db;
+    new_stmt->internal_stmt = sqlite_stmt;
+    *stmt = new_stmt;
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_stmt_finalize(poly_db_stmt_t* stmt) {
+    if (!stmt) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    sqlite3_finalize(sqlite_stmt);
+    infra_free(stmt);
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_stmt_step(poly_db_stmt_t* stmt) {
+    if (!stmt) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    int rc = sqlite3_step(sqlite_stmt);
+    if (rc == SQLITE_DONE) return INFRA_OK;
+    if (rc == SQLITE_ROW) return INFRA_OK;
+    return INFRA_ERROR_QUERY_FAILED;
+}
+
+static infra_error_t sqlite_bind_text(poly_db_stmt_t* stmt, int index, const char* text, size_t len) {
+    if (!stmt || !text) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    int rc = sqlite3_bind_text(sqlite_stmt, index, text, len, SQLITE_STATIC);
+    return rc == SQLITE_OK ? INFRA_OK : INFRA_ERROR_QUERY_FAILED;
+}
+
+static infra_error_t sqlite_bind_blob(poly_db_stmt_t* stmt, int index, const void* data, size_t len) {
+    if (!stmt || !data) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    int rc = sqlite3_bind_blob(sqlite_stmt, index, data, len, SQLITE_STATIC);
+    return rc == SQLITE_OK ? INFRA_OK : INFRA_ERROR_QUERY_FAILED;
+}
+
+static infra_error_t sqlite_column_blob(poly_db_stmt_t* stmt, int col, void** data, size_t* size) {
+    if (!stmt || !data || !size) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    
+    const void* blob_data = sqlite3_column_blob(sqlite_stmt, col);
+    int blob_size = sqlite3_column_bytes(sqlite_stmt, col);
+    
+    if (!blob_data || blob_size <= 0) {
+        *data = NULL;
+        *size = 0;
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    void* blob_copy = infra_malloc(blob_size);
+    if (!blob_copy) return INFRA_ERROR_NO_MEMORY;
+    
+    memcpy(blob_copy, blob_data, blob_size);
+    *data = blob_copy;
+    *size = blob_size;
+    
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_column_text(poly_db_stmt_t* stmt, int col, char** text) {
+    if (!stmt || !text) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    
+    const unsigned char* text_data = sqlite3_column_text(sqlite_stmt, col);
+    if (!text_data) {
+        *text = NULL;
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    *text = infra_strdup((const char*)text_data);
+    if (!*text) return INFRA_ERROR_NO_MEMORY;
+    
+    return INFRA_OK;
+}
+
+// DuckDB 预处理语句相关函数
+static infra_error_t poly_duckdb_prepare(poly_db_t* db, const char* sql, poly_db_stmt_t** stmt) {
+    if (!db || !sql || !stmt) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)db->impl;
+
+    poly_db_stmt_t* new_stmt = infra_malloc(sizeof(poly_db_stmt_t));
+    if (!new_stmt) return INFRA_ERROR_NO_MEMORY;
+
+    duckdb_connection conn;
+    duckdb_state state = impl->connect(impl->handle, &conn);
+    if (state != DuckDBSuccess) {
+        infra_free(new_stmt);
+        return INFRA_ERROR_QUERY_FAILED;
+    }
+
+    duckdb_prepared_statement* duck_stmt = infra_malloc(sizeof(duckdb_prepared_statement));
+    if (!duck_stmt) {
+        impl->disconnect(&conn);
+        infra_free(new_stmt);
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    state = impl->prepare(conn, sql, duck_stmt);
+    if (state != DuckDBSuccess) {
+        impl->disconnect(&conn);
+        infra_free(duck_stmt);
+        infra_free(new_stmt);
+        return INFRA_ERROR_QUERY_FAILED;
+    }
+
+    new_stmt->db = db;
+    new_stmt->internal_stmt = duck_stmt;
+    *stmt = new_stmt;
+    return INFRA_OK;
+}
+
+static infra_error_t poly_duckdb_stmt_finalize(poly_db_stmt_t* stmt) {
+    if (!stmt) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    duckdb_prepared_statement* duck_stmt = (duckdb_prepared_statement*)stmt->internal_stmt;
+    impl->destroy_prepare(duck_stmt);
+    infra_free(duck_stmt);
+    infra_free(stmt);
+    return INFRA_OK;
+}
+
+static infra_error_t poly_duckdb_stmt_step(poly_db_stmt_t* stmt) {
+    if (!stmt) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    duckdb_prepared_statement* duck_stmt = (duckdb_prepared_statement*)stmt->internal_stmt;
+    
+    duckdb_result result;
+    duckdb_state state = impl->execute_prepared(*duck_stmt, &result);
+    if (state != DuckDBSuccess) return INFRA_ERROR_QUERY_FAILED;
+    
+    impl->destroy_result(&result);
+    return INFRA_OK;
+}
+
+static infra_error_t poly_duckdb_bind_text(poly_db_stmt_t* stmt, int index, const char* text, size_t len) {
+    if (!stmt || !text) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    duckdb_prepared_statement* duck_stmt = (duckdb_prepared_statement*)stmt->internal_stmt;
+    
+    duckdb_state state = impl->bind_varchar(*duck_stmt, index, text);
+    return state == DuckDBSuccess ? INFRA_OK : INFRA_ERROR_QUERY_FAILED;
+}
+
+static infra_error_t poly_duckdb_bind_blob(poly_db_stmt_t* stmt, int index, const void* data, size_t len) {
+    if (!stmt || !data) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    duckdb_prepared_statement* duck_stmt = (duckdb_prepared_statement*)stmt->internal_stmt;
+    
+    impl->bind_blob(*duck_stmt, index, data, len);
+    return INFRA_OK;
+}
+
+static infra_error_t poly_duckdb_column_blob(poly_db_stmt_t* stmt, int col, void** data, size_t* size) {
+    if (!stmt || !data || !size) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    duckdb_prepared_statement* duck_stmt = (duckdb_prepared_statement*)stmt->internal_stmt;
+    
+    // TODO: Implement DuckDB column blob retrieval
+    return INFRA_ERROR_QUERY_FAILED;
+}
+
+static infra_error_t poly_duckdb_column_text(poly_db_stmt_t* stmt, int col, char** text) {
+    if (!stmt || !text) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    duckdb_prepared_statement* duck_stmt = (duckdb_prepared_statement*)stmt->internal_stmt;
+    
+    // TODO: Implement DuckDB column text retrieval
+    return INFRA_ERROR_QUERY_FAILED;
+}
+
+// 公共接口函数
+infra_error_t poly_db_prepare(poly_db_t* db, const char* sql, poly_db_stmt_t** stmt) {
+    if (!db || !sql || !stmt) return INFRA_ERROR_INVALID_PARAM;
+    return db->prepare(db, sql, stmt);
+}
+
+infra_error_t poly_db_stmt_finalize(poly_db_stmt_t* stmt) {
+    if (!stmt || !stmt->db) return INFRA_ERROR_INVALID_PARAM;
+    return stmt->db->stmt_finalize(stmt);
+}
+
+infra_error_t poly_db_stmt_step(poly_db_stmt_t* stmt) {
+    if (!stmt || !stmt->db) return INFRA_ERROR_INVALID_PARAM;
+    return stmt->db->stmt_step(stmt);
+}
+
+infra_error_t poly_db_bind_text(poly_db_stmt_t* stmt, int index, const char* text, size_t len) {
+    if (!stmt || !stmt->db || !text) return INFRA_ERROR_INVALID_PARAM;
+    return stmt->db->bind_text(stmt, index, text, len);
+}
+
+infra_error_t poly_db_bind_blob(poly_db_stmt_t* stmt, int index, const void* data, size_t len) {
+    if (!stmt || !stmt->db || !data) return INFRA_ERROR_INVALID_PARAM;
+    return stmt->db->bind_blob(stmt, index, data, len);
+}
+
+infra_error_t poly_db_column_blob(poly_db_stmt_t* stmt, int col, void** data, size_t* size) {
+    if (!stmt || !stmt->db || !data || !size) return INFRA_ERROR_INVALID_PARAM;
+    return stmt->db->column_blob(stmt, col, data, size);
+}
+
+infra_error_t poly_db_column_text(poly_db_stmt_t* stmt, int col, char** text) {
+    if (!stmt || !stmt->db || !text) return INFRA_ERROR_INVALID_PARAM;
+    return stmt->db->column_text(stmt, col, text);
+}
+
+// 其他函数
 infra_error_t poly_db_open(const poly_db_config_t* config, poly_db_t** db) {
     if (!config || !db) return INFRA_ERROR_INVALID_PARAM;
 
+    // 分配内存
     poly_db_t* new_db = infra_malloc(sizeof(poly_db_t));
     if (!new_db) return INFRA_ERROR_NO_MEMORY;
     memset(new_db, 0, sizeof(poly_db_t));
 
-    new_db->type = config->type;
-
+    // 根据类型创建具体实现
     switch (config->type) {
         case POLY_DB_TYPE_SQLITE: {
-            sqlite_impl_t* impl = infra_malloc(sizeof(sqlite_impl_t));
-            if (!impl) {
+            sqlite_impl_t* sqlite = infra_malloc(sizeof(sqlite_impl_t));
+            if (!sqlite) {
                 infra_free(new_db);
                 return INFRA_ERROR_NO_MEMORY;
             }
+            memset(sqlite, 0, sizeof(sqlite_impl_t));
 
-            int rc = sqlite3_open(config->url, &impl->db);
+            // 打开 SQLite 数据库
+            int flags = config->read_only ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+            int rc = sqlite3_open_v2(config->url ? config->url : ":memory:", &sqlite->db, flags, NULL);
             if (rc != SQLITE_OK) {
-                infra_free(impl);
+                infra_free(sqlite);
                 infra_free(new_db);
-                return INFRA_ERROR_EXEC_FAILED;
+                return INFRA_ERROR_OPEN_FAILED;
             }
 
-            new_db->impl = impl;
+            new_db->type = POLY_DB_TYPE_SQLITE;
+            new_db->impl = sqlite;
             new_db->exec = sqlite_exec;
             new_db->query = sqlite_query;
             new_db->close = sqlite_close;
             new_db->result_row_count = sqlite_result_row_count;
             new_db->result_get_blob = sqlite_result_get_blob;
             new_db->result_get_string = sqlite_result_get_string;
+            new_db->prepare = sqlite_prepare;
+            new_db->stmt_finalize = sqlite_stmt_finalize;
+            new_db->stmt_step = sqlite_stmt_step;
+            new_db->bind_text = sqlite_bind_text;
+            new_db->bind_blob = sqlite_bind_blob;
+            new_db->column_blob = sqlite_column_blob;
+            new_db->column_text = sqlite_column_text;
             break;
         }
         case POLY_DB_TYPE_DUCKDB: {
-            duckdb_impl_t* impl;
-            infra_error_t err = create_duckdb(&impl);
+            duckdb_impl_t* duckdb = NULL;
+            infra_error_t err = create_duckdb(&duckdb);
             if (err != INFRA_OK) {
                 infra_free(new_db);
                 return err;
             }
 
-            duckdb_database db;
-            duckdb_state state = impl->open(config->url, &db);
-            if (state != DuckDBSuccess) {
-                destroy_duckdb(impl);
-                infra_free(new_db);
-                return INFRA_ERROR_EXEC_FAILED;
-            }
-
-            impl->handle = db;
-            new_db->impl = impl;
+            new_db->type = POLY_DB_TYPE_DUCKDB;
+            new_db->impl = duckdb;
             new_db->exec = poly_duckdb_exec;
             new_db->query = poly_duckdb_query;
             new_db->close = poly_duckdb_close;
             new_db->result_row_count = poly_duckdb_result_row_count;
             new_db->result_get_blob = poly_duckdb_result_get_blob;
             new_db->result_get_string = poly_duckdb_result_get_string;
+            new_db->prepare = poly_duckdb_prepare;
+            new_db->stmt_finalize = poly_duckdb_stmt_finalize;
+            new_db->stmt_step = poly_duckdb_stmt_step;
+            new_db->bind_text = poly_duckdb_bind_text;
+            new_db->bind_blob = poly_duckdb_bind_blob;
+            new_db->column_blob = poly_duckdb_column_blob;
+            new_db->column_text = poly_duckdb_column_text;
             break;
         }
         default:
@@ -450,76 +696,48 @@ infra_error_t poly_db_open(const poly_db_config_t* config, poly_db_t** db) {
 }
 
 infra_error_t poly_db_close(poly_db_t* db) {
-    if (db == NULL) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    if (db->close) {
-        db->close(db);
-    }
+    if (!db) return INFRA_ERROR_INVALID_PARAM;
+    if (db->close) db->close(db);
+    infra_free(db);
     return INFRA_OK;
 }
 
+infra_error_t poly_db_exec(poly_db_t* db, const char* sql) {
+    if (!db || !sql) return INFRA_ERROR_INVALID_PARAM;
+    return db->exec(db, sql);
+}
+
+infra_error_t poly_db_query(poly_db_t* db, const char* sql, poly_db_result_t** result) {
+    if (!db || !sql || !result) return INFRA_ERROR_INVALID_PARAM;
+    return db->query(db, sql, result);
+}
+
 infra_error_t poly_db_result_free(poly_db_result_t* result) {
-    if (result == NULL) {
-        return INFRA_ERROR_INVALID_PARAM;
+    if (!result) return INFRA_ERROR_INVALID_PARAM;
+    if (result->db && result->db->type == POLY_DB_TYPE_DUCKDB) {
+        duckdb_impl_t* impl = (duckdb_impl_t*)result->db->impl;
+        impl->destroy_result(result->internal_result);
+        infra_free(result->internal_result);
     }
-    
-    if (result->internal_result) {
-        if (result->db->type == POLY_DB_TYPE_SQLITE) {
-            sqlite3_finalize(result->internal_result);
-        } else if (result->db->type == POLY_DB_TYPE_DUCKDB) {
-            duckdb_impl_t* impl = (duckdb_impl_t*)result->db->impl;
-            impl->destroy_result(result->internal_result);
-        }
-    }
-    
     infra_free(result);
     return INFRA_OK;
 }
 
 infra_error_t poly_db_result_row_count(poly_db_result_t* result, size_t* count) {
     if (!result || !count) return INFRA_ERROR_INVALID_PARAM;
-    
-    if (result->db->result_row_count) {
-        return result->db->result_row_count(result, count);
-    }
-    
-    return INFRA_ERROR_NOT_SUPPORTED;
+    return result->db->result_row_count(result, count);
 }
 
 infra_error_t poly_db_result_get_blob(poly_db_result_t* result, size_t row, size_t col, void** data, size_t* size) {
     if (!result || !data || !size) return INFRA_ERROR_INVALID_PARAM;
-    
-    if (result->db->result_get_blob) {
-        return result->db->result_get_blob(result, row, col, data, size);
-    }
-    
-    return INFRA_ERROR_NOT_SUPPORTED;
+    return result->db->result_get_blob(result, row, col, data, size);
 }
 
 infra_error_t poly_db_result_get_string(poly_db_result_t* result, size_t row, size_t col, char** str) {
     if (!result || !str) return INFRA_ERROR_INVALID_PARAM;
-    
-    if (result->db->result_get_string) {
-        return result->db->result_get_string(result, row, col, str);
-    }
-    
-    return INFRA_ERROR_NOT_SUPPORTED;
+    return result->db->result_get_string(result, row, col, str);
 }
 
 poly_db_type_t poly_db_get_type(const poly_db_t* db) {
-    if (!db) return POLY_DB_TYPE_UNKNOWN;
-    return db->type;
-}
-
-infra_error_t poly_db_exec(poly_db_t* db, const char* sql) {
-    if (!db || !sql) return INFRA_ERROR_INVALID_PARAM;
-    if (!db->exec) return INFRA_ERROR_NOT_SUPPORTED;
-    return db->exec(db, sql);
-}
-
-infra_error_t poly_db_query(poly_db_t* db, const char* sql, poly_db_result_t** result) {
-    if (!db || !sql || !result) return INFRA_ERROR_INVALID_PARAM;
-    if (!db->query) return INFRA_ERROR_NOT_SUPPORTED;
-    return db->query(db, sql, result);
+    return db ? db->type : POLY_DB_TYPE_UNKNOWN;
 }

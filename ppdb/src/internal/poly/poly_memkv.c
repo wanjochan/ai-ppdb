@@ -56,43 +56,81 @@ static infra_error_t kv_set_internal(poly_db_t* db, const char* key, size_t key_
                                    const void* value, size_t value_size) {
     if (!db || !key || !value) return INFRA_ERROR_INVALID_PARAM;
 
-    char sql[512];
-    snprintf(sql, sizeof(sql), 
-        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);");
+    // 使用参数化查询
+    const char* sql = "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?);";
+    poly_db_stmt_t* stmt = NULL;
+    infra_error_t err = poly_db_prepare(db, sql, &stmt);
+    if (err != INFRA_OK) return err;
 
-    return poly_db_exec(db, sql);
+    // 绑定参数
+    err = poly_db_bind_text(stmt, 1, key, key_len);
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return err;
+    }
+
+    err = poly_db_bind_blob(stmt, 2, value, value_size);
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return err;
+    }
+
+    // 执行语句
+    err = poly_db_stmt_step(stmt);
+    poly_db_stmt_finalize(stmt);
+    return err;
 }
 
 static infra_error_t kv_get_internal(poly_db_t* db, const char* key, size_t key_len,
                                    void** value, size_t* value_size) {
     if (!db || !key || !value || !value_size) return INFRA_ERROR_INVALID_PARAM;
 
-    char sql[512];
-    snprintf(sql, sizeof(sql), "SELECT value FROM kv_store WHERE key = ?;");
-
-    poly_db_result_t* result = NULL;
-    infra_error_t err = poly_db_query(db, sql, &result);
+    // 使用参数化查询
+    const char* sql = "SELECT value FROM kv_store WHERE key = ?;";
+    poly_db_stmt_t* stmt = NULL;
+    infra_error_t err = poly_db_prepare(db, sql, &stmt);
     if (err != INFRA_OK) return err;
 
-    size_t count = 0;
-    err = poly_db_result_row_count(result, &count);
-    if (err != INFRA_OK || count == 0) {
-        poly_db_result_free(result);
-        return INFRA_ERROR_NOT_FOUND;
+    // 绑定参数
+    err = poly_db_bind_text(stmt, 1, key, key_len);
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return err;
     }
 
-    err = poly_db_result_get_blob(result, 0, 0, value, value_size);
-    poly_db_result_free(result);
+    // 执行查询
+    err = poly_db_stmt_step(stmt);
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return err;
+    }
+
+    // 获取结果
+    err = poly_db_column_blob(stmt, 0, value, value_size);
+    poly_db_stmt_finalize(stmt);
     return err;
 }
 
 static infra_error_t kv_del_internal(poly_db_t* db, const char* key, size_t key_len) {
     if (!db || !key) return INFRA_ERROR_INVALID_PARAM;
 
-    char sql[512];
-    snprintf(sql, sizeof(sql), "DELETE FROM kv_store WHERE key = ?;");
+    // 使用参数化查询
+    const char* sql = "DELETE FROM kv_store WHERE key = ?;";
+    poly_db_stmt_t* stmt = NULL;
+    infra_error_t err = poly_db_prepare(db, sql, &stmt);
+    if (err != INFRA_OK) return err;
 
-    return poly_db_exec(db, sql);
+    // 绑定参数
+    err = poly_db_bind_text(stmt, 1, key, key_len);
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return err;
+    }
+
+    // 执行语句
+    err = poly_db_stmt_step(stmt);
+    poly_db_stmt_finalize(stmt);
+    return err;
 }
 
 //-----------------------------------------------------------------------------
@@ -206,10 +244,31 @@ infra_error_t poly_memkv_del(poly_memkv_db_t* db, const char* key) {
 infra_error_t poly_memkv_expire(poly_memkv_db_t* db, const char* key, time_t expiry) {
     if (!db || !key) return INFRA_ERROR_INVALID_PARAM;
     
-    char sql[256];
-    snprintf(sql, sizeof(sql), "UPDATE kv_store SET expire = %ld WHERE key = '%s';", expiry, key);
-    
-    return poly_db_exec(db->db, sql);
+    // 使用参数化查询
+    const char* sql = "UPDATE kv_store SET expire = ? WHERE key = ?;";
+    poly_db_stmt_t* stmt = NULL;
+    infra_error_t err = poly_db_prepare(db->db, sql, &stmt);
+    if (err != INFRA_OK) return err;
+
+    // 绑定参数
+    char expiry_str[32];
+    snprintf(expiry_str, sizeof(expiry_str), "%ld", expiry);
+    err = poly_db_bind_text(stmt, 1, expiry_str, strlen(expiry_str));
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return err;
+    }
+
+    err = poly_db_bind_text(stmt, 2, key, strlen(key));
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return err;
+    }
+
+    // 执行语句
+    err = poly_db_stmt_step(stmt);
+    poly_db_stmt_finalize(stmt);
+    return err;
 }
 
 // 迭代器实现
