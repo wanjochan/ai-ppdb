@@ -64,14 +64,15 @@ echo "-e Build complete."
 ls -l "${POLY_DIR}/libpoly.a"
 echo "-e Build completed in $SECONDS seconds."
 
+# 构建 infra
+echo "Building infra..."
+"$(dirname "$0")/build_infra.sh"
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+
 # 准备基础源文件列表
 SOURCES=(
-    "${SRC_DIR}/internal/infra/infra_core.c"
-    "${SRC_DIR}/internal/infra/infra_memory.c"
-    "${SRC_DIR}/internal/infra/infra_error.c"
-    "${SRC_DIR}/internal/infra/infra_net.c"
-    "${SRC_DIR}/internal/infra/infra_platform.c"
-    "${SRC_DIR}/internal/infra/infra_sync.c"
     "${SRC_DIR}/internal/poly/poly_cmdline.c"
     "${SRC_DIR}/internal/poly/poly_atomic.c"
     "${SRC_DIR}/internal/peer/peer_service.c"
@@ -96,33 +97,9 @@ fi
 
 # 构建 sqlite3
 echo "Building sqlite3..."
-SQLITE_LIB="${BUILD_DIR}/lib/libsqlite3.a"
-mkdir -p "${BUILD_DIR}/lib"
-
-# 只在静态库不存在或源文件更新时重新构建
-if [ ! -f "${SQLITE_LIB}" ] || [ "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -nt "${SQLITE_LIB}" ]; then
-    echo "Compiling sqlite3 static library..."
-    # 添加必要的编译选项
-    SQLITE_CFLAGS="${CFLAGS} -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS4 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_JSON1 -DSQLITE_ENABLE_RTREE"
-    
-    "${CC}" ${SQLITE_CFLAGS} -c "${PPDB_DIR}/vendor/sqlite3/sqlite3.c" -o "${BUILD_DIR}/obj/sqlite3.o"
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to compile sqlite3"
-        rm -f "${BUILD_DIR}/obj/sqlite3.o"
-        exit 1
-    fi
-    
-    # 创建静态库
-    "${AR}" rcs "${SQLITE_LIB}" "${BUILD_DIR}/obj/sqlite3.o"
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to create sqlite3 static library"
-        rm -f "${SQLITE_LIB}"
-        exit 1
-    fi
-    
-    echo "SQLite static library created successfully"
-else
-    echo "SQLite static library is up to date"
+"$(dirname "$0")/build_sqlite3.sh"
+if [ $? -ne 0 ]; then
+    exit 1
 fi
 
 # 增量编译源文件
@@ -190,7 +167,7 @@ done
 
 # 链接
 echo "Linking..."
-"${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${POLY_DIR}/libpoly.a" "${SQLITE_LIB}" -o "${BUILD_DIR}/ppdb_latest.exe"
+"${CC}" ${LDFLAGS} "${OBJECTS[@]}" -L"${BUILD_DIR}/poly" -lpoly -L"${BUILD_DIR}/lib" -lsqlite3 -L"${BUILD_DIR}/infra" -linfra -o "${BUILD_DIR}/ppdb_latest.exe"
 if [ $? -ne 0 ]; then
     echo "Error: Linking failed"
     rm -f "${BUILD_DIR}/ppdb_latest.exe"
