@@ -115,9 +115,13 @@ static infra_error_t register_services(void) {
 #endif
 
 #ifdef DEV_SQLITE3
-    if ((err = peer_service_register(&g_sqlite3_service)) != INFRA_OK) {
+    // Register SQLite3 service
+    err = peer_service_register(&g_sqlite3_service);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to register sqlite3 service: %d", err);
         return err;
     }
+    INFRA_LOG_INFO("Registered sqlite3 service");
 #endif
 
     return INFRA_OK;
@@ -160,6 +164,16 @@ static void print_usage(const char* program) {
     infra_printf("      --status          Show service status\n");
 #endif
 
+#ifdef DEV_SQLITE3
+    infra_printf("  sqlite3 - SQLite3 service management\n");
+    infra_printf("    Options:\n");
+    infra_printf("      --db=<value>     Database file path\n");
+    infra_printf("      --port=<value>   Listen port (default: 5433)\n");
+    infra_printf("      --start          Start the service\n");
+    infra_printf("      --stop           Stop the service\n");
+    infra_printf("      --status         Show service status\n");
+    infra_printf("      --help           Show this help message\n");
+#endif
 }
 
 //-----------------------------------------------------------------------------

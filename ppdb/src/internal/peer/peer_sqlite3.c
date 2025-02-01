@@ -30,7 +30,7 @@ typedef struct {
     char db_path[SQLITE3_MAX_PATH_LEN]; // Database path
     infra_socket_t listener;            // Listener socket
     volatile bool running;              // Service running flag
-    infra_sem_t mutex;                  // Service mutex
+    infra_mutex_t mutex;                // Service mutex
     poly_poll_context_t* poll_ctx;      // Poll context
 } sqlite3_service_t;
 
@@ -42,6 +42,7 @@ static infra_error_t sqlite3_cleanup(void);
 static infra_error_t sqlite3_start(void);
 static infra_error_t sqlite3_stop(void);
 static bool sqlite3_is_running(void);
+static infra_error_t sqlite3_cmd_handler(int argc, char** argv);
 
 //-----------------------------------------------------------------------------
 // Command Line Options
@@ -77,7 +78,8 @@ peer_service_t g_sqlite3_service = {
     .cleanup = sqlite3_cleanup,
     .start = sqlite3_start,
     .stop = sqlite3_stop,
-    .is_running = sqlite3_is_running
+    .is_running = sqlite3_is_running,
+    .cmd_handler = sqlite3_cmd_handler
 };
 
 //-----------------------------------------------------------------------------
@@ -170,7 +172,11 @@ static void handle_request_wrapper(void* args) {
 //-----------------------------------------------------------------------------
 
 static infra_error_t sqlite3_init(const infra_config_t* config) {
-    return infra_sem_init(&g_service.mutex, 1);
+    infra_error_t err = infra_mutex_create(&g_service.mutex);
+    if (err != INFRA_OK) {
+        return err;
+    }
+    return INFRA_OK;
 }
 
 static infra_error_t sqlite3_start(void) {
@@ -275,10 +281,80 @@ static infra_error_t sqlite3_stop(void) {
 }
 
 static infra_error_t sqlite3_cleanup(void) {
-    infra_sem_destroy(&g_service.mutex);
+    infra_mutex_destroy(g_service.mutex);
     return INFRA_OK;
 }
 
 static bool sqlite3_is_running(void) {
     return g_service.running;
+}
+
+//-----------------------------------------------------------------------------
+// Command handler
+//-----------------------------------------------------------------------------
+
+static infra_error_t sqlite3_cmd_handler(int argc, char** argv) {
+    bool start = false;
+    bool stop = false;
+    bool status = false;
+    const char* db_path = NULL;
+    int port = 5433;
+
+    // Parse command line options
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-' || argv[i][1] != '-') {
+            continue;
+        }
+
+        const char* option = argv[i] + 2;
+        if (strcmp(option, "start") == 0) {
+            start = true;
+        } else if (strcmp(option, "stop") == 0) {
+            stop = true;
+        } else if (strcmp(option, "status") == 0) {
+            status = true;
+        } else {
+            const char* value = strchr(option, '=');
+            if (!value) {
+                continue;
+            }
+            value++;  // Skip '='
+
+            size_t name_len = value - option - 1;
+            if (strncmp(option, "db", name_len) == 0) {
+                db_path = value;
+            } else if (strncmp(option, "port", name_len) == 0) {
+                port = atoi(value);
+                if (port <= 0 || port > 65535) {
+                    INFRA_LOG_ERROR("Invalid port number: %d", port);
+                    return INFRA_ERROR_INVALID_PARAM;
+                }
+            }
+        }
+    }
+
+    // Check for conflicting options
+    if ((start && stop) || (start && status) || (stop && status)) {
+        INFRA_LOG_ERROR("Only one of --start, --stop, or --status can be specified");
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // Handle commands
+    if (start) {
+        if (!db_path) {
+            INFRA_LOG_ERROR("Database path not specified (use --db=<path>)");
+            return INFRA_ERROR_INVALID_PARAM;
+        }
+        strncpy(g_service.db_path, db_path, sizeof(g_service.db_path) - 1);
+        return sqlite3_start();
+    } else if (stop) {
+        return sqlite3_stop();
+    } else if (status) {
+        infra_printf("SQLite3 service is %s\n", 
+            sqlite3_is_running() ? "running" : "stopped");
+        return INFRA_OK;
+    }
+
+    INFRA_LOG_ERROR("No action specified (use --start, --stop, or --status)");
+    return INFRA_ERROR_INVALID_PARAM;
 }

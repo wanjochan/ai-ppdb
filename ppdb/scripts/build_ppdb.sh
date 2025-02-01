@@ -21,6 +21,10 @@ if [ "${ENABLE_MEMKV}" = "1" ]; then
     CFLAGS="${CFLAGS} -DDEV_MEMKV"
 fi
 
+if [ "${ENABLE_SQLITE3}" = "1" ]; then
+    CFLAGS="${CFLAGS} -DDEV_SQLITE3"
+fi
+
 # 清理旧的可执行文件
 echo "remove ${BUILD_DIR}/ppdb_latest.exe"
 rm -f "${BUILD_DIR}/ppdb_latest.exe"
@@ -37,6 +41,9 @@ sh "$(dirname "$0")/build_infra.sh"
 if [ $? -ne 0 ]; then
     exit 1
 fi
+
+# Sync the filesystem to ensure all files are written
+sync
 
 # 构建依赖库
 echo "Building poly library..."
