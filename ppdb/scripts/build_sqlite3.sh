@@ -37,3 +37,4 @@ if [ ! -f "${SQLITE_LIB}" ] || [ "${SQLITE_SRC}" -nt "${SQLITE_LIB}" ]; then
 else
     echo "SQLite3 library is up to date, skipping build."
 fi 
+ls -al "${SQLITE_LIB}"

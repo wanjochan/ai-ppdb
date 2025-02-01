@@ -1,12 +1,5 @@
 #!/bin/bash
 
-# # 加载环境变量和通用函数
-# source "$(dirname "$0")/build_env.sh"
-# if [ $? -ne 0 ]; then
-#     echo "Error: Failed to load build environment"
-#     exit 1
-# fi
-
 # 加载通用构建脚本
 source "$(dirname "$0")/build_common.sh" || { echo "Error: Failed to load build_common.sh"; exit 1; }
 

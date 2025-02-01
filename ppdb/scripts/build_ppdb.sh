@@ -32,6 +32,13 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Verify poly library exists
+POLY_LIB="${BUILD_DIR}/poly/libpoly.a"
+if [ ! -f "$POLY_LIB" ]; then
+    echo "Error: Poly library not found at $POLY_LIB"
+    exit 1
+fi
+
 echo "Building infra..."
 "$(dirname "$0")/build_infra.sh"
 if [ $? -ne 0 ]; then
