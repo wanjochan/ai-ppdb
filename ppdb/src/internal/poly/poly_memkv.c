@@ -138,7 +138,8 @@ infra_error_t poly_memkv_create(const poly_memkv_config_t* config, poly_memkv_db
     const char* create_table_sql = 
         "CREATE TABLE IF NOT EXISTS kv_store ("
         "key TEXT PRIMARY KEY,"
-        "value BLOB"
+        "value BLOB,"
+        "expire INTEGER"
         ");";
     
     err = poly_db_exec(memdb->db, create_table_sql);
@@ -200,6 +201,15 @@ infra_error_t poly_memkv_get(poly_memkv_db_t* db, const char* key, void** value,
 infra_error_t poly_memkv_del(poly_memkv_db_t* db, const char* key) {
     if (!db || !key) return INFRA_ERROR_INVALID_PARAM;
     return kv_del_internal(db->db, key, strlen(key));
+}
+
+infra_error_t poly_memkv_expire(poly_memkv_db_t* db, const char* key, time_t expiry) {
+    if (!db || !key) return INFRA_ERROR_INVALID_PARAM;
+    
+    char sql[256];
+    snprintf(sql, sizeof(sql), "UPDATE kv_store SET expire = %ld WHERE key = '%s';", expiry, key);
+    
+    return poly_db_exec(db->db, sql);
 }
 
 // 迭代器实现

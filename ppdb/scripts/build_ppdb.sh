@@ -31,6 +31,39 @@ rm -f "${BUILD_DIR}/ppdb_latest.exe"
 rm -f "${PPDB_DIR}/ppdb_latest.exe"
 echo "Building ppdb..."
 
+# 构建 poly 库
+echo "Building poly library..."
+POLY_SOURCES=(
+    "${SRC_DIR}/internal/poly/poly_db.c"
+    "${SRC_DIR}/internal/poly/poly_memkv.c"
+    "${SRC_DIR}/internal/poly/poly_memkv_cmd.c"
+    "${SRC_DIR}/internal/poly/poly_plugin.c"
+    "${SRC_DIR}/internal/poly/poly_poll.c"
+)
+
+# 编译 poly 源文件
+echo "${POLY_DIR}/libpoly.a"
+echo "Starting parallel compilation (max 8 jobs)..."
+POLY_OBJECTS=()
+
+for src in "${POLY_SOURCES[@]}"; do
+    obj="${POLY_DIR}/$(basename "${src}" .c).o"
+    POLY_OBJECTS+=("${obj}")
+    if [ ! -f "${obj}" ] || [ "${src}" -nt "${obj}" ]; then
+        echo "-e Compiling ${src}..."
+        "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
+    else
+        echo "-e Skipping ${src} (up to date)"
+    fi
+done
+
+# 创建静态库
+echo "-e Creating static library..."
+"${AR}" rcs "${POLY_DIR}/libpoly.a" "${POLY_OBJECTS[@]}"
+echo "-e Build complete."
+ls -l "${POLY_DIR}/libpoly.a"
+echo "-e Build completed in $SECONDS seconds."
+
 # 准备基础源文件列表
 SOURCES=(
     "${SRC_DIR}/internal/infra/infra_core.c"
@@ -41,7 +74,6 @@ SOURCES=(
     "${SRC_DIR}/internal/infra/infra_sync.c"
     "${SRC_DIR}/internal/poly/poly_cmdline.c"
     "${SRC_DIR}/internal/poly/poly_atomic.c"
-    "${SRC_DIR}/internal/poly/poly_plugin.c"
     "${SRC_DIR}/internal/peer/peer_service.c"
     "${SRC_DIR}/ppdb/ppdb.c"
 )
@@ -53,7 +85,6 @@ fi
 
 if [ "${ENABLE_MEMKV}" = "1" ]; then
     SOURCES+=("${SRC_DIR}/internal/peer/peer_memkv.c")
-    SOURCES+=("${SRC_DIR}/internal/poly/poly_memkv.c")
 fi
 
 # 获取 CPU 核心数
@@ -63,14 +94,7 @@ else
     JOBS=$(nproc)
 fi
 
-# 编译第三方库
-echo "Building poly library..."
-sh "$(dirname "$0")/build_poly.sh"
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to build poly library"
-    exit 1
-fi
-
+# 构建 sqlite3
 echo "Building sqlite3..."
 SQLITE_LIB="${BUILD_DIR}/lib/libsqlite3.a"
 mkdir -p "${BUILD_DIR}/lib"
@@ -165,7 +189,7 @@ done
 
 # 链接
 echo "Linking..."
-"${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${BUILD_DIR}/poly/libpoly.a" "${SQLITE_LIB}" -o "${BUILD_DIR}/ppdb_latest.exe"
+"${CC}" ${LDFLAGS} "${OBJECTS[@]}" "${POLY_DIR}/libpoly.a" "${SQLITE_LIB}" -o "${BUILD_DIR}/ppdb_latest.exe"
 if [ $? -ne 0 ]; then
     echo "Error: Linking failed"
     rm -f "${BUILD_DIR}/ppdb_latest.exe"

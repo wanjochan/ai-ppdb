@@ -33,6 +33,7 @@ SRC_FILES=(
     "${SRC_DIR}/internal/poly/poly_memkv_cmd.c"
     "${SRC_DIR}/internal/poly/poly_db.c"
     "${SRC_DIR}/internal/poly/poly_plugin.c"
+    "${SRC_DIR}/internal/poly/poly_poll.c"
 )
 
 # 设置最大并发数（根据CPU核心数）

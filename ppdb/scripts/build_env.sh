@@ -12,6 +12,7 @@ SRC_DIR="${PPDB_DIR}/src"
 INCLUDE_DIR="${PPDB_DIR}/include"
 INTERNAL_DIR="${PPDB_DIR}/internal"
 TEST_DIR="${PPDB_DIR}/test"
+POLY_DIR="${BUILD_DIR}/poly"
 # prebuilt software and mannually extract from curl -L -o cosmopolitan.zip https://justine.lol/cosmopolitan/cosmopolitan.zip
 COSMOS="${ROOT_DIR}/repos/cosmos"
 # cosmo compiler
@@ -39,5 +40,8 @@ done
 CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions"
 LDFLAGS="-static -Wl,--gc-sections -Wl,--build-id=none"
 
+# 创建必要的目录
+mkdir -p "${BUILD_DIR}" "${BIN_DIR}" "${POLY_DIR}"
+
 # 导出环境变量
-export ROOT_DIR PPDB_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR 
+export ROOT_DIR PPDB_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR POLY_DIR

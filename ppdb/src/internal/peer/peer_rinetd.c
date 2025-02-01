@@ -4,6 +4,7 @@
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_net.h"
 #include "internal/peer/peer_service.h"
+#include "internal/poly/poly_poll.h"
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -55,16 +56,9 @@ typedef struct {
 typedef struct {
     bool running;                        // 服务是否运行
     char config_path[RINETD_MAX_PATH_LEN]; // 配置文件路径
-    rinetd_rule_t* rules;               // 转发规则数组
-    int rule_count;                      // 规则数量
-    infra_thread_pool_t* pool;          // 线程池
-    infra_socket_t* listeners;          // 监听socket数组
-    infra_thread_t* listener_threads;    // 监听线程数组
-    infra_mutex_t* mutex;               // 全局互斥锁
-    rinetd_session_t* active_sessions;  // 活跃会话数组
-    int session_count;                  // 会话数量
-    struct pollfd* polls;               // poll 事件数组
-    int poll_count;                     // poll 事件数量
+    rinetd_rule_t rules[RINETD_MAX_RULES];  // 规则数组
+    int rule_count;                      // 当前规则数量
+    poly_poll_context_t* poll_ctx;       // poll上下文
 } rinetd_context_t;
 
 //-----------------------------------------------------------------------------
@@ -128,15 +122,7 @@ peer_service_t g_rinetd_service = {
 };
 
 // 服务上下文
-static struct {
-    bool running;
-    rinetd_rule_t rules[RINETD_MAX_RULES];  // 规则数组
-    int rule_count;                          // 当前规则数量
-    infra_socket_t listeners[RINETD_MAX_RULES];  // 每个规则对应一个监听器
-    infra_thread_pool_t* pool;
-    struct pollfd* polls;                    // poll事件数组
-    int poll_count;                          // poll事件数量
-} g_context = {0};
+static rinetd_context_t g_context = {0};
 
 //-----------------------------------------------------------------------------
 // Helper Functions
@@ -206,122 +192,227 @@ static infra_error_t forward_data(infra_socket_t src, infra_socket_t dst, char* 
 }
 
 // 处理单个连接
-static void* handle_connection(void* arg) {
-    rinetd_conn_t* conn = (rinetd_conn_t*)arg;
-    if (!conn) {
-        return NULL;
+static void handle_connection(void* user_data) {
+    poly_poll_handler_args_t* args = (poly_poll_handler_args_t*)user_data;
+    if (!args || !args->client || !args->user_data) {
+        INFRA_LOG_ERROR("Invalid connection parameters");
+        if (args && args->client) infra_net_close(args->client);
+        if (args) free(args);
+        return;
     }
 
-    INFRA_LOG_DEBUG("Started connection handling: %s:%d", 
-        conn->rule->src_addr, conn->rule->src_port);
+    // 获取规则索引
+    int rule_idx = (int)(intptr_t)args->user_data;
+    if (rule_idx < 0 || rule_idx >= g_context.rule_count) {
+        INFRA_LOG_ERROR("Invalid rule index: %d", rule_idx);
+        infra_net_close(args->client);
+        free(args);
+        return;
+    }
 
-    // 设置客户端socket为非阻塞模式
-    infra_net_set_nonblock(conn->client, true);
-    infra_net_set_timeout(conn->client, 30000);  // 30秒超时
+    rinetd_rule_t* rule = &g_context.rules[rule_idx];
 
-    // 创建服务器连接
+    // 连接目标服务器
     infra_socket_t server = NULL;
     infra_config_t config = {0};
     infra_error_t err = infra_net_create(&server, false, &config);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to create server socket: %d", err);
-        goto cleanup;
+        infra_net_close(args->client);
+        free(args);
+        return;
     }
 
-    // 连接到目标服务器
-    infra_net_addr_t addr = {0};
-    addr.host = conn->rule->dst_addr;
-    addr.port = conn->rule->dst_port;
+    // 连接目标地址
+    infra_net_addr_t addr = {
+        .host = rule->dst_addr,
+        .port = rule->dst_port
+    };
     err = infra_net_connect(&addr, &server, &config);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to connect to server %s:%d: %d", 
-            addr.host, addr.port, err);
-        goto cleanup;
+            rule->dst_addr, rule->dst_port, err);
+        infra_net_close(args->client);
+        infra_net_close(server);
+        free(args);
+        return;
     }
 
-    INFRA_LOG_INFO("Connected to server %s:%d", addr.host, addr.port);
+    INFRA_LOG_INFO("Connected to server %s:%d", rule->dst_addr, rule->dst_port);
 
-    // 设置服务器socket为非阻塞模式
-    infra_net_set_nonblock(server, true);
-    infra_net_set_timeout(server, 30000);  // 30秒超时
+    // 设置非阻塞模式
+    err = infra_net_set_nonblock(args->client, true);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set client nonblock: %d", err);
+        infra_net_close(args->client);
+        infra_net_close(server);
+        free(args);
+        return;
+    }
 
-    conn->server = server;
+    err = infra_net_set_nonblock(server, true);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set server nonblock: %d", err);
+        infra_net_close(args->client);
+        infra_net_close(server);
+        free(args);
+        return;
+    }
 
-    // 连接状态
-    bool client_closed = false;
-    bool server_closed = false;
-    int idle_count = 0;
-    const int MAX_IDLE = 600;  // 最大空闲次数（约60秒）
+    // 创建会话
+    rinetd_session_t* session = malloc(sizeof(rinetd_session_t));
+    if (!session) {
+        INFRA_LOG_ERROR("Failed to allocate session");
+        infra_net_close(args->client);
+        infra_net_close(server);
+        free(args);
+        return;
+    }
 
-    // 创建 poll 事件数组
-    struct pollfd polls[2] = {0};
-    polls[0].fd = infra_net_get_fd(conn->client);
-    polls[1].fd = infra_net_get_fd(conn->server);
+    session->client = args->client;
+    session->server = server;
+    session->c2s_failed = false;
+    session->s2c_failed = false;
 
-    while (g_context.running && !client_closed && !server_closed && idle_count < MAX_IDLE) {
-        // 设置 poll 事件
-        polls[0].events = POLLIN;
-        polls[1].events = POLLIN;
+    // 不再需要 args 了
+    free(args);
 
-        // 等待事件
-        int ready = poll(polls, 2, 100);  // 100ms timeout
-        if (ready < 0) {
+    // 设置 poll
+    struct pollfd fds[2] = {0};
+    fds[0].fd = infra_net_get_fd(session->client);
+    fds[0].events = POLLIN;
+    fds[1].fd = infra_net_get_fd(session->server);
+    fds[1].events = POLLIN;
+
+    // 开始转发数据
+    while (!session->c2s_failed && !session->s2c_failed) {
+        // 等待事件，1秒超时
+        int ret = poll(fds, 2, 1000);
+        if (ret < 0) {
             if (errno == EINTR) continue;
             INFRA_LOG_ERROR("Poll failed: %d", errno);
             break;
         }
-        
-        if (ready == 0) {
-            idle_count++;
-            continue;
-        }
-        
-        idle_count = 0;  // 重置空闲计数
+        if (ret == 0) continue;  // 超时，继续
 
-        // 处理客户端到服务器的数据
-        if (!client_closed && (polls[0].revents & POLLIN)) {
-            err = forward_data(conn->client, conn->server, conn->buffer, "C->S");
-            if (err == INFRA_ERROR_CLOSED) {
-                INFRA_LOG_DEBUG("Client closed connection");
-                client_closed = true;
-            } else if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
-                INFRA_LOG_ERROR("Forward C->S failed: %d", err);
-                break;
+        char buffer[RINETD_BUFFER_SIZE];
+
+        // 客户端到服务器
+        if (!session->c2s_failed && (fds[0].revents & POLLIN)) {
+            err = forward_data(session->client, session->server, buffer, "C->S");
+            if (err != INFRA_OK) {
+                if (err != INFRA_ERROR_WOULD_BLOCK && err != INFRA_ERROR_TIMEOUT) {
+                    session->c2s_failed = true;
+                }
             }
         }
 
-        // 处理服务器到客户端的数据
-        if (!server_closed && (polls[1].revents & POLLIN)) {
-            err = forward_data(conn->server, conn->client, conn->buffer, "S->C");
-            if (err == INFRA_ERROR_CLOSED) {
-                INFRA_LOG_DEBUG("Server closed connection");
-                server_closed = true;
-            } else if (err != INFRA_OK && err != INFRA_ERROR_TIMEOUT) {
-                INFRA_LOG_ERROR("Forward S->C failed: %d", err);
-                break;
+        // 服务器到客户端
+        if (!session->s2c_failed && (fds[1].revents & POLLIN)) {
+            err = forward_data(session->server, session->client, buffer, "S->C");
+            if (err != INFRA_OK) {
+                if (err != INFRA_ERROR_WOULD_BLOCK && err != INFRA_ERROR_TIMEOUT) {
+                    session->s2c_failed = true;
+                }
             }
         }
     }
 
-cleanup:
-    // 清理连接
-    INFRA_LOG_DEBUG("Cleaning up connection");
-    
-    if (conn->client) {
-        infra_net_shutdown(conn->client, INFRA_NET_SHUTDOWN_BOTH);
-        infra_net_close(conn->client);
-    }
-    if (conn->server) {
-        infra_net_shutdown(conn->server, INFRA_NET_SHUTDOWN_BOTH);
-        infra_net_close(conn->server);
-    }
-    free(conn);
-    return NULL;
+    // 清理资源
+    infra_net_close(session->client);
+    infra_net_close(session->server);
+    free(session);
 }
 
-//-----------------------------------------------------------------------------
-// Core Functions Implementation
-//-----------------------------------------------------------------------------
+// 启动服务
+static infra_error_t rinetd_start(void) {
+    if (g_context.running) {
+        INFRA_LOG_ERROR("Service already running");
+        return INFRA_ERROR_ALREADY_EXISTS;
+    }
+
+    // 创建 poly_poll 上下文
+    g_context.poll_ctx = malloc(sizeof(poly_poll_context_t));
+    if (!g_context.poll_ctx) {
+        INFRA_LOG_ERROR("Failed to allocate poll context");
+        return INFRA_ERROR_NO_MEMORY;
+    }
+
+    // 初始化 poly_poll
+    poly_poll_config_t config = {
+        .min_threads = RINETD_MIN_THREADS,
+        .max_threads = RINETD_MAX_THREADS,
+        .queue_size = RINETD_MAX_THREADS * 2,
+        .max_listeners = RINETD_MAX_RULES
+    };
+    
+    infra_error_t err = poly_poll_init(g_context.poll_ctx, &config);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to init poll context: %d", err);
+        free(g_context.poll_ctx);
+        g_context.poll_ctx = NULL;
+        return err;
+    }
+    
+    // 添加监听器
+    for (int i = 0; i < g_context.rule_count; i++) {
+        poly_poll_listener_t listener = {
+            .bind_port = g_context.rules[i].src_port,
+            .user_data = (void*)(intptr_t)i  // 传递规则索引
+        };
+        strncpy(listener.bind_addr, g_context.rules[i].src_addr, POLY_MAX_ADDR_LEN - 1);
+        listener.bind_addr[POLY_MAX_ADDR_LEN - 1] = '\0';  // 确保字符串结束
+
+        err = poly_poll_add_listener(g_context.poll_ctx, &listener);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to add listener %s:%d: %d",
+                g_context.rules[i].src_addr, g_context.rules[i].src_port, err);
+            goto error;
+        }
+    }
+    
+    // 设置连接处理器
+    poly_poll_set_handler(g_context.poll_ctx, handle_connection);
+    
+    // 标记服务为运行状态
+    g_context.running = true;
+    
+    // 启动服务
+    err = poly_poll_start(g_context.poll_ctx);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to start poll: %d", err);
+        goto error;
+    }
+
+    return INFRA_OK;
+
+error:
+    if (g_context.poll_ctx) {
+        poly_poll_cleanup(g_context.poll_ctx);
+        free(g_context.poll_ctx);
+        g_context.poll_ctx = NULL;
+    }
+    g_context.running = false;
+    return err;
+}
+
+// 停止服务
+static infra_error_t rinetd_stop(void) {
+    if (!g_context.running) {
+        return INFRA_OK;
+    }
+
+    g_context.running = false;
+
+    if (g_context.poll_ctx) {
+        poly_poll_stop(g_context.poll_ctx);
+        poly_poll_cleanup(g_context.poll_ctx);
+        free(g_context.poll_ctx);
+        g_context.poll_ctx = NULL;
+    }
+
+    return INFRA_OK;
+}
 
 infra_error_t rinetd_init(const infra_config_t* config) {
     if (!config) {
@@ -329,18 +420,6 @@ infra_error_t rinetd_init(const infra_config_t* config) {
     }
 
     memset(&g_context, 0, sizeof(g_context));
-
-    // 创建线程池
-    infra_thread_pool_config_t pool_config = {
-        .min_threads = RINETD_MIN_THREADS,
-        .max_threads = RINETD_MAX_THREADS,
-        .queue_size = RINETD_MAX_THREADS * 2
-    };
-
-    infra_error_t err = infra_thread_pool_create(&pool_config, &g_context.pool);
-    if (err != INFRA_OK) {
-        return err;
-    }
 
     return INFRA_OK;
 }
@@ -350,196 +429,12 @@ infra_error_t rinetd_cleanup(void) {
         rinetd_stop();
     }
 
-    if (g_context.pool) {
-        infra_thread_pool_destroy(g_context.pool);
-        g_context.pool = NULL;
-    }
-
-    // 清理所有监听器
-    for (int i = 0; i < g_context.rule_count; i++) {
-        if (g_context.listeners[i]) {
-            infra_net_close(g_context.listeners[i]);
-            g_context.listeners[i] = NULL;
-        }
-    }
-    g_context.rule_count = 0;
-
-    // 清理 poll 事件数组
-    if (g_context.polls) {
-        free(g_context.polls);
-        g_context.polls = NULL;
-    }
-    g_context.poll_count = 0;
-
-    return INFRA_OK;
-}
-
-static infra_error_t create_listener(int rule_index) {
-    if (rule_index < 0 || rule_index >= g_context.rule_count) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    // 创建监听socket
-    infra_socket_t listener = NULL;
-    infra_config_t config = {0};
-    infra_error_t err = infra_net_create(&listener, false, &config);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
-    // 设置地址重用
-    err = infra_net_set_reuseaddr(listener, true);
-    if (err != INFRA_OK) {
-        infra_net_close(listener);
-        return err;
-    }
-
-    // 绑定地址
-    infra_net_addr_t addr = {0};
-    addr.host = g_context.rules[rule_index].src_addr;
-    addr.port = g_context.rules[rule_index].src_port;
-    err = infra_net_bind(listener, &addr);
-    if (err != INFRA_OK) {
-        infra_net_close(listener);
-        return err;
-    }
-
-    // 开始监听
-    err = infra_net_listen(listener);
-    if (err != INFRA_OK) {
-        infra_net_close(listener);
-        return err;
-    }
-
-    g_context.listeners[rule_index] = listener;
-    return INFRA_OK;
-}
-
-infra_error_t rinetd_start(void) {
-    if (g_context.running) {
-        return INFRA_ERROR_BUSY;
-    }
-
-    // 检查是否有规则
-    if (g_context.rule_count == 0) {
-        INFRA_LOG_ERROR("No rules configured");
-        return INFRA_ERROR_INVALID_STATE;
-    }
-
-    // 为每个规则创建监听器
-    for (int i = 0; i < g_context.rule_count; i++) {
-        infra_error_t err = create_listener(i);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to create listener for rule %d: %d", i, err);
-            // 清理已创建的监听器
-            for (int j = 0; j < i; j++) {
-                infra_net_close(g_context.listeners[j]);
-                g_context.listeners[j] = NULL;
-            }
-            return err;
-        }
-    }
-
-    // 初始化 poll 事件数组
-    g_context.polls = malloc(sizeof(struct pollfd) * g_context.rule_count);
-    if (!g_context.polls) {
-        INFRA_LOG_ERROR("Failed to allocate poll events");
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    // 设置运行标志
-    g_context.running = true;
-
-    // 在前台运行
-    INFRA_LOG_INFO("Starting rinetd service in foreground with %d rules", g_context.rule_count);
-    
-    // 初始化 poll 事件
-    for (int i = 0; i < g_context.rule_count; i++) {
-        g_context.polls[i].fd = infra_net_get_fd(g_context.listeners[i]);
-        g_context.polls[i].events = POLLIN;
-    }
-    g_context.poll_count = g_context.rule_count;
-
-    while (g_context.running) {
-        // 等待连接
-        int ready = poll(g_context.polls, g_context.poll_count, 1000);  // 1秒超时
-        if (ready < 0) {
-            if (errno == EINTR) continue;
-            INFRA_LOG_ERROR("Poll failed: %d", errno);
-            break;
-        }
-        if (ready == 0) continue;  // 超时，继续循环
-
-        // 检查每个监听器
-        for (int i = 0; i < g_context.rule_count; i++) {
-            if (!(g_context.polls[i].revents & POLLIN)) continue;
-
-            // 接受连接
-            infra_socket_t client = NULL;
-            infra_net_addr_t client_addr = {0};
-            infra_error_t err = infra_net_accept(g_context.listeners[i], &client, &client_addr);
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_WOULD_BLOCK) continue;
-                INFRA_LOG_ERROR("Failed to accept connection: %d", err);
-                continue;
-            }
-
-            INFRA_LOG_INFO("Accepted connection from %s:%d for rule %d", 
-                client_addr.host, client_addr.port, i);
-
-            // 创建连接结构
-            rinetd_conn_t* conn = malloc(sizeof(rinetd_conn_t));
-            if (!conn) {
-                INFRA_LOG_ERROR("Failed to allocate connection");
-                infra_net_close(client);
-                continue;
-            }
-
-            // 初始化连接结构
-            memset(conn, 0, sizeof(rinetd_conn_t));
-            conn->client = client;
-            conn->rule = &g_context.rules[i];
-
-            // 提交到线程池
-            err = infra_thread_pool_submit(g_context.pool, handle_connection, conn);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to submit connection to thread pool: %d", err);
-                infra_net_close(client);
-                free(conn);
-                continue;
-            }
-        }
-    }
-
-    return INFRA_OK;
-}
-
-infra_error_t rinetd_stop(void) {
-    if (!g_context.running) {
-        return INFRA_OK;
-    }
-
-    g_context.running = false;
-    
-    // 清理所有监听器
-    for (int i = 0; i < g_context.rule_count; i++) {
-        if (g_context.listeners[i]) {
-            infra_net_close(g_context.listeners[i]);
-            g_context.listeners[i] = NULL;
-        }
-    }
-    g_context.rule_count = 0;
-
     return INFRA_OK;
 }
 
 bool rinetd_is_running(void) {
     return g_context.running;
 }
-
-//-----------------------------------------------------------------------------
-// Command Handler
-//-----------------------------------------------------------------------------
 
 infra_error_t rinetd_cmd_handler(int argc, char** argv) {
     if (argc < 1) {
