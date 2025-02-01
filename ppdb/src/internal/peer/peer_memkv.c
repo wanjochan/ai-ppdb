@@ -1,20 +1,26 @@
-#include "internal/peer/peer_service.h"
-#include "internal/infra/infra_core.h"
-#include "internal/infra/infra_net.h"
-#include "internal/infra/infra_sync.h"
-#include "internal/infra/infra_memory.h"
-#include "internal/poly/poly_memkv.h"
-#include "internal/poly/poly_poll.h"
-#define MEMKV_VERSION          "1.0.0"
+#include "peer_service.h"
+#include "../infra/infra_core.h"
+#include "../infra/infra_net.h"
+#include "../infra/infra_sync.h"
+#include "../infra/infra_memory.h"
+#include "../poly/poly_memkv.h"
+#include "../poly/poly_poll.h"
+
+// #include <stdio.h>
+// #include <stdlib.h>
+// #include <string.h>
+// #include <time.h>
+
+#define MEMKV_VERSION "1.0.0"
 #define MEMKV_MAX_ADDR_LEN 256
 #define MEMKV_MAX_RULES 16
 #define RING_BUFFER_SIZE 4096
-#define MEMKV_BUFFER_SIZE      1048576  // 增加到 1MB
-#define MEMKV_MAX_KEY_SIZE     250
-#define MEMKV_MAX_VALUE_SIZE   (1024 * 1024)  // 1MB
-#define MEMKV_MIN_THREADS      32
-#define MEMKV_MAX_THREADS      512
-#define MEMKV_DEFAULT_PORT     11211
+#define MEMKV_BUFFER_SIZE 1048576  // 1MB
+#define MEMKV_MAX_KEY_SIZE 250
+#define MEMKV_MAX_VALUE_SIZE (1024 * 1024)  // 1MB
+#define MEMKV_MIN_THREADS 32
+#define MEMKV_MAX_THREADS 512
+#define MEMKV_DEFAULT_PORT 11211
 #define POLY_OK 0
 #define POLY_ERR_NOT_FOUND 1
 
@@ -22,93 +28,49 @@
 // Types
 //-----------------------------------------------------------------------------
 
-// 存储规则
-typedef struct memkv_rule {
-    char bind_addr[MEMKV_MAX_ADDR_LEN];  // 绑定地址
-    uint16_t bind_port;                  // 绑定端口
-    poly_memkv_engine_t engine;          // 存储引擎
-    char* db_path;                       // 数据库路径
-    char* plugin_path;                   // 插件路径
-    size_t max_memory;                   // 内存限制
-    bool enable_compression;             // 启用压缩
-    bool read_only;                      // 只读模式
-} memkv_rule_t;
-
-// 键值对元数据
-typedef struct memkv_item {
-    time_t expiry;                       // 过期时间
-    uint32_t flags;                      // 标志位
-    size_t value_len;                    // 值长度
-} memkv_item_t;
-
-// 环形缓冲区结构
 typedef struct {
-    char data[RING_BUFFER_SIZE];
+    char* data;
+    size_t bytes_available;
     size_t read_pos;
     size_t write_pos;
-    size_t bytes_available;
 } ring_buffer_t;
 
-// 连接上下文
-typedef struct memkv_conn memkv_conn_t;
-static void handle_set_command(memkv_conn_t* conn, const char* key, unsigned int flags, time_t exptime, size_t bytes);
-static void handle_incr_decr_command(memkv_conn_t* conn, const char* key, const char* op, uint64_t delta);
-
-// 连接上下文
-typedef struct memkv_conn {
-    infra_socket_t client;
-    poly_memkv_db_t* store;
-    memkv_rule_t* rule;
-    bool active;
-    ring_buffer_t rx_buf;
-    ring_buffer_t tx_buf;
+typedef struct {
+    infra_socket_t sock;        // 客户端套接字
+    bool binary_protocol;       // 是否使用二进制协议
+    bool should_close;          // 是否应该关闭连接
+    poly_memkv_db_t* store;    // 存储引擎实例
+    ring_buffer_t rx_buf;      // 接收缓冲区
+    ring_buffer_t tx_buf;      // 发送缓冲区
 } memkv_conn_t;
 
-// 服务上下文
-typedef struct memkv_context {
-    bool running;                        // 运行标志
-    infra_thread_pool_t* pool;          // 线程池
-    memkv_rule_t rules[MEMKV_MAX_RULES];// 规则列表
-    int rule_count;                      // 规则数量
-    infra_socket_t listeners[MEMKV_MAX_RULES]; // 监听socket列表
-    poly_poll_context_t* poll_ctx;      // poll上下文
-} memkv_context_t;
+typedef struct {
+    char addr[MEMKV_MAX_ADDR_LEN];
+    int port;
+    bool binary_protocol;
+} memkv_rule_t;
 
-// Peer Memory KV Store handle implementation
-typedef struct peer_memkv_db {
-    poly_memkv_db_t* db;  // Underlying poly_memkv handle
-} peer_memkv_db_t;
+typedef struct {
+    memkv_rule_t rules[MEMKV_MAX_RULES];
+    int rule_count;
+    int max_threads;
+    int min_threads;
+    char* engine;
+    char* plugin;
+    bool running;
+    poly_poll_context_t* poll_ctx;  // Fix type name
+} memkv_config_t;
 
-// Peer Memory KV Store iterator implementation
-typedef struct peer_memkv_iter {
-    poly_memkv_iter_t* iter;  // Underlying poly_memkv iterator
+typedef struct {
+    poly_memkv_db_t* db;
+    poly_memkv_iter_t* iter;
 } peer_memkv_iter_t;
 
-//-----------------------------------------------------------------------------
-// Forward Declarations
-//-----------------------------------------------------------------------------
-
-// Service interface functions
-static infra_error_t memkv_init(const infra_config_t* config);
-static infra_error_t memkv_cleanup(void);
-static infra_error_t memkv_start(void);
-static infra_error_t memkv_stop(void);
-static bool memkv_is_running(void);
-static infra_error_t memkv_cmd_handler(int argc, char* argv[]);
-
-// Helper functions
-static infra_error_t load_config(const char* config_path);
-static void handle_connection(void* arg);  // 修改为 void 返回类型
-
-// Storage functions
-static bool is_key_expired(poly_memkv_db_t* db, const char* key);
-static infra_error_t set_with_expiry(poly_memkv_db_t* db, const char* key, const void* value, 
-                                    size_t value_len, uint32_t flags, time_t expiry);
-static infra_error_t get_with_expiry(poly_memkv_db_t* db, const char* key, void** value, 
-                                    size_t* value_len, uint32_t* flags);
-static infra_error_t poly_memkv_counter_op(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
-static infra_error_t poly_memkv_incr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
-static infra_error_t poly_memkv_decr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
+typedef struct {
+    time_t expiry;
+    uint32_t flags;
+    size_t value_len;
+} memkv_item_t;
 
 // Command Line Options
 static const poly_cmd_option_t memkv_options[] = {
@@ -123,8 +85,41 @@ static const poly_cmd_option_t memkv_options[] = {
 static const size_t memkv_option_count = sizeof(memkv_options) / sizeof(memkv_options[0]);
 
 //-----------------------------------------------------------------------------
+// Forward Declarations
+//-----------------------------------------------------------------------------
+
+static void handle_flush_all_command(memkv_conn_t* conn);
+static void handle_get_command(memkv_conn_t* conn, const char* key);
+static void handle_text_command(memkv_conn_t* conn, const char* cmd);
+static void handle_binary_command(memkv_conn_t* conn, const char* cmd);
+static void handle_connection(void* arg);
+static infra_error_t memkv_init(const infra_config_t* config);
+static infra_error_t memkv_cleanup(void);
+static infra_error_t memkv_start(void);
+static infra_error_t memkv_stop(void);
+static bool memkv_is_running(void);
+static infra_error_t memkv_cmd_handler(int argc, char* argv[]);
+static infra_error_t load_config(const char* config_path);
+static bool is_key_expired(poly_memkv_db_t* db, const char* key);
+static infra_error_t set_with_expiry(poly_memkv_db_t* db, const char* key, const void* value, 
+                                    size_t value_len, uint32_t flags, time_t expiry);
+static infra_error_t get_with_expiry(poly_memkv_db_t* db, const char* key, void** value, 
+                                    size_t* value_len, uint32_t* flags);
+static infra_error_t poly_memkv_counter_op(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
+static infra_error_t poly_memkv_incr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
+static infra_error_t poly_memkv_decr(poly_memkv_db_t* db, const char* key, int64_t delta, int64_t* new_value);
+static bool send_response(infra_socket_t sock, const char* response, size_t len);
+static void handle_request(memkv_conn_t* conn, char* request, size_t len);
+static void handle_client_command(memkv_conn_t* conn, const char* cmd);
+static void send_binary_error_response(memkv_conn_t* conn, const char* error_msg);
+static void handle_incr_command(memkv_conn_t* conn, const char* key, const char* value);
+
+//-----------------------------------------------------------------------------
 // Global Variables
 //-----------------------------------------------------------------------------
+
+static memkv_config_t g_config = {0};
+static bool g_initialized = false;
 
 // 服务实例
 peer_service_t g_memkv_service = {
@@ -144,22 +139,9 @@ peer_service_t g_memkv_service = {
     .cmd_handler = memkv_cmd_handler
 };
 
-// 服务上下文
-static memkv_context_t g_context = {0};  // 静态初始化为 0
-
 //-----------------------------------------------------------------------------
 // Helper Functions
 //-----------------------------------------------------------------------------
-
-// 函数前向声明
-static void handle_client_command(memkv_conn_t* conn, const char* cmd);
-static void handle_request(memkv_conn_t* conn, char* request, size_t len);
-static void handle_binary_command(memkv_conn_t* conn, const char* cmd);
-static void handle_text_command(memkv_conn_t* conn, const char* cmd);
-static void handle_get_command(memkv_conn_t* conn, const char* key);
-static void handle_incr_command(memkv_conn_t* conn, const char* key, const char* value);
-static void send_binary_error_response(memkv_conn_t* conn, const char* error_msg);
-static bool send_response(infra_socket_t sock, const char* response, size_t len);
 
 // 环形缓冲区操作
 static void ring_buffer_init(ring_buffer_t* buf) {
@@ -185,16 +167,28 @@ static size_t ring_buffer_write(ring_buffer_t* buf, const char* data, size_t len
 
 // 处理客户端连接
 static void handle_connection(void* arg) {
+    INFRA_LOG_DEBUG("Entering handle_connection");
+    if (!arg) {
+        INFRA_LOG_ERROR("Null argument passed to handle_connection");
+        return;
+    }
+
     poly_poll_handler_args_t* args = (poly_poll_handler_args_t*)arg;
-    if (!args || !args->client) {
+    INFRA_LOG_DEBUG("Created args, client=%p, user_data=%p", args->client, args->user_data);
+    if (!args || !args->client || !args->user_data) {
         INFRA_LOG_ERROR("Invalid connection parameters");
-        if (args && args->client) infra_net_close(args->client);
-        if (args) infra_free(args);
+        if (args && args->client) {
+            infra_net_close(args->client);
+        }
+        if (args) {
+            infra_free(args);
+        }
         return;
     }
 
     // 创建连接上下文
     memkv_conn_t* conn = (memkv_conn_t*)infra_malloc(sizeof(memkv_conn_t));
+    INFRA_LOG_DEBUG("Allocated connection context at %p", conn);
     if (!conn) {
         INFRA_LOG_ERROR("Failed to allocate connection context");
         infra_net_close(args->client);
@@ -204,31 +198,25 @@ static void handle_connection(void* arg) {
 
     // 初始化连接上下文
     memset(conn, 0, sizeof(memkv_conn_t));
-    conn->client = args->client;
-    conn->rule = (memkv_rule_t*)args->user_data;
-    if (!conn->rule) {
-        INFRA_LOG_ERROR("Invalid rule in connection context");
-        infra_net_close(conn->client);
-        infra_free(conn);
-        infra_free(args);
-        return;
-    }
-    
-    conn->active = true;
+    conn->sock = args->client;
+    conn->binary_protocol = false;
+    conn->should_close = false;
+
+    // Initialize ring buffers
     ring_buffer_init(&conn->rx_buf);
     ring_buffer_init(&conn->tx_buf);
 
     // 创建存储引擎
     poly_memkv_config_t store_config = {0};  // 确保完全初始化
-    store_config.url = conn->rule->db_path ? conn->rule->db_path : ":memory:";
-    store_config.engine = conn->rule->engine;
+    store_config.url = ":memory:";
+    store_config.engine = POLY_MEMKV_ENGINE_SQLITE;
     store_config.max_key_size = MEMKV_MAX_KEY_SIZE;
     store_config.max_value_size = MEMKV_MAX_VALUE_SIZE;
-    store_config.memory_limit = conn->rule->max_memory;
-    store_config.enable_compression = conn->rule->enable_compression;
-    store_config.plugin_path = conn->rule->plugin_path;
+    store_config.memory_limit = 0;  // 无限制
+    store_config.enable_compression = false;
+    store_config.plugin_path = NULL;
     store_config.allow_fallback = true;
-    store_config.read_only = conn->rule->read_only;
+    store_config.read_only = false;
 
     INFRA_LOG_DEBUG("Creating store with config: engine=%d, url=%s", 
                     store_config.engine, store_config.url);
@@ -238,7 +226,7 @@ static void handle_connection(void* arg) {
     infra_error_t err = poly_memkv_create(&store_config, &store);
     if (err != INFRA_OK || !store) {
         INFRA_LOG_ERROR("Failed to create store: %d", err);
-        infra_net_close(conn->client);
+        infra_net_close(conn->sock);
         infra_free(conn);
         infra_free(args);
         return;
@@ -246,16 +234,16 @@ static void handle_connection(void* arg) {
     conn->store = store;
 
     // 设置非阻塞
-    infra_net_set_nonblock(conn->client, true);
+    infra_net_set_nonblock(conn->sock, true);
 
     char buffer[MEMKV_BUFFER_SIZE] = {0};
     size_t bytes_received = 0;
 
     INFRA_LOG_DEBUG("Connection handler started for client");
 
-    while (conn->active) {
+    while (!conn->should_close) {
         // 接收数据
-        err = infra_net_recv(conn->client, buffer, sizeof(buffer), &bytes_received);
+        err = infra_net_recv(conn->sock, buffer, sizeof(buffer), &bytes_received);
         if (err != INFRA_OK) {
             if (err == INFRA_ERROR_WOULD_BLOCK) {
                 // 非阻塞模式下，暂时没有数据可读
@@ -285,17 +273,17 @@ static void handle_connection(void* arg) {
             
             if (first_chunk >= bytes_to_send) {
                 // 数据是连续的
-                if (!send_response(conn->client, conn->tx_buf.data + conn->tx_buf.read_pos, bytes_to_send)) {
+                if (!send_response(conn->sock, conn->tx_buf.data + conn->tx_buf.read_pos, bytes_to_send)) {
                     INFRA_LOG_ERROR("Failed to send response");
                     break;
                 }
             } else {
                 // 数据分两段发送
-                if (!send_response(conn->client, conn->tx_buf.data + conn->tx_buf.read_pos, first_chunk)) {
+                if (!send_response(conn->sock, conn->tx_buf.data + conn->tx_buf.read_pos, first_chunk)) {
                     INFRA_LOG_ERROR("Failed to send first chunk of response");
                     break;
                 }
-                if (!send_response(conn->client, conn->tx_buf.data, bytes_to_send - first_chunk)) {
+                if (!send_response(conn->sock, conn->tx_buf.data, bytes_to_send - first_chunk)) {
                     INFRA_LOG_ERROR("Failed to send second chunk of response");
                     break;
                 }
@@ -313,9 +301,13 @@ static void handle_connection(void* arg) {
         poly_memkv_destroy(conn->store);
         conn->store = NULL;
     }
-    infra_net_close(conn->client);
+    if (conn->sock) {
+        infra_net_close(conn->sock);
+        conn->sock = NULL;
+    }
     infra_free(conn);
     infra_free(args);
+    INFRA_LOG_DEBUG("Connection handler finished");
 }
 
 //-----------------------------------------------------------------------------
@@ -324,43 +316,43 @@ static void handle_connection(void* arg) {
 
 // 启动服务
 static infra_error_t memkv_start(void) {
-    if (g_context.running) {
+    if (g_config.running) {
         return INFRA_OK;
     }
 
     infra_error_t err = INFRA_OK;
 
     // 初始化监听器
-    for (int i = 0; i < g_context.rule_count; i++) {
-        memkv_rule_t* rule = &g_context.rules[i];
+    for (int i = 0; i < g_config.rule_count; i++) {
+        memkv_rule_t* rule = &g_config.rules[i];
 
         // 创建监听器配置
         poly_poll_listener_t poll_listener = {0};
-        strncpy(poll_listener.bind_addr, rule->bind_addr, POLY_MAX_ADDR_LEN - 1);
-        poll_listener.bind_port = rule->bind_port;
+        strncpy(poll_listener.bind_addr, rule->addr, POLY_MAX_ADDR_LEN - 1);
+        poll_listener.bind_port = rule->port;
         poll_listener.user_data = rule;
 
         // 添加到poll上下文
-        err = poly_poll_add_listener(g_context.poll_ctx, &poll_listener);
+        err = poly_poll_add_listener(g_config.poll_ctx, &poll_listener);
         if (err != INFRA_OK) {
             INFRA_LOG_ERROR("Failed to add listener: %d", err);
             goto cleanup;
         }
 
-        INFRA_LOG_INFO("Listening on %s:%d", rule->bind_addr, rule->bind_port);
+        INFRA_LOG_INFO("Listening on %s:%d", rule->addr, rule->port);
     }
 
     // 设置连接处理回调
-    poly_poll_set_handler(g_context.poll_ctx, handle_connection);
+    poly_poll_set_handler(g_config.poll_ctx, handle_connection);
 
     // 启动poll
-    err = poly_poll_start(g_context.poll_ctx);
+    err = poly_poll_start(g_config.poll_ctx);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to start poll: %d", err);
         goto cleanup;
     }
 
-    g_context.running = true;
+    g_config.running = true;
     return INFRA_OK;
 
 cleanup:
@@ -369,23 +361,24 @@ cleanup:
 
 // 停止服务
 static infra_error_t memkv_stop(void) {
-    if (!g_context.running) {
-        INFRA_LOG_ERROR("Service not running");
-        return INFRA_ERROR_NOT_READY;
+    if (!g_config.running) {
+        return INFRA_OK;
     }
-    
-    // 设置停止标志
-    g_context.running = false;
-    
-    // 等待服务线程退出
-    INFRA_LOG_INFO("Stopping service...");
-    
+
+    // Stop poly_poll first
+    infra_error_t err = poly_poll_stop(g_config.poll_ctx);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to stop poll: %d", err);
+        return err;
+    }
+
+    g_config.running = false;
     return INFRA_OK;
 }
 
 // 检查服务是否运行
 bool memkv_is_running(void) {
-    return g_context.running;
+    return g_config.running;
 }
 
 // 处理命令行
@@ -423,13 +416,12 @@ infra_error_t memkv_cmd_handler(int argc, char* argv[]) {
             INFRA_LOG_INFO("MemKV service stopped successfully");
             return INFRA_OK;
         } else if (strcmp(argv[i], "--status") == 0) {
-            if (g_context.running) {
-                INFRA_LOG_INFO("Service is running with %d rules:", g_context.rule_count);
-                for (int j = 0; j < g_context.rule_count; j++) {
-                    memkv_rule_t* rule = &g_context.rules[j];
-                    INFRA_LOG_INFO("  Rule %d: %s:%d (%s)", j,
-                        rule->bind_addr, rule->bind_port,
-                        rule->engine == POLY_MEMKV_ENGINE_SQLITE ? "sqlite" : "duckdb");
+            if (g_config.running) {
+                INFRA_LOG_INFO("Service is running with %d rules:", g_config.rule_count);
+                for (int j = 0; j < g_config.rule_count; j++) {
+                    memkv_rule_t* rule = &g_config.rules[j];
+                    INFRA_LOG_INFO("  Rule %d: %s:%d", j,
+                        rule->addr, rule->port);
                 }
             } else {
                 INFRA_LOG_INFO("Service is stopped");
@@ -836,122 +828,32 @@ static void handle_request(memkv_conn_t* conn, char* request, size_t len) {
         return;
     }
 
-    char* saveptr;
-    char* cmd = strtok_r(request, " \r\n", &saveptr);
-    if (!cmd) {
-        INFRA_LOG_ERROR("Invalid command format");
-        ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
+    // 处理命令
+    if (strcmp(request, "flush_all") == 0) {
+        handle_flush_all_command(conn);
+    } else {
+        handle_client_command(conn, request);
+    }
+}
+
+static void handle_flush_all_command(memkv_conn_t* conn) {
+    if (!conn) {
+        INFRA_LOG_ERROR("Invalid parameters in handle_flush_all_command");
         return;
     }
 
-    // 转换命令为小写
-    for (char* p = cmd; *p; ++p) *p = tolower(*p);
-
-    INFRA_LOG_DEBUG("Processing command: %s", cmd);
-
-    if (strcmp(cmd, "get") == 0) {
-        char* key = strtok_r(NULL, " \r\n", &saveptr);
-        if (!key) {
-            INFRA_LOG_ERROR("GET: Missing key");
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
-
-        void* value;
-        size_t value_len;
-        
-        infra_error_t err = poly_memkv_get(conn->store, key, &value, &value_len);
-        if (err == INFRA_OK) {
-            char header[256];
-            int header_len = snprintf(header, sizeof(header), "VALUE %s 0 %zu\r\n", key, value_len);
-            if (header_len < 0 || header_len >= sizeof(header)) {
-                INFRA_LOG_ERROR("GET: Header buffer overflow");
-                if (value) infra_free(value);
-                ring_buffer_write(&conn->tx_buf, "SERVER_ERROR header overflow\r\n", 29);
-                return;
-            }
-
-            // 检查缓冲区空间是否足够
-            if (RING_BUFFER_SIZE - conn->tx_buf.bytes_available < header_len + value_len + 7) {
-                INFRA_LOG_ERROR("GET: Response buffer overflow");
-                if (value) infra_free(value);
-                ring_buffer_write(&conn->tx_buf, "SERVER_ERROR buffer overflow\r\n", 29);
-                return;
-            }
-
-            ring_buffer_write(&conn->tx_buf, header, header_len);
-            ring_buffer_write(&conn->tx_buf, value, value_len);
-            ring_buffer_write(&conn->tx_buf, "\r\nEND\r\n", 7);
-            if (value) infra_free(value);
-        } else {
-            INFRA_LOG_DEBUG("GET: Key not found: %s", key);
-            ring_buffer_write(&conn->tx_buf, "END\r\n", 5);
-        }
-    } else if (strcmp(cmd, "set") == 0) {
-        char* key = strtok_r(NULL, " ", &saveptr);
-        char* flags_str = strtok_r(NULL, " ", &saveptr);
-        char* expiry_str = strtok_r(NULL, " ", &saveptr);
-        char* bytes_str = strtok_r(NULL, " \r\n", &saveptr);
-
-        if (!key || !flags_str || !expiry_str || !bytes_str) {
-            INFRA_LOG_ERROR("SET: Invalid parameters");
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
-
-        uint32_t flags = atoi(flags_str);
-        time_t expiry = atoi(expiry_str);
-        size_t bytes = atoi(bytes_str);
-
-        if (bytes > MEMKV_MAX_VALUE_SIZE) {
-            INFRA_LOG_ERROR("SET: Value too large: %zu", bytes);
-            ring_buffer_write(&conn->tx_buf, "SERVER_ERROR value too large\r\n", 29);
-            return;
-        }
-
-        char* value = infra_malloc(bytes + 2);  // +2 for \r\n
-        if (!value) {
-            INFRA_LOG_ERROR("SET: Failed to allocate memory for value");
-            ring_buffer_write(&conn->tx_buf, "SERVER_ERROR out of memory\r\n", 27);
-            return;
-        }
-
-        size_t received = 0;
-        infra_error_t err = infra_net_recv(conn->client, value, bytes + 2, &received);
-        if (err != INFRA_OK || received != bytes + 2 || value[bytes] != '\r' || value[bytes + 1] != '\n') {
-            INFRA_LOG_ERROR("SET: Failed to receive value data");
-            infra_free(value);
-            ring_buffer_write(&conn->tx_buf, "CLIENT_ERROR bad data chunk\r\n", 29);
-            return;
-        }
-
-        err = poly_memkv_set(conn->store, key, value, bytes);
-        if (err == INFRA_OK && expiry > 0) {
-            err = poly_memkv_expire(conn->store, key, expiry);
-        }
-
-        infra_free(value);
-        ring_buffer_write(&conn->tx_buf, err == INFRA_OK ? "STORED\r\n" : "NOT_STORED\r\n", 
-                         err == INFRA_OK ? 8 : 12);
-    } else if (strcmp(cmd, "delete") == 0) {
-        char* key = strtok_r(NULL, " \r\n", &saveptr);
-        if (!key) {
-            INFRA_LOG_ERROR("DELETE: Missing key");
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
-
-        infra_error_t err = poly_memkv_del(conn->store, key);
-        if (err == INFRA_OK) {
-            INFRA_LOG_DEBUG("DELETE: Key deleted successfully: %s", key);
-            ring_buffer_write(&conn->tx_buf, "DELETED\r\n", 9);
-        } else {
-            INFRA_LOG_DEBUG("DELETE: Key not found: %s", key);
-            ring_buffer_write(&conn->tx_buf, "NOT_FOUND\r\n", 11);
+    INFRA_LOG_DEBUG("FLUSH_ALL: Clearing all data");
+    
+    if (poly_memkv_flush_all(conn->store) == POLY_OK) {
+        INFRA_LOG_DEBUG("FLUSH_ALL: Successfully cleared all data");
+        if (!ring_buffer_write(&conn->tx_buf, "OK\r\n", 4)) {
+            INFRA_LOG_ERROR("Failed to write OK response");
         }
     } else {
-        INFRA_LOG_ERROR("Unknown command: %s", cmd);
-        ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
+        INFRA_LOG_ERROR("FLUSH_ALL: Failed to clear data");
+        if (!ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7)) {
+            INFRA_LOG_ERROR("Failed to write ERROR response");
+        }
     }
 }
 
@@ -982,198 +884,189 @@ static void handle_client_command(memkv_conn_t* conn, const char* cmd) {
 }
 
 static void handle_binary_command(memkv_conn_t* conn, const char* cmd) {
-    if (strncmp(cmd, "GET", 3) == 0) {
-        const char* key = cmd + 4;
-        handle_get_command(conn, key);
-    } else if (strncmp(cmd, "INCR", 4) == 0) {
-        const char* key = cmd + 5;
-        const char* value = strchr(key, ' ');
-        if (value) {
-            value++;
-            handle_incr_command(conn, key, value);
-        } else {
-            send_binary_error_response(conn, "INVALID_INCR_COMMAND");
-        }
-    } else {
-        send_binary_error_response(conn, "UNKNOWN_COMMAND");
+    if (!conn || !cmd) {
+        INFRA_LOG_ERROR("Invalid parameters in handle_binary_command");
+        return;
+    }
+
+    // 二进制协议格式：
+    // 第1字节：魔数 (0x80)
+    // 第2字节：命令类型
+    // 第3-4字节：键长度 (big-endian)
+    // 第5-8字节：值长度 (big-endian)
+    // 第9-12字节：额外数据长度 (big-endian)
+    // 后续字节：键、值、额外数据
+
+    if ((unsigned char)cmd[0] != 0x80) {
+        INFRA_LOG_ERROR("Invalid binary protocol magic number");
+        send_binary_error_response(conn, "PROTOCOL_ERROR");
+        return;
+    }
+
+    uint8_t cmd_type = (unsigned char)cmd[1];
+    uint16_t key_len = ((unsigned char)cmd[2] << 8) | (unsigned char)cmd[3];
+    uint32_t value_len = ((unsigned char)cmd[4] << 24) | ((unsigned char)cmd[5] << 16) |
+                        ((unsigned char)cmd[6] << 8) | (unsigned char)cmd[7];
+    uint32_t extra_len = ((unsigned char)cmd[8] << 24) | ((unsigned char)cmd[9] << 16) |
+                        ((unsigned char)cmd[10] << 8) | (unsigned char)cmd[11];
+
+    const char* key = cmd + 12;
+    const char* value = key + key_len;
+    const char* extra = value + value_len;
+
+    switch (cmd_type) {
+        case 0x00:  // GET
+            if (key_len > 0) {
+                handle_get_command(conn, key);
+            } else {
+                send_binary_error_response(conn, "INVALID_KEY");
+            }
+            break;
+
+        case 0x01:  // SET
+            if (key_len > 0 && value_len > 0) {
+                if (set_with_expiry(conn->store, key, value, value_len, 0, 0) == INFRA_OK) {
+                    ring_buffer_write(&conn->tx_buf, "STORED\r\n", 8);
+                } else {
+                    ring_buffer_write(&conn->tx_buf, "NOT_STORED\r\n", 12);
+                }
+            } else {
+                send_binary_error_response(conn, "INVALID_PARAMETERS");
+            }
+            break;
+
+        case 0x02:  // DELETE
+            if (key_len > 0) {
+                if (peer_memkv_del(conn->store, key) == INFRA_OK) {
+                    ring_buffer_write(&conn->tx_buf, "DELETED\r\n", 9);
+                } else {
+                    ring_buffer_write(&conn->tx_buf, "NOT_FOUND\r\n", 11);
+                }
+            } else {
+                send_binary_error_response(conn, "INVALID_KEY");
+            }
+            break;
+
+        case 0x03:  // INCR
+            if (key_len > 0 && value_len > 0) {
+                char value_str[32];
+                memcpy(value_str, value, value_len < sizeof(value_str) ? value_len : sizeof(value_str) - 1);
+                handle_incr_command(conn, key, value_str);
+            } else {
+                send_binary_error_response(conn, "INVALID_PARAMETERS");
+            }
+            break;
+
+        default:
+            INFRA_LOG_ERROR("Unknown binary command type: %d", cmd_type);
+            send_binary_error_response(conn, "UNKNOWN_COMMAND");
+            break;
     }
 }
 
 static void handle_text_command(memkv_conn_t* conn, const char* cmd) {
-    char op[16] = {0};
-    char key[256] = {0};
-    
-    // 移除命令末尾的\r\n
-    char clean_cmd[1024] = {0};
-    strncpy(clean_cmd, cmd, sizeof(clean_cmd) - 1);
-    char* end = strstr(clean_cmd, "\r\n");
-    if (end) {
-        *end = '\0';
+    if (!conn || !cmd) {
+        INFRA_LOG_ERROR("Invalid parameters in handle_text_command");
+        return;
     }
+
+    char command[32] = {0};
+    char key[256] = {0};
+    char value[1024] = {0};
     
-    if (sscanf(clean_cmd, "%15s", op) < 1) {
-        INFRA_LOG_ERROR("Failed to parse command");
+    // 解析命令
+    if (sscanf(cmd, "%31s %255s %1023s", command, key, value) < 1) {
+        INFRA_LOG_ERROR("Failed to parse text command");
         ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
         return;
     }
 
-    INFRA_LOG_DEBUG("Processing command: %s", op);
+    // 转换为大写以便比较
+    for (char* p = command; *p; p++) {
+        *p = toupper(*p);
+    }
 
-    if (strcmp(op, "get") == 0) {
-        if (sscanf(clean_cmd, "%*s %255s", key) < 1) {
-            INFRA_LOG_ERROR("GET: Missing key");
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
+    INFRA_LOG_DEBUG("Parsed text command: cmd=%s, key=%s, value=%s", command, key, value);
 
-        INFRA_LOG_DEBUG("GET: key=[%s]", key);
-
-        void* value;
-        size_t value_len;
-        if (poly_memkv_get(conn->store, key, &value, &value_len) == POLY_OK) {
-            char header[256];
-            snprintf(header, sizeof(header), "VALUE %s 0 %zu\r\n", key, value_len);
-            INFRA_LOG_DEBUG("GET: Found value, sending header: [%s]", header);
-            
-            ring_buffer_write(&conn->tx_buf, header, strlen(header));
-            ring_buffer_write(&conn->tx_buf, value, value_len);
-            ring_buffer_write(&conn->tx_buf, "\r\n", 2);
-            free(value);
+    if (strcmp(command, "GET") == 0) {
+        if (key[0]) {
+            handle_get_command(conn, key);
         } else {
-            INFRA_LOG_DEBUG("GET: Key not found: [%s]", key);
+            ring_buffer_write(&conn->tx_buf, "CLIENT_ERROR no key\r\n", 20);
         }
-        ring_buffer_write(&conn->tx_buf, "END\r\n", 5);
-    } else if (strcmp(op, "set") == 0) {
-        unsigned int flags;
-        unsigned int exptime;
-        unsigned int bytes;
-        
-        // 解析SET命令的头部
-        if (sscanf(clean_cmd, "%*s %255s %u %u %u", key, &flags, &exptime, &bytes) < 4) {
-            INFRA_LOG_ERROR("SET: Invalid format");
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
-
-        INFRA_LOG_DEBUG("SET: key=[%s], flags=%u, exptime=%u, bytes=%u", 
-                       key, flags, exptime, bytes);
-
-        // 寻找数据部分
-        const char* value_start = strstr(cmd, "\r\n");
-        if (!value_start || value_start[1] != '\n') {
-            INFRA_LOG_ERROR("SET: Missing data part");
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
-        value_start += 2;  // 跳过\r\n
-
-        // 设置值
-        if (poly_memkv_set(conn->store, key, value_start, bytes) == POLY_OK) {
-            INFRA_LOG_DEBUG("SET: Successfully stored value");
-            ring_buffer_write(&conn->tx_buf, "STORED\r\n", 8);
+    } else if (strcmp(command, "SET") == 0) {
+        if (key[0] && value[0]) {
+            if (set_with_expiry(conn->store, key, value, strlen(value), 0, 0) == INFRA_OK) {
+                ring_buffer_write(&conn->tx_buf, "STORED\r\n", 8);
+            } else {
+                ring_buffer_write(&conn->tx_buf, "NOT_STORED\r\n", 12);
+            }
         } else {
-            INFRA_LOG_ERROR("SET: Failed to store value");
-            ring_buffer_write(&conn->tx_buf, "NOT_STORED\r\n", 12);
+            ring_buffer_write(&conn->tx_buf, "CLIENT_ERROR missing key or value\r\n", 34);
         }
-    } else if (strcmp(op, "delete") == 0) {
-        if (sscanf(clean_cmd, "%*s %255s", key) < 1) {
-            INFRA_LOG_ERROR("DELETE: Missing key");
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
-
-        INFRA_LOG_DEBUG("DELETE: key=[%s]", key);
-
-        if (poly_memkv_del(conn->store, key) == POLY_OK) {
-            INFRA_LOG_DEBUG("DELETE: Key deleted successfully");
-            ring_buffer_write(&conn->tx_buf, "DELETED\r\n", 9);
+    } else if (strcmp(command, "DELETE") == 0) {
+        if (key[0]) {
+            if (peer_memkv_del(conn->store, key) == INFRA_OK) {
+                ring_buffer_write(&conn->tx_buf, "DELETED\r\n", 9);
+            } else {
+                ring_buffer_write(&conn->tx_buf, "NOT_FOUND\r\n", 11);
+            }
         } else {
-            INFRA_LOG_DEBUG("DELETE: Key not found");
-            ring_buffer_write(&conn->tx_buf, "NOT_FOUND\r\n", 11);
+            ring_buffer_write(&conn->tx_buf, "CLIENT_ERROR no key\r\n", 20);
         }
-    } else if (strcmp(op, "incr") == 0 || strcmp(op, "decr") == 0) {
-        unsigned long delta;
-        if (sscanf(clean_cmd, "%*s %255s %lu", key, &delta) < 2) {
-            INFRA_LOG_ERROR("%s: Invalid format", op);
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
-
-        INFRA_LOG_DEBUG("%s: key=[%s], delta=%lu", op, key, delta);
-
-        void* stored_value;
-        size_t value_len;
-        if (poly_memkv_get(conn->store, key, &stored_value, &value_len) != POLY_OK) {
-            INFRA_LOG_DEBUG("%s: Key not found", op);
-            ring_buffer_write(&conn->tx_buf, "NOT_FOUND\r\n", 11);
-            return;
-        }
-
-        char* endptr;
-        unsigned long current = strtoul((char*)stored_value, &endptr, 10);
-        if (*endptr != '\0') {
-            INFRA_LOG_ERROR("%s: Non-numeric value: [%s]", op, (char*)stored_value);
-            free(stored_value);
-            ring_buffer_write(&conn->tx_buf, "CLIENT_ERROR cannot increment or decrement non-numeric value\r\n", 60);
-            return;
-        }
-
-        unsigned long result;
-        if (strcmp(op, "incr") == 0) {
-            result = current + delta;
-            INFRA_LOG_DEBUG("INCR: %lu + %lu = %lu", current, delta, result);
+    } else if (strcmp(command, "INCR") == 0) {
+        if (key[0] && value[0]) {
+            handle_incr_command(conn, key, value);
         } else {
-            result = (current > delta) ? (current - delta) : 0;
-            INFRA_LOG_DEBUG("DECR: %lu - %lu = %lu", current, delta, result);
+            ring_buffer_write(&conn->tx_buf, "CLIENT_ERROR missing key or value\r\n", 34);
         }
-
-        char new_value[32];
-        int new_len = snprintf(new_value, sizeof(new_value), "%lu", result);
-
-        if (poly_memkv_set(conn->store, key, new_value, new_len) != POLY_OK) {
-            free(stored_value);
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-            return;
-        }
-
-        free(stored_value);
-        char response[32];
-        int response_len = snprintf(response, sizeof(response), "%lu\r\n", result);
-        INFRA_LOG_DEBUG("%s: Sending response: [%.*s]", op, response_len-2, response);
-        ring_buffer_write(&conn->tx_buf, response, response_len);
-    } else if (strcmp(op, "flush_all") == 0) {
-        INFRA_LOG_DEBUG("FLUSH_ALL: Clearing all data");
-        
-        if (poly_memkv_flush_all(conn->store) == POLY_OK) {
-            INFRA_LOG_DEBUG("FLUSH_ALL: Successfully cleared all data");
-            ring_buffer_write(&conn->tx_buf, "OK\r\n", 4);
-        } else {
-            INFRA_LOG_ERROR("FLUSH_ALL: Failed to clear data");
-            ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
-        }
+    } else if (strcmp(command, "QUIT") == 0) {
+        ring_buffer_write(&conn->tx_buf, "BYE\r\n", 5);
+        conn->should_close = true;
     } else {
-        INFRA_LOG_ERROR("Unknown command: [%s]", op);
+        INFRA_LOG_ERROR("Unknown text command: %s", command);
         ring_buffer_write(&conn->tx_buf, "ERROR\r\n", 7);
     }
 }
 
 static void handle_get_command(memkv_conn_t* conn, const char* key) {
+    if (!conn || !key) {
+        INFRA_LOG_ERROR("Invalid parameters in handle_get_command");
+        return;
+    }
+
+    INFRA_LOG_DEBUG("GET: key=[%s]", key);
+
     void* value;
     size_t value_len;
-    
     if (poly_memkv_get(conn->store, key, &value, &value_len) == POLY_OK) {
         char header[256];
         snprintf(header, sizeof(header), "VALUE %s 0 %zu\r\n", key, value_len);
         INFRA_LOG_DEBUG("GET: Found value, sending header: [%s]", header);
         
-        ring_buffer_write(&conn->tx_buf, header, strlen(header));
-        ring_buffer_write(&conn->tx_buf, value, value_len);
-        ring_buffer_write(&conn->tx_buf, "\r\n", 2);
+        if (!ring_buffer_write(&conn->tx_buf, header, strlen(header))) {
+            INFRA_LOG_ERROR("Failed to write header to response buffer");
+            free(value);
+            return;
+        }
+        if (!ring_buffer_write(&conn->tx_buf, value, value_len)) {
+            INFRA_LOG_ERROR("Failed to write value to response buffer");
+            free(value);
+            return;
+        }
+        if (!ring_buffer_write(&conn->tx_buf, "\r\n", 2)) {
+            INFRA_LOG_ERROR("Failed to write line ending to response buffer");
+            free(value);
+            return;
+        }
         free(value);
     } else {
         INFRA_LOG_DEBUG("GET: Key not found: [%s]", key);
     }
-    ring_buffer_write(&conn->tx_buf, "END\r\n", 5);
+
+    if (!ring_buffer_write(&conn->tx_buf, "END\r\n", 5)) {
+        INFRA_LOG_ERROR("Failed to write END marker to response buffer");
+    }
 }
 
 static void handle_incr_command(memkv_conn_t* conn, const char* key, const char* value) {
@@ -1194,6 +1087,7 @@ static void handle_incr_command(memkv_conn_t* conn, const char* key, const char*
     char* stored_str = (char*)stored_value;
     long current = strtol(stored_str, &endptr, 10);
     if (*endptr != '\0') {
+        // 非数字值
         free(stored_value);
         send_binary_error_response(conn, "INVALID_NUMBER");
         return;
@@ -1245,9 +1139,17 @@ static infra_error_t memkv_init(const infra_config_t* config) {
     }
 
     // 初始化上下文
-    memset(&g_context, 0, sizeof(g_context));
+    memset(&g_config, 0, sizeof(g_config));
 
-    // 创建 poly_poll 配置
+    // Create and initialize poll context
+    g_config.poll_ctx = (poly_poll_context_t*)malloc(sizeof(poly_poll_context_t));
+    if (!g_config.poll_ctx) {
+        INFRA_LOG_ERROR("Failed to allocate poll context");
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    memset(g_config.poll_ctx, 0, sizeof(poly_poll_context_t));
+
+    // Initialize poly_poll
     poly_poll_config_t poll_config = {
         .min_threads = MEMKV_MIN_THREADS,
         .max_threads = MEMKV_MAX_THREADS,
@@ -1255,33 +1157,21 @@ static infra_error_t memkv_init(const infra_config_t* config) {
         .max_listeners = MEMKV_MAX_RULES
     };
 
-    // 分配 poll 上下文
-    g_context.poll_ctx = (poly_poll_context_t*)infra_malloc(sizeof(poly_poll_context_t));
-    if (!g_context.poll_ctx) {
-        INFRA_LOG_ERROR("Failed to allocate poll context");
-        return INFRA_ERROR_NO_MEMORY;
-    }
-
-    // 初始化poll上下文
-    infra_error_t err = poly_poll_init(g_context.poll_ctx, &poll_config);
+    infra_error_t err = poly_poll_init(g_config.poll_ctx, &poll_config);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to init poll context: %d", err);
-        infra_free(g_context.poll_ctx);
-        g_context.poll_ctx = NULL;
+        INFRA_LOG_ERROR("Failed to init poll: %d", err);
+        free(g_config.poll_ctx);
+        g_config.poll_ctx = NULL;
         return err;
     }
 
     // 使用默认配置
-    memkv_rule_t* rule = &g_context.rules[0];
+    memkv_rule_t* rule = &g_config.rules[0];
     memset(rule, 0, sizeof(memkv_rule_t));
-    strncpy(rule->bind_addr, "127.0.0.1", sizeof(rule->bind_addr) - 1);
-    rule->bind_port = MEMKV_DEFAULT_PORT;
-    rule->engine = POLY_MEMKV_ENGINE_SQLITE;
-    rule->db_path = strdup(":memory:");  // 默认使用内存数据库
-    rule->max_memory = 0;  // 无限制
-    rule->enable_compression = false;
-    rule->read_only = false;
-    g_context.rule_count = 1;
+    strncpy(rule->addr, "127.0.0.1", sizeof(rule->addr) - 1);
+    rule->port = MEMKV_DEFAULT_PORT;
+    rule->binary_protocol = false;
+    g_config.rule_count = 1;
 
     return INFRA_OK;
 }
@@ -1310,14 +1200,15 @@ static infra_error_t load_config(const char* config_path) {
 // 清理服务
 static infra_error_t memkv_cleanup(void) {
     // 停止服务
-    if (g_context.running) {
+    if (g_config.running) {
         memkv_stop();
     }
 
-    // 销毁 poly_poll 上下文
-    if (g_context.poll_ctx) {
-        poly_poll_cleanup(g_context.poll_ctx);
-        g_context.poll_ctx = NULL;
+    // Cleanup poly_poll
+    if (g_config.poll_ctx) {
+        poly_poll_cleanup(g_config.poll_ctx);
+        free(g_config.poll_ctx);
+        g_config.poll_ctx = NULL;
     }
 
     return INFRA_OK;

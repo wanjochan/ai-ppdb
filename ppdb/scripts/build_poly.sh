@@ -19,6 +19,8 @@ SRC_FILES=(
     "${SRC_DIR}/internal/poly/poly_memkv.c"
     "${SRC_DIR}/internal/poly/poly_memkv_cmd.c"
     "${SRC_DIR}/internal/poly/poly_db.c"
+    "${SRC_DIR}/internal/poly/poly_cmdline.c"
+    "${SRC_DIR}/internal/poly/poly_atomic.c"
     "${SRC_DIR}/internal/poly/poly_plugin.c"
     "${SRC_DIR}/internal/poly/poly_poll.c"
 )
@@ -32,9 +34,6 @@ done
 
 # 使用 build_common.sh 中的编译函数
 compile_files "${SRC_FILES[@]}" "${BUILD_DIR}/poly" "poly"
-
-# 等待所有编译任务完成
-wait
 
 # 确保所有目标文件都存在
 for obj in "${OBJECTS[@]}"; do
