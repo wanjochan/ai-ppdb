@@ -712,11 +712,70 @@ infra_error_t poly_db_open(const poly_db_config_t* config, poly_db_t** db) {
 
             // 打开 SQLite 数据库
             int flags = config->read_only ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-            int rc = sqlite3_open_v2(config->url ? config->url : ":memory:", &sqlite->db, flags, NULL);
+            flags |= SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_SHAREDCACHE;  // 添加共享缓存和互斥锁
+            const char* db_path = config->url;
+            if (!db_path || strcmp(db_path, ":memory:") == 0) {
+                db_path = "/tmp/ppdb_sqlite3.db";  // 使用固定的临时文件路径
+            }
+            
+            // 确保数据库目录存在
+            char* dir_path = infra_strdup("/tmp");
+            if (dir_path) {
+                mkdir(dir_path, 0755);
+                infra_free(dir_path);
+            }
+            
+            int rc = sqlite3_open_v2(db_path, &sqlite->db, flags, NULL);
             if (rc != SQLITE_OK) {
+                INFRA_LOG_ERROR("Failed to open SQLite database: %s", sqlite3_errmsg(sqlite->db));
                 infra_free(sqlite);
                 infra_free(new_db);
                 return INFRA_ERROR_OPEN_FAILED;
+            }
+
+            // 启用 WAL 模式以提高并发性能
+            char* err_msg = NULL;
+            rc = sqlite3_exec(sqlite->db, "PRAGMA journal_mode=WAL", NULL, NULL, &err_msg);
+            if (rc != SQLITE_OK) {
+                INFRA_LOG_ERROR("Failed to enable WAL mode: %s", err_msg);
+                sqlite3_free(err_msg);
+            }
+
+            // 设置 busy timeout 以处理并发访问
+            sqlite3_busy_timeout(sqlite->db, 10000);  // 增加到 10 秒超时
+
+            // 设置同步模式为 NORMAL 以平衡性能和安全性
+            rc = sqlite3_exec(sqlite->db, "PRAGMA synchronous=NORMAL", NULL, NULL, &err_msg);
+            if (rc != SQLITE_OK) {
+                INFRA_LOG_ERROR("Failed to set synchronous mode: %s", err_msg);
+                sqlite3_free(err_msg);
+            }
+
+            // 增加缓存大小和页面大小
+            rc = sqlite3_exec(sqlite->db, "PRAGMA cache_size=5000", NULL, NULL, &err_msg);
+            if (rc != SQLITE_OK) {
+                INFRA_LOG_ERROR("Failed to set cache size: %s", err_msg);
+                sqlite3_free(err_msg);
+            }
+
+            rc = sqlite3_exec(sqlite->db, "PRAGMA page_size=8192", NULL, NULL, &err_msg);
+            if (rc != SQLITE_OK) {
+                INFRA_LOG_ERROR("Failed to set page size: %s", err_msg);
+                sqlite3_free(err_msg);
+            }
+
+            // 启用共享缓存
+            rc = sqlite3_exec(sqlite->db, "PRAGMA shared_cache=ON", NULL, NULL, &err_msg);
+            if (rc != SQLITE_OK) {
+                INFRA_LOG_ERROR("Failed to enable shared cache: %s", err_msg);
+                sqlite3_free(err_msg);
+            }
+
+            // 设置临时存储为文件而不是内存
+            rc = sqlite3_exec(sqlite->db, "PRAGMA temp_store=FILE", NULL, NULL, &err_msg);
+            if (rc != SQLITE_OK) {
+                INFRA_LOG_ERROR("Failed to set temp store: %s", err_msg);
+                sqlite3_free(err_msg);
             }
 
             new_db->type = POLY_DB_TYPE_SQLITE;
