@@ -1,15 +1,88 @@
 #include "internal/poly/poly_cmdline.h"
 #include "internal/infra/infra_core.h"
 #include "internal/peer/peer_service.h"
+#include "internal/infra/infra_core.h"
 
 #ifdef DEV_RINETD
-// #include "internal/peer/peer_rinetd.h"
-extern peer_service_t g_rinetd_service;
+#include "internal/peer/peer_rinetd.h"
 #endif
 
 #ifdef DEV_MEMKV
 #include "internal/peer/peer_memkv.h"
 #endif
+
+#ifdef DEV_SQLITE3
+#include "internal/peer/peer_sqlite3.h"
+#endif
+
+//-----------------------------------------------------------------------------
+// Service Registry Implementation
+//-----------------------------------------------------------------------------
+
+// 服务注册表
+static struct {
+    peer_service_t* services[SERVICE_TYPE_COUNT];
+    bool initialized;
+} g_registry = {0};
+
+// 注册服务
+infra_error_t peer_service_register(peer_service_t* service) {
+    if (!service) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (service->config.type <= SERVICE_TYPE_UNKNOWN || 
+        service->config.type >= SERVICE_TYPE_COUNT) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (g_registry.services[service->config.type]) {
+        return INFRA_ERROR_ALREADY_EXISTS;
+    }
+
+    // 初始化服务状态
+    service->state = SERVICE_STATE_STOPPED;
+
+    g_registry.services[service->config.type] = service;
+    INFRA_LOG_INFO("Registered service: %s", service->config.name);
+
+    return INFRA_OK;
+}
+
+// 获取服务
+peer_service_t* peer_service_get_by_type(peer_service_type_t type) {
+    if (type <= SERVICE_TYPE_UNKNOWN || type >= SERVICE_TYPE_COUNT) {
+        return NULL;
+    }
+    return g_registry.services[type];
+}
+
+peer_service_t* peer_service_get(const char* name) {
+    if (!name) {
+        return NULL;
+    }
+
+    for (int i = SERVICE_TYPE_UNKNOWN + 1; i < SERVICE_TYPE_COUNT; i++) {
+        peer_service_t* service = g_registry.services[i];
+        if (service && strcmp(service->config.name, name) == 0) {
+            return service;
+        }
+    }
+
+    return NULL;
+}
+
+// 获取服务名称
+const char* peer_service_get_name(peer_service_type_t type) {
+    peer_service_t* service = peer_service_get_by_type(type);
+    return service ? service->config.name : NULL;
+}
+
+// 获取服务状态
+peer_service_state_t peer_service_get_state(peer_service_type_t type) {
+    peer_service_t* service = peer_service_get_by_type(type);
+    return service ? service->state : SERVICE_STATE_STOPPED;
+} 
 
 //-----------------------------------------------------------------------------
 // Global Options
@@ -39,12 +112,19 @@ static infra_error_t register_services(void) {
 
 #ifdef DEV_RINETD
     // Register Rinetd service
-    err = peer_service_register(&g_rinetd_service);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register rinetd service: %d", err);
+    if ((err = peer_service_register(&g_rinetd_service)) != INFRA_OK) {
         return err;
     }
-    INFRA_LOG_INFO("Registered rinetd service");
+#endif
+
+#ifdef DEV_SQLITE3
+    // Register SQLite3 service
+    err = peer_service_register(&g_sqlite3_service);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to register sqlite3 service: %d", err);
+        return err;
+    }
+    INFRA_LOG_INFO("Registered sqlite3 service");
 #endif
 
     return INFRA_OK;
@@ -86,54 +166,17 @@ static void print_usage(const char* program) {
     infra_printf("      --stop            Stop the service\n");
     infra_printf("      --status          Show service status\n");
 #endif
-}
 
-static infra_error_t process_global_options(int argc, char** argv, infra_config_t* config) {
-    if (argc < 1 || !config) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    // Parse global options first
-    for (int i = 1; i < argc; i++) {
-        if (argv[i][0] != '-' || argv[i][1] != '-') {
-            continue;
-        }
-
-        const char* option = argv[i] + 2;  // Skip "--"
-        const char* value = strchr(option, '=');
-        if (value) {
-            size_t name_len = value - option;
-            value++;  // Skip '='
-            
-            if (strncmp(option, "log-level", name_len) == 0) {
-                if (*value == '\0') {  // Empty value
-                    INFRA_LOG_ERROR("--log-level requires a numeric value (0-5)");
-                    INFRA_LOG_ERROR("Example: ppdb --log-level=4 help");
-                    return INFRA_ERROR_INVALID_PARAM;
-                }
-
-                // Parse the numeric value
-                char* endptr;
-                long level = strtol(value, &endptr, 10);
-                
-                // Check for conversion errors
-                if (*endptr != '\0' || endptr == value) {
-                    INFRA_LOG_ERROR("Invalid log level: %s (must be a number)", value);
-                    return INFRA_ERROR_INVALID_PARAM;
-                }
-                
-                // Check value range
-                if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
-                    config->log.level = (int)level;
-                } else {
-                    INFRA_LOG_ERROR("Invalid log level: %ld (valid range: 0-5)", level);
-                    return INFRA_ERROR_INVALID_PARAM;
-                }
-            }
-        }
-    }
-
-    return INFRA_OK;
+#ifdef DEV_SQLITE3
+    infra_printf("  sqlite3 - SQLite3 service management\n");
+    infra_printf("    Options:\n");
+    infra_printf("      --db=<value>     Database file path\n");
+    infra_printf("      --port=<value>   Listen port (default: 5433)\n");
+    infra_printf("      --start          Start the service\n");
+    infra_printf("      --stop           Stop the service\n");
+    infra_printf("      --status         Show service status\n");
+    infra_printf("      --help           Show this help message\n");
+#endif
 }
 
 //-----------------------------------------------------------------------------
@@ -151,10 +194,44 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Process global options
-    err = process_global_options(argc, argv, &config);
-    if (err != INFRA_OK) {
-        return 1;
+    // Process command line options
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-' || argv[i][1] != '-') {
+            continue;
+        }
+
+        const char* option = argv[i] + 2;  // Skip "--"
+        const char* value = strchr(option, '=');
+        if (value) {
+            size_t name_len = value - option;
+            value++;  // Skip '='
+
+            if (strncmp(option, "log-level", name_len) == 0) {
+                if (*value == '\0') {  // Empty value
+                    INFRA_LOG_ERROR("--log-level requires a numeric value (0-5)");
+                    INFRA_LOG_ERROR("Example: ppdb --log-level=4 help");
+                    return 1;
+                }
+
+                // Parse the numeric value
+                char* endptr;
+                long level = strtol(value, &endptr, 10);
+
+                // Check for conversion errors
+                if (*endptr != '\0' || endptr == value) {
+                    INFRA_LOG_ERROR("Invalid log level: %s (must be a number)", value);
+                    return 1;
+                }
+
+                // Check value range
+                if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
+                    config.log.level = (int)level;
+                } else {
+                    INFRA_LOG_ERROR("Invalid log level: %ld (valid range: 0-5)", level);
+                    return 1;
+                }
+            }
+        }
     }
 
     // Initialize infrastructure layer

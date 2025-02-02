@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# 设置环境变量以禁用自动初始化
-export INFRA_NO_AUTO_INIT=1
-
 # 记录开始时间
 START_TIME=$(date +%s.%N)
 
@@ -10,13 +7,13 @@ START_TIME=$(date +%s.%N)
 TEST_MODULE="$1"
 
 # 设置测试文件列表
-TEST_FILES="test_memory.c test_log.c test_sync.c test_error.c test_struct.c test_memory_pool.c test_net.c test_mux.c"
+TEST_FILES="test_memory.c test_log.c test_sync.c test_error.c test_memory_pool.c test_net.c test_mux.c test_gc.c"
 
 # 如果没有指定测试模块，显示可用的测试模块
 if [ -z "$TEST_MODULE" ]; then
     echo "Available test modules:"
     for f in $TEST_FILES; do
-        echo "    ${f%.c}"
+        echo "\t${f%.c}" | sed 's/test_//'
     done
     exit 0
 fi
@@ -40,6 +37,11 @@ else
     done
 fi
 
+echo ========= clean old begin
+#find "${BUILD_DIR}/test/white/infra/"
+rm -vrf "${BUILD_DIR}/test/white/infra/*"
+echo ========= clean old end
+
 if [ $NEED_BUILD_INFRA -eq 1 ]; then
     echo "Building infra library..."
     "$(dirname "$0")/build_infra.sh"
@@ -52,7 +54,6 @@ fi
 
 # 创建必要的目录
 mkdir -p "${BUILD_DIR}/test/white/framework"
-mkdir -p "${BUILD_DIR}/test/white/infra/mock/core"
 
 # 检查测试框架是否需要重新构建
 NEED_BUILD_FRAMEWORK=0
@@ -64,64 +65,12 @@ fi
 
 if [ $NEED_BUILD_FRAMEWORK -eq 1 ]; then
     echo "Building test framework..."
-    echo "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/test_framework.c" -c -o "${BUILD_DIR}/test/white/framework/test_framework.o"
-    "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/test_framework.c" -c -o "${BUILD_DIR}/test/white/framework/test_framework.o"
+    "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/test_framework.c" -c -o "${BUILD_DIR}/test/white/framework/test_framework.o"
     if [ $? -ne 0 ]; then
         exit 1
     fi
 else
     echo "Test framework is up to date."
-fi
-
-# 检查mock框架是否需要重新构建
-NEED_BUILD_MOCK=0
-if [ ! -f "${BUILD_DIR}/test/white/framework/mock_framework.o" ]; then
-    NEED_BUILD_MOCK=1
-elif [ "${PPDB_DIR}/test/white/framework/mock_framework.c" -nt "${BUILD_DIR}/test/white/framework/mock_framework.o" ]; then
-    NEED_BUILD_MOCK=1
-fi
-
-if [ $NEED_BUILD_MOCK -eq 1 ]; then
-    echo "Building mock framework..."
-    "${CC}" ${CFLAGS} -I"${COSMOS}" -I"${PPDB_DIR}" -I"${SRC_DIR}" -I"${PPDB_DIR}/test/white/framework" "${PPDB_DIR}/test/white/framework/mock_framework.c" -c -o "${BUILD_DIR}/test/white/framework/mock_framework.o"
-    if [ $? -ne 0 ]; then
-        exit 1
-    fi
-else
-    echo "Mock framework is up to date."
-fi
-
-# 检查mock core是否需要重新构建
-NEED_BUILD_MOCK_CORE=0
-if [ ! -f "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o" ]; then
-    NEED_BUILD_MOCK_CORE=1
-elif [ "${PPDB_DIR}/test/white/infra/mock/core/mock_core.c" -nt "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o" ]; then
-    NEED_BUILD_MOCK_CORE=1
-fi
-
-if [ $NEED_BUILD_MOCK_CORE -eq 1 ]; then
-    echo "Building mock core..."
-    echo "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${SRC_DIR}" \
-        -I"${PPDB_DIR}/test" \
-        -I"${PPDB_DIR}/test/white" \
-        -I"${PPDB_DIR}/test/white/framework" \
-        "${PPDB_DIR}/test/white/infra/mock/core/mock_core.c" \
-        -c -o "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o"
-    "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}" \
-        -I"${SRC_DIR}" \
-        -I"${PPDB_DIR}/test" \
-        -I"${PPDB_DIR}/test/white" \
-        -I"${PPDB_DIR}/test/white/framework" \
-        "${PPDB_DIR}/test/white/infra/mock/core/mock_core.c" \
-        -c -o "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o"
-    if [ $? -ne 0 ]; then
-        exit 1
-    fi
-else
-    echo "Mock core is up to date."
 fi
 
 echo "Building test cases..."
@@ -131,14 +80,15 @@ mkdir -p "${BUILD_DIR}/test/white/infra"
 
 # 如果指定了测试模块，则只构建该模块的测试
 if [ ! -z "$TEST_MODULE" ]; then
-    if [ -f "${PPDB_DIR}/test/white/infra/test_${TEST_MODULE}.c" ]; then
-        TEST_FILES="test_${TEST_MODULE}.c"
+    TEST_FILE="test_${TEST_MODULE}.c"
+    if [ -f "${PPDB_DIR}/test/white/infra/${TEST_FILE}" ]; then
+        TEST_FILES="${TEST_FILE}"
         echo "Building only ${TEST_MODULE} module tests..."
     else
         echo "Error: Test module '${TEST_MODULE}' not found"
         echo "Available modules:"
         for f in $TEST_FILES; do
-            echo "    ${f%.c}"
+            echo "    ${f%.c}" | sed 's/test_//'
         done
         exit 1
     fi
@@ -156,17 +106,9 @@ for f in $TEST_FILES; do
     
     if [ $NEED_BUILD -eq 1 ]; then
         echo "Building $f..."
-        echo "${CC}" ${CFLAGS} \
-            -I"${PPDB_DIR}" \
-            -I"${SRC_DIR}" \
-            -I"${PPDB_DIR}/test" \
-            -I"${PPDB_DIR}/test/white" \
-            -I"${PPDB_DIR}/test/white/framework" \
-            -I"${PPDB_DIR}/src/internal/infra" \
-            "${PPDB_DIR}/test/white/infra/$f" \
-            -c -o "${BUILD_DIR}/test/white/infra/${base}.o"
         "${CC}" ${CFLAGS} \
             -I"${PPDB_DIR}" \
+            -I"${PPDB_DIR}/include" \
             -I"${SRC_DIR}" \
             -I"${PPDB_DIR}/test" \
             -I"${PPDB_DIR}/test/white" \
@@ -193,18 +135,9 @@ for f in $TEST_FILES; do
     
     if [ $NEED_LINK -eq 1 ]; then
         echo "Linking ${base}..."
-        echo "${CC}" \
-            "${BUILD_DIR}/test/white/framework/test_framework.o" \
-            "${BUILD_DIR}/test/white/framework/mock_framework.o" \
-            "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o" \
-            "${BUILD_DIR}/test/white/infra/${base}.o" \
-            "${BUILD_DIR}/infra/libinfra.a" \
-            ${LDFLAGS} ${LIBS} \
-            -o "${BUILD_DIR}/test/white/infra/${base}.exe"
+
         "${CC}" \
             "${BUILD_DIR}/test/white/framework/test_framework.o" \
-            "${BUILD_DIR}/test/white/framework/mock_framework.o" \
-            "${BUILD_DIR}/test/white/infra/mock/core/mock_core.o" \
             "${BUILD_DIR}/test/white/infra/${base}.o" \
             "${BUILD_DIR}/infra/libinfra.a" \
             ${LDFLAGS} ${LIBS} \
@@ -214,12 +147,6 @@ for f in $TEST_FILES; do
             exit 1
         fi
 
-        #echo "Creating binary ${base}..."
-        #"${OBJCOPY}" -S -O binary "${BUILD_DIR}/test/white/infra/${base}.dbg" "${BUILD_DIR}/test/white/infra/${base}"
-        #if [ $? -ne 0 ]; then
-        #    echo "Failed to create binary ${base}"
-        #    exit 1
-        #fi
     else
         echo "${base}.exe binary is up to date."
     fi
@@ -238,4 +165,4 @@ END_TIME=$(date +%s.%N)
 ELAPSED_TIME=$(echo "$END_TIME - $START_TIME" | bc)
 printf "Total build time: %.3f seconds\n" $ELAPSED_TIME
 
-exit 0 
+exit 0

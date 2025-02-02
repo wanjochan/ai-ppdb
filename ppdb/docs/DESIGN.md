@@ -85,41 +85,22 @@ proxier (proxy client helper)
 
 ## 测试结构
 
-- 采用 mock 机制进行单元测试，通过替换真实函数调用来模拟组件行为。主要用于:
-- 隔离外部依赖(文件系统、网络等)
-- 模拟错误情况
-- 验证函数调用是否符合预期
-
-框架提供 MOCK_FUNC() 定义 mock 函数,通过 mock_register_expectation() 设置预期行为。目前已实现了内存管理、平台抽象等模块的 mock。
-
 - 单元测试结构
 
 ```
 test/white/
 ├── framework/             # 测试框架
-│   ├── test_framework.h   # 测试框架
-│   ├── mock_framework.h   # mock框架
-│   └── mock_framework.c
+│   └── test_framework.h   # 测试框架
 │
-└── infra/                 # infra层的mock实现
-    ├── mock_memory.h      # 内存管理mock
-    ├── mock_memory.c
-    ├── mock_platform.h    # 平台抽象mock
-    └── mock_platform.c
+└── infra/                 # infra层的测试实现
 ```
 
 - 测试流程
 
-```
-# 【热身】主要用于确认 cross9/cosmopolitan 工具链运作正常，运行后不管是否正常都算热身完毕，停下来等待下一步安排。
-.\pdpb\scripts\build_test42.bat
-
-# 用于确定 mock 机制运作正常
-.\ppdb\scripts\build_test_mock.bat  
-
+``` 
 # 用于确定 infra 层运作正常
-.\ppdb\scripts\build_test_infra_all.bat 全部infra模块
-.\ppdb\scripts\build_test_infra.bat [module] [norun]  //用于确定 infra 层运作正常
+rm -rf ppdb/build && sh ./ppdb/scripts/build_test_infra_all.sh
+sh ppdb/scripts/build_test_infra.sh [module] 
   - 不带参数：会触发帮助
   - module参数：指定要测试的模块，当前支持的测试模块包括：
       - memory：内存管理测试
@@ -131,10 +112,8 @@ test/white/
   - norun参数：只构建不运行测试
 
 # 构建 ppdb 产品
-.\ppdb\scripts\build_ppdb.bat 构建 libppdb.a 和 ppdb.exe（以后可能还会生成 ppdb.lib作为跨平台动态库）
-  里面会复制 ppdb.exe 到 .\ppdb\ppdb_latest.exe
-
-  .\ppdb\scripts\build_ppdb.bat
+rm -rf ppdb/build
+sh ppdb/scripts/build_ppdb.sh
 
 ## rinetd
   .\ppdb\ppdb_latest.exe --log-level=5 rinetd --start
@@ -151,5 +130,3 @@ test/white/
 ## memkv
 
 ./ppdb/ppdb_latest.exe --log-level=5 memkv --start
-
-```

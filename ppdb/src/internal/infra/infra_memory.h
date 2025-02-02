@@ -6,15 +6,18 @@
 #define INFRA_MEMORY_H
 
 #include "internal/infra/infra_error.h"
+#include "internal/infra/infra_gc.h"
 
 //-----------------------------------------------------------------------------
 // Memory Configuration
 //-----------------------------------------------------------------------------
 
 typedef struct {
-    bool use_memory_pool;
-    size_t pool_initial_size;
-    size_t pool_alignment;
+    bool use_memory_pool;          // 是否使用内存池
+    size_t pool_initial_size;      // 内存池初始大小
+    size_t pool_alignment;         // 内存池对齐大小
+    bool use_gc;                   // 是否使用垃圾回收
+    infra_gc_config_t gc_config;   // GC配置
 } infra_memory_config_t;
 
 //-----------------------------------------------------------------------------

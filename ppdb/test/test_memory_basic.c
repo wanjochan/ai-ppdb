@@ -18,6 +18,18 @@ static mem_stats_t g_stats = {0};
 static int test_memory_basic(void) {
     infra_printf("Running basic memory tests...\n");
 
+    // 初始化内存管理
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK, "Config initialization failed");
+
+    config.memory.use_memory_pool = false;
+    config.memory.pool_initial_size = 0;
+    config.memory.pool_alignment = sizeof(void*);
+
+    err = infra_init_with_config((infra_init_flags_t)INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK, "Memory initialization failed");
+
     // 测试基本分配和释放
     void* ptr = infra_malloc(100);
     TEST_ASSERT(ptr != NULL, "Memory allocation failed");
@@ -33,6 +45,9 @@ static int test_memory_basic(void) {
     TEST_ASSERT(ptr != NULL, "Large memory allocation failed");
     infra_free(ptr);
 
+    // 清理内存管理
+    infra_cleanup();
+
     infra_printf("Basic memory tests passed\n");
     return 0;
 }
@@ -41,18 +56,33 @@ static int test_memory_basic(void) {
 static int test_memory_alignment(void) {
     infra_printf("Running memory alignment tests...\n");
 
-    // 测试不同对齐要求
-    void* ptr1 = ppdb_mem_aligned_alloc(8, 100);
-    TEST_ASSERT(((uintptr_t)ptr1 % 8) == 0, "8-byte alignment failed");
+    // 初始化内存管理
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK, "Config initialization failed");
+
+    config.memory.use_memory_pool = false;
+    config.memory.pool_initial_size = 0;
+    config.memory.pool_alignment = 32;  // 使用最大对齐要求
+
+    err = infra_init_with_config((infra_init_flags_t)INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK, "Memory initialization failed");
+
+    // 测试不同大小的分配是否都正确对齐
+    void* ptr1 = infra_malloc(100);
+    TEST_ASSERT(((uintptr_t)ptr1 % 32) == 0, "32-byte alignment failed");
     infra_free(ptr1);
 
-    void* ptr2 = ppdb_mem_aligned_alloc(16, 100);
-    TEST_ASSERT(((uintptr_t)ptr2 % 16) == 0, "16-byte alignment failed");
+    void* ptr2 = infra_malloc(200);
+    TEST_ASSERT(((uintptr_t)ptr2 % 32) == 0, "32-byte alignment failed");
     infra_free(ptr2);
 
-    void* ptr3 = ppdb_mem_aligned_alloc(32, 100);
+    void* ptr3 = infra_malloc(300);
     TEST_ASSERT(((uintptr_t)ptr3 % 32) == 0, "32-byte alignment failed");
     infra_free(ptr3);
+
+    // 清理内存管理
+    infra_cleanup();
 
     infra_printf("Memory alignment tests passed\n");
     return 0;
@@ -62,39 +92,44 @@ static int test_memory_alignment(void) {
 static int test_memory_pool(void) {
     infra_printf("Running memory pool tests...\n");
 
-    ppdb_mempool_t* pool;
-    ppdb_error_t err;
+    // 初始化内存管理
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK, "Config initialization failed");
 
-    // 创建内存池
-    err = ppdb_mempool_create(&pool, 1024, 16);
-    TEST_ASSERT(err == PPDB_OK, "Memory pool creation failed");
+    config.memory.use_memory_pool = true;
+    config.memory.pool_initial_size = 1024 * 1024;  // 1MB
+    config.memory.pool_alignment = sizeof(void*);
+
+    err = infra_init_with_config((infra_init_flags_t)INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK, "Memory initialization failed");
 
     // 分配多个块
     void* blocks[64];
     for (int i = 0; i < 64; i++) {
-        blocks[i] = ppdb_mempool_alloc(pool, 16);
+        blocks[i] = infra_malloc(16);
         TEST_ASSERT(blocks[i] != NULL, "Pool allocation failed");
         infra_memset(blocks[i], i, 16);
     }
 
     // 释放一半的块
     for (int i = 0; i < 32; i++) {
-        ppdb_mempool_free(pool, blocks[i]);
+        infra_free(blocks[i]);
     }
 
     // 重新分配
     for (int i = 0; i < 32; i++) {
-        blocks[i] = ppdb_mempool_alloc(pool, 16);
+        blocks[i] = infra_malloc(16);
         TEST_ASSERT(blocks[i] != NULL, "Pool reallocation failed");
     }
 
     // 释放所有块
     for (int i = 0; i < 64; i++) {
-        ppdb_mempool_free(pool, blocks[i]);
+        infra_free(blocks[i]);
     }
 
-    // 销毁内存池
-    ppdb_mempool_destroy(pool);
+    // 清理内存管理
+    infra_cleanup();
 
     infra_printf("Memory pool tests passed\n");
     return 0;
@@ -103,6 +138,18 @@ static int test_memory_pool(void) {
 // 内存性能测试
 static int test_memory_performance(void) {
     infra_printf("Running memory performance tests...\n");
+
+    // 初始化内存管理
+    infra_config_t config;
+    infra_error_t err = infra_config_init(&config);
+    TEST_ASSERT(err == INFRA_OK, "Config initialization failed");
+
+    config.memory.use_memory_pool = false;
+    config.memory.pool_initial_size = 0;
+    config.memory.pool_alignment = sizeof(void*);
+
+    err = infra_init_with_config((infra_init_flags_t)INFRA_INIT_MEMORY, &config);
+    TEST_ASSERT(err == INFRA_OK, "Memory initialization failed");
 
     const int NUM_ALLOCS = 10000;
     const int MAX_SIZE = 1024;
@@ -136,18 +183,40 @@ static int test_memory_performance(void) {
     total_time = (end_time - start_time) / 1000.0;
     infra_printf("Free rate: %.2f frees/sec\n", NUM_ALLOCS / total_time);
 
+    // 清理内存管理
+    infra_cleanup();
+
     infra_printf("Memory performance tests passed\n");
     return 0;
 }
 
 // 打印内存统计信息
 static void print_memory_stats(void) {
-    infra_printf("\n=== Memory Statistics ===\n");
-    infra_printf("Total allocations: %ld\n", g_stats.total_allocs);
-    infra_printf("Total frees: %ld\n", g_stats.total_frees);
-    infra_printf("Total bytes allocated: %ld\n", g_stats.total_bytes);
-    infra_printf("Peak memory usage: %ld bytes\n", g_stats.peak_bytes);
-    infra_printf("Average allocation size: %.2f bytes\n", 
-           g_stats.total_allocs > 0 ? (double)g_stats.total_bytes / g_stats.total_allocs : 0);
-    infra_printf("=====================\n\n");
+    infra_memory_stats_t stats;
+    if (infra_memory_get_stats(&stats) == INFRA_OK) {
+        infra_printf("\n=== Memory Statistics ===\n");
+        infra_printf("Current usage: %zu bytes\n", stats.current_usage);
+        infra_printf("Peak usage: %zu bytes\n", stats.peak_usage);
+        infra_printf("Total allocations: %zu\n", stats.total_allocations);
+        infra_printf("Pool utilization: %zu%%\n", stats.pool_utilization);
+        infra_printf("Pool fragmentation: %zu%%\n", stats.pool_fragmentation);
+        infra_printf("=====================\n\n");
+    }
+}
+
+// 主测试函数
+int main(void) {
+    infra_printf("Running memory tests...\n");
+
+    // 运行所有测试
+    TEST_RUN(test_memory_basic);
+    TEST_RUN(test_memory_alignment);
+    TEST_RUN(test_memory_pool);
+    TEST_RUN(test_memory_performance);
+
+    // 打印最终统计信息
+    print_memory_stats();
+
+    infra_printf("All memory tests passed!\n");
+    return 0;
 } 

@@ -12,6 +12,8 @@ SRC_DIR="${PPDB_DIR}/src"
 INCLUDE_DIR="${PPDB_DIR}/include"
 INTERNAL_DIR="${PPDB_DIR}/internal"
 TEST_DIR="${PPDB_DIR}/test"
+POLY_DIR="${BUILD_DIR}/poly"
+INFRA_DIR="${SRC_DIR}/internal/infra"
 # prebuilt software and mannually extract from curl -L -o cosmopolitan.zip https://justine.lol/cosmopolitan/cosmopolitan.zip
 COSMOS="${ROOT_DIR}/repos/cosmos"
 # cosmo compiler
@@ -36,24 +38,11 @@ for tool in "$CC" "$AR"; do
 done
 
 # 设置构建标志
-#CFLAGS="-g -O2 -fno-pie -fno-pic -fno-omit-frame-pointer -mno-red-zone -fno-common -fno-plt -mcmodel=large"
-# cursor 推荐
-CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large"
+CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions"
 LDFLAGS="-static -Wl,--gc-sections -Wl,--build-id=none"
 
-# 使用 windsurf 推荐的 (failed)
-# CFLAGS="-Os -fdata-sections -ffunction-sections -fno-unwind-tables -fno-asynchronous-unwind-tables"
-# LDFLAGS="-static -Wl,--gc-sections -Wl,--strip-all -Wl,--build-id=none"
-
-## 验证运行时文件
-#for file in "crt.o" "ape.o" "ape.lds" "cosmopolitan.a" "cosmopolitan.h"; do
-#    if [ ! -f "${COSMOS}/$file" ]; then
-#        echo "Error: $file not found at ${COSMOS}/$file"
-#        exit 1
-#    else
-#        echo "Found ${COSMOS}/$file"
-#    fi
-#done
+# 创建必要的目录
+mkdir -p "${BUILD_DIR}" "${BIN_DIR}" "${POLY_DIR}"
 
 # 导出环境变量
-export ROOT_DIR PPDB_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR 
+export ROOT_DIR PPDB_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR POLY_DIR INFRA_DIR

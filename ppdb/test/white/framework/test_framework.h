@@ -93,8 +93,8 @@ extern int g_test_stats[3];  // total, passed, failed
 
 #define TEST_ASSERT_EQUAL(expected, actual) \
     TEST_ASSERT_MSG((expected) == (actual), \
-                    "Expected %lu but got %lu", \
-                    (uint64_t)(expected), (uint64_t)(actual))
+                    "Expected %d but got %d", \
+                    (int64_t)(expected), (int64_t)(actual))
 
 #define TEST_ASSERT_EQUAL_PTR(expected, actual) \
     TEST_ASSERT_MSG((expected) == (actual), \
@@ -117,6 +117,18 @@ extern int g_test_stats[3];  // total, passed, failed
 
 #define TEST_ASSERT_FALSE(x) \
     TEST_ASSERT_MSG(!(x), "%s is not false", #x)
+
+// 添加失败宏
+#define TEST_FAIL_MSG(fmt, ...) \
+    do { \
+        infra_printf("[FAILED] %s:%d: ", __FILE__, __LINE__); \
+        infra_printf(fmt, ##__VA_ARGS__); \
+        infra_printf("\n"); \
+        g_test_stats[TEST_STATS_FAILED]++; \
+        return; \
+    } while (0)
+
+#define TEST_FAIL(msg) TEST_FAIL_MSG("%s", msg)
 
 // Special assert macros for different types
 #define TEST_ASSERT_MSG_VOID(cond, fmt, ...) TEST_ASSERT_VOID(cond, fmt, ##__VA_ARGS__)

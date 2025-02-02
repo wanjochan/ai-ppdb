@@ -109,17 +109,6 @@ typedef struct {
         int level;
         const char* log_file;
     } log;
-    
-//@infra_ds
-    //struct {
-    //    size_t hash_initial_size;
-    //    uint32_t hash_load_factor;
-    //} ds;
-
-    //struct {
-    //    size_t max_events;   // 单次处理的最大事件数
-    //    bool edge_trigger;   // 是否启用边缘触发(仅epoll)
-    //} mux;
 
 //@infra_net
     struct {
@@ -181,11 +170,11 @@ char* infra_strcat(char* dest, const char* src);
 char* infra_strncat(char* dest, const char* src, size_t n);
 int infra_strcmp(const char* s1, const char* s2);
 int infra_strncmp(const char* s1, const char* s2, size_t n);
-char* infra_strdup(const char* s);
-char* infra_strndup(const char* s, size_t n);
 char* infra_strchr(const char* s, int c);
 char* infra_strrchr(const char* s, int c);
 char* infra_strstr(const char* haystack, const char* needle);
+char* infra_strdup(const char* s);
+char* infra_strndup(const char* s, size_t n);
 
 //-----------------------------------------------------------------------------
 // List Operations
@@ -259,6 +248,7 @@ typedef struct infra_rbtree_node {
 
 typedef struct {
     infra_rbtree_node_t* root;
+    infra_rbtree_node_t* nil;  // sentinel node
     size_t size;
 } infra_rbtree_t;
 
@@ -378,5 +368,30 @@ void infra_random_seed(uint32_t seed);
 
 // 获取当前工作目录
 infra_error_t infra_get_cwd(char* buffer, size_t size);
+
+//-----------------------------------------------------------------------------
+// File Operations
+//-----------------------------------------------------------------------------
+
+#define INFRA_FILE_CREATE  (1 << 0)
+#define INFRA_FILE_RDONLY  (1 << 1)
+#define INFRA_FILE_WRONLY  (1 << 2)
+#define INFRA_FILE_RDWR    (INFRA_FILE_RDONLY | INFRA_FILE_WRONLY)
+#define INFRA_FILE_APPEND  (1 << 3)
+#define INFRA_FILE_TRUNC   (1 << 4)
+
+#define INFRA_SEEK_SET 0
+#define INFRA_SEEK_CUR 1
+#define INFRA_SEEK_END 2
+
+infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle);
+infra_error_t infra_file_close(INFRA_CORE_Handle_t handle);
+infra_error_t infra_file_read(INFRA_CORE_Handle_t handle, void* buffer, size_t size, size_t* bytes_read);
+infra_error_t infra_file_write(INFRA_CORE_Handle_t handle, const void* buffer, size_t size, size_t* bytes_written);
+infra_error_t infra_file_seek(INFRA_CORE_Handle_t handle, int64_t offset, int whence);
+infra_error_t infra_file_size(INFRA_CORE_Handle_t handle, size_t* size);
+infra_error_t infra_file_remove(const char* path);
+infra_error_t infra_file_rename(const char* old_path, const char* new_path);
+infra_error_t infra_file_exists(const char* path, bool* exists);
 
 #endif /* INFRA_CORE_H */

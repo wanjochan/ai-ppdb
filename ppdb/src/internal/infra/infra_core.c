@@ -23,14 +23,6 @@ const infra_config_t INFRA_DEFAULT_CONFIG = {
         .level = INFRA_LOG_LEVEL_INFO,
         .log_file = NULL
     },
-    //.ds = {
-    //    .hash_initial_size = 16,
-    //    .hash_load_factor = 75
-    //},
-    //.mux = {
-    //    .max_events = 1024,
-    //    .edge_trigger = false
-    //},
     .net = {
         .flags = 0,  // 默认使用阻塞模式
         .connect_timeout_ms = 1000,  // 1秒连接超时
@@ -54,18 +46,14 @@ infra_global_t g_infra = {
         .callback = NULL,
         .mutex = NULL
     },
-    //.ds = {
-    //    .hash_initial_size = INFRA_DEFAULT_CONFIG.ds.hash_initial_size,
-    //    .hash_load_factor = INFRA_DEFAULT_CONFIG.ds.hash_load_factor
-    //},
 };
 
 // 自动初始化
 static void __attribute__((constructor)) infra_auto_init(void) {
     //infra_fprintf(stdout, "infra_auto_init()\n");
-    // 如果没有设置 INFRA_AUTO_INIT 环境变量，则跳过自动初始化
-    const char* auto_init = getenv("INFRA_AUTO_INIT");
-    if (!auto_init) {
+    // 如果没有设置 INFRA_NO_AUTO_INIT 环境变量，则自动初始化
+    const char* no_auto_init = getenv("INFRA_NO_AUTO_INIT");
+    if (no_auto_init) {
         return;
     }
 
@@ -80,9 +68,9 @@ static void __attribute__((constructor)) infra_auto_init(void) {
 
 // 自动清理
 static void __attribute__((destructor)) infra_auto_cleanup(void) {
-    // 如果没有设置 INFRA_AUTO_INIT 环境变量，则跳过自动清理
-    const char* auto_init = getenv("INFRA_AUTO_INIT");
-    if (!auto_init) {
+    // 如果没有设置 INFRA_NO_AUTO_INIT 环境变量，则自动清理
+    const char* no_auto_init = getenv("INFRA_NO_AUTO_INIT");
+    if (no_auto_init) {
         return;
     }
     infra_cleanup();
@@ -131,6 +119,9 @@ infra_error_t infra_config_validate(const infra_config_t* config) {
     return INFRA_OK;
 }
 
+// 运行时更新配置
+// 注意：目前仅支持更新日志相关配置（log level和log file）
+// 其他配置项（如内存池、数据结构等）必须在初始化时通过 infra_init_with_config 设置
 infra_error_t infra_config_apply(const infra_config_t* config) {
     if (!config) {
         return INFRA_ERROR_INVALID_PARAM;
@@ -304,73 +295,106 @@ infra_error_t infra_get_status(infra_status_t* status) {
 }
 
 //-----------------------------------------------------------------------------
-// Memory Management
-//-----------------------------------------------------------------------------
-
-// 内存管理函数已迁移到 infra_memory.c
-
-//-----------------------------------------------------------------------------
 // String Operations
 //-----------------------------------------------------------------------------
 
 size_t infra_strlen(const char* s) {
+    if (!s) {
+        return 0;
+    }
     return strlen(s);
 }
 
 char* infra_strcpy(char* dest, const char* src) {
+    if (!dest || !src) {
+        return NULL;
+    }
     return strcpy(dest, src);
 }
 
 char* infra_strncpy(char* dest, const char* src, size_t n) {
+    if (!dest || !src) {
+        return NULL;
+    }
     return strncpy(dest, src, n);
 }
 
 char* infra_strcat(char* dest, const char* src) {
+    if (!dest || !src) {
+        return NULL;
+    }
     return strcat(dest, src);
 }
 
 char* infra_strncat(char* dest, const char* src, size_t n) {
+    if (!dest || !src) {
+        return NULL;
+    }
     return strncat(dest, src, n);
 }
 
 int infra_strcmp(const char* s1, const char* s2) {
+    if (!s1 || !s2) {
+        return s1 == s2 ? 0 : (s1 ? 1 : -1);
+    }
     return strcmp(s1, s2);
 }
 
 int infra_strncmp(const char* s1, const char* s2, size_t n) {
+    if (!s1 || !s2) {
+        return s1 == s2 ? 0 : (s1 ? 1 : -1);
+    }
     return strncmp(s1, s2, n);
 }
 
-char* infra_strdup(const char* s) {
-    size_t len = infra_strlen(s) + 1;
-    char* new_str = infra_malloc(len);
-    if (new_str) {
-        infra_memcpy(new_str, s, len);
-    }
-    return new_str;
-}
-
-char* infra_strndup(const char* s, size_t n) {
-    size_t len = infra_strlen(s);
-    if (len > n) len = n;
-    char* new_str = infra_malloc(len + 1);
-    if (new_str) {
-        infra_memcpy(new_str, s, len);
-        new_str[len] = '\0';
-    }
-    return new_str;
-}
-
 char* infra_strchr(const char* s, int c) {
+    if (!s) {
+        return NULL;
+    }
     return strchr(s, c);
 }
 
 char* infra_strrchr(const char* s, int c) {
+    if (!s) {
+        return NULL;
+    }
     return strrchr(s, c);
 }
 
 char* infra_strstr(const char* haystack, const char* needle) {
+    if (!haystack || !needle) {
+        return NULL;
+    }
     return strstr(haystack, needle);
+}
+
+char* infra_strdup(const char* s) {
+    if (!s) {
+        return NULL;
+    }
+    size_t len = infra_strlen(s);
+    char* new_str = (char*)infra_malloc(len + 1);
+    if (!new_str) {
+        return NULL;
+    }
+    return infra_strcpy(new_str, s);
+}
+
+char* infra_strndup(const char* s, size_t n) {
+    if (!s) {
+        return NULL;
+    }
+    size_t len = infra_strlen(s);
+    if (len > n) {
+        len = n;
+    }
+    char* new_str = (char*)infra_malloc(len + 1);
+    if (!new_str) {
+        return NULL;
+    }
+    infra_strncpy(new_str, s, len);
+    new_str[len] = '\0';
+    return new_str;
 }
 
 //-----------------------------------------------------------------------------
@@ -593,6 +617,37 @@ int infra_snprintf(char* str, size_t size, const char* format, ...)
 // File Operations
 //-----------------------------------------------------------------------------
 
+infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle) {
+    if (!path || !handle) return INFRA_ERROR_INVALID;
+
+    int open_flags = 0;
+    
+    // 转换标志位
+    if ((flags & INFRA_FILE_RDONLY) && (flags & INFRA_FILE_WRONLY)) {
+        open_flags |= O_RDWR;
+    } else if (flags & INFRA_FILE_RDONLY) {
+        open_flags |= O_RDONLY;
+    } else if (flags & INFRA_FILE_WRONLY) {
+        open_flags |= O_WRONLY;
+    }
+    
+    if (flags & INFRA_FILE_APPEND) open_flags |= O_APPEND;
+    if (flags & INFRA_FILE_TRUNC) open_flags |= O_TRUNC;
+    
+    // 如果是写模式且文件不存在，则创建文件
+    if ((flags & INFRA_FILE_WRONLY) || (flags & INFRA_FILE_APPEND)) {
+        open_flags |= O_CREAT;
+    }
+
+    int fd = open(path, open_flags, mode);
+    if (fd == -1) {
+        return INFRA_ERROR_IO;
+    }
+
+    *handle = (INFRA_CORE_Handle_t)fd;
+    return INFRA_OK;
+}
+
 infra_error_t infra_file_close(infra_handle_t handle) {
     if (!handle) return INFRA_ERROR_INVALID;
 
@@ -764,5 +819,3 @@ infra_error_t infra_get_cwd(char* buffer, size_t size) {
 
     return INFRA_OK;
 }
-
-

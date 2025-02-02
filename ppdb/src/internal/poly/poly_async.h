@@ -1,92 +1,103 @@
-#ifndef POLY_ASYNC_H_
-#define POLY_ASYNC_H_
+#pragma once
+#include <setjmp.h>
+#include <stddef.h>
 
-//占位，还没完善
+// 栈大小配置
+#define POLY_STACK_MIN  (4 * 1024)     // 4KB 起始栈
+#define POLY_STACK_MAX  (1024 * 1024)  // 1MB 上限
 
-#include "libc/integral/integral.h"
-#include "libc/runtime/runtime.h"
-#include "libc/sysv/consts/poll.h"
-#include "poly_error.h"
+// 默认栈大小 64KB
+// #define POLY_STACK_SIZE (64 * 1024)
+/*
+64位系统：
+128TB / 65.5KB ≈ 2,000,000,000 个协程（理论值）
 
-/**
- * @brief Event types for async operations
- */
-typedef enum {
-    POLY_ASYNC_READ = 1,   /* Read event */
-    POLY_ASYNC_WRITE = 2,  /* Write event */
-    POLY_ASYNC_ERROR = 4   /* Error event */
-} poly_async_event_t;
+实际限制因素：
+1. 可用物理内存（如16GB）：
+   16GB / 65.5KB  约≈ 250,000 个协程
 
-/**
- * @brief Async context handle
- */
-typedef struct poly_async_context poly_async_context_t;
+2. 操作系统限制：
+   - 默认进程虚拟内存限制
+   - 默认进程最大内存映射区域数
+*/
+// 协程函数类型
+typedef void (*poly_async_fn)(void*);
 
-/**
- * @brief Async future handle for operation results
- */
-typedef struct poly_async_future poly_async_future_t;
+// 协程上下文
+typedef struct poly_async_ctx {
+    jmp_buf env;           // 上下文
+    char* stack;           // 栈指针
+    size_t size;          // 当前栈大小
+    size_t used;          // 已用空间
+    poly_async_fn fn;      // 协程函数
+    void* arg;            // 函数参数
+    int done;             // 是否完成
+    struct poly_async_ctx* next;  // 链表指针
+} poly_async_ctx;
 
-/**
- * @brief Callback function type for async operations
- * @param user_data User provided context
- * @param status Operation status (0 for success)
- * @param bytes_transferred Number of bytes transferred (if applicable)
- */
-typedef void (*poly_async_callback_t)(void* user_data, int status, size_t bytes_transferred);
+// 基础协程API
+poly_async_ctx* poly_go(poly_async_fn fn, void* arg);  // 创建协程
+void poly_yield(void);                                 // 让出执行权
+void poly_run(void);                                   // 运行调度器
 
-/**
- * @brief Create an async context
- * @return Context handle or NULL on error
- */
-poly_async_context_t* poly_async_create(void);
+// 内存管理API
+void* poly_alloc(size_t size);                        // 在当前协程栈上分配内存
+void poly_reset(void);                                // 重置当前协程的内存使用
 
-/**
- * @brief Destroy an async context
- * @param ctx Context to destroy
- */
-void poly_async_destroy(poly_async_context_t* ctx);
-
-/**
- * @brief Add a file descriptor to async context
- * @param ctx Async context
- * @param fd File descriptor to monitor
- * @param events Event types to monitor (POLY_ASYNC_*)
- * @param callback Callback function
- * @param user_data User data passed to callback
- * @return Future handle or NULL on error
- */
-poly_async_future_t* poly_async_add_fd(poly_async_context_t* ctx, 
-                                      int fd, 
-                                      int events,
-                                      poly_async_callback_t callback,
-                                      void* user_data);
+// 获取当前协程上下文
+poly_async_ctx* poly_current(void);
 
 /**
- * @brief Remove a file descriptor from async context
- * @param ctx Async context
- * @param fd File descriptor to remove
- * @return 0 on success, error code otherwise
- */
-int poly_async_remove_fd(poly_async_context_t* ctx, int fd);
+// 一个简单的消息处理结构
+struct message {
+    int type;
+    char data[128];
+};
 
-/**
- * @brief Run the async event loop
- * @param ctx Async context
- * @return 0 on success, error code otherwise
- */
-int poly_async_run(poly_async_context_t* ctx);
+void process_messages(void* arg) {
+    // 在协程栈上分配消息缓冲区
+    struct message* msg = poly_alloc(sizeof(struct message));
+    
+    // 在协程栈上分配结果数组
+    int* results = poly_alloc(sizeof(int) * 10);
+    int result_count = 0;
+    
+    while (1) {
+        // 读取消息到我们分配的缓冲区
+        if (read_message(msg) <= 0) break;
+        
+        // 处理消息
+        if (msg->type == MSG_DATA) {
+            // 将处理结果存入结果数组
+            results[result_count++] = process_data(msg->data);
+        }
+        
+        // 如果结果足够多，发送出去
+        if (result_count >= 10) {
+            send_results(results, result_count);
+            result_count = 0;
+        }
+        
+        // 让其他协程运行
+        poly_yield();
+    }
+    
+    // 发送剩余的结果
+    if (result_count > 0) {
+        send_results(results, result_count);
+    }
+    
+    // 不需要手动释放 msg 和 results
+    // 协程结束时会自动释放所有通过 poly_alloc 分配的内存
+}
 
-/**
- * @brief Stop the async event loop
- * @param ctx Async context
+int main() {
+    // 启动消息处理协程
+    poly_go(process_messages, NULL);
+    
+    // 运行协程调度器
+    while (1) {
+        poly_run();
+    }
+}
  */
-void poly_async_stop(poly_async_context_t* ctx);
-
-/**
- * @brief Cancel a future
- * @param future Future to cancel
- */
-void poly_async_cancel(poly_async_future_t* future);
-
-#endif /* POLY_ASYNC_H_ */ 

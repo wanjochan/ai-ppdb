@@ -13,15 +13,17 @@ typedef enum {
     SERVICE_TYPE_UNKNOWN = 0,
     SERVICE_TYPE_MEMKV,
     SERVICE_TYPE_RINETD,
+    SERVICE_TYPE_SQLITE3,
     SERVICE_TYPE_COUNT
 } peer_service_type_t;
 
 // 服务状态
 typedef enum {
-    SERVICE_STATE_STOPPED = 0,
-    SERVICE_STATE_STARTING,
-    SERVICE_STATE_RUNNING,
-    SERVICE_STATE_STOPPING
+    SERVICE_STATE_UNKNOWN = 0,  // 未知状态
+    SERVICE_STATE_STOPPED,      // 已停止
+    SERVICE_STATE_STARTING,     // 正在启动
+    SERVICE_STATE_RUNNING,      // 正在运行
+    SERVICE_STATE_STOPPING      // 正在停止
 } peer_service_state_t;
 
 // 服务配置
@@ -31,6 +33,7 @@ typedef struct {
     const poly_cmd_option_t* options;  // 命令行选项
     int option_count;                // 选项数量
     infra_config_t* config;          // 基础配置
+    const char* config_path;         // 配置文件路径
 } peer_service_config_t;
 
 // 服务接口
