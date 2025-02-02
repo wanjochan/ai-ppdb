@@ -46,3 +46,58 @@ void poly_reset(void);                                // 重置当前协程的�
 
 // 获取当前协程上下文
 poly_async_ctx* poly_current(void);
+
+/**
+// 一个简单的消息处理结构
+struct message {
+    int type;
+    char data[128];
+};
+
+void process_messages(void* arg) {
+    // 在协程栈上分配消息缓冲区
+    struct message* msg = poly_alloc(sizeof(struct message));
+    
+    // 在协程栈上分配结果数组
+    int* results = poly_alloc(sizeof(int) * 10);
+    int result_count = 0;
+    
+    while (1) {
+        // 读取消息到我们分配的缓冲区
+        if (read_message(msg) <= 0) break;
+        
+        // 处理消息
+        if (msg->type == MSG_DATA) {
+            // 将处理结果存入结果数组
+            results[result_count++] = process_data(msg->data);
+        }
+        
+        // 如果结果足够多，发送出去
+        if (result_count >= 10) {
+            send_results(results, result_count);
+            result_count = 0;
+        }
+        
+        // 让其他协程运行
+        poly_yield();
+    }
+    
+    // 发送剩余的结果
+    if (result_count > 0) {
+        send_results(results, result_count);
+    }
+    
+    // 不需要手动释放 msg 和 results
+    // 协程结束时会自动释放所有通过 poly_alloc 分配的内存
+}
+
+int main() {
+    // 启动消息处理协程
+    poly_go(process_messages, NULL);
+    
+    // 运行协程调度器
+    while (1) {
+        poly_run();
+    }
+}
+ */

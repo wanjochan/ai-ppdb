@@ -7,6 +7,13 @@ static struct {
     poly_async_ctx* ready;    // 就绪队列
     poly_async_ctx* current;  // 当前运行的协程
     jmp_buf scheduler;        // 调度器上下文
+    
+    // 栈使用统计
+    struct {
+        size_t total_allocs;  // 总分配次数
+        size_t grow_count;    // 栈增长次数
+        size_t peak_size;     // 峰值大小
+    } stats;
 } scheduler;
 
 // 获取当前协程
@@ -14,16 +21,30 @@ poly_async_ctx* poly_current(void) {
     return scheduler.current;
 }
 
-// 栈增长
+// 智能栈增长
 static int grow_stack(poly_async_ctx* ctx) {
-    size_t new_size = ctx->size * 2;
-    if (new_size > POLY_STACK_MAX) return -1;
+    scheduler.stats.grow_count++;
+    
+    // 计算新大小：根据增长频率和当前使用量智能调整
+    size_t grow_factor = scheduler.stats.grow_count > 3 ? 4 : 2;
+    size_t new_size = ctx->size * grow_factor;
+    
+    // 限制最大值
+    if (new_size > POLY_STACK_MAX) {
+        new_size = POLY_STACK_MAX;
+    }
     
     char* new_stack = realloc(ctx->stack, new_size);
     if (!new_stack) return -1;
     
     ctx->stack = new_stack;
     ctx->size = new_size;
+    
+    // 更新统计
+    if (new_size > scheduler.stats.peak_size) {
+        scheduler.stats.peak_size = new_size;
+    }
+    
     return 0;
 }
 
@@ -32,14 +53,21 @@ poly_async_ctx* poly_go(poly_async_fn fn, void* arg) {
     poly_async_ctx* ctx = calloc(1, sizeof(*ctx));
     if (!ctx) return NULL;
     
-    // 分配初始栈
-    ctx->stack = malloc(POLY_STACK_MIN);
+    // 智能初始栈大小：根据历史数据
+    size_t initial_size = scheduler.stats.peak_size > 0 
+        ? (scheduler.stats.peak_size / 2)  // 使用历史峰值的一半
+        : POLY_STACK_MIN;                  // 首次使用最小值
+    
+    if (initial_size < POLY_STACK_MIN) initial_size = POLY_STACK_MIN;
+    if (initial_size > POLY_STACK_MAX) initial_size = POLY_STACK_MAX;
+    
+    ctx->stack = malloc(initial_size);
     if (!ctx->stack) {
         free(ctx);
         return NULL;
     }
     
-    ctx->size = POLY_STACK_MIN;
+    ctx->size = initial_size;
     ctx->used = 0;
     ctx->fn = fn;
     ctx->arg = arg;
@@ -57,13 +85,19 @@ void* poly_alloc(size_t size) {
     poly_async_ctx* ctx = poly_current();
     if (!ctx) return NULL;
     
+    scheduler.stats.total_allocs++;
+    
     // 对齐到8字节
     size = (size + 7) & ~7;
     
-    // 检查是否需要增长栈
-    while (ctx->used + size > ctx->size) {
-        if (grow_stack(ctx) < 0) {
-            return NULL;
+    // 智能增长：预留一些空间避免频繁扩展
+    size_t required = ctx->used + size;
+    if (required > ctx->size) {
+        size_t margin = size * 2;  // 额外预留空间
+        while (ctx->used + size + margin > ctx->size) {
+            if (grow_stack(ctx) < 0) {
+                return NULL;
+            }
         }
     }
     
