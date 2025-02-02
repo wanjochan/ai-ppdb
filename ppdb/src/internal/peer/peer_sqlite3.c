@@ -6,6 +6,7 @@
 #include "internal/poly/poly_poll.h"
 #include "internal/peer/peer_service.h"
 #include "internal/peer/peer_sqlite3.h"
+// #include "internal/sqlite3/sqlite3.h"  // 修改 SQLite 头文件路径
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -24,6 +25,7 @@ typedef struct {
     infra_socket_t client;              // Client socket
     poly_db_t* db;                      // Database connection
     char buffer[SQLITE3_MAX_SQL_LEN];   // SQL buffer
+    volatile bool is_closing;           // Connection closing flag
 } sqlite3_conn_t;
 
 // Service state
@@ -96,12 +98,45 @@ static sqlite3_conn_t* sqlite3_conn_create(infra_socket_t client) {
     
     conn->client = client;
     conn->db = NULL;
+    conn->is_closing = false;
     
-    // Open database connection
+    // 设置 socket 为阻塞模式
+    infra_error_t err = infra_net_set_nonblock(client, false);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set socket to blocking mode");
+        infra_free(conn);
+        return NULL;
+    }
+    
+    // 设置较长的超时时间
+    struct timeval timeout;
+    timeout.tv_sec = 30;  // 30 秒超时
+    timeout.tv_usec = 0;
+    
+    int fd = infra_net_get_fd(client);
+    if (fd < 0) {
+        INFRA_LOG_ERROR("Failed to get socket file descriptor");
+        infra_free(conn);
+        return NULL;
+    }
+    
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        INFRA_LOG_ERROR("Failed to set receive timeout");
+        infra_free(conn);
+        return NULL;
+    }
+    
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
+        INFRA_LOG_ERROR("Failed to set send timeout");
+        infra_free(conn);
+        return NULL;
+    }
+    
+    // Open database connection using poly_db with WAL mode
     poly_db_config_t config = {
         .type = POLY_DB_TYPE_SQLITE,
         .url = g_service.db_path,
-        .max_memory = strcmp(g_service.db_path, ":memory:") == 0 ? (100 * 1024 * 1024) : 0,
+        .max_memory = 100 * 1024 * 1024,  // 100MB 内存限制
         .read_only = false,
         .plugin_path = NULL,
         .allow_fallback = false
@@ -109,9 +144,44 @@ static sqlite3_conn_t* sqlite3_conn_create(infra_socket_t client) {
     
     INFRA_LOG_INFO("Opening database: %s", g_service.db_path);
     
-    infra_error_t err = poly_db_open(&config, &conn->db);
+    err = poly_db_open(&config, &conn->db);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to open database connection: %d", err);
+        infra_free(conn);
+        return NULL;
+    }
+
+    // 启用 WAL 模式以提高并发性能
+    err = poly_db_exec(conn->db, "PRAGMA journal_mode=WAL;");
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to enable WAL mode");
+        poly_db_close(conn->db);
+        infra_free(conn);
+        return NULL;
+    }
+
+    // 设置较短的超时和重试
+    err = poly_db_exec(conn->db, "PRAGMA busy_timeout=5000;");
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set busy timeout");
+        poly_db_close(conn->db);
+        infra_free(conn);
+        return NULL;
+    }
+
+    // 设置共享缓存模式
+    err = poly_db_exec(conn->db, "PRAGMA cache_size=2000;");  // 2000 pages = ~8MB cache
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set cache size");
+        poly_db_close(conn->db);
+        infra_free(conn);
+        return NULL;
+    }
+
+    err = poly_db_exec(conn->db, "PRAGMA synchronous=NORMAL;");  // 提高写入性能
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set synchronous mode");
+        poly_db_close(conn->db);
         infra_free(conn);
         return NULL;
     }
@@ -126,16 +196,33 @@ static void sqlite3_conn_destroy(sqlite3_conn_t* conn) {
         return;
     }
 
+    if (conn->is_closing) {
+        INFRA_LOG_DEBUG("Connection already being destroyed");
+        return;
+    }
+    conn->is_closing = true;
+
     INFRA_LOG_DEBUG("Destroying connection: client=%p, db=%p", conn->client, conn->db);
 
+    // Close database connection using poly_db
     if (conn->db) {
         INFRA_LOG_DEBUG("Closing database connection");
         poly_db_close(conn->db);
         conn->db = NULL;
     }
 
-    // 不要关闭 client socket，它由 poly_poll 管理
-    conn->client = NULL;
+    if (conn->client) {
+        INFRA_LOG_DEBUG("Clearing client socket reference");
+        conn->client = NULL;
+    }
+
+    // Verify cleanup
+    if (conn->db != NULL) {
+        INFRA_LOG_ERROR("Database connection not properly cleaned up");
+    }
+    if (conn->client != NULL) {
+        INFRA_LOG_ERROR("Client socket reference not properly cleaned up");
+    }
 
     INFRA_LOG_DEBUG("Freeing connection structure");
     infra_free(conn);
@@ -153,14 +240,14 @@ static void handle_request_wrapper(void* args) {
 
     poly_poll_handler_args_t* handler_args = (poly_poll_handler_args_t*)args;
     
-    // 在创建连接前获取客户端地址
+    // Get client address
     char client_addr[POLY_MAX_ADDR_LEN] = {0};
     infra_net_addr_t addr = {0};
     
-    // 使用 getpeername 获取对端地址
     infra_error_t err = infra_net_getpeername(handler_args->client, &addr);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to get peer address");
+        free(handler_args);
         return;
     }
     
@@ -170,57 +257,115 @@ static void handle_request_wrapper(void* args) {
     // Create connection state
     sqlite3_conn_t* conn = sqlite3_conn_create(handler_args->client);
     if (!conn) {
-        const char* error_msg = "Failed to create connection\n";
+        const char* error_msg = "ERROR: Failed to create connection\n";
         size_t sent;
         infra_net_send(handler_args->client, error_msg, strlen(error_msg), &sent);
-        return;  // Let poly_poll close the socket
+        free(handler_args);
+        return;
     }
+
+    free(handler_args);
+    handler_args = NULL;
 
     INFRA_LOG_INFO("Client connected from %s", client_addr);
 
     // Process requests
     while (g_service.running) {
         size_t received = 0;
+        memset(conn->buffer, 0, sizeof(conn->buffer));  // 清空缓冲区
+        
+        INFRA_LOG_DEBUG("Waiting for SQL from %s", client_addr);
         err = infra_net_recv(conn->client, conn->buffer, sizeof(conn->buffer) - 1, &received);
+        
+        if (err == INFRA_ERROR_TIMEOUT) {
+            INFRA_LOG_DEBUG("Receive timeout from %s, continuing...", client_addr);
+            continue;
+        }
+        
         if (err != INFRA_OK || received == 0) {
-            INFRA_LOG_INFO("Client disconnected: %s", client_addr);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to receive from %s: %d", client_addr, err);
+            } else {
+                INFRA_LOG_INFO("Client disconnected: %s", client_addr);
+            }
             break;
         }
 
         // Ensure NULL termination
         conn->buffer[received] = '\0';
-        INFRA_LOG_DEBUG("Received SQL from %s: %s", client_addr, conn->buffer);
+        INFRA_LOG_DEBUG("Received SQL from %s (%zu bytes): %s", client_addr, received, conn->buffer);
 
-        // Execute SQL and send response
-        err = poly_db_exec(conn->db, conn->buffer);
-        
-        const char* response;
-        char error_buf[256];
-        
-        if (err != INFRA_OK) {
-            snprintf(error_buf, sizeof(error_buf), "ERROR: %d\n", err);
-            response = error_buf;
-            INFRA_LOG_ERROR("SQL execution failed for %s: %d", client_addr, err);
+        // 尝试执行 SQL
+        const char* sql = conn->buffer;
+        bool is_query = false;
+
+        // 简单检查是否是查询语句
+        const char* sql_upper = sql;
+        while (*sql_upper && isspace(*sql_upper)) sql_upper++;
+        is_query = (strncasecmp(sql_upper, "SELECT", 6) == 0);
+
+        char response[4096] = {0};
+        if (is_query) {
+            // 执行查询
+            poly_db_result_t* result = NULL;
+            err = poly_db_query(conn->db, sql, &result);
+            if (err != INFRA_OK) {
+                snprintf(response, sizeof(response), "ERROR: Query failed (%d)\n", err);
+                INFRA_LOG_ERROR("Query failed for %s: %d", client_addr, err);
+            } else {
+                size_t row_count = 0;
+                err = poly_db_result_row_count(result, &row_count);
+                if (err != INFRA_OK) {
+                    snprintf(response, sizeof(response), "ERROR: Failed to get row count (%d)\n", err);
+                    INFRA_LOG_ERROR("Failed to get row count for %s: %d", client_addr, err);
+                } else {
+                    snprintf(response, sizeof(response), "OK: %zu rows\n", row_count);
+                    INFRA_LOG_DEBUG("Query returned %zu rows for %s", row_count, client_addr);
+                }
+                if (result) {
+                    poly_db_result_free(result);
+                }
+            }
         } else {
-            response = "OK\n";
-            INFRA_LOG_DEBUG("SQL execution succeeded for %s", client_addr);
+            // 执行非查询语句
+            err = poly_db_exec(conn->db, sql);
+            if (err != INFRA_OK) {
+                snprintf(response, sizeof(response), "ERROR: Execution failed (%d)\n", err);
+                INFRA_LOG_ERROR("Execution failed for %s: %d", client_addr, err);
+            } else {
+                snprintf(response, sizeof(response), "OK\n");
+                INFRA_LOG_DEBUG("Execution succeeded for %s", client_addr);
+            }
+        }
+
+        // 立即发送响应
+        size_t total_sent = 0;
+        size_t response_len = strlen(response);
+        
+        INFRA_LOG_DEBUG("Sending response to %s (%zu bytes): %s", client_addr, response_len, response);
+        
+        while (total_sent < response_len) {
+            size_t remaining = response_len - total_sent;
+            size_t sent = 0;
+            
+            err = infra_net_send(conn->client, response + total_sent, remaining, &sent);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send response to %s: %d", client_addr, err);
+                goto cleanup;
+            }
+            
+            total_sent += sent;
+            if (sent == 0) {
+                INFRA_LOG_ERROR("Connection closed while sending response to %s", client_addr);
+                goto cleanup;
+            }
         }
         
-        size_t sent;
-        err = infra_net_send(conn->client, response, strlen(response), &sent);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send response to %s: %d", client_addr, err);
-            break;
-        }
+        INFRA_LOG_DEBUG("Response sent to %s", client_addr);
     }
 
+cleanup:
     INFRA_LOG_INFO("Closing connection from %s", client_addr);
-    
-    // 让 sqlite3_conn_destroy 来处理数据库连接的关闭
-    // 不要在这里关闭数据库连接，避免重复关闭
-    
-    // 不要关闭 socket，让 poly_poll 来处理
-    conn->client = NULL;  // 防止 sqlite3_conn_destroy 尝试关闭它
     sqlite3_conn_destroy(conn);
     INFRA_LOG_DEBUG("Connection cleanup completed for %s", client_addr);
 }
@@ -240,6 +385,11 @@ infra_error_t sqlite3_init(const infra_config_t* config) {
     infra_error_t err = infra_mutex_create(&g_service.mutex);
     if (err != INFRA_OK) {
         return err;
+    }
+
+    // 如果没有指定数据库路径，使用临时文件而不是内存数据库
+    if (!g_service.db_path[0]) {
+        strncpy(g_service.db_path, "/tmp/ppdb_sqlite3.db", sizeof(g_service.db_path) - 1);
     }
 
     // 更新服务状态

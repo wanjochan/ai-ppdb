@@ -278,13 +278,18 @@ static void poly_duckdb_close(poly_db_t* db) {
 static infra_error_t sqlite_exec(poly_db_t* db, const char* sql) {
     if (!db || !sql) return INFRA_ERROR_INVALID_PARAM;
     sqlite_impl_t* impl = (sqlite_impl_t*)db->impl;
+    
+    INFRA_LOG_DEBUG("Executing SQL: %s", sql);
+    
     char* err_msg = NULL;
     int rc = sqlite3_exec(impl->db, sql, NULL, NULL, &err_msg);
     if (rc != SQLITE_OK) {
-        printf("SQLite error: %s\n", err_msg ? err_msg : "unknown error");
+        INFRA_LOG_ERROR("SQLite error: %s", err_msg ? err_msg : "unknown error");
         if (err_msg) sqlite3_free(err_msg);
         return INFRA_ERROR_EXEC_FAILED;
     }
+    
+    INFRA_LOG_DEBUG("SQL execution successful");
     return INFRA_OK;
 }
 
@@ -292,19 +297,39 @@ static infra_error_t sqlite_query(poly_db_t* db, const char* sql, poly_db_result
     if (!db || !sql || !result) return INFRA_ERROR_INVALID_PARAM;
     sqlite_impl_t* impl = (sqlite_impl_t*)db->impl;
     
+    INFRA_LOG_DEBUG("Preparing query: %s", sql);
+    
     poly_db_result_t* res = infra_malloc(sizeof(poly_db_result_t));
-    if (!res) return INFRA_ERROR_NO_MEMORY;
+    if (!res) {
+        INFRA_LOG_ERROR("Failed to allocate result structure");
+        return INFRA_ERROR_NO_MEMORY;
+    }
     
     sqlite3_stmt* stmt;
     int rc = sqlite3_prepare_v2(impl->db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
+        INFRA_LOG_ERROR("Failed to prepare statement: %s", sqlite3_errmsg(impl->db));
         infra_free(res);
         return INFRA_ERROR_EXEC_FAILED;
     }
     
+    // 执行语句以获取结果
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW && rc != SQLITE_DONE) {
+        INFRA_LOG_ERROR("Failed to execute statement: %s", sqlite3_errmsg(impl->db));
+        sqlite3_finalize(stmt);
+        infra_free(res);
+        return INFRA_ERROR_EXEC_FAILED;
+    }
+    
+    // 重置语句以便后续使用
+    sqlite3_reset(stmt);
+    
     res->db = db;
     res->internal_result = stmt;
     *result = res;
+    
+    INFRA_LOG_DEBUG("Query prepared and executed successfully");
     return INFRA_OK;
 }
 
@@ -386,10 +411,29 @@ static infra_error_t sqlite_result_get_string(poly_db_result_t* result, size_t r
 
 static void sqlite_close(poly_db_t* db) {
     if (!db || !db->impl) return;
+    
     sqlite_impl_t* impl = (sqlite_impl_t*)db->impl;
     if (impl->db) {
-        sqlite3_close(impl->db);
+        // 等待所有未完成的语句完成
+        sqlite3_stmt* stmt = NULL;
+        while ((stmt = sqlite3_next_stmt(impl->db, NULL)) != NULL) {
+            sqlite3_finalize(stmt);
+        }
+        
+        // 关闭数据库连接
+        int rc = sqlite3_close(impl->db);
+        if (rc != SQLITE_OK) {
+            INFRA_LOG_ERROR("Failed to close SQLite database: %s", sqlite3_errmsg(impl->db));
+            // 强制关闭
+            rc = sqlite3_close_v2(impl->db);
+            if (rc != SQLITE_OK) {
+                INFRA_LOG_ERROR("Failed to force close SQLite database: %s", sqlite3_errmsg(impl->db));
+            }
+        }
+        impl->db = NULL;
     }
+    
+    // 释放资源
     infra_free(impl);
     infra_free(db);
 }
@@ -697,8 +741,11 @@ infra_error_t poly_db_open(const poly_db_config_t* config, poly_db_t** db) {
 
 infra_error_t poly_db_close(poly_db_t* db) {
     if (!db) return INFRA_ERROR_INVALID_PARAM;
-    if (db->close) db->close(db);
-    infra_free(db);
+    if (db->close) {
+        db->close(db);  // close 函数会释放 db
+        return INFRA_OK;
+    }
+    infra_free(db);  // 只有在没有 close 函数时才直接释放
     return INFRA_OK;
 }
 

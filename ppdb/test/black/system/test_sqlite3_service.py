@@ -21,7 +21,7 @@ class SQLite3Client:
         logging.info(f"Connecting to {self.host}:{self.port}")
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((self.host, self.port))
-        self.sock.settimeout(5)  # 设置超时时间为 5 秒
+        self.sock.settimeout(1)  # 设置较短的超时时间，但会多次重试
         logging.info("Connection established")
     
     def close(self):
@@ -42,24 +42,37 @@ class SQLite3Client:
         
         # 读取响应
         response = b''
-        try:
-            while True:
+        start_time = time.time()
+        max_wait_time = 5  # 最大等待时间（秒）
+        
+        while True:
+            try:
                 chunk = self.sock.recv(4096)
                 if not chunk:
                     break
                 response += chunk
-                # 如果收到了完整的响应就退出
-                if b'SQL execution failed' in response or b'OK' in response:
+                
+                # 检查是否收到完整响应（以换行符结尾）
+                if response.endswith(b'\n'):
                     break
-        except socket.timeout:
-            logging.warning("Timeout waiting for response")
+                
+            except socket.timeout:
+                # 检查是否超过最大等待时间
+                if time.time() - start_time > max_wait_time:
+                    logging.warning("Timeout waiting for response")
+                    break
+                continue  # 继续尝试接收
+            
+            except Exception as e:
+                logging.error(f"Error receiving response: {e}")
+                break
         
         if not response:
             return None
         
         # 检查错误
-        response_str = response.decode()
-        if "SQL execution failed" in response_str:
+        response_str = response.decode().strip()
+        if response_str.startswith("ERROR:"):
             raise Exception(f"SQL execution failed: {response_str}")
         
         return response_str
