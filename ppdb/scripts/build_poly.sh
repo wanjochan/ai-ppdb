@@ -7,15 +7,45 @@ source "$(dirname "$0")/build_common.sh" || { echo "Error: Failed to load build_
 
 # 创建构建目录（如果不存在）
 mkdir -p "${BUILD_DIR}/poly"
+mkdir -p "${BUILD_DIR}/poly/libdill"
 
-# 编译所有 poly 源文件
-echo -e "Building poly library..."
+# 首先编译 libdill 的核心文件
+LIBDILL_SRC=(
+    "${LIBDILL_DIR}/libdill.c"
+    "${LIBDILL_DIR}/cr.c"
+    "${LIBDILL_DIR}/handle.c"
+    "${LIBDILL_DIR}/ctx.c"
+    "${LIBDILL_DIR}/stack.c"
+    "${LIBDILL_DIR}/pollset.c"
+    "${LIBDILL_DIR}/utils.c"
+    "${LIBDILL_DIR}/rbtree.c"
+    "${LIBDILL_DIR}/fd.c"
+    "${LIBDILL_DIR}/iol.c"
+    "${SRC_DIR}/internal/poly/compat/now.c"
+)
 
-# 清理旧的库文件和目标文件
-rm -f "${BUILD_DIR}/poly/libpoly.a"
+# 编译 libdill
+echo "-e Building libdill..."
+LIBDILL_OBJECTS=()
+for src in "${LIBDILL_SRC[@]}"; do
+    obj="${BUILD_DIR}/poly/libdill/$(basename "${src}" .c).o"
+    LIBDILL_OBJECTS+=("${obj}")
+    
+    echo "-e Compiling ${src}..."
+    "${CC}" -I"${LIBDILL_DIR}" -I"${SRC_DIR}/internal/poly/compat" -DDILL_THREADS -DDILL_SOCKETS -c "${src}" -o "${obj}"
+    if [ $? -ne 0 ]; then
+        echo "-e Error: Failed to compile ${src}"
+        exit 1
+    fi
+done
+
+# 创建 libdill 静态库
+echo "-e Creating libdill static library..."
+"${AR}" rcs "${BUILD_DIR}/poly/libdill.a" "${LIBDILL_OBJECTS[@]}"
 
 # 定义源文件
 SRC_FILES=(
+    "${SRC_DIR}/internal/poly/poly_async.c"
     "${SRC_DIR}/internal/poly/poly_memkv.c"
     "${SRC_DIR}/internal/poly/poly_memkv_cmd.c"
     "${SRC_DIR}/internal/poly/poly_db.c"
@@ -32,7 +62,7 @@ for src in "${SRC_FILES[@]}"; do
     OBJECTS+=("${obj}")
 done
 
-# 使用 build_common.sh 中的编译函数
+# 使用 build_common.sh 中的编译函数，添加 libdill 链接
 compile_files "${SRC_FILES[@]}" "${BUILD_DIR}/poly" "poly"
 
 # 确保所有目标文件都存在

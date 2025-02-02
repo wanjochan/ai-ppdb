@@ -23,7 +23,7 @@ compile_core() {
     fi
 
     echo "-e Compiling ${src}..."
-    "${CC}" ${cflags} -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${PPDB_DIR}/vendor/sqlite3" -I"${PPDB_DIR}/vendor/duckdb" -c "${src}" -o "${obj}"
+    "${CC}" ${cflags} -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -I"${PPDB_DIR}/vendor/sqlite3" -I"${PPDB_DIR}/vendor/duckdb" -I"${LIBDILL_DIR}" -c "${src}" -o "${obj}"
     return $?
 }
 

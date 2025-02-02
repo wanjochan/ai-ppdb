@@ -739,3 +739,28 @@ infra_error_t infra_net_getsockname(infra_socket_t sock, infra_net_addr_t* addr)
 
     return INFRA_OK;
 }
+
+infra_error_t infra_net_getpeername(infra_socket_t sock, infra_net_addr_t* addr) {
+    if (!sock || !addr) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    struct sockaddr_in sa;
+    socklen_t len = sizeof(sa);
+    if (getpeername(sock->fd, (struct sockaddr*)&sa, &len) == -1) {
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    char host[INET_ADDRSTRLEN];
+    if (!inet_ntop(AF_INET, &sa.sin_addr, host, sizeof(host))) {
+        return INFRA_ERROR_SYSTEM;
+    }
+
+    addr->host = strdup(host);
+    if (!addr->host) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    addr->port = ntohs(sa.sin_port);
+
+    return INFRA_OK;
+}

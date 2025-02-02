@@ -153,6 +153,7 @@ done
 
 "${CC}" ${LDFLAGS} "${ORDERED_OBJECTS[@]}" \
     -L"${BUILD_DIR}/poly" -lpoly \
+    -L"${BUILD_DIR}/poly" -ldill \
     -L"${BUILD_DIR}/infra" -linfra \
     -L"${BUILD_DIR}/sqlite3" -lsqlite3 \
     -o "${BUILD_DIR}/ppdb_latest.exe"

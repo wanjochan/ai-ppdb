@@ -20,6 +20,8 @@ COSMOS="${ROOT_DIR}/repos/cosmos"
 COSMOCC="${ROOT_DIR}/repos/cosmocc"
 # cosmo src
 COSMOPOLITAN="${ROOT_DIR}/repos/cosmopolitan"
+# libdill path
+LIBDILL_DIR="${ROOT_DIR}/repos/libdill"
 
 # 设置工具链路径
 TOOLCHAIN_DIR="${COSMOCC}/bin"
@@ -41,8 +43,16 @@ done
 CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions"
 LDFLAGS="-static -Wl,--gc-sections -Wl,--build-id=none"
 
+# 添加 libdill 的头文件和库文件路径
+if [ -d "${LIBDILL_DIR}" ]; then
+    CFLAGS="${CFLAGS} -I${LIBDILL_DIR}/include"
+    LDFLAGS="${LDFLAGS} -L${LIBDILL_DIR}/lib -ldill"
+else
+    echo "Warning: libdill directory not found at ${LIBDILL_DIR}"
+fi
+
 # 创建必要的目录
 mkdir -p "${BUILD_DIR}" "${BIN_DIR}" "${POLY_DIR}"
 
 # 导出环境变量
-export ROOT_DIR PPDB_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR POLY_DIR INFRA_DIR
+export ROOT_DIR PPDB_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR POLY_DIR INFRA_DIR LIBDILL_DIR

@@ -46,7 +46,12 @@ build_infra() {
 
     # 创建静态库
     echo "Creating static library: ${lib_file}"
-    "${AR}" rcs "${lib_file}" "${infra_objects[@]}"
+    cd "${build_dir}" || exit 1
+    OBJECTS_BASENAME=()
+    for obj in "${infra_objects[@]}"; do
+        OBJECTS_BASENAME+=("$(basename "${obj}")")
+    done
+    "${AR}" rcs "${lib_file}" "${OBJECTS_BASENAME[@]}"
     if [ $? -ne 0 ]; then
         echo "Failed to create infra library"
         exit 1

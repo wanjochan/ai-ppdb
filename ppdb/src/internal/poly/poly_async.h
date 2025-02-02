@@ -51,3 +51,5 @@ poly_async_result_t poly_async_wait(poly_async_context_t* ctx,
  * @return 成功返回0，失败返回-1
  */
 int poly_async_run(poly_async_context_t* ctx);
+
+#endif /* POLY_ASYNC_H_ */

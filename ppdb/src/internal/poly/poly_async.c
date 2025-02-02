@@ -6,8 +6,7 @@
 // 内部使用的操作句柄
 typedef struct {
     poly_async_op_t op;      // 操作类型
-    int coroutine;           // 协程句柄
-    int status;              // 操作状态
+    int status;             // 操作状态
     size_t bytes;           // 传输的字节数
 } async_handle_t;
 
@@ -18,24 +17,12 @@ struct poly_async_context {
 };
 
 // 工作协程函数
-coroutine void worker(async_handle_t* handle, int timeout_ms) {
-    switch(handle->op) {
-        case POLY_ASYNC_OP_WAIT:
-            // 简单让出CPU
-            handle->status = yield();
-            break;
-            
-        case POLY_ASYNC_OP_TIMEOUT:
-            handle->status = msleep(timeout_ms);
-            break;
-            
-        case POLY_ASYNC_OP_SIGNAL:
-            handle->status = sigtrace();
-            break;
-            
-        default:
-            handle->status = -EINVAL;
-            break;
+static coroutine void worker(async_handle_t* handle, int timeout_ms) {
+    if(timeout_ms > 0) {
+        int64_t deadline = now() + timeout_ms;
+        handle->status = msleep(deadline);
+    } else {
+        handle->status = yield();
     }
 }
 
@@ -55,7 +42,6 @@ poly_async_context_t* poly_async_create(void) {
 
 void poly_async_destroy(poly_async_context_t* ctx) {
     if(!ctx) return;
-    
     ctx->running = false;
     
     if(ctx->bundle >= 0) {
@@ -76,35 +62,28 @@ poly_async_result_t poly_async_wait(poly_async_context_t* ctx,
     }
     
     // 创建操作句柄
-    async_handle_t* handle = calloc(1, sizeof(*handle));
-    if(!handle) {
-        result.status = -ENOMEM;
-        return result;
-    }
-    
-    handle->op = op;
+    async_handle_t handle = {
+        .op = op,
+        .status = 0,
+        .bytes = 0
+    };
     
     // 启动工作协程
-    handle->coroutine = go(worker(handle, timeout_ms));
-    if(handle->coroutine < 0) {
-        free(handle);
+    int cr = go(worker(&handle, timeout_ms));
+    if(cr < 0) {
         result.status = -errno;
         return result;
     }
-    
-    // 加入bundle
-    bundle_go(ctx->bundle, handle->coroutine);
     
     // 等待操作完成
     int rc = bundle_wait(ctx->bundle, timeout_ms);
     if(rc < 0) {
         result.status = -errno;
     } else {
-        result.status = handle->status;
-        result.bytes = handle->bytes;
+        result.status = handle.status;
+        result.bytes = handle.bytes;
     }
     
-    free(handle);
     return result;
 }
 
