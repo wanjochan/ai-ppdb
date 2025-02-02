@@ -342,8 +342,15 @@ static infra_error_t sqlite_result_row_count(poly_db_result_t* result, size_t* c
     
     // 计算行数
     size_t rows = 0;
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         rows++;
+    }
+    
+    if (rc != SQLITE_DONE) {
+        INFRA_LOG_ERROR("Failed to count rows: %s", 
+            sqlite3_errmsg(((sqlite_impl_t*)result->db->impl)->db));
+        return INFRA_ERROR_QUERY_FAILED;
     }
     
     // 重置语句以便后续使用
@@ -357,23 +364,40 @@ static infra_error_t sqlite_result_get_blob(poly_db_result_t* result, size_t row
     if (!result || !data || !size) return INFRA_ERROR_INVALID_PARAM;
     sqlite3_stmt* stmt = (sqlite3_stmt*)result->internal_result;
     
-    if (sqlite3_step(stmt) != SQLITE_ROW) {
-        *data = NULL;
-        *size = 0;
-        return INFRA_ERROR_NOT_FOUND;
+    // 重置语句
+    sqlite3_reset(stmt);
+    
+    // 定位到指定行
+    int rc;
+    for (size_t i = 0; i <= row; i++) {
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
+            *data = NULL;
+            *size = 0;
+            if (rc != SQLITE_DONE) {
+                INFRA_LOG_ERROR("Failed to get blob: %s", 
+                    sqlite3_errmsg(((sqlite_impl_t*)result->db->impl)->db));
+                return INFRA_ERROR_QUERY_FAILED;
+            }
+            return INFRA_ERROR_NOT_FOUND;
+        }
     }
     
     const void* blob = sqlite3_column_blob(stmt, col);
     int blob_size = sqlite3_column_bytes(stmt, col);
     
-    if (!blob) {
+    if (!blob || blob_size <= 0) {
         *data = NULL;
         *size = 0;
         return INFRA_ERROR_NOT_FOUND;
     }
     
     void* blob_copy = infra_malloc(blob_size);
-    if (!blob_copy) return INFRA_ERROR_NO_MEMORY;
+    if (!blob_copy) {
+        *data = NULL;
+        *size = 0;
+        return INFRA_ERROR_NO_MEMORY;
+    }
     
     memcpy(blob_copy, blob, blob_size);
     *data = blob_copy;
@@ -390,9 +414,16 @@ static infra_error_t sqlite_result_get_string(poly_db_result_t* result, size_t r
     sqlite3_reset(stmt);
     
     // 定位到指定行
+    int rc;
     for (size_t i = 0; i <= row; i++) {
-        if (sqlite3_step(stmt) != SQLITE_ROW) {
+        rc = sqlite3_step(stmt);
+        if (rc != SQLITE_ROW) {
             *str = NULL;
+            if (rc != SQLITE_DONE) {
+                INFRA_LOG_ERROR("Failed to get string: %s", 
+                    sqlite3_errmsg(((sqlite_impl_t*)result->db->impl)->db));
+                return INFRA_ERROR_QUERY_FAILED;
+            }
             return INFRA_ERROR_NOT_FOUND;
         }
     }
@@ -761,11 +792,18 @@ infra_error_t poly_db_query(poly_db_t* db, const char* sql, poly_db_result_t** r
 
 infra_error_t poly_db_result_free(poly_db_result_t* result) {
     if (!result) return INFRA_ERROR_INVALID_PARAM;
-    if (result->db && result->db->type == POLY_DB_TYPE_DUCKDB) {
+    
+    if (result->db && result->db->type == POLY_DB_TYPE_SQLITE) {
+        sqlite3_stmt* stmt = (sqlite3_stmt*)result->internal_result;
+        if (stmt) {
+            sqlite3_finalize(stmt);
+        }
+    } else if (result->db && result->db->type == POLY_DB_TYPE_DUCKDB) {
         duckdb_impl_t* impl = (duckdb_impl_t*)result->db->impl;
         impl->destroy_result(result->internal_result);
         infra_free(result->internal_result);
     }
+    
     infra_free(result);
     return INFRA_OK;
 }

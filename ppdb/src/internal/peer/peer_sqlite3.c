@@ -132,7 +132,7 @@ static sqlite3_conn_t* sqlite3_conn_create(infra_socket_t client) {
         return NULL;
     }
     
-    // Open database connection using poly_db with WAL mode
+    // Open database connection using poly_db with shared cache
     poly_db_config_t config = {
         .type = POLY_DB_TYPE_SQLITE,
         .url = g_service.db_path,
@@ -181,6 +181,14 @@ static sqlite3_conn_t* sqlite3_conn_create(infra_socket_t client) {
     err = poly_db_exec(conn->db, "PRAGMA synchronous=NORMAL;");  // 提高写入性能
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to set synchronous mode");
+        poly_db_close(conn->db);
+        infra_free(conn);
+        return NULL;
+    }
+
+    err = poly_db_exec(conn->db, "PRAGMA locking_mode=NORMAL;");  // 使用正常的锁定模式
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set locking mode");
         poly_db_close(conn->db);
         infra_free(conn);
         return NULL;
@@ -387,9 +395,9 @@ infra_error_t sqlite3_init(const infra_config_t* config) {
         return err;
     }
 
-    // 如果没有指定数据库路径，使用临时文件而不是内存数据库
+    // 如果没有指定数据库路径，使用内存数据库
     if (!g_service.db_path[0]) {
-        strncpy(g_service.db_path, "/tmp/ppdb_sqlite3.db", sizeof(g_service.db_path) - 1);
+        strncpy(g_service.db_path, "file::memory:?cache=shared", sizeof(g_service.db_path) - 1);
     }
 
     // 更新服务状态
