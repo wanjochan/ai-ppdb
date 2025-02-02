@@ -1,92 +1,53 @@
 #ifndef POLY_ASYNC_H_
 #define POLY_ASYNC_H_
 
-//占位，还没完善
+#include <stddef.h>
+#include <stdbool.h>
 
-#include "libc/integral/integral.h"
-#include "libc/runtime/runtime.h"
-#include "libc/sysv/consts/poll.h"
-#include "poly_error.h"
-
-/**
- * @brief Event types for async operations
- */
+// 异步操作类型
 typedef enum {
-    POLY_ASYNC_READ = 1,   /* Read event */
-    POLY_ASYNC_WRITE = 2,  /* Write event */
-    POLY_ASYNC_ERROR = 4   /* Error event */
-} poly_async_event_t;
+    POLY_ASYNC_OP_NONE = 0,
+    POLY_ASYNC_OP_WAIT,      // 等待事件
+    POLY_ASYNC_OP_TIMEOUT,   // 超时
+    POLY_ASYNC_OP_SIGNAL,    // 信号
+    POLY_ASYNC_OP_CUSTOM     // 用户自定义
+} poly_async_op_t;
 
-/**
- * @brief Async context handle
- */
+// 异步操作结果
+typedef struct {
+    int status;     // 0表示成功，负数表示错误
+    size_t bytes;   // 传输的字节数（如果适用）
+} poly_async_result_t;
+
+// 异步上下文（不暴露内部实现）
 typedef struct poly_async_context poly_async_context_t;
 
 /**
- * @brief Async future handle for operation results
- */
-typedef struct poly_async_future poly_async_future_t;
-
-/**
- * @brief Callback function type for async operations
- * @param user_data User provided context
- * @param status Operation status (0 for success)
- * @param bytes_transferred Number of bytes transferred (if applicable)
- */
-typedef void (*poly_async_callback_t)(void* user_data, int status, size_t bytes_transferred);
-
-/**
- * @brief Create an async context
- * @return Context handle or NULL on error
+ * @brief 创建异步上下文
+ * @return 上下文指针，失败返回NULL
  */
 poly_async_context_t* poly_async_create(void);
 
 /**
- * @brief Destroy an async context
- * @param ctx Context to destroy
+ * @brief 销毁异步上下文
+ * @param ctx 上下文指针
  */
 void poly_async_destroy(poly_async_context_t* ctx);
 
 /**
- * @brief Add a file descriptor to async context
- * @param ctx Async context
- * @param fd File descriptor to monitor
- * @param events Event types to monitor (POLY_ASYNC_*)
- * @param callback Callback function
- * @param user_data User data passed to callback
- * @return Future handle or NULL on error
+ * @brief 等待异步操作完成
+ * @param ctx 上下文指针
+ * @param op 操作类型
+ * @param timeout_ms 超时时间（毫秒），-1表示永不超时
+ * @return 异步操作结果
  */
-poly_async_future_t* poly_async_add_fd(poly_async_context_t* ctx, 
-                                      int fd, 
-                                      int events,
-                                      poly_async_callback_t callback,
-                                      void* user_data);
+poly_async_result_t poly_async_wait(poly_async_context_t* ctx, 
+                                  poly_async_op_t op,
+                                  int timeout_ms);
 
 /**
- * @brief Remove a file descriptor from async context
- * @param ctx Async context
- * @param fd File descriptor to remove
- * @return 0 on success, error code otherwise
- */
-int poly_async_remove_fd(poly_async_context_t* ctx, int fd);
-
-/**
- * @brief Run the async event loop
- * @param ctx Async context
- * @return 0 on success, error code otherwise
+ * @brief 运行异步事件循环
+ * @param ctx 上下文指针
+ * @return 成功返回0，失败返回-1
  */
 int poly_async_run(poly_async_context_t* ctx);
-
-/**
- * @brief Stop the async event loop
- * @param ctx Async context
- */
-void poly_async_stop(poly_async_context_t* ctx);
-
-/**
- * @brief Cancel a future
- * @param future Future to cancel
- */
-void poly_async_cancel(poly_async_future_t* future);
-
-#endif /* POLY_ASYNC_H_ */ 

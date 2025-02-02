@@ -25,7 +25,8 @@ build_infra() {
     mkdir -p "${build_dir}"
 
     # 清理旧的库文件
-    rm -f "${lib_file}"
+    echo rm "${lib_file}"
+    rm -vf "${lib_file}"
 
     # 设置编译标志
     CFLAGS="${CFLAGS} -I${PPDB_DIR}/src"
@@ -50,7 +51,8 @@ build_infra() {
         echo "Failed to create infra library"
         exit 1
     fi
-
+    echo "sync in build_infra()"
+    sync #
     # 验证库文件是否创建成功
     if [ ! -f "${lib_file}" ]; then
         echo "Error: Library file was not created: ${lib_file}"
@@ -58,6 +60,7 @@ build_infra() {
     fi
 
     # 显示库文件信息
+    echo ls "${lib_file}"
     ls -lh "${lib_file}"
 }
 

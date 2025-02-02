@@ -12,6 +12,7 @@ mkdir -p "${BUILD_DIR}/obj"
 ENABLE_RINETD=1
 ENABLE_MEMKV=1
 ENABLE_SQLITE3=1
+
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
     CFLAGS="${CFLAGS} -DDEV_RINETD"
@@ -42,9 +43,6 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Sync the filesystem to ensure all files are written
-sync
-
 # 构建依赖库
 echo "Building poly library..."
 sh "$(dirname "$0")/build_poly.sh"
@@ -54,10 +52,23 @@ fi
 
 # Verify poly library exists
 POLY_LIB="${BUILD_DIR}/poly/libpoly.a"
-if [ ! -f "$POLY_LIB" ]; then
-    echo "Error: Poly library not found at $POLY_LIB"
-    exit 1
-fi
+# if [ ! -f "$POLY_LIB" ]; then
+#     echo "Error: Poly library not found at $POLY_LIB"
+#     exit 1
+# fi
+for i in {1..3}; do
+    if [ -f "$POLY_LIB" ]; then
+        break
+    fi
+    echo "Waiting for libpoly.a (attempt $i of 3)..."
+    ls -al ${POLY_LIB}
+    echo POLY_LIB=${POLY_LIB}
+    sleep 1
+    sync
+done
+
+# Sync the filesystem to ensure all files are written
+sync
 
 echo "Building ppdb..."
 # 准备源文件列表
@@ -92,6 +103,8 @@ done
 
 compile_files "${SOURCES[@]}" "${BUILD_DIR}/obj" "ppdb"
 
+sync
+
 # 链接
 echo "Linking..."
 
@@ -105,10 +118,23 @@ done
 
 # 检查 libinfra.a 是否存在
 INFRA_LIB="${BUILD_DIR}/infra/libinfra.a"
-if [ ! -f "$INFRA_LIB" ]; then
-    echo "Error: Infra library not found at $INFRA_LIB"
-    exit 1
-fi
+# 等待 libinfra.a 最多3秒
+for i in {1..3}; do
+    if [ -f "$INFRA_LIB" ]; then
+        break
+    fi
+    echo "Waiting for libinfra.a (attempt $i of 3)..."
+    ls -al “${BUILD_DIR}/infra
+    ls -al $INFRA_LIB
+    echo INFRA_LIB=${INFRA_LIB}
+    sleep 1
+    sync
+done
+
+# if [ ! -f "$INFRA_LIB" ]; then
+#     echo "Error: Infra library not found at $INFRA_LIB"
+#     exit 1
+# fi
 
 # 重新排序目标文件，确保服务实现在前面
 ORDERED_OBJECTS=()

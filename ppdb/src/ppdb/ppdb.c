@@ -40,6 +40,9 @@ infra_error_t peer_service_register(peer_service_t* service) {
         return INFRA_ERROR_ALREADY_EXISTS;
     }
 
+    // 初始化服务状态
+    service->state = SERVICE_STATE_STOPPED;
+
     g_registry.services[service->config.type] = service;
     INFRA_LOG_INFO("Registered service: %s", service->config.name);
 

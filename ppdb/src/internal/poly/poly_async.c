@@ -1,163 +1,122 @@
-//TODO change select to poll mechanism
 #include "poly_async.h"
+#include <libdill.h>
+#include <stdlib.h>
+#include <errno.h>
 
-#define POLY_ASYNC_MAX_EVENTS 1024
+// 内部使用的操作句柄
+typedef struct {
+    poly_async_op_t op;      // 操作类型
+    int coroutine;           // 协程句柄
+    int status;              // 操作状态
+    size_t bytes;           // 传输的字节数
+} async_handle_t;
 
-struct poly_async_future {
-    int fd;                         /* File descriptor */
-    int events;                     /* Monitored events */
-    poly_async_callback_t callback; /* User callback */
-    void* user_data;               /* User context */
-    struct poly_async_context* ctx; /* Parent context */
-    bool cancelled;                /* Cancellation flag */
-};
-
+// 异步上下文的完整定义
 struct poly_async_context {
-    bool running;                  /* Event loop running flag */
-    int max_fd;                    /* Max fd for select */
-    fd_set read_fds;              /* Read fd set */
-    fd_set write_fds;             /* Write fd set */
-    fd_set error_fds;             /* Error fd set */
-    poly_async_future_t* futures[POLY_ASYNC_MAX_EVENTS]; /* Active futures */
+    int bundle;             // 协程束
+    bool running;           // 运行状态
 };
+
+// 工作协程函数
+coroutine void worker(async_handle_t* handle, int timeout_ms) {
+    switch(handle->op) {
+        case POLY_ASYNC_OP_WAIT:
+            // 简单让出CPU
+            handle->status = yield();
+            break;
+            
+        case POLY_ASYNC_OP_TIMEOUT:
+            handle->status = msleep(timeout_ms);
+            break;
+            
+        case POLY_ASYNC_OP_SIGNAL:
+            handle->status = sigtrace();
+            break;
+            
+        default:
+            handle->status = -EINVAL;
+            break;
+    }
+}
 
 poly_async_context_t* poly_async_create(void) {
-    poly_async_context_t* ctx = calloc(1, sizeof(poly_async_context_t));
-    if (!ctx) return NULL;
+    poly_async_context_t* ctx = calloc(1, sizeof(*ctx));
+    if(!ctx) return NULL;
     
-    FD_ZERO(&ctx->read_fds);
-    FD_ZERO(&ctx->write_fds);
-    FD_ZERO(&ctx->error_fds);
-    ctx->max_fd = -1;
+    ctx->bundle = bundle();
+    if(ctx->bundle < 0) {
+        free(ctx);
+        return NULL;
+    }
     
+    ctx->running = true;
     return ctx;
 }
 
 void poly_async_destroy(poly_async_context_t* ctx) {
-    if (!ctx) return;
+    if(!ctx) return;
     
-    /* Cancel all pending futures */
-    for (int i = 0; i < POLY_ASYNC_MAX_EVENTS; i++) {
-        if (ctx->futures[i]) {
-            poly_async_cancel(ctx->futures[i]);
-            free(ctx->futures[i]);
-        }
+    ctx->running = false;
+    
+    if(ctx->bundle >= 0) {
+        hclose(ctx->bundle);
     }
     
     free(ctx);
 }
 
-poly_async_future_t* poly_async_add_fd(poly_async_context_t* ctx,
-                                      int fd,
-                                      int events,
-                                      poly_async_callback_t callback,
-                                      void* user_data) {
-    if (!ctx || fd < 0 || !callback) return NULL;
+poly_async_result_t poly_async_wait(poly_async_context_t* ctx, 
+                                  poly_async_op_t op,
+                                  int timeout_ms) {
+    poly_async_result_t result = {0};
     
-    /* Find free slot */
-    int slot = -1;
-    for (int i = 0; i < POLY_ASYNC_MAX_EVENTS; i++) {
-        if (!ctx->futures[i]) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot < 0) return NULL;
-    
-    /* Create future */
-    poly_async_future_t* future = calloc(1, sizeof(poly_async_future_t));
-    if (!future) return NULL;
-    
-    future->fd = fd;
-    future->events = events;
-    future->callback = callback;
-    future->user_data = user_data;
-    future->ctx = ctx;
-    
-    /* Update fd sets */
-    if (events & POLY_ASYNC_READ) FD_SET(fd, &ctx->read_fds);
-    if (events & POLY_ASYNC_WRITE) FD_SET(fd, &ctx->write_fds);
-    if (events & POLY_ASYNC_ERROR) FD_SET(fd, &ctx->error_fds);
-    
-    if (fd > ctx->max_fd) ctx->max_fd = fd;
-    
-    ctx->futures[slot] = future;
-    return future;
-}
-
-int poly_async_remove_fd(poly_async_context_t* ctx, int fd) {
-    if (!ctx || fd < 0) return -1;
-    
-    /* Find and remove future */
-    for (int i = 0; i < POLY_ASYNC_MAX_EVENTS; i++) {
-        poly_async_future_t* future = ctx->futures[i];
-        if (future && future->fd == fd) {
-            FD_CLR(fd, &ctx->read_fds);
-            FD_CLR(fd, &ctx->write_fds);
-            FD_CLR(fd, &ctx->error_fds);
-            
-            free(future);
-            ctx->futures[i] = NULL;
-            
-            /* Update max_fd if needed */
-            if (fd == ctx->max_fd) {
-                int new_max = -1;
-                for (int j = 0; j < POLY_ASYNC_MAX_EVENTS; j++) {
-                    if (ctx->futures[j] && ctx->futures[j]->fd > new_max) {
-                        new_max = ctx->futures[j]->fd;
-                    }
-                }
-                ctx->max_fd = new_max;
-            }
-            
-            return 0;
-        }
+    if(!ctx) {
+        result.status = -EINVAL;
+        return result;
     }
     
-    return -1;
+    // 创建操作句柄
+    async_handle_t* handle = calloc(1, sizeof(*handle));
+    if(!handle) {
+        result.status = -ENOMEM;
+        return result;
+    }
+    
+    handle->op = op;
+    
+    // 启动工作协程
+    handle->coroutine = go(worker(handle, timeout_ms));
+    if(handle->coroutine < 0) {
+        free(handle);
+        result.status = -errno;
+        return result;
+    }
+    
+    // 加入bundle
+    bundle_go(ctx->bundle, handle->coroutine);
+    
+    // 等待操作完成
+    int rc = bundle_wait(ctx->bundle, timeout_ms);
+    if(rc < 0) {
+        result.status = -errno;
+    } else {
+        result.status = handle->status;
+        result.bytes = handle->bytes;
+    }
+    
+    free(handle);
+    return result;
 }
 
 int poly_async_run(poly_async_context_t* ctx) {
-    if (!ctx) return -1;
+    if(!ctx) return -1;
     
-    ctx->running = true;
-    while (ctx->running) {
-        fd_set read_fds = ctx->read_fds;
-        fd_set write_fds = ctx->write_fds;
-        fd_set error_fds = ctx->error_fds;
-        
-        int ready = select(ctx->max_fd + 1, &read_fds, &write_fds, &error_fds, NULL);
-        if (ready < 0) {
-            if (errno == EINTR) continue;
+    while(ctx->running) {
+        int rc = bundle_wait(ctx->bundle, -1);
+        if(rc < 0 && errno != EINTR) {
             return -1;
-        }
-        
-        /* Process ready descriptors */
-        for (int i = 0; i < POLY_ASYNC_MAX_EVENTS && ready > 0; i++) {
-            poly_async_future_t* future = ctx->futures[i];
-            if (!future || future->cancelled) continue;
-            
-            int events = 0;
-            size_t bytes = 0;
-            
-            if (FD_ISSET(future->fd, &read_fds)) events |= POLY_ASYNC_READ;
-            if (FD_ISSET(future->fd, &write_fds)) events |= POLY_ASYNC_WRITE;
-            if (FD_ISSET(future->fd, &error_fds)) events |= POLY_ASYNC_ERROR;
-            
-            if (events) {
-                future->callback(future->user_data, 0, bytes);
-                ready--;
-            }
         }
     }
     
     return 0;
 }
-
-void poly_async_stop(poly_async_context_t* ctx) {
-    if (ctx) ctx->running = false;
-}
-
-void poly_async_cancel(poly_async_future_t* future) {
-    if (future) future->cancelled = true;
-} 
