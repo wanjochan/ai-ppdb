@@ -15,6 +15,8 @@ SRC_FILES=(
     "${SRC_DIR}/internal/poly/poly_atomic.c"
     "${SRC_DIR}/internal/poly/poly_plugin.c"
     "${SRC_DIR}/internal/poly/poly_poll.c"
+    # TODO: 等 memkv 模块完成后再启用
+    # "${SRC_DIR}/internal/poly/poly_async.c"
 )
 
 # 设置编译标志

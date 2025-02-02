@@ -6,6 +6,7 @@
 #include "../infra/infra_error.h"
 #include "../poly/poly_db.h"
 #include "../poly/poly_poll.h"
+#include <netinet/tcp.h>  // 添加TCP_NODELAY的定义
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
@@ -23,7 +24,8 @@ static infra_error_t memkv_cmd_handler(int argc, char* argv[]);
 //-----------------------------------------------------------------------------
 
 #define MEMKV_VERSION "1.0.0"
-#define MEMKV_BUFFER_SIZE 8192
+#define MEMKV_BUFFER_SIZE (64 * 1024 * 1024)  // 增加到64MB
+#define MEMKV_MAX_DATA_SIZE (32 * 1024 * 1024)  // 最大数据大小32MB
 #define MEMKV_DEFAULT_PORT 11211
 #define MEMKV_MAX_THREADS 32
 
@@ -92,6 +94,8 @@ peer_service_t g_memkv_service = {
 //-----------------------------------------------------------------------------
 
 static infra_error_t db_init(poly_db_t** db) {
+    if (!db) return INFRA_ERROR_INVALID_PARAM;
+    
     poly_db_config_t config = {
         .type = strcmp(g_config.engine, "duckdb") == 0 ? 
                 POLY_DB_TYPE_DUCKDB : POLY_DB_TYPE_SQLITE,
@@ -103,7 +107,10 @@ static infra_error_t db_init(poly_db_t** db) {
     };
 
     infra_error_t err = poly_db_open(&config, db);
-    if (err != INFRA_OK) return err;
+    if (err != INFRA_OK) {
+        printf("DEBUG: Failed to open database: err=%d\n", err);
+        return err;
+    }
 
     // 创建 KV 表
     const char* sql = 
@@ -115,7 +122,13 @@ static infra_error_t db_init(poly_db_t** db) {
         ");"
         "CREATE INDEX IF NOT EXISTS idx_expiry ON kv_store(expiry);";
     
-    return poly_db_exec(*db, sql);
+    err = poly_db_exec(*db, sql);
+    if (err != INFRA_OK) {
+        printf("DEBUG: Failed to create tables: err=%d\n", err);
+        poly_db_close(*db);
+        *db = NULL;
+    }
+    return err;
 }
 
 static infra_error_t kv_get(poly_db_t* db, const char* key, void** value, 
@@ -142,9 +155,10 @@ static infra_error_t kv_get(poly_db_t* db, const char* key, void** value,
 
     err = poly_db_column_blob(stmt, 0, value, value_len);
     if (err == INFRA_OK && flags) {
-        char* flags_data;
-        if (poly_db_column_text(stmt, 1, &flags_data) == INFRA_OK && flags_data) {
-            memcpy(flags, flags_data, sizeof(*flags));
+        char* flags_str = NULL;
+        if (poly_db_column_text(stmt, 1, &flags_str) == INFRA_OK && flags_str) {
+            *flags = (uint32_t)strtoul(flags_str, NULL, 10);
+            free(flags_str);
         }
     }
 
@@ -167,10 +181,14 @@ static infra_error_t kv_set(poly_db_t* db, const char* key, const void* value,
     err = poly_db_bind_blob(stmt, 2, value, value_len);
     if (err != INFRA_OK) goto cleanup;
 
-    err = poly_db_bind_text(stmt, 3, (const char*)&flags, sizeof(flags));
+    char flags_str[32];
+    snprintf(flags_str, sizeof(flags_str), "%u", flags);
+    err = poly_db_bind_text(stmt, 3, flags_str, strlen(flags_str));
     if (err != INFRA_OK) goto cleanup;
 
-    err = poly_db_bind_text(stmt, 4, (const char*)&expiry, sizeof(expiry));
+    char expiry_str[32];
+    snprintf(expiry_str, sizeof(expiry_str), "%ld", expiry);
+    err = poly_db_bind_text(stmt, 4, expiry_str, strlen(expiry_str));
     if (err != INFRA_OK) goto cleanup;
 
     err = poly_db_stmt_step(stmt);
@@ -180,124 +198,636 @@ cleanup:
     return err;
 }
 
+static infra_error_t send_all(infra_socket_t sock, const void* data, size_t len) {
+    size_t sent = 0;
+    int retry_count = 0;
+    const int max_retries = 3;
+    
+    while (sent < len) {
+        size_t bytes_sent = 0;
+        infra_error_t err = infra_net_send(sock, (const char*)data + sent, len - sent, &bytes_sent);
+        
+        if (err == INFRA_ERROR_WOULD_BLOCK) {
+            if (retry_count < max_retries) {
+                // 短暂等待后重试
+                usleep(10000); // 10ms
+                retry_count++;
+                continue;
+            }
+            printf("DEBUG: Send would block after %d retries\n", max_retries);
+            return err;
+        }
+        
+        if (err != INFRA_OK || bytes_sent == 0) {
+            printf("DEBUG: Failed to send data: err=%d\n", err);
+            return err;
+        }
+        
+        sent += bytes_sent;
+        retry_count = 0; // 重置重试计数
+    }
+    return INFRA_OK;
+}
+
 static void handle_get(memkv_conn_t* conn, const char* key) {
+    printf("DEBUG: Handling GET command for key='%s'\n", key);
+    
     void* value = NULL;
     size_t value_len = 0;
     uint32_t flags = 0;
 
-    if (kv_get(conn->store, key, &value, &value_len, &flags) == INFRA_OK && value) {
+    infra_error_t err = kv_get(conn->store, key, &value, &value_len, &flags);
+    printf("DEBUG: GET result: err=%d, value=%p, value_len=%zu\n", err, value, value_len);
+    
+    if (err == INFRA_OK && value) {
         char header[128];
         int header_len = snprintf(header, sizeof(header), 
                                 "VALUE %s %u %zu\r\n", key, flags, value_len);
         
-        infra_net_send(conn->sock, header, header_len, NULL);
-        infra_net_send(conn->sock, value, value_len, NULL);
-        infra_net_send(conn->sock, "\r\n", 2, NULL);
-        infra_net_send(conn->sock, "END\r\n", 5, NULL);
+        printf("DEBUG: Sending GET response header: [%.*s]\n", header_len-2, header);
+        
+        // 分块发送大数据
+        const size_t chunk_size = 8192; // 8KB chunks
+        
+        // 发送头部
+        err = send_all(conn->sock, header, header_len);
+        if (err != INFRA_OK) {
+            printf("DEBUG: Failed to send header: err=%d\n", err);
+            free(value);
+            return;
+        }
+        
+        // 分块发送数据
+        size_t sent = 0;
+        while (sent < value_len && err == INFRA_OK) {
+            size_t remaining = value_len - sent;
+            size_t to_send = remaining < chunk_size ? remaining : chunk_size;
+            
+            err = send_all(conn->sock, (char*)value + sent, to_send);
+            if (err != INFRA_OK) {
+                printf("DEBUG: Failed to send data chunk at offset %zu: err=%d\n", sent, err);
+                break;
+            }
+            sent += to_send;
+        }
+        
+        // 如果数据发送成功，发送结尾
+        if (err == INFRA_OK) {
+            err = send_all(conn->sock, "\r\n", 2);
+            if (err == INFRA_OK) {
+                err = send_all(conn->sock, "END\r\n", 5);
+            }
+        }
+        
+        if (err != INFRA_OK) {
+            printf("DEBUG: Failed to complete GET response: err=%d\n", err);
+            if (err == INFRA_ERROR_WOULD_BLOCK) {
+                printf("DEBUG: Send buffer full, connection might be slow\n");
+            }
+            conn->should_close = true;
+        }
+        
         free(value);
     } else {
-        infra_net_send(conn->sock, "END\r\n", 5, NULL);
+        printf("DEBUG: Key not found or error: %d\n", err);
+        send_all(conn->sock, "END\r\n", 5);
     }
 }
 
 static void handle_set(memkv_conn_t* conn, const char* key, const char* flags_str,
-                      const char* exptime_str, const char* bytes_str, const char* value) {
+                      const char* exptime_str, const char* bytes_str, bool noreply) {
+    printf("DEBUG: Handling SET command: key='%s', flags='%s', exptime='%s', bytes='%s'\n",
+           key, flags_str, exptime_str, bytes_str);
+           
     uint32_t flags = strtoul(flags_str, NULL, 10);
     time_t exptime = strtol(exptime_str, NULL, 10);
     size_t bytes = strtoul(bytes_str, NULL, 10);
 
-    if (exptime > 0 && exptime < 2592000) {  // 30天
+    printf("DEBUG: Parsed SET params: flags=%u, exptime=%ld, bytes=%zu\n",
+           flags, exptime, bytes);
+
+    // 检查数据大小限制
+    if (bytes > MEMKV_MAX_DATA_SIZE) {
+        printf("DEBUG: Data too large (max %d bytes)\n", MEMKV_MAX_DATA_SIZE);
+        if (!noreply) {
+            infra_net_send(conn->sock, "SERVER_ERROR object too large\r\n", 30, NULL);
+        }
+        return;
+    }
+
+    char* data = malloc(bytes);
+    if (!data) {
+        printf("DEBUG: SET failed - out of memory\n");
+        if (!noreply) {
+            infra_net_send(conn->sock, "SERVER_ERROR out of memory\r\n", 26, NULL);
+        }
+        return;
+    }
+
+    size_t total_received = 0;
+    int retry_count = 0;
+    const int max_retries = 5;  // 增加重试次数
+    const size_t chunk_size = 65536;  // 减小到64KB以提高接收成功率
+    
+    // 设置更长的接收超时
+    struct timeval orig_tv, new_tv;
+    socklen_t tv_len = sizeof(struct timeval);
+    int sock_fd = infra_net_get_fd(conn->sock);
+    getsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &orig_tv, &tv_len);
+    
+    new_tv.tv_sec = 30;  // 减少单次超时时间，但增加重试次数
+    new_tv.tv_usec = 0;
+    setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &new_tv, sizeof(new_tv));
+
+    // 临时增加接收缓冲区大小
+    int orig_rcvbuf = 0;
+    socklen_t optlen = sizeof(orig_rcvbuf);
+    getsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &orig_rcvbuf, &optlen);
+    
+    int large_rcvbuf = MEMKV_BUFFER_SIZE;
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &large_rcvbuf, sizeof(large_rcvbuf)) < 0) {
+        printf("DEBUG: Failed to set temporary large SO_RCVBUF\n");
+    }
+
+    // 设置非阻塞模式
+    int flags_orig = fcntl(sock_fd, F_GETFL, 0);
+    fcntl(sock_fd, F_SETFL, flags_orig | O_NONBLOCK);
+
+    while (total_received < bytes) {
+        size_t to_receive = bytes - total_received;
+        if (to_receive > chunk_size) to_receive = chunk_size;
+        
+        size_t received = 0;
+        infra_error_t err = infra_net_recv(conn->sock, 
+                                         data + total_received,
+                                         to_receive,
+                                         &received);
+        
+        printf("DEBUG: SET data receive: want=%zu, got=%zu, err=%d\n",
+               to_receive, received, err);
+        
+        if (err == INFRA_ERROR_TIMEOUT || err == INFRA_ERROR_WOULD_BLOCK) {
+            if (retry_count < max_retries) {
+                printf("DEBUG: SET receive timeout/would block, retrying (%d/%d)\n", 
+                       retry_count + 1, max_retries);
+                retry_count++;
+                usleep(10000); // 休眠10ms后重试
+                continue;
+            }
+            printf("DEBUG: SET failed - timeout after %d retries\n", max_retries);
+            free(data);
+            if (!noreply) {
+                infra_net_send(conn->sock, "CLIENT_ERROR timeout\r\n", 20, NULL);
+            }
+            setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &orig_tv, sizeof(orig_tv));
+            setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &orig_rcvbuf, sizeof(orig_rcvbuf));
+            fcntl(sock_fd, F_SETFL, flags_orig);  // 恢复原始flags
+            conn->should_close = true;
+            return;
+        }
+        
+        if (err != INFRA_OK || received == 0) {
+            if (err == INFRA_ERROR_CLOSED) {
+                printf("DEBUG: SET failed - connection closed by peer\n");
+            } else {
+                printf("DEBUG: SET failed - error receiving data: %d\n", err);
+            }
+            free(data);
+            if (!noreply) {
+                infra_net_send(conn->sock, "CLIENT_ERROR bad data chunk\r\n", 28, NULL);
+            }
+            setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &orig_tv, sizeof(orig_tv));
+            setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &orig_rcvbuf, sizeof(orig_rcvbuf));
+            fcntl(sock_fd, F_SETFL, flags_orig);  // 恢复原始flags
+            conn->should_close = true;
+            return;
+        }
+        
+        total_received += received;
+        if (received > 0) {
+            retry_count = 0;  // 只有在成功接收数据时才重置重试计数
+        }
+        
+        // 打印进度
+        if (bytes > chunk_size && total_received % (chunk_size * 8) == 0) {
+            printf("DEBUG: SET progress: %zu/%zu bytes (%.1f%%)\n", 
+                   total_received, bytes, (total_received * 100.0) / bytes);
+        }
+    }
+
+    // 恢复原始设置
+    setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &orig_tv, sizeof(orig_tv));
+    setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &orig_rcvbuf, sizeof(orig_rcvbuf));
+    fcntl(sock_fd, F_SETFL, flags_orig);  // 恢复原始flags
+
+    char crlf[2];
+    size_t received = 0;
+    infra_error_t err = infra_net_recv(conn->sock, crlf, 2, &received);
+    printf("DEBUG: SET reading CRLF: received=%zu, crlf=[%02x,%02x]\n",
+           received, crlf[0], crlf[1]);
+           
+    if (err != INFRA_OK || received != 2 || crlf[0] != '\r' || crlf[1] != '\n') {
+        printf("DEBUG: SET failed - bad CRLF\n");
+        free(data);
+        if (!noreply) {
+            infra_net_send(conn->sock, "CLIENT_ERROR bad data chunk\r\n", 28, NULL);
+        }
+        conn->should_close = true;
+        return;
+    }
+
+    if (exptime > 0 && exptime < 2592000) {
         exptime += time(NULL);
     }
 
-    if (kv_set(conn->store, key, value, bytes, flags, exptime) == INFRA_OK) {
-        infra_net_send(conn->sock, "STORED\r\n", 8, NULL);
-    } else {
-        infra_net_send(conn->sock, "NOT_STORED\r\n", 12, NULL);
-    }
-}
+    err = kv_set(conn->store, key, data, bytes, flags, exptime);
+    printf("DEBUG: SET storage result: err=%d\n", err);
+    free(data);
 
-static void handle_flush(memkv_conn_t* conn) {
-    if (poly_db_exec(conn->store, "DELETE FROM kv_store") == INFRA_OK) {
-        infra_net_send(conn->sock, "OK\r\n", 4, NULL);
-    } else {
-        infra_net_send(conn->sock, "ERROR\r\n", 7, NULL);
-    }
-}
-
-static void handle_command(memkv_conn_t* conn, char* cmd) {
-    char* saveptr = NULL;
-    char* token = strtok_r(cmd, " \r\n", &saveptr);
-    if (!token) return;
-
-    if (strcasecmp(token, "get") == 0) {
-        token = strtok_r(NULL, " \r\n", &saveptr);
-        if (token) handle_get(conn, token);
-    } 
-    else if (strcasecmp(token, "set") == 0) {
-        char* key = strtok_r(NULL, " \r\n", &saveptr);
-        char* flags = strtok_r(NULL, " \r\n", &saveptr);
-        char* exptime = strtok_r(NULL, " \r\n", &saveptr);
-        char* bytes = strtok_r(NULL, " \r\n", &saveptr);
-        char* value = strtok_r(NULL, "\r\n", &saveptr);
-
-        if (key && flags && exptime && bytes && value) {
-            handle_set(conn, key, flags, exptime, bytes, value);
+    if (!noreply) {
+        if (err == INFRA_OK) {
+            infra_net_send(conn->sock, "STORED\r\n", 8, NULL);
+        } else {
+            infra_net_send(conn->sock, "NOT_STORED\r\n", 12, NULL);
         }
     }
-    else if (strcasecmp(token, "flush_all") == 0) {
-        handle_flush(conn);
+}
+
+static void handle_delete(memkv_conn_t* conn, const char* key, bool noreply) {
+    printf("DEBUG: Handling DELETE command for key='%s'\n", key);
+    
+    const char* sql = "DELETE FROM kv_store WHERE key = ?";
+    poly_db_stmt_t* stmt = NULL;
+    
+    infra_error_t err = poly_db_prepare(conn->store, sql, &stmt);
+    if (err != INFRA_OK) {
+        if (!noreply) {
+            infra_net_send(conn->sock, "ERROR\r\n", 7, NULL);
+        }
+        return;
     }
-    else {
-        infra_net_send(conn->sock, "ERROR\r\n", 7, NULL);
+    
+    err = poly_db_bind_text(stmt, 1, key, strlen(key));
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        if (!noreply) {
+            infra_net_send(conn->sock, "ERROR\r\n", 7, NULL);
+        }
+        return;
+    }
+    
+    err = poly_db_stmt_step(stmt);
+    poly_db_stmt_finalize(stmt);
+    
+    if (!noreply) {
+        if (err == INFRA_OK) {
+            infra_net_send(conn->sock, "DELETED\r\n", 9, NULL);
+        } else {
+            infra_net_send(conn->sock, "NOT_FOUND\r\n", 11, NULL);
+        }
+    }
+}
+
+static void handle_flush(memkv_conn_t* conn, bool noreply) {
+    infra_error_t err = poly_db_exec(conn->store, "DELETE FROM kv_store");
+    if (!noreply) {
+        if (err == INFRA_OK) {
+            infra_net_send(conn->sock, "OK\r\n", 4, NULL);
+        } else {
+            infra_net_send(conn->sock, "ERROR\r\n", 7, NULL);
+        }
+    }
+}
+
+static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* value_str, bool is_incr) {
+    printf("DEBUG: Handling %s command for key='%s', value='%s'\n", 
+           is_incr ? "INCR" : "DECR", key, value_str);
+           
+    uint64_t delta = strtoull(value_str, NULL, 10);
+    void* old_value = NULL;
+    size_t old_value_len = 0;
+    uint32_t flags = 0;
+    
+    infra_error_t err = kv_get(conn->store, key, &old_value, &old_value_len, &flags);
+    if (err != INFRA_OK || !old_value) {
+        if (is_incr) {
+            // 对于INCR，如果key不存在，初始化为0
+            char zero_str[] = "0";
+            err = kv_set(conn->store, key, zero_str, strlen(zero_str), 0, 0);
+            if (err == INFRA_OK) {
+                err = send_all(conn->sock, "0\r\n", 3);
+                if (err == INFRA_ERROR_CLOSED) {
+                    conn->should_close = true;
+                }
+            } else {
+                err = send_all(conn->sock, "ERROR\r\n", 7);
+                if (err == INFRA_ERROR_CLOSED) {
+                    conn->should_close = true;
+                }
+            }
+        } else {
+            err = send_all(conn->sock, "NOT_FOUND\r\n", 11);
+            if (err == INFRA_ERROR_CLOSED) {
+                conn->should_close = true;
+            }
+        }
+        if (old_value) free(old_value);
+        return;
+    }
+    
+    // 确保old_value是以null结尾的字符串
+    char* null_term_value = malloc(old_value_len + 1);
+    if (!null_term_value) {
+        free(old_value);
+        err = send_all(conn->sock, "SERVER_ERROR out of memory\r\n", 26);
+        if (err == INFRA_ERROR_CLOSED) {
+            conn->should_close = true;
+        }
+        return;
+    }
+    memcpy(null_term_value, old_value, old_value_len);
+    null_term_value[old_value_len] = '\0';
+    
+    uint64_t current = strtoull(null_term_value, NULL, 10);
+    free(old_value);
+    free(null_term_value);
+    
+    if (is_incr) {
+        current += delta;
+    } else {
+        if (current < delta) {
+            current = 0;
+        } else {
+            current -= delta;
+        }
+    }
+    
+    char new_value[32];
+    int new_value_len = snprintf(new_value, sizeof(new_value), "%lu", current);
+    
+    err = kv_set(conn->store, key, new_value, new_value_len, flags, 0);
+    if (err == INFRA_OK) {
+        char response[32];
+        int response_len = snprintf(response, sizeof(response), "%lu\r\n", current);
+        err = send_all(conn->sock, response, response_len);
+        if (err == INFRA_ERROR_CLOSED) {
+            conn->should_close = true;
+        }
+    } else {
+        err = send_all(conn->sock, "ERROR\r\n", 7);
+        if (err == INFRA_ERROR_CLOSED) {
+            conn->should_close = true;
+        }
     }
 }
 
 static void handle_connection(void* arg) {
+    if (!arg) {
+        printf("DEBUG: Invalid connection arguments\n");
+        return;
+    }
+
     poly_poll_handler_args_t* args = (poly_poll_handler_args_t*)arg;
-    if (!args) return;
+    if (!args->client) {
+        printf("DEBUG: Invalid client socket\n");
+        free(args);
+        return;
+    }
 
-    memkv_conn_t conn = {
-        .sock = args->client,
-        .rx_buf = malloc(MEMKV_BUFFER_SIZE),
-        .rx_len = 0,
-        .should_close = false
-    };
+    printf("DEBUG: New connection accepted\n");
+    
+    // 初始化连接结构
+    memkv_conn_t conn = {0};  // 初始化所有字段为0
+    conn.sock = args->client;
+    
+    // 设置socket配置
+    int sock_fd = infra_net_get_fd(conn.sock);
+    if (sock_fd < 0) {
+        printf("DEBUG: Invalid socket fd\n");
+        goto cleanup;
+    }
 
-    if (!conn.rx_buf) goto cleanup;
-    if (db_init(&conn.store) != INFRA_OK) goto cleanup;
+    // 设置超时
+    struct timeval tv;
+    tv.tv_sec = 300;  // 5分钟超时
+    tv.tv_usec = 0;
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
+        printf("DEBUG: Failed to set SO_RCVTIMEO\n");
+    }
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv) < 0) {
+        printf("DEBUG: Failed to set SO_SNDTIMEO\n");
+    }
 
+    // 设置缓冲区
+    int buf_size = MEMKV_BUFFER_SIZE;
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size)) < 0) {
+        printf("DEBUG: Failed to set SO_RCVBUF to %d\n", buf_size);
+    }
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size)) < 0) {
+        printf("DEBUG: Failed to set SO_SNDBUF to %d\n", buf_size);
+    }
+
+    // 禁用Nagle算法
+    int flag = 1;
+    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) < 0) {
+        printf("DEBUG: Failed to set TCP_NODELAY\n");
+    }
+
+    // 启用TCP保活
+    if (setsockopt(sock_fd, SOL_SOCKET, SO_KEEPALIVE, &flag, sizeof(flag)) < 0) {
+        printf("DEBUG: Failed to set SO_KEEPALIVE\n");
+    }
+
+    // 设置TCP保活参数
+#ifdef TCP_KEEPIDLE
+    int keepalive_time = 60;  // 60秒无数据时发送保活包
+    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepalive_time, sizeof(keepalive_time)) < 0) {
+        printf("DEBUG: Failed to set TCP_KEEPIDLE\n");
+    }
+#endif
+
+#ifdef TCP_KEEPINTVL
+    int keepalive_intvl = 10;  // 每10秒发送一次保活包
+    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepalive_intvl, sizeof(keepalive_intvl)) < 0) {
+        printf("DEBUG: Failed to set TCP_KEEPINTVL\n");
+    }
+#endif
+
+#ifdef TCP_KEEPCNT
+    int keepalive_probes = 6;  // 最多发送6次保活包
+    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepalive_probes, sizeof(keepalive_probes)) < 0) {
+        printf("DEBUG: Failed to set TCP_KEEPCNT\n");
+    }
+#endif
+
+    // 分配接收缓冲区
+    conn.rx_buf = malloc(MEMKV_BUFFER_SIZE);
+    if (!conn.rx_buf) {
+        printf("DEBUG: Failed to allocate rx buffer\n");
+        goto cleanup;
+    }
+    
+    // 初始化数据库
+    infra_error_t err = db_init(&conn.store);
+    if (err != INFRA_OK) {
+        printf("DEBUG: Failed to initialize database: err=%d\n", err);
+        goto cleanup;
+    }
+
+    printf("DEBUG: Connection setup complete, entering command loop\n");
+
+    // 命令处理循环
     while (!conn.should_close) {
-        size_t received = 0;
-        infra_error_t err = infra_net_recv(conn.sock, 
-                                         conn.rx_buf + conn.rx_len,
-                                         MEMKV_BUFFER_SIZE - conn.rx_len - 1,
-                                         &received);
-        
-        if (err != INFRA_OK || received == 0) break;
-        
-        conn.rx_len += received;
-        conn.rx_buf[conn.rx_len] = '\0';
+        char cmd_line[1024];  // 使用较小的命令行缓冲区
+        size_t cmd_len = 0;
+        bool has_data = false;
 
-        char* cmd_end;
-        while ((cmd_end = strstr(conn.rx_buf, "\r\n")) != NULL) {
-            *cmd_end = '\0';
-            handle_command(&conn, conn.rx_buf);
+        // 读取命令行
+        while (cmd_len < sizeof(cmd_line) - 1) {
+            size_t received = 0;
+            err = infra_net_recv(conn.sock, cmd_line + cmd_len, 1, &received);
             
-            // 移动剩余数据
-            size_t remaining = conn.rx_len - (cmd_end - conn.rx_buf + 2);
-            if (remaining > 0) {
-                memmove(conn.rx_buf, cmd_end + 2, remaining);
+            if (err != INFRA_OK) {
+                if (err == INFRA_ERROR_TIMEOUT) {
+                    if (!has_data) {
+                        continue;  // 如果还没收到任何数据，继续等待
+                    }
+                    printf("DEBUG: Command read timeout with partial data\n");
+                    goto cleanup;
+                }
+                if (err == INFRA_ERROR_CLOSED) {
+                    printf("DEBUG: Connection closed by peer\n");
+                    goto cleanup;
+                }
+                printf("DEBUG: Command read error: %d\n", err);
+                goto cleanup;
             }
-            conn.rx_len = remaining;
+            
+            if (received == 0) {
+                printf("DEBUG: Connection closed by peer\n");
+                goto cleanup;
+            }
+            
+            has_data = true;
+            cmd_len++;
+            
+            if (cmd_len >= 2 && cmd_line[cmd_len-2] == '\r' && cmd_line[cmd_len-1] == '\n') {
+                cmd_line[cmd_len-2] = '\0';
+                printf("DEBUG: Received command: [%s]\n", cmd_line);
+                break;
+            }
+        }
+
+        if (cmd_len >= sizeof(cmd_line) - 1) {
+            printf("DEBUG: Command too long\n");
+            if (infra_net_send(conn.sock, "CLIENT_ERROR line too long\r\n", 26, NULL) != INFRA_OK) {
+                goto cleanup;
+            }
+            continue;
+        }
+
+        if (cmd_len == 0) {
+            printf("DEBUG: Empty command received\n");
+            continue;
+        }
+
+        char* saveptr = NULL;
+        char* cmd = strtok_r(cmd_line, " ", &saveptr);
+        if (!cmd) {
+            printf("DEBUG: Invalid command format\n");
+            continue;
+        }
+
+        printf("DEBUG: Processing command: %s\n", cmd);
+
+        if (strcasecmp(cmd, "quit") == 0) {
+            printf("DEBUG: Client requested quit\n");
+            goto cleanup;
+        }
+        
+        // 处理其他命令...
+        if (strcasecmp(cmd, "get") == 0) {
+            char* key = strtok_r(NULL, " ", &saveptr);
+            if (key) {
+                handle_get(&conn, key);
+            } else {
+                if (infra_net_send(conn.sock, "CLIENT_ERROR no key\r\n", 20, NULL) != INFRA_OK) {
+                    goto cleanup;
+                }
+            }
+        }
+        else if (strcasecmp(cmd, "set") == 0) {
+            char* key = strtok_r(NULL, " ", &saveptr);
+            char* flags = strtok_r(NULL, " ", &saveptr);
+            char* exptime = strtok_r(NULL, " ", &saveptr);
+            char* bytes_str = strtok_r(NULL, " ", &saveptr);
+            char* noreply = strtok_r(NULL, " ", &saveptr);
+
+            if (!key || !flags || !exptime || !bytes_str) {
+                printf("DEBUG: SET command missing parameters\n");
+                if (infra_net_send(conn.sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL) != INFRA_OK) {
+                    goto cleanup;
+                }
+                continue;
+            }
+
+            handle_set(&conn, key, flags, exptime, bytes_str, noreply && strcmp(noreply, "noreply") == 0);
+            if (conn.should_close) goto cleanup;
+        }
+        else if (strcasecmp(cmd, "delete") == 0) {
+            char* key = strtok_r(NULL, " ", &saveptr);
+            char* noreply = strtok_r(NULL, " ", &saveptr);
+            if (key) {
+                handle_delete(&conn, key, noreply && strcmp(noreply, "noreply") == 0);
+            } else {
+                if (infra_net_send(conn.sock, "CLIENT_ERROR no key\r\n", 20, NULL) != INFRA_OK) {
+                    goto cleanup;
+                }
+            }
+        }
+        else if (strcasecmp(cmd, "incr") == 0 || strcasecmp(cmd, "decr") == 0) {
+            char* key = strtok_r(NULL, " ", &saveptr);
+            char* value = strtok_r(NULL, " ", &saveptr);
+            if (key && value) {
+                handle_incr_decr(&conn, key, value, strcasecmp(cmd, "incr") == 0);
+                if (conn.should_close) goto cleanup;
+            } else {
+                if (infra_net_send(conn.sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL) != INFRA_OK) {
+                    goto cleanup;
+                }
+            }
+        }
+        else if (strcasecmp(cmd, "flush_all") == 0) {
+            char* delay = strtok_r(NULL, " ", &saveptr);  // 忽略延迟参数
+            char* noreply = strtok_r(NULL, " ", &saveptr);
+            handle_flush(&conn, noreply && strcmp(noreply, "noreply") == 0);
+        }
+        else {
+            printf("DEBUG: Unknown command: %s\n", cmd);
+            if (infra_net_send(conn.sock, "ERROR\r\n", 7, NULL) != INFRA_OK) {
+                goto cleanup;
+            }
         }
     }
 
 cleanup:
-    if (conn.store) poly_db_close(conn.store);
-    if (conn.rx_buf) free(conn.rx_buf);
-    infra_net_close(conn.sock);
-    free(args);
+    printf("DEBUG: Cleaning up connection\n");
+    if (conn.store) {
+        poly_db_close(conn.store);
+        conn.store = NULL;
+    }
+    if (conn.rx_buf) {
+        free(conn.rx_buf);
+        conn.rx_buf = NULL;
+    }
+    if (conn.sock) {
+        infra_net_close(conn.sock);
+        conn.sock = NULL;
+    }
+    if (args) {
+        free(args);
+        args = NULL;
+    }
 }
 
 //-----------------------------------------------------------------------------

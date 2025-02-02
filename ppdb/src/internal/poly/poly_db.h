@@ -55,7 +55,10 @@ infra_error_t poly_db_stmt_finalize(poly_db_stmt_t* stmt);
 infra_error_t poly_db_stmt_step(poly_db_stmt_t* stmt);
 infra_error_t poly_db_bind_text(poly_db_stmt_t* stmt, int index, const char* text, size_t len);
 infra_error_t poly_db_bind_blob(poly_db_stmt_t* stmt, int index, const void* data, size_t len);
+infra_error_t poly_db_bind_blob_update(poly_db_stmt_t* stmt, int index, const void* data, size_t len, size_t offset);
 infra_error_t poly_db_column_blob(poly_db_stmt_t* stmt, int col, void** data, size_t* size);
+infra_error_t poly_db_column_blob_size(poly_db_stmt_t* stmt, int col, size_t* size);
+infra_error_t poly_db_column_blob_chunk(poly_db_stmt_t* stmt, int col, void* buffer, size_t size, size_t offset, size_t* read_size);
 infra_error_t poly_db_column_text(poly_db_stmt_t* stmt, int col, char** text);
 
 // Status functions

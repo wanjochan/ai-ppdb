@@ -865,3 +865,211 @@ infra_error_t poly_db_result_get_string(poly_db_result_t* result, size_t row, si
 poly_db_type_t poly_db_get_type(const poly_db_t* db) {
     return db ? db->type : POLY_DB_TYPE_UNKNOWN;
 }
+
+// SQLite 实现的分块 BLOB 操作
+static infra_error_t sqlite_column_blob_size(poly_db_stmt_t* stmt, int col, size_t* size) {
+    if (!stmt || !size) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    *size = sqlite3_column_bytes(sqlite_stmt, col);
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_column_blob_chunk(poly_db_stmt_t* stmt, int col, void* buffer, 
+                                            size_t size, size_t offset, size_t* read_size) {
+    if (!stmt || !buffer || !read_size) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    
+    const void* blob = sqlite3_column_blob(sqlite_stmt, col);
+    size_t total_size = sqlite3_column_bytes(sqlite_stmt, col);
+    
+    if (!blob || offset >= total_size) {
+        *read_size = 0;
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    size_t remaining = total_size - offset;
+    size_t to_read = size < remaining ? size : remaining;
+    memcpy(buffer, (const char*)blob + offset, to_read);
+    *read_size = to_read;
+    
+    return INFRA_OK;
+}
+
+static infra_error_t sqlite_bind_blob_update(poly_db_stmt_t* stmt, int index, 
+                                           const void* data, size_t len, size_t offset) {
+    if (!stmt || (!data && len > 0)) return INFRA_ERROR_INVALID_PARAM;
+    sqlite3_stmt* sqlite_stmt = (sqlite3_stmt*)stmt->internal_stmt;
+    
+    // SQLite 不支持部分更新，所以我们需要缓存整个 BLOB
+    static __thread char* blob_cache = NULL;
+    static __thread size_t blob_cache_size = 0;
+    
+    if (offset == 0) {
+        // 第一个块，分配缓存
+        if (blob_cache) {
+            free(blob_cache);
+            blob_cache = NULL;
+        }
+        blob_cache = malloc(len);
+        if (!blob_cache) return INFRA_ERROR_NO_MEMORY;
+        blob_cache_size = len;
+        memcpy(blob_cache, data, len);
+    } else {
+        // 后续块，追加到缓存
+        if (!blob_cache) return INFRA_ERROR_INVALID_STATE;
+        if (offset + len > blob_cache_size) {
+            char* new_cache = realloc(blob_cache, offset + len);
+            if (!new_cache) return INFRA_ERROR_NO_MEMORY;
+            blob_cache = new_cache;
+            blob_cache_size = offset + len;
+        }
+        memcpy(blob_cache + offset, data, len);
+    }
+    
+    // 如果这是最后一个块，绑定整个 BLOB
+    if (offset + len == blob_cache_size) {
+        int rc = sqlite3_bind_blob(sqlite_stmt, index, blob_cache, blob_cache_size, SQLITE_STATIC);
+        free(blob_cache);
+        blob_cache = NULL;
+        blob_cache_size = 0;
+        return rc == SQLITE_OK ? INFRA_OK : INFRA_ERROR_INVALID_PARAM;
+    }
+    
+    return INFRA_OK;
+}
+
+// DuckDB 实现的分块 BLOB 操作
+static infra_error_t poly_duckdb_column_blob_size(poly_db_stmt_t* stmt, int col, size_t* size) {
+    if (!stmt || !size) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_prepared_statement duck_stmt = (duckdb_prepared_statement)stmt->internal_stmt;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    
+    duckdb_result result;
+    duckdb_state state = impl->execute_prepared(duck_stmt, &result);
+    if (state != DuckDBSuccess) return INFRA_ERROR_EXEC_FAILED;
+    
+    if (impl->value_is_null(&result, col, 0)) {
+        *size = 0;
+        impl->destroy_result(&result);
+        return INFRA_OK;
+    }
+    
+    duckdb_blob blob = impl->value_blob(&result, col, 0);
+    *size = blob.size;
+    impl->destroy_result(&result);
+    return INFRA_OK;
+}
+
+static infra_error_t poly_duckdb_column_blob_chunk(poly_db_stmt_t* stmt, int col, void* buffer,
+                                                  size_t size, size_t offset, size_t* read_size) {
+    if (!stmt || !buffer || !read_size) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_prepared_statement duck_stmt = (duckdb_prepared_statement)stmt->internal_stmt;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    
+    duckdb_result result;
+    duckdb_state state = impl->execute_prepared(duck_stmt, &result);
+    if (state != DuckDBSuccess) return INFRA_ERROR_EXEC_FAILED;
+    
+    if (impl->value_is_null(&result, col, 0)) {
+        *read_size = 0;
+        impl->destroy_result(&result);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    duckdb_blob blob = impl->value_blob(&result, col, 0);
+    if (offset >= blob.size) {
+        *read_size = 0;
+        impl->destroy_result(&result);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    size_t remaining = blob.size - offset;
+    size_t to_read = size < remaining ? size : remaining;
+    memcpy(buffer, (const char*)blob.data + offset, to_read);
+    *read_size = to_read;
+    
+    impl->destroy_result(&result);
+    return INFRA_OK;
+}
+
+static infra_error_t poly_duckdb_bind_blob_update(poly_db_stmt_t* stmt, int index,
+                                                 const void* data, size_t len, size_t offset) {
+    if (!stmt || (!data && len > 0)) return INFRA_ERROR_INVALID_PARAM;
+    duckdb_prepared_statement duck_stmt = (duckdb_prepared_statement)stmt->internal_stmt;
+    duckdb_impl_t* impl = (duckdb_impl_t*)stmt->db->impl;
+    
+    // DuckDB 也不支持部分更新，使用相同的缓存策略
+    static __thread char* blob_cache = NULL;
+    static __thread size_t blob_cache_size = 0;
+    
+    if (offset == 0) {
+        if (blob_cache) {
+            free(blob_cache);
+            blob_cache = NULL;
+        }
+        blob_cache = malloc(len);
+        if (!blob_cache) return INFRA_ERROR_NO_MEMORY;
+        blob_cache_size = len;
+        memcpy(blob_cache, data, len);
+    } else {
+        if (!blob_cache) return INFRA_ERROR_INVALID_STATE;
+        if (offset + len > blob_cache_size) {
+            char* new_cache = realloc(blob_cache, offset + len);
+            if (!new_cache) return INFRA_ERROR_NO_MEMORY;
+            blob_cache = new_cache;
+            blob_cache_size = offset + len;
+        }
+        memcpy(blob_cache + offset, data, len);
+    }
+    
+    if (offset + len == blob_cache_size) {
+        impl->bind_blob(duck_stmt, index, blob_cache, blob_cache_size);
+        free(blob_cache);
+        blob_cache = NULL;
+        blob_cache_size = 0;
+    }
+    
+    return INFRA_OK;
+}
+
+// 公共接口实现
+infra_error_t poly_db_column_blob_size(poly_db_stmt_t* stmt, int col, size_t* size) {
+    if (!stmt || !size) return INFRA_ERROR_INVALID_PARAM;
+    
+    switch (stmt->db->type) {
+        case POLY_DB_TYPE_SQLITE:
+            return sqlite_column_blob_size(stmt, col, size);
+        case POLY_DB_TYPE_DUCKDB:
+            return poly_duckdb_column_blob_size(stmt, col, size);
+        default:
+            return INFRA_ERROR_NOT_SUPPORTED;
+    }
+}
+
+infra_error_t poly_db_column_blob_chunk(poly_db_stmt_t* stmt, int col, void* buffer,
+                                       size_t size, size_t offset, size_t* read_size) {
+    if (!stmt || !buffer || !read_size) return INFRA_ERROR_INVALID_PARAM;
+    
+    switch (stmt->db->type) {
+        case POLY_DB_TYPE_SQLITE:
+            return sqlite_column_blob_chunk(stmt, col, buffer, size, offset, read_size);
+        case POLY_DB_TYPE_DUCKDB:
+            return poly_duckdb_column_blob_chunk(stmt, col, buffer, size, offset, read_size);
+        default:
+            return INFRA_ERROR_NOT_SUPPORTED;
+    }
+}
+
+infra_error_t poly_db_bind_blob_update(poly_db_stmt_t* stmt, int index,
+                                      const void* data, size_t len, size_t offset) {
+    if (!stmt || (!data && len > 0)) return INFRA_ERROR_INVALID_PARAM;
+    
+    switch (stmt->db->type) {
+        case POLY_DB_TYPE_SQLITE:
+            return sqlite_bind_blob_update(stmt, index, data, len, offset);
+        case POLY_DB_TYPE_DUCKDB:
+            return poly_duckdb_bind_blob_update(stmt, index, data, len, offset);
+        default:
+            return INFRA_ERROR_NOT_SUPPORTED;
+    }
+}
