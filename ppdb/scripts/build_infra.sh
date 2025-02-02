@@ -6,13 +6,13 @@ source "$(dirname "$0")/build_common.sh"
 
 # 定义 infra 源文件
 INFRA_SOURCES=(
-    "${INFRA_DIR}/infra_core.c"
+    "${INFRA_DIR}/infra_platform.c"
     "${INFRA_DIR}/infra_memory.c"
+    "${INFRA_DIR}/infra_sync.c"
     "${INFRA_DIR}/infra_error.c"
     "${INFRA_DIR}/infra_net.c"
-    "${INFRA_DIR}/infra_platform.c"
-    "${INFRA_DIR}/infra_sync.c"
     "${INFRA_DIR}/infra_gc.c"
+    "${INFRA_DIR}/infra_core.c"
 )
 
 # 编译 infra 库
@@ -31,9 +31,16 @@ build_infra() {
     # 设置编译标志
     CFLAGS="${CFLAGS} -I${PPDB_DIR}/src"
 
-    # 编译源文件
-    compile_files "${INFRA_SOURCES[@]}" "${build_dir}" "infra"
-    infra_objects=("${OBJECTS[@]}")
+    # 先编译所有源文件
+    for src in "${INFRA_SOURCES[@]}"; do
+        local obj="${build_dir}/$(basename "${src}" .c).o"
+        "${CC}" ${CFLAGS} -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -c "${src}" -o "${obj}"
+        if [ $? -ne 0 ]; then
+            echo "Error: Failed to compile ${src}"
+            exit 1
+        fi
+        infra_objects+=("${obj}")
+    done
 
     # 检查所有目标文件是否存在
     for obj in "${infra_objects[@]}"; do
@@ -47,17 +54,12 @@ build_infra() {
     # 创建静态库
     echo "Creating static library: ${lib_file}"
     cd "${build_dir}" || exit 1
-    OBJECTS_BASENAME=()
-    for obj in "${infra_objects[@]}"; do
-        OBJECTS_BASENAME+=("$(basename "${obj}")")
-    done
-    "${AR}" rcs "${lib_file}" "${OBJECTS_BASENAME[@]}"
+    "${AR}" rcs "${lib_file}" *.o
     if [ $? -ne 0 ]; then
         echo "Failed to create infra library"
         exit 1
     fi
-    echo "sync in build_infra()"
-    sync #
+
     # 验证库文件是否创建成功
     if [ ! -f "${lib_file}" ]; then
         echo "Error: Library file was not created: ${lib_file}"

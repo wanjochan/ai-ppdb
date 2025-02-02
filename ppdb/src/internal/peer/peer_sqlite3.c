@@ -5,6 +5,7 @@
 #include "internal/poly/poly_db.h"
 #include "internal/poly/poly_poll.h"
 #include "internal/peer/peer_service.h"
+#include "internal/peer/peer_sqlite3.h"
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -37,12 +38,12 @@ typedef struct {
 static sqlite3_service_t g_service = {0};
 
 // Forward declarations
-static infra_error_t sqlite3_init(const infra_config_t* config);
-static infra_error_t sqlite3_cleanup(void);
-static infra_error_t sqlite3_start(void);
-static infra_error_t sqlite3_stop(void);
-static bool sqlite3_is_running(void);
-static infra_error_t sqlite3_cmd_handler(int argc, char** argv);
+infra_error_t sqlite3_init(const infra_config_t* config);
+infra_error_t sqlite3_cleanup(void);
+infra_error_t sqlite3_start(void);
+infra_error_t sqlite3_stop(void);
+bool sqlite3_is_running(void);
+infra_error_t sqlite3_cmd_handler(int argc, char** argv);
 
 //-----------------------------------------------------------------------------
 // Command Line Options
@@ -215,12 +216,8 @@ static void handle_request_wrapper(void* args) {
 
     INFRA_LOG_INFO("Closing connection from %s", client_addr);
     
-    // 确保在销毁连接前数据库连接已经关闭
-    if (conn->db) {
-        INFRA_LOG_DEBUG("Closing database connection for %s", client_addr);
-        poly_db_close(conn->db);
-        conn->db = NULL;
-    }
+    // 让 sqlite3_conn_destroy 来处理数据库连接的关闭
+    // 不要在这里关闭数据库连接，避免重复关闭
     
     // 不要关闭 socket，让 poly_poll 来处理
     conn->client = NULL;  // 防止 sqlite3_conn_destroy 尝试关闭它
@@ -232,7 +229,7 @@ static void handle_request_wrapper(void* args) {
 // Service interface
 //-----------------------------------------------------------------------------
 
-static infra_error_t sqlite3_init(const infra_config_t* config) {
+infra_error_t sqlite3_init(const infra_config_t* config) {
     // 检查服务状态
     if (g_sqlite3_service.state != SERVICE_STATE_UNKNOWN && 
         g_sqlite3_service.state != SERVICE_STATE_STOPPED) {
@@ -250,7 +247,7 @@ static infra_error_t sqlite3_init(const infra_config_t* config) {
     return INFRA_OK;
 }
 
-static infra_error_t sqlite3_start(void) {
+infra_error_t sqlite3_start(void) {
     // 检查服务状态
     if (g_sqlite3_service.state != SERVICE_STATE_STOPPED) {
         INFRA_LOG_ERROR("Service is in invalid state: %d", g_sqlite3_service.state);
@@ -328,7 +325,7 @@ static infra_error_t sqlite3_start(void) {
     return INFRA_OK;
 }
 
-static infra_error_t sqlite3_stop(void) {
+infra_error_t sqlite3_stop(void) {
     // 检查服务状态
     if (g_sqlite3_service.state != SERVICE_STATE_RUNNING) {
         INFRA_LOG_ERROR("Service is not running");
@@ -363,7 +360,7 @@ static infra_error_t sqlite3_stop(void) {
     return INFRA_OK;
 }
 
-static infra_error_t sqlite3_cleanup(void) {
+infra_error_t sqlite3_cleanup(void) {
     // 检查服务状态
     if (g_sqlite3_service.state == SERVICE_STATE_RUNNING ||
         g_sqlite3_service.state == SERVICE_STATE_STARTING) {
@@ -389,7 +386,7 @@ static infra_error_t sqlite3_cleanup(void) {
     return INFRA_OK;
 }
 
-static bool sqlite3_is_running(void) {
+bool sqlite3_is_running(void) {
     return g_service.running;
 }
 
@@ -397,7 +394,7 @@ static bool sqlite3_is_running(void) {
 // Command handler
 //-----------------------------------------------------------------------------
 
-static infra_error_t sqlite3_cmd_handler(int argc, char** argv) {
+infra_error_t sqlite3_cmd_handler(int argc, char** argv) {
     bool start = false;
     bool stop = false;
     bool status = false;

@@ -89,19 +89,24 @@ fi
 
 # 然后添加其他源文件
 SOURCES+=(
-    "${SRC_DIR}/internal/peer/peer_service.c"
     "${SRC_DIR}/ppdb/ppdb.c"
 )
 
 # 编译源文件
 echo "Building sources..."
 OBJECTS=()  # Initialize OBJECTS array
+
+# 编译所有源文件
 for src in "${SOURCES[@]}"; do
     obj="${BUILD_DIR}/obj/$(basename "${src}" .c).o"
-    OBJECTS+=("$obj")
+    echo "-e Compiling ${src}..."
+    "${CC}" ${CFLAGS} -I"${PPDB_DIR}/include" -I"${SRC_DIR}" -c "${src}" -o "${obj}"
+    if [ $? -ne 0 ]; then
+        echo "-e Error: Failed to compile ${src}"
+        exit 1
+    fi
+    OBJECTS+=("${obj}")
 done
-
-compile_files "${SOURCES[@]}" "${BUILD_DIR}/obj" "ppdb"
 
 sync
 
@@ -124,37 +129,17 @@ for i in {1..3}; do
         break
     fi
     echo "Waiting for libinfra.a (attempt $i of 3)..."
-    ls -al “${BUILD_DIR}/infra
+    ls -al "${BUILD_DIR}/infra"
     ls -al $INFRA_LIB
     echo INFRA_LIB=${INFRA_LIB}
     sleep 1
     sync
 done
 
-# if [ ! -f "$INFRA_LIB" ]; then
-#     echo "Error: Infra library not found at $INFRA_LIB"
-#     exit 1
-# fi
-
-# 重新排序目标文件，确保服务实现在前面
-ORDERED_OBJECTS=()
-for src in "${SOURCES[@]}"; do
-    base=$(basename "${src}")
-    if [[ "$base" == "peer_rinetd.c" || "$base" == "peer_memkv.c" || "$base" == "peer_sqlite3.c" ]]; then
-        ORDERED_OBJECTS+=("${BUILD_DIR}/obj/$(basename "${src}" .c).o")
-    fi
-done
-for src in "${SOURCES[@]}"; do
-    base=$(basename "${src}")
-    if [[ "$base" != "peer_rinetd.c" && "$base" != "peer_memkv.c" && "$base" != "peer_sqlite3.c" ]]; then
-        ORDERED_OBJECTS+=("${BUILD_DIR}/obj/$(basename "${src}" .c).o")
-    fi
-done
-
-"${CC}" ${LDFLAGS} "${ORDERED_OBJECTS[@]}" \
-    -L"${BUILD_DIR}/poly" -lpoly \
-    -L"${BUILD_DIR}/poly" -ldill \
+# 链接所有目标文件和库
+"${CC}" ${LDFLAGS} "${OBJECTS[@]}" \
     -L"${BUILD_DIR}/infra" -linfra \
+    -L"${BUILD_DIR}/poly" -lpoly \
     -L"${BUILD_DIR}/sqlite3" -lsqlite3 \
     -o "${BUILD_DIR}/ppdb_latest.exe"
 if [ $? -ne 0 ]; then
