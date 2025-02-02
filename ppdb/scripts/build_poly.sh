@@ -10,8 +10,6 @@ mkdir -p "${BUILD_DIR}/poly"
 
 # 定义源文件
 SRC_FILES=(
-    "${SRC_DIR}/internal/poly/poly_memkv.c"
-    "${SRC_DIR}/internal/poly/poly_memkv_cmd.c"
     "${SRC_DIR}/internal/poly/poly_db.c"
     "${SRC_DIR}/internal/poly/poly_cmdline.c"
     "${SRC_DIR}/internal/poly/poly_atomic.c"
