@@ -57,8 +57,8 @@ infra_error_t infra_rwlock_unlock(infra_rwlock_t rwlock);
 // Spinlock Operations
 //-----------------------------------------------------------------------------
 
-typedef struct {
-    volatile int32_t lock;
+typedef struct infra_spinlock {
+    atomic_flag lock;
 } infra_spinlock_t;
 
 void infra_spinlock_init(infra_spinlock_t* spinlock);

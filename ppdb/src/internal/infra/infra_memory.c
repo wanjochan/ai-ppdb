@@ -14,6 +14,7 @@
 
 #define MIN_BLOCK_SIZE (sizeof(memory_block_t))
 #define ALIGN_SIZE(size, align) (((size) + ((align) - 1)) & ~((align) - 1))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 //-----------------------------------------------------------------------------
 // Global State
@@ -78,59 +79,39 @@ static void* allocate_from_pool(size_t size) {
         return NULL;
     }
 
-    // 计算需要的总大小，包括块头
-    size_t total_size = sizeof(memory_block_t) + size;
-    if (total_size < size) {  // 检查溢出
-        return NULL;
-    }
-
     // 计算对齐后的大小
-    size_t aligned_size = ALIGN_SIZE(total_size, g_memory.config.pool_alignment);
-    if (aligned_size < total_size) {  // 检查溢出
+    size_t aligned_size = ALIGN_SIZE(size, g_memory.config.pool_alignment);
+    size_t total_size = sizeof(memory_block_t) + aligned_size;
+    
+    if (total_size > g_memory.pool.pool_size) {
         return NULL;
     }
 
-    // 检查是否超过池大小
-    if (aligned_size > g_memory.pool.pool_size) {
+    memory_block_t* block = find_free_block(aligned_size);
+    if (!block) {
         return NULL;
     }
 
-    memory_block_t* current = g_memory.pool.free_list;
-    while (current) {
-        if (!current->is_used && current->size >= aligned_size) {  // 使用对齐后的大小进行比较
-            // 找到足够大的空闲块
-            if (current->size >= aligned_size + MIN_BLOCK_SIZE) {
-                // 分割块
-                memory_block_t* new_block = (memory_block_t*)((char*)current + aligned_size);
-                new_block->size = current->size - aligned_size;
-                new_block->is_used = false;
-                new_block->next = current->next;
-                current->size = aligned_size - sizeof(memory_block_t);  // 存储可用大小
-                current->next = new_block;
-                g_memory.pool.block_count++;
-            }
-            current->is_used = true;
-            g_memory.pool.used_size += aligned_size;  // 使用对齐后的大小
-            g_memory.stats.current_usage += size;  // 使用原始大小
-            g_memory.stats.total_allocations++;
-            if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
-                g_memory.stats.peak_usage = g_memory.stats.current_usage;
-            }
-            
-            // 确保返回的地址正确对齐
-            void* ptr = (void*)(current + 1);
-            size_t addr = (size_t)ptr;
-            if ((addr & (g_memory.config.pool_alignment - 1)) != 0) {
-                // 如果地址没有正确对齐，进行调整
-                size_t padding = g_memory.config.pool_alignment - (addr & (g_memory.config.pool_alignment - 1));
-                ptr = (void*)((char*)ptr + padding);
-            }
-            return ptr;
-        }
-        current = current->next;
+    // 如果块太大，分割它
+    if (block->size > aligned_size + sizeof(memory_block_t)) {
+        memory_block_t* new_block = (memory_block_t*)((char*)block + sizeof(memory_block_t) + aligned_size);
+        new_block->size = block->size - aligned_size - sizeof(memory_block_t);
+        new_block->is_used = false;
+        new_block->next = block->next;
+        
+        block->size = size;  // 存储原始大小，不是对齐后的大小
+        block->next = new_block;
+        
+        g_memory.pool.block_count++;
+    } else {
+        block->size = size;  // 存储原始大小，不是对齐后的大小
     }
 
-    return NULL;
+    block->is_used = true;
+    g_memory.pool.used_size += aligned_size;
+
+    // 返回数据区域的指针（跳过块头）
+    return (void*)((char*)block + sizeof(memory_block_t));
 }
 
 static bool initialize_pool(void) {
@@ -174,22 +155,17 @@ static memory_block_t* get_block_header(void* ptr) {
 }
 
 static void try_merge_blocks(void) {
-    bool merged;
-    do {
-        merged = false;
-        memory_block_t* current = g_memory.pool.free_list;
-        while (current && current->next) {
-            if (!current->is_used && !current->next->is_used) {
-                // 合并相邻的空闲块
-                current->size += current->next->size + sizeof(memory_block_t);
-                current->next = current->next->next;
-                g_memory.pool.block_count--;  // 更新块计数
-                merged = true;
-            } else {
-                current = current->next;
-            }
+    memory_block_t* current = g_memory.pool.free_list;
+    while (current && current->next) {
+        if (!current->is_used && !current->next->is_used) {
+            // 合并相邻的空闲块
+            current->size += current->next->size + sizeof(memory_block_t);
+            current->next = current->next->next;
+            g_memory.pool.block_count--;
+        } else {
+            current = current->next;
         }
-    } while (merged);  // 继续合并直到没有可合并的块
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -207,11 +183,22 @@ static void reset_memory_state(void) {
 
 infra_error_t infra_memory_init(const infra_memory_config_t* config) {
     if (g_memory.initialized) {
-        return INFRA_ERROR_ALREADY_INITIALIZED;
+        return INFRA_ERROR_EXISTS;
     }
 
     if (!config) {
         return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // 验证参数
+    if (config->use_memory_pool) {
+        if (config->pool_initial_size == 0 || config->pool_alignment == 0) {
+            return INFRA_ERROR_INVALID_PARAM;
+        }
+        // 确保alignment是2的幂
+        if ((config->pool_alignment & (config->pool_alignment - 1)) != 0) {
+            return INFRA_ERROR_INVALID_PARAM;
+        }
     }
 
     // 复制配置
@@ -251,7 +238,7 @@ infra_error_t infra_memory_init(const infra_memory_config_t* config) {
 #endif
 
     // 重置统计信息
-    reset_memory_state();
+    memset(&g_memory.stats, 0, sizeof(g_memory.stats));
 
     g_memory.initialized = true;
     return INFRA_OK;
@@ -268,6 +255,9 @@ void infra_memory_cleanup(void) {
     if (g_memory.config.use_memory_pool) {
         cleanup_pool();
     }
+
+    // 重置所有统计信息
+    memset(&g_memory.stats, 0, sizeof(g_memory.stats));
 
     // 重置状态（除了互斥锁）
     bool was_initialized = g_memory.initialized;
@@ -315,30 +305,26 @@ infra_error_t infra_memory_get_stats(infra_memory_stats_t* stats) {
 //-----------------------------------------------------------------------------
 
 static void* allocate_memory(size_t size) {
-    if (!g_memory.initialized) {
+    void* ptr = NULL;
+
+    // 首先检查 size 为 0 的情况
+    if (size == 0) {
         return NULL;
     }
 
-    void* ptr = NULL;
-    
-#ifdef INFRA_USE_GC
-    if (g_memory.config.use_gc) {
-        // 使用GC分配内存
-        ptr = infra_gc_alloc(size);
-    } else
-#endif
     if (g_memory.config.use_memory_pool) {
-        // 使用内存池分配内存
         ptr = allocate_from_pool(size);
+        if (ptr) {
+            g_memory.stats.current_usage += size;
+            g_memory.stats.total_allocations++;
+            g_memory.stats.peak_usage = MAX(g_memory.stats.peak_usage, g_memory.stats.current_usage);
+        }
     } else {
-        // 使用系统分配器
         ptr = malloc(size);
         if (ptr) {
             g_memory.stats.current_usage += size;
             g_memory.stats.total_allocations++;
-            if (g_memory.stats.current_usage > g_memory.stats.peak_usage) {
-                g_memory.stats.peak_usage = g_memory.stats.current_usage;
-            }
+            g_memory.stats.peak_usage = MAX(g_memory.stats.peak_usage, g_memory.stats.current_usage);
         }
     }
 
@@ -352,20 +338,22 @@ static void free_memory(void* ptr) {
 
 #ifdef INFRA_USE_GC
     if (g_memory.config.use_gc) {
-        // 使用GC时，free是可选的
-        // 实际的内存释放会在GC时进行
-    } else
+        return;
+    }
 #endif
+
     if (g_memory.config.use_memory_pool) {
-        memory_block_t* block = get_block_header(ptr);
-        if (block->is_used) {
+        memory_block_t* block = (memory_block_t*)((char*)ptr - sizeof(memory_block_t));
+        if (block && block->is_used) {
+            size_t aligned_size = ALIGN_SIZE(block->size, g_memory.config.pool_alignment);
             block->is_used = false;
-            g_memory.pool.used_size -= (block->size + sizeof(memory_block_t));
+            g_memory.pool.used_size -= aligned_size;
             g_memory.stats.current_usage -= block->size;
             try_merge_blocks();
         }
     } else {
         free(ptr);
+        g_memory.stats.current_usage = 0;  // 系统分配器模式下，释放后重置统计
     }
 }
 

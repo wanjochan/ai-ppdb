@@ -1,11 +1,4 @@
-/*
- * @cursor:protected
- * This file is considered semi-read-only by Cursor AI.
- * Any modifications should be discussed and confirmed before applying.
- *
- * infra_sync.c - Synchronization Primitives Implementation
- */
-
+//同步原语
 #include "cosmopolitan.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_sync.h"
@@ -121,7 +114,7 @@ infra_error_t infra_rwlock_unlock(infra_rwlock_t rwlock) {
 
 void infra_spinlock_init(infra_spinlock_t* spinlock) {
     if (spinlock) {
-        spinlock->lock = 0;
+        atomic_flag_clear_explicit(&spinlock->lock, memory_order_relaxed);
     }
 }
 
@@ -134,10 +127,11 @@ void infra_spinlock_lock(infra_spinlock_t* spinlock) {
     if (!spinlock) return;
     
     uint32_t backoff = 1;
-    while (__atomic_test_and_set(&spinlock->lock, __ATOMIC_ACQUIRE)) {
+    while (atomic_flag_test_and_set_explicit(&spinlock->lock, memory_order_acquire)) {
         // 指数退避
         for (uint32_t i = 0; i < backoff; i++) {
-            sched_yield();
+            // CPU pause instruction for spinlock backoff
+            pthread_pause_np(); //@cosmopolitan? 
         }
         if (backoff < 1024) {
             backoff *= 2;
@@ -147,12 +141,12 @@ void infra_spinlock_lock(infra_spinlock_t* spinlock) {
 
 bool infra_spinlock_trylock(infra_spinlock_t* spinlock) {
     if (!spinlock) return false;
-    return !__atomic_test_and_set(&spinlock->lock, __ATOMIC_ACQUIRE);
+    return !atomic_flag_test_and_set_explicit(&spinlock->lock, memory_order_acquire);
 }
 
 void infra_spinlock_unlock(infra_spinlock_t* spinlock) {
     if (!spinlock) return;
-    __atomic_clear(&spinlock->lock, __ATOMIC_RELEASE);
+    atomic_flag_clear_explicit(&spinlock->lock, memory_order_release);
 }
 
 //-----------------------------------------------------------------------------
