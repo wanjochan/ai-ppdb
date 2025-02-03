@@ -3,8 +3,9 @@
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_net.h"
+// #include "internal/infra/infra_thread.h"
 #include "internal/peer/peer_service.h"
-#include "internal/poly/poly_poll.h"
+#include "internal/poly/poly_poll_compat.h"
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -17,6 +18,9 @@
 #define RINETD_MAX_THREADS 512         // 最大线程数
 #define RINETD_MAX_RULES 128           // 最大规则数
 #define RINETD_MAX_EVENTS 1024         // 最大事件数
+
+// 启用异步版本
+// #define USE_ASYNC_POLL
 
 //-----------------------------------------------------------------------------
 // Command Line Options
@@ -395,9 +399,11 @@ static infra_error_t rinetd_start(void) {
         .min_threads = RINETD_MIN_THREADS,
         .max_threads = RINETD_MAX_THREADS,
         .queue_size = RINETD_MAX_THREADS * 2,
-        .max_listeners = RINETD_MAX_RULES
+        .max_listeners = RINETD_MAX_RULES,
+        .read_buffer_size = RINETD_BUFFER_SIZE  // 添加缓冲区大小
     };
     
+    // 通过兼容层初始化，会自动选择异步版本
     infra_error_t err = poly_poll_init(g_context.poll_ctx, &config);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to init poll context: %d", err);

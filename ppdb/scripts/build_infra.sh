@@ -9,6 +9,7 @@ INFRA_SOURCES=(
     "${INFRA_DIR}/infra_platform.c"
     "${INFRA_DIR}/infra_memory.c"
     "${INFRA_DIR}/infra_sync.c"
+    "${INFRA_DIR}/infra_thread.c"
     "${INFRA_DIR}/infra_error.c"
     "${INFRA_DIR}/infra_net.c"
     "${INFRA_DIR}/infra_gc.c"

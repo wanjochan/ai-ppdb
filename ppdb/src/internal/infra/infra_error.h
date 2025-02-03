@@ -42,6 +42,15 @@ typedef enum {
     INFRA_ERROR_INVALID_URL = -29, //
     INFRA_ERROR_OPEN_FAILED = -30, //
     INFRA_ERROR_ALREADY_INITIALIZED = -31, // 系统已初始化
+    INFRA_ERROR_INIT_FAILED = -32,    // 初始化失败
+    INFRA_ERROR_LOCK_FAILED = -33,    // 加锁失败
+    INFRA_ERROR_UNLOCK_FAILED = -34,  // 解锁失败
+    INFRA_ERROR_WAIT_FAILED = -35,    // 等待失败
+    INFRA_ERROR_SIGNAL_FAILED = -36,  // 信号发送失败
+    INFRA_ERROR_DESTROY_FAILED = -37, // 销毁失败
+    INFRA_ERROR_THREAD_CREATE = -38,  // 线程创建失败
+    INFRA_ERROR_THREAD_JOIN = -39,    // 线程join失败
+    INFRA_ERROR_THREAD_DETACH = -40,  // 线程detach失败
     INFRA_ERROR_MAX
 } infra_error_t;
 

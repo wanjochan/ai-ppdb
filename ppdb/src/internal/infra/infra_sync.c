@@ -194,17 +194,7 @@ infra_error_t infra_thread_detach(infra_thread_t thread) {
     return infra_platform_thread_detach(thread);
 }
 
-//-----------------------------------------------------------------------------
-// Utility Functions
-//-----------------------------------------------------------------------------
 
-infra_error_t infra_yield(void) {
-    return infra_platform_yield();
-}
-
-infra_error_t infra_sleep(uint32_t milliseconds) {
-    return infra_platform_sleep(milliseconds);
-}
 
 // 线程池相关实现
 infra_error_t infra_thread_pool_create(const infra_thread_pool_config_t* config, infra_thread_pool_t** pool) {

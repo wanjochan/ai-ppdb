@@ -801,6 +801,18 @@ uint64_t infra_time_ms(void) {
 }
 
 //-----------------------------------------------------------------------------
+// Thread Operations
+//-----------------------------------------------------------------------------
+
+infra_error_t infra_sleep(uint32_t milliseconds) {
+    return infra_platform_sleep(milliseconds);
+}
+
+infra_error_t infra_yield(void) {
+    return infra_platform_yield();
+}
+
+//-----------------------------------------------------------------------------
 // Random Number Operations
 //-----------------------------------------------------------------------------
 

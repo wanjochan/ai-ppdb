@@ -72,6 +72,9 @@ infra_error_t infra_thread_join(infra_thread_t thread);
 //TODO
 //infra_thread_t infra_thread_self(void);
 
+infra_error_t infra_sleep(uint32_t milliseconds);
+infra_error_t infra_yield(void);
+
 //-----------------------------------------------------------------------------
 // Log Levels
 //-----------------------------------------------------------------------------
@@ -320,10 +323,6 @@ infra_error_t infra_ring_buffer_read(infra_ring_buffer_t* rb, void* data, size_t
 size_t infra_ring_buffer_readable(const infra_ring_buffer_t* rb);
 size_t infra_ring_buffer_writable(const infra_ring_buffer_t* rb);
 void infra_ring_buffer_reset(infra_ring_buffer_t* rb);
-
-// 线程和进程
-infra_error_t infra_sleep(uint32_t ms);
-infra_error_t infra_yield(void);
 
 // 时间操作
 uint64_t infra_time_ms(void);

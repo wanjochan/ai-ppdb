@@ -97,8 +97,8 @@ infra_error_t infra_sem_getvalue(infra_sem_t* sem, int* value);
 // Utility Functions
 //-----------------------------------------------------------------------------
 
-infra_error_t infra_yield(void);
-infra_error_t infra_sleep(uint32_t milliseconds);
+// infra_error_t infra_yield(void);
+// infra_error_t infra_sleep(uint32_t milliseconds);
 
 //-----------------------------------------------------------------------------
 // Thread Pool

@@ -14,6 +14,7 @@ typedef struct poly_poll_config {
     int max_threads;          // 最大线程数
     int queue_size;           // 队列大小
     int max_listeners;        // 最大监听器数量
+    size_t read_buffer_size;  // 读缓冲区大小
 } poly_poll_config_t;
 
 // 监听器结构

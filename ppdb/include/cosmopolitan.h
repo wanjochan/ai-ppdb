@@ -28,8 +28,7 @@
 #include <dlfcn.h>
 #include <ctype.h>
 #include <stdbool.h>
-
-/* System headers */
+#include <setjmp.h>
 #include <signal.h>     /* 信号处理 */
 #include <pthread.h>    /* 线程支持 */
 #include <stdatomic.h>  /* 原子操作 */
