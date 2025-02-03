@@ -7,17 +7,27 @@
 #include "../poly/poly_db.h"
 #include "../poly/poly_poll.h"
 #include <netinet/tcp.h>  // 添加TCP_NODELAY的定义
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <sys/socket.h>
+#include "infra/infra_log.h"
+#include "infra/infra_net.h"
+#include "infra/infra_core.h"
+#include "poly/poly_cmdline.h"
+#include "poly/poly_poll.h"
+#include "poly/poly_db.h"
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
 //-----------------------------------------------------------------------------
 
-static infra_error_t memkv_init(const infra_config_t* config);
+static infra_error_t memkv_init(void);
 static infra_error_t memkv_cleanup(void);
 static infra_error_t memkv_start(void);
 static infra_error_t memkv_stop(void);
-static bool memkv_is_running(void);
-static infra_error_t memkv_cmd_handler(int argc, char* argv[]);
+static infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size);
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -34,7 +44,7 @@ static infra_error_t memkv_cmd_handler(int argc, char* argv[]);
 #define MEMKV_ERROR INFRA_ERROR
 
 // Command Line Options
-static const poly_cmd_option_t memkv_options[] = {
+static const struct poly_cmd_option memkv_options[] = {
     {"port", "Server port", true},
     {"start", "Start the service", false},
     {"stop", "Stop the service", false},
@@ -62,7 +72,7 @@ typedef struct {
     char* engine;
     char* plugin;
     bool running;
-    poly_poll_context_t* poll_ctx;
+    poly_poll_t* poll_ctx;
 } memkv_config_t;
 
 //-----------------------------------------------------------------------------
@@ -76,16 +86,13 @@ static bool g_initialized = false;
 peer_service_t g_memkv_service = {
     .config = {
         .name = "memkv",
-        .type = SERVICE_TYPE_MEMKV,
-        .options = memkv_options,
-        .option_count = memkv_option_count,
+        .user_data = NULL
     },
-    .state = SERVICE_STATE_STOPPED,
+    .state = PEER_SERVICE_STATE_INIT,
     .init = memkv_init,
     .cleanup = memkv_cleanup,
     .start = memkv_start,
     .stop = memkv_stop,
-    .is_running = memkv_is_running,
     .cmd_handler = memkv_cmd_handler
 };
 
@@ -331,8 +338,13 @@ static void handle_set(memkv_conn_t* conn, const char* key, const char* flags_st
     
     // 设置更长的接收超时
     struct timeval orig_tv, new_tv;
+    int sock_fd = infra_net_socket_fd(conn->sock);
+    if (sock_fd < 0) {
+        printf("DEBUG: Invalid socket fd\n");
+        free(data);
+        return;
+    }
     socklen_t tv_len = sizeof(struct timeval);
-    int sock_fd = infra_net_get_fd(conn->sock);
     getsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &orig_tv, &tv_len);
     
     new_tv.tv_sec = 30;  // 减少单次超时时间，但增加重试次数
@@ -601,7 +613,7 @@ static void handle_connection(void* arg) {
     conn.sock = args->client;
     
     // 设置socket配置
-    int sock_fd = infra_net_get_fd(conn.sock);
+    int sock_fd = infra_net_socket_fd(conn.sock);
     if (sock_fd < 0) {
         printf("DEBUG: Invalid socket fd\n");
         goto cleanup;
@@ -834,13 +846,17 @@ cleanup:
 // Service Interface Implementation
 //-----------------------------------------------------------------------------
 
-static infra_error_t memkv_init(const infra_config_t* config) {
-    if (!config) return INFRA_ERROR_INVALID_PARAM;
-
-    g_config.port = MEMKV_DEFAULT_PORT;
-    g_config.engine = "sqlite";
-    g_initialized = true;
+static infra_error_t memkv_init(void) {
+    if (g_initialized) return INFRA_OK;
     
+    // Set default values
+    g_config.port = MEMKV_DEFAULT_PORT;
+    g_config.engine = "sqlite";  // Default to SQLite
+    g_config.plugin = NULL;
+    g_config.running = false;
+    g_config.poll_ctx = NULL;
+
+    g_initialized = true;
     return INFRA_OK;
 }
 
@@ -851,113 +867,84 @@ static infra_error_t memkv_cleanup(void) {
 }
 
 static infra_error_t memkv_start(void) {
-    if (!g_initialized) return INFRA_ERROR_NOT_INITIALIZED;
-    if (g_config.running) return INFRA_OK;
+    infra_error_t err;
 
-    g_memkv_service.state = SERVICE_STATE_STARTING;
+    if (!g_initialized) {
+        return INFRA_ERROR_NOT_INITIALIZED;
+    }
 
-    // 创建轮询上下文
-    g_config.poll_ctx = malloc(sizeof(poly_poll_context_t));
-    if (!g_config.poll_ctx) return INFRA_ERROR_NO_MEMORY;
+    if (g_config.running) {
+        return INFRA_ERROR_ALREADY_EXISTS;
+    }
 
-    poly_poll_config_t poll_config = {
-        .min_threads = MEMKV_MAX_THREADS / 2,
-        .max_threads = MEMKV_MAX_THREADS,
-        .queue_size = 1024,
-        .max_listeners = 1
-    };
+    g_memkv_service.state = PEER_SERVICE_STATE_RUNNING;
 
-    infra_error_t err = poly_poll_init(g_config.poll_ctx, &poll_config);
-    if (err != INFRA_OK) goto cleanup;
+    // Create poll context
+    poly_poll_t* poll;
+    err = poly_poll_create(&poll);
+    if (err != INFRA_OK) {
+        g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    g_config.poll_ctx = poll;
 
-    // 添加监听器
-    poly_poll_listener_t listener = {
-        .bind_port = g_config.port,
-        .user_data = NULL
-    };
-    strncpy(listener.bind_addr, "127.0.0.1", POLY_MAX_ADDR_LEN - 1);
-
-    err = poly_poll_add_listener(g_config.poll_ctx, &listener);
-    if (err != INFRA_OK) goto cleanup;
-
-    poly_poll_set_handler(g_config.poll_ctx, handle_connection);
-    err = poly_poll_start(g_config.poll_ctx);
-    if (err != INFRA_OK) goto cleanup;
+    // Initialize database
+    poly_db_t* db;
+    err = db_init(&db);
+    if (err != INFRA_OK) {
+        poly_poll_destroy(g_config.poll_ctx);
+        g_config.poll_ctx = NULL;
+        g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
+        return err;
+    }
 
     g_config.running = true;
-    g_memkv_service.state = SERVICE_STATE_RUNNING;
     return INFRA_OK;
-
-cleanup:
-    if (g_config.poll_ctx) {
-        poly_poll_cleanup(g_config.poll_ctx);
-        free(g_config.poll_ctx);
-        g_config.poll_ctx = NULL;
-    }
-    g_memkv_service.state = SERVICE_STATE_STOPPED;
-    return err;
 }
 
 static infra_error_t memkv_stop(void) {
-    if (!g_initialized || !g_config.running) return INFRA_OK;
+    if (!g_initialized) {
+        return INFRA_ERROR_NOT_INITIALIZED;
+    }
 
-    g_memkv_service.state = SERVICE_STATE_STOPPING;
+    if (!g_config.running) {
+        return INFRA_OK;
+    }
 
+    g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
+    
     if (g_config.poll_ctx) {
-        poly_poll_stop(g_config.poll_ctx);
-        poly_poll_cleanup(g_config.poll_ctx);
-        free(g_config.poll_ctx);
+        poly_poll_destroy(g_config.poll_ctx);
         g_config.poll_ctx = NULL;
     }
 
     g_config.running = false;
-    g_memkv_service.state = SERVICE_STATE_STOPPED;
     return INFRA_OK;
 }
 
-static bool memkv_is_running(void) {
-    return g_initialized && g_config.running;
-}
-
-static infra_error_t memkv_cmd_handler(int argc, char* argv[]) {
-    if (argc < 2) return INFRA_ERROR_INVALID_PARAM;
-
-    bool start = false, stop = false, status = false;
-    const char* config_path = NULL;
-
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "--config=", 9) == 0) {
-            config_path = argv[i] + 9;
-        } else if (strcmp(argv[i], "--start") == 0) {
-            start = true;
-        } else if (strcmp(argv[i], "--stop") == 0) {
-            stop = true;
-        } else if (strcmp(argv[i], "--status") == 0) {
-            status = true;
-        }
+static infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
+    if (!cmd || !response || size == 0) {
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (start) {
-        if (!g_initialized) {
-            peer_service_config_t init_config = {
-                .name = "memkv",
-                .type = SERVICE_TYPE_MEMKV,
-                .options = memkv_options,
-                .option_count = memkv_option_count,
-                .config_path = config_path
-            };
-            infra_error_t err = memkv_init((const infra_config_t*)&init_config);
-            if (err != INFRA_OK) return err;
-        }
+    // Parse command
+    if (strcmp(cmd, "start") == 0) {
         return memkv_start();
-    } 
-    else if (stop) {
+    } else if (strcmp(cmd, "stop") == 0) {
         return memkv_stop();
-    }
-    else if (status) {
-        printf("memkv service is %s\n", memkv_is_running() ? "running" : "stopped");
+    } else if (strcmp(cmd, "status") == 0) {
+        snprintf(response, size, "MemKV Service Status:\n"
+                "State: %s\n"
+                "Port: %d\n"
+                "Engine: %s\n"
+                "Plugin: %s\n",
+                g_config.running ? "Running" : "Stopped",
+                g_config.port,
+                g_config.engine ? g_config.engine : "none",
+                g_config.plugin ? g_config.plugin : "none");
         return INFRA_OK;
     }
 
+    snprintf(response, size, "Unknown command: %s", cmd);
     return INFRA_ERROR_INVALID_PARAM;
 }

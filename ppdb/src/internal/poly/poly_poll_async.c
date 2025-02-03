@@ -251,30 +251,56 @@ infra_error_t poly_poll_stop(poly_poll_context_t* ctx) {
 
 // 清理资源
 void poly_poll_cleanup(poly_poll_context_t* ctx) {
-    if (!ctx) return;
-    
+    if (!ctx) {
+        INFRA_LOG_ERROR("Invalid context");
+        return;
+    }
+
+    INFRA_LOG_INFO("Cleaning up poly_poll_async resources");
+
     // 停止服务
     ctx->running = false;
-    
+
     // 等待线程池结束
     if (ctx->pool) {
         infra_thread_pool_destroy(ctx->pool);
+        ctx->pool = NULL;
     }
-    
-    // 关闭所有监听socket
-    for (int i = 0; i < ctx->listener_count; i++) {
-        if (ctx->listeners[i]) {
-            infra_net_close(ctx->listeners[i]);
+
+    // 清理调度器
+    if (ctx->schedulers) {
+        for (int i = 0; i < ctx->thread_count; i++) {
+            if (ctx->schedulers[i].user_data) {
+                infra_scheduler_destroy(ctx->schedulers[i].user_data);
+                ctx->schedulers[i].user_data = NULL;
+            }
         }
+        free(ctx->schedulers);
+        ctx->schedulers = NULL;
     }
-    
-    // 释放内存
-    free(ctx->listeners);
-    free(ctx->configs);
-    for (int i = 0; i < ctx->thread_count; i++) {
-        infra_scheduler_destroy(ctx->schedulers[i].user_data);
+
+    // 关闭所有监听socket
+    if (ctx->listeners) {
+        for (int i = 0; i < ctx->listener_count; i++) {
+            if (ctx->listeners[i]) {
+                infra_net_close(ctx->listeners[i]);
+                ctx->listeners[i] = NULL;
+            }
+        }
+        free(ctx->listeners);
+        ctx->listeners = NULL;
     }
-    free(ctx->schedulers);
-    
-    memset(ctx, 0, sizeof(*ctx));
+
+    // 清理配置数组
+    if (ctx->configs) {
+        free(ctx->configs);
+        ctx->configs = NULL;
+    }
+
+    ctx->listener_count = 0;
+    ctx->max_listeners = 0;
+    ctx->handler = NULL;
+    ctx->thread_count = 0;
+
+    INFRA_LOG_INFO("Poly_poll_async cleanup completed");
 }

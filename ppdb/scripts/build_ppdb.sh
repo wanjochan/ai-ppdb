@@ -10,8 +10,8 @@ mkdir -p "${BUILD_DIR}/obj"
 
 # 设置条件编译选项
 ENABLE_RINETD=1
-ENABLE_MEMKV=1
-ENABLE_SQLITE3=1
+ENABLE_MEMKV=0
+ENABLE_SQLITE3=0
 
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
@@ -31,12 +31,13 @@ echo "remove ${BUILD_DIR}/ppdb_latest.exe"
 rm -f "${BUILD_DIR}/ppdb_latest.exe"
 rm -f "${PPDB_DIR}/ppdb_latest.exe"
 
-echo "Building sqlite3..."
-sh "$(dirname "$0")/build_sqlite3.sh"
-if [ $? -ne 0 ]; then
-    exit 1
+if [ "${ENABLE_MEMKV}" = "1" ] || [ "${ENABLE_SQLITE3}" = "1" ]; then
+    echo "Building sqlite3..."
+    sh "$(dirname "$0")/build_sqlite3.sh"
+    if [ $? -ne 0 ]; then
+        exit 1
+    fi
 fi
-
 echo "Building infra..."
 sh "$(dirname "$0")/build_infra.sh"
 if [ $? -ne 0 ]; then

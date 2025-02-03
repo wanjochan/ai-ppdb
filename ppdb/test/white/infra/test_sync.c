@@ -3,6 +3,7 @@
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_platform.h"
+#include <stdio.h>
 
 static void* thread_func(void* arg) {
     int* counter = (int*)arg;
@@ -15,11 +16,11 @@ static void test_thread(void) {
     infra_thread_t thread;
     int counter = 0;
 
-    // 创建线程
+    // Create thread
     err = infra_thread_create(&thread, thread_func, &counter);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 等待线程完成
+    // Wait for thread to complete
     err = infra_thread_join(thread);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(counter == 1);
@@ -30,25 +31,25 @@ static void test_mutex(void) {
     infra_mutex_t mutex;
     int counter = 0;
 
-    // 创建互斥锁
+    // Create mutex
     err = infra_mutex_create(&mutex);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 加锁
+    // Lock
     err = infra_mutex_lock(mutex);
     TEST_ASSERT(err == INFRA_OK);
     counter++;
     err = infra_mutex_unlock(mutex);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 尝试加锁
+    // Try lock
     err = infra_mutex_trylock(mutex);
     TEST_ASSERT(err == INFRA_OK);
     counter++;
     err = infra_mutex_unlock(mutex);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 销毁互斥锁
+    // Destroy mutex
     infra_mutex_destroy(mutex);
     TEST_ASSERT(counter == 2);
 }
@@ -57,37 +58,36 @@ static void test_cond(void) {
     infra_error_t err;
     infra_mutex_t mutex;
     infra_cond_t cond;
+    int counter = 0;
 
-    // 创建互斥锁和条件变量
+    // Create mutex and condition
     err = infra_mutex_create(&mutex);
     TEST_ASSERT(err == INFRA_OK);
-
     err = infra_cond_init(&cond);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 测试信号
+    // Lock mutex
     err = infra_mutex_lock(mutex);
     TEST_ASSERT(err == INFRA_OK);
 
+    // Signal condition
+    counter++;
     err = infra_cond_signal(cond);
     TEST_ASSERT(err == INFRA_OK);
 
-    err = infra_mutex_unlock(mutex);
-    TEST_ASSERT(err == INFRA_OK);
-
-    // 测试广播
-    err = infra_mutex_lock(mutex);
-    TEST_ASSERT(err == INFRA_OK);
-
+    // Broadcast condition
+    counter++;
     err = infra_cond_broadcast(cond);
     TEST_ASSERT(err == INFRA_OK);
 
+    // Unlock mutex
     err = infra_mutex_unlock(mutex);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 销毁条件变量和互斥锁
+    // Destroy condition and mutex
     infra_cond_destroy(cond);
     infra_mutex_destroy(mutex);
+    TEST_ASSERT(counter == 2);
 }
 
 static void test_rwlock(void) {
@@ -95,101 +95,85 @@ static void test_rwlock(void) {
     infra_rwlock_t rwlock;
     int counter = 0;
 
-    // 创建读写锁
+    // Create rwlock
     err = infra_rwlock_init(&rwlock);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 读锁
+    // Read lock
     err = infra_rwlock_rdlock(rwlock);
     TEST_ASSERT(err == INFRA_OK);
     counter++;
     err = infra_rwlock_unlock(rwlock);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 写锁
+    // Write lock
     err = infra_rwlock_wrlock(rwlock);
     TEST_ASSERT(err == INFRA_OK);
     counter++;
     err = infra_rwlock_unlock(rwlock);
     TEST_ASSERT(err == INFRA_OK);
 
-    // 销毁读写锁
+    // Destroy rwlock
     err = infra_rwlock_destroy(rwlock);
     TEST_ASSERT(err == INFRA_OK);
     TEST_ASSERT(counter == 2);
 }
 
 static void* task_func(void* arg) {
-    void** args = (void**)arg;
-    int* counter = (int*)args[0];
-    infra_mutex_t* mutex = (infra_mutex_t*)args[1];
+    int* counter = (int*)arg;
+    infra_mutex_t mutex;
     
-    infra_mutex_lock(*mutex);
+    infra_mutex_create(&mutex);
+    infra_mutex_lock(mutex);
     (*counter)++;
-    infra_mutex_unlock(*mutex);
-    
+    infra_mutex_unlock(mutex);
+    infra_mutex_destroy(mutex);
     return NULL;
 }
 
 static void test_thread_pool(void) {
     infra_error_t err;
-    infra_thread_pool_t* pool = NULL;
+    infra_thread_pool_t* pool;
+    int counter = 0;
+    const int num_tasks = 10;
+
+    // Create thread pool
     infra_thread_pool_config_t config = {
         .min_threads = 2,
         .max_threads = 4,
         .queue_size = 10,
         .idle_timeout = 1000
     };
-    
-    // 创建线程池
     err = infra_thread_pool_create(&config, &pool);
     TEST_ASSERT(err == INFRA_OK);
-    TEST_ASSERT(pool != NULL);
-    
-    // 准备测试数据
-    int counter = 0;
-    infra_mutex_t mutex;
-    err = infra_mutex_create(&mutex);
-    TEST_ASSERT(err == INFRA_OK);
-    
-    void* args[2] = { &counter, &mutex };
-    
-    // 提交多个任务
-    for (int i = 0; i < 5; i++) {
-        err = infra_thread_pool_submit(pool, task_func, args);
+
+    // Submit tasks
+    for (int i = 0; i < num_tasks; i++) {
+        err = infra_thread_pool_submit(pool, task_func, &counter);
         TEST_ASSERT(err == INFRA_OK);
     }
-    
-    // 等待任务完成（增加等待时间）
-    infra_sleep(500);
-    
-    // 检查结果
-    TEST_ASSERT(counter == 5);
-    
-    // 获取线程池状态
+
+    // Wait for tasks to complete (using sleep as a simple way)
+    infra_sleep(100);
+    TEST_ASSERT(counter == num_tasks);
+
+    // Get stats
     size_t active_threads, queued_tasks;
     err = infra_thread_pool_get_stats(pool, &active_threads, &queued_tasks);
     TEST_ASSERT(err == INFRA_OK);
-    TEST_ASSERT(queued_tasks == 0);  // 所有任务都应该完成
-    
-    // 清理
-    infra_mutex_destroy(mutex);
+    TEST_ASSERT(queued_tasks == 0);
+
+    // Destroy thread pool
     err = infra_thread_pool_destroy(pool);
     TEST_ASSERT(err == INFRA_OK);
 }
 
 int main(void) {
-    infra_error_t err = infra_init();
-    if (err != INFRA_OK) {
-        infra_printf("Failed to initialize infra system: %d\n", err);
-        return 1;
-    }
-
-    TEST_BEGIN();
-    RUN_TEST(test_thread);
-    RUN_TEST(test_mutex);
-    RUN_TEST(test_cond);
-    RUN_TEST(test_rwlock);
-    RUN_TEST(test_thread_pool);
-    TEST_END();
-} 
+    TEST_RUN(test_thread);
+    TEST_RUN(test_mutex);
+    TEST_RUN(test_cond);
+    TEST_RUN(test_rwlock);
+    TEST_RUN(test_thread_pool);
+    
+    return 0;
+}

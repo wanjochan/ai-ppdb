@@ -15,6 +15,7 @@ INFRA_SOURCES=(
     "${INFRA_DIR}/infra_gc.c"
     "${INFRA_DIR}/infra_core.c"
     "${INFRA_DIR}/infra_async.c"
+    "${INFRA_DIR}/infra_log.c"
 )
 
 # 编译 infra 库

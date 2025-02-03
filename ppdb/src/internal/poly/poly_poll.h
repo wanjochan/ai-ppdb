@@ -5,8 +5,18 @@
 #include "internal/infra/infra_net.h"
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_memory.h"
+#include "internal/infra/infra_error.h"
 
 #define POLY_MAX_ADDR_LEN 256
+
+// Poll item structure
+typedef struct poly_poll {
+    struct pollfd* pfds;        // pollfd array
+    infra_socket_t* sockets;    // socket array
+    size_t capacity;            // array capacity
+    size_t count;               // current count
+    infra_mutex_t mutex;        // mutex lock
+} poly_poll_t;
 
 // 配置结构
 typedef struct poly_poll_config {
@@ -45,6 +55,11 @@ typedef struct poly_poll_context {
     poly_poll_connection_handler handler; // 连接处理回调
 } poly_poll_context_t;
 
+// 事件标志
+#define POLY_POLL_READ    0x01
+#define POLY_POLL_WRITE   0x02
+#define POLY_POLL_ERROR   0x04
+
 // 初始化 poly_poll
 infra_error_t poly_poll_init(poly_poll_context_t* ctx, 
                             const poly_poll_config_t* config);
@@ -66,4 +81,20 @@ infra_error_t poly_poll_stop(poly_poll_context_t* ctx);
 // 清理资源
 void poly_poll_cleanup(poly_poll_context_t* ctx);
 
-#endif // POLY_POLL_H
+// 创建和销毁
+infra_error_t poly_poll_create(poly_poll_t** poll);
+void poly_poll_destroy(poly_poll_t* poll);
+
+// 添加和移除套接字
+infra_error_t poly_poll_add(poly_poll_t* poll, infra_socket_t sock, int events);
+infra_error_t poly_poll_remove(poly_poll_t* poll, infra_socket_t sock);
+
+// 等待事件
+infra_error_t poly_poll_wait(poly_poll_t* poll, int timeout_ms);
+
+// 获取事件和套接字信息
+infra_error_t poly_poll_get_events(poly_poll_t* poll, size_t index, int* events);
+infra_error_t poly_poll_get_socket(poly_poll_t* poll, size_t index, infra_socket_t* sock);
+size_t poly_poll_get_count(poly_poll_t* poll);
+
+#endif /* POLY_POLL_H */

@@ -12,6 +12,13 @@
 #include "internal/infra/infra_memory.h"
 #include "internal/infra/infra_error.h"
 
+// Forward declarations for logging
+typedef void (*infra_log_callback_t)(int level, const char* file, int line, const char* func, const char* message);
+struct infra_logger;
+typedef struct infra_logger infra_logger_t;
+
+#include "internal/infra/infra_log.h"
+
 //-----------------------------------------------------------------------------
 // Version Information
 //-----------------------------------------------------------------------------
@@ -76,61 +83,6 @@ infra_error_t infra_sleep(uint32_t milliseconds);
 // infra_error_t infra_yield(void);
 
 //-----------------------------------------------------------------------------
-// Log Levels
-//-----------------------------------------------------------------------------
-
-#define INFRA_LOG_LEVEL_NONE  0
-#define INFRA_LOG_LEVEL_ERROR 1
-#define INFRA_LOG_LEVEL_WARN  2
-#define INFRA_LOG_LEVEL_INFO  3
-#define INFRA_LOG_LEVEL_DEBUG 4
-#define INFRA_LOG_LEVEL_TRACE 5
-
-//-----------------------------------------------------------------------------
-// Log Macros
-//-----------------------------------------------------------------------------
-
-#define INFRA_LOG_ERROR(fmt, ...) infra_log(INFRA_LOG_LEVEL_ERROR, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
-#define INFRA_LOG_WARN(fmt, ...)  infra_log(INFRA_LOG_LEVEL_WARN,  __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
-#define INFRA_LOG_INFO(fmt, ...)  infra_log(INFRA_LOG_LEVEL_INFO,  __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
-#define INFRA_LOG_DEBUG(fmt, ...) infra_log(INFRA_LOG_LEVEL_DEBUG, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
-#define INFRA_LOG_TRACE(fmt, ...) infra_log(INFRA_LOG_LEVEL_TRACE, __FILE__, __LINE__, __func__, fmt, ##__VA_ARGS__)
-
-//-----------------------------------------------------------------------------
-// Configuration
-//-----------------------------------------------------------------------------
-
-// 网络配置标志
-#define INFRA_CONFIG_FLAG_NONBLOCK (1 << 0)  // 非阻塞模式
-#define INFRA_CONFIG_FLAG_NODELAY  (1 << 1)  // 禁用Nagle算法
-#define INFRA_CONFIG_FLAG_KEEPALIVE (1 << 2) // 启用保活
-
-typedef struct {
-    infra_memory_config_t memory;
-    
-    struct {
-        int level;
-        const char* log_file;
-    } log;
-
-//@infra_net
-    struct {
-        infra_flags_t flags;     // 网络配置标志
-        uint32_t connect_timeout_ms;  // 连接超时时间
-        uint32_t read_timeout_ms;     // 读取超时时间
-        uint32_t write_timeout_ms;    // 写入超时时间
-    } net;
-} infra_config_t;
-
-// 默认配置
-extern const infra_config_t INFRA_DEFAULT_CONFIG;
-
-// 配置相关函数
-infra_error_t infra_config_init(infra_config_t* config);
-infra_error_t infra_config_validate(const infra_config_t* config);
-infra_error_t infra_config_apply(const infra_config_t* config);
-
-//-----------------------------------------------------------------------------
 // Initialization and Cleanup
 //-----------------------------------------------------------------------------
 
@@ -141,7 +93,6 @@ typedef enum {
     INFRA_INIT_ALL    = 0xFFFFFFFF
 } infra_init_flags_t;
 
-infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_config_t* config);
 infra_error_t infra_init(void);  // 使用默认配置
 void infra_cleanup(void);
 bool infra_is_initialized(infra_init_flags_t flag);
@@ -282,29 +233,6 @@ size_t infra_buffer_writable(const infra_buffer_t* buf);
 void infra_buffer_reset(infra_buffer_t* buf);
 
 //-----------------------------------------------------------------------------
-// Logging
-//-----------------------------------------------------------------------------
-
-typedef void (*infra_log_callback_t)(int level, const char* file, int line, const char* func, const char* message);
-
-void infra_log_set_level(int level);
-void infra_log_set_callback(infra_log_callback_t callback);
-void infra_log(int level, const char* file, int line, const char* func, const char* format, ...);
-
-//-----------------------------------------------------------------------------
-// Printf Operations
-//-----------------------------------------------------------------------------
-
-infra_error_t infra_printf(const char* format, ...);
-infra_error_t infra_fprintf(FILE* stream, const char* format, ...);
-int infra_vprintf(const char* format, va_list args);
-int infra_vfprintf(FILE* stream, const char* format, va_list args);
-int infra_snprintf(char* str, size_t size, const char* format, ...);
-int infra_vsnprintf(char* str, size_t size, const char* format, va_list args);
-
-const char* infra_error_string(int error_code);
-
-//-----------------------------------------------------------------------------
 // Ring Buffer Operations
 //-----------------------------------------------------------------------------
 
@@ -352,9 +280,6 @@ typedef struct {
     //} ds;
 } infra_global_t;
 
-// 全局变量声明
-extern infra_global_t g_infra;
-
 //-----------------------------------------------------------------------------
 // Random Number Operations
 //-----------------------------------------------------------------------------
@@ -392,23 +317,5 @@ infra_error_t infra_file_size(INFRA_CORE_Handle_t handle, size_t* size);
 infra_error_t infra_file_remove(const char* path);
 infra_error_t infra_file_rename(const char* old_path, const char* new_path);
 infra_error_t infra_file_exists(const char* path, bool* exists);
-
-// Configuration Builder API
-typedef struct infra_config_builder infra_config_builder_t;
-
-// Create a new config builder with default settings
-infra_config_builder_t* infra_config_builder_new(void);
-
-// Builder pattern methods
-infra_config_builder_t* infra_config_builder_set_memory_pool(infra_config_builder_t* builder, bool use_pool, size_t size);
-infra_config_builder_t* infra_config_builder_set_log_level(infra_config_builder_t* builder, int level);
-infra_config_builder_t* infra_config_builder_set_log_file(infra_config_builder_t* builder, const char* file);
-infra_config_builder_t* infra_config_builder_set_net_timeout(infra_config_builder_t* builder, int connect_ms, int read_ms, int write_ms);
-
-// Build and initialize
-infra_error_t infra_config_builder_build_and_init(infra_config_builder_t* builder);
-
-// Environment variable based configuration
-infra_error_t infra_init_from_env(void);
 
 #endif /* INFRA_CORE_H */

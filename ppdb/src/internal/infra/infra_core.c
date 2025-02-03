@@ -7,45 +7,21 @@
 #include "internal/infra/infra_memory.h"
 #include "internal/infra/infra_platform.h"
 #include "internal/infra/infra_sync.h"
-#include "internal/infra/infra_error.h"
-
-//-----------------------------------------------------------------------------
-// Default Configuration
-//-----------------------------------------------------------------------------
-
-const infra_config_t INFRA_DEFAULT_CONFIG = {
-    .memory = {
-        .use_memory_pool = false,
-        .pool_initial_size = 1024 * 1024,  // 1MB
-        .pool_alignment = sizeof(void*)
-    },
-    .log = {
-        .level = INFRA_LOG_LEVEL_INFO,
-        .log_file = NULL
-    },
-    .net = {
-        .flags = 0,  // 默认使用阻塞模式
-        .connect_timeout_ms = 1000,  // 1秒连接超时
-        .read_timeout_ms = 0,        // 无读取超时
-        .write_timeout_ms = 0        // 无写入超时
-    }
-};
+#include "internal/infra/infra_log.h"
 
 //-----------------------------------------------------------------------------
 // Global State
 //-----------------------------------------------------------------------------
 
-// 全局状态 （注意跟 infra_config_t 不一样，这个是超级全局）
-infra_global_t g_infra = {
+// 全局状态
+static struct {
+    bool initialized;
+    infra_init_flags_t active_flags;
+    infra_mutex_t mutex;
+} g_state = {
     .initialized = false,
     .active_flags = 0,
-    .mutex = NULL,
-    .log = {
-        .level = INFRA_DEFAULT_CONFIG.log.level,
-        .log_file = INFRA_DEFAULT_CONFIG.log.log_file,
-        .callback = NULL,
-        .mutex = NULL
-    },
+    .mutex = NULL
 };
 
 // 自动初始化
@@ -59,10 +35,10 @@ static void __attribute__((constructor)) infra_auto_init(void) {
 
     infra_error_t err = infra_init();
     if (err != INFRA_OK) {
-	INFRA_LOG_ERROR("Failed to initialize infra: %d\n", err);
+        INFRA_LOG_ERROR("Failed to initialize infra: %d\n", err);
         abort();
     }else{
-	INFRA_LOG_DEBUG("infra_auto_init() success\n");
+        INFRA_LOG_DEBUG("infra_auto_init() success\n");
     }
 }
 
@@ -77,284 +53,79 @@ static void __attribute__((destructor)) infra_auto_cleanup(void) {
 }
 
 //-----------------------------------------------------------------------------
-// Configuration Management
-//-----------------------------------------------------------------------------
-
-infra_error_t infra_config_init(infra_config_t* config) {
-    if (!config) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    *config = INFRA_DEFAULT_CONFIG;
-    return INFRA_OK;
-}
-
-infra_error_t infra_config_validate(const infra_config_t* config) {
-    if (!config) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    // 验证内存配置
-    if (config->memory.use_memory_pool) {
-        if (config->memory.pool_initial_size == 0 || 
-            config->memory.pool_alignment == 0 || 
-            config->memory.pool_alignment < sizeof(void*) || 
-            (config->memory.pool_alignment & (config->memory.pool_alignment - 1)) != 0) {
-            return INFRA_ERROR_INVALID_PARAM;
-        }
-    }
-
-    // 验证日志配置
-    if (config->log.level < INFRA_LOG_LEVEL_NONE || 
-        config->log.level > INFRA_LOG_LEVEL_TRACE) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    // 验证数据结构配置
-    //if (config->ds.hash_initial_size == 0 || 
-    //    config->ds.hash_load_factor == 0 || 
-    //    config->ds.hash_load_factor > 100) {
-    //    return INFRA_ERROR_INVALID_PARAM;
-    //}
-
-    return INFRA_OK;
-}
-
-// 运行时更新配置
-// 注意：目前仅支持更新日志相关配置（log level和log file）
-// 其他配置项（如内存池、数据结构等）必须在初始化时通过 infra_init_with_config 设置
-infra_error_t infra_config_apply(const infra_config_t* config) {
-    if (!config) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    infra_error_t err = infra_config_validate(config);
-    if (err != INFRA_OK) {
-        return err;
-    }
-
-    // 应用日志配置
-    g_infra.log.level = config->log.level;
-    g_infra.log.log_file = config->log.log_file;
-
-    // 应用数据结构配置
-    //g_infra.ds.hash_initial_size = config->ds.hash_initial_size;
-    //g_infra.ds.hash_load_factor = config->ds.hash_load_factor;
-
-    return INFRA_OK;
-}
-
-//-----------------------------------------------------------------------------
-// Configuration Builder Implementation
-//-----------------------------------------------------------------------------
-
-struct infra_config_builder {
-    infra_config_t config;
-};
-
-infra_config_builder_t* infra_config_builder_new(void) {
-    infra_config_builder_t* builder = malloc(sizeof(infra_config_builder_t));
-    if (!builder) {
-        return NULL;
-    }
-    builder->config = INFRA_DEFAULT_CONFIG;
-    return builder;
-}
-
-infra_config_builder_t* infra_config_builder_set_memory_pool(infra_config_builder_t* builder, bool use_pool, size_t size) {
-    if (builder) {
-        builder->config.memory.use_memory_pool = use_pool;
-        builder->config.memory.pool_initial_size = size;
-    }
-    return builder;
-}
-
-infra_config_builder_t* infra_config_builder_set_log_level(infra_config_builder_t* builder, int level) {
-    if (builder) {
-        builder->config.log.level = level;
-    }
-    return builder;
-}
-
-infra_config_builder_t* infra_config_builder_set_log_file(infra_config_builder_t* builder, const char* file) {
-    if (builder) {
-        builder->config.log.log_file = file;
-    }
-    return builder;
-}
-
-infra_config_builder_t* infra_config_builder_set_net_timeout(infra_config_builder_t* builder, int connect_ms, int read_ms, int write_ms) {
-    if (builder) {
-        builder->config.net.connect_timeout_ms = connect_ms;
-        builder->config.net.read_timeout_ms = read_ms;
-        builder->config.net.write_timeout_ms = write_ms;
-    }
-    return builder;
-}
-
-infra_error_t infra_config_builder_build_and_init(infra_config_builder_t* builder) {
-    if (!builder) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-
-    infra_error_t err = infra_init_with_config(INFRA_INIT_ALL, &builder->config);
-    free(builder);
-    return err;
-}
-
-infra_error_t infra_init_from_env(void) {
-    infra_config_t config = INFRA_DEFAULT_CONFIG;
-    
-    // Read memory pool configuration from environment
-    const char* pool_size = getenv("INFRA_MEMORY_POOL_SIZE");
-    if (pool_size) {
-        config.memory.use_memory_pool = true;
-        config.memory.pool_initial_size = atoi(pool_size);
-    }
-    
-    // Read log configuration from environment
-    const char* log_level = getenv("INFRA_LOG_LEVEL");
-    if (log_level) {
-        config.log.level = atoi(log_level);
-    }
-    
-    const char* log_file = getenv("INFRA_LOG_FILE");
-    if (log_file) {
-        config.log.log_file = log_file;
-    }
-    
-    // Read network configuration from environment
-    const char* connect_timeout = getenv("INFRA_NET_CONNECT_TIMEOUT");
-    if (connect_timeout) {
-        config.net.connect_timeout_ms = atoi(connect_timeout);
-    }
-    
-    return infra_init_with_config(INFRA_INIT_ALL, &config);
-}
-
-//-----------------------------------------------------------------------------
 // Initialization and Cleanup
 //-----------------------------------------------------------------------------
 
-/*
- * 保留此函数用于未来模块化初始化的扩展
- * 目前基础设施层的初始化是整体进行的，但未来可能需要支持按模块初始化
- * 比如：只初始化内存管理、日志系统等特定模块
- * 因此保留此函数作为扩展点
- */
-static infra_error_t __attribute__((unused)) init_module(infra_init_flags_t flag, const infra_config_t* config) {
-    infra_error_t err = INFRA_OK;
-
-    switch (flag) {
-        case INFRA_INIT_MEMORY:
-            // Initialize memory module
-            err = infra_memory_init(&config->memory);
-            break;
-
-        case INFRA_INIT_LOG:
-            // Initialize log module
-            g_infra.log.level = config->log.level;
-            g_infra.log.log_file = config->log.log_file;
-            g_infra.log.callback = NULL;
-
-            // Create log mutex
-            err = infra_mutex_create(&g_infra.log.mutex);
-            if (err != INFRA_OK) {
-                fprintf(stderr, "Failed to create log mutex\n");
-                return err;
-            }
-
-            // Test log output
-            INFRA_LOG_DEBUG("Log module initialized, level=%d", g_infra.log.level);
-            break;
-
-        default:
-            err = INFRA_ERROR_INVALID_PARAM;
-            break;
-    }
-
-    return err;
-}
-
-infra_error_t infra_init_with_config(infra_init_flags_t flags, const infra_config_t* config) {
+//没必要初始化，稍后慢慢移除！！
+infra_error_t infra_init(void) {
     // Check if already initialized
-    if (g_infra.initialized) {
+    if (g_state.initialized) {
+        INFRA_LOG_DEBUG("infra_init() g_state.initialized");
         return INFRA_OK;
     }
 
     // Create global mutex
-    infra_error_t err = infra_mutex_create(&g_infra.mutex);
+    infra_error_t err = infra_mutex_create(&g_state.mutex);
     if (err != INFRA_OK) {
         fprintf(stderr, "Failed to create global mutex\n");
         return err;
     }
 
     // Initialize log module first
-    err = init_module(INFRA_INIT_LOG, config);
+    err = infra_log_init(INFRA_LOG_LEVEL_INFO, NULL);
     if (err != INFRA_OK) {
         fprintf(stderr, "Failed to initialize log module\n");
         return err;
     }
 
-    // Initialize other modules
-    if (flags & INFRA_INIT_MEMORY) {
-        err = init_module(INFRA_INIT_MEMORY, config);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to initialize memory module");
-            return err;
-        }
+    // Initialize memory module
+    infra_memory_config_t mem_config = {
+        .use_memory_pool = false,  // Use system allocator by default
+        .use_gc = false,          // No garbage collection by default
+        .pool_initial_size = 0,
+        .pool_alignment = 8
+    };
+    err = infra_memory_init(&mem_config);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to initialize memory module");
+        return err;
     }
 
     // Set initialized flag
-    g_infra.initialized = true;
-    g_infra.active_flags = flags;
+    g_state.initialized = true;
+    g_state.active_flags = INFRA_INIT_ALL;
 
     INFRA_LOG_DEBUG("Infrastructure layer initialized successfully");
     return INFRA_OK;
 }
 
-infra_error_t infra_init(void) {
-    // Check if already initialized
-    if (g_infra.initialized) {
-        INFRA_LOG_DEBUG("infra_init() g_infra.initialized");
-        return INFRA_OK;  // Already initialized, just return success
-    }
-
-    // Initialize with default config
-    return infra_init_with_config(INFRA_INIT_ALL, &INFRA_DEFAULT_CONFIG);
-}
-
 void infra_cleanup(void) {
-    if (!g_infra.initialized) {
+    if (!g_state.initialized) {
         return;
     }
 
-    // 按照初始化的相反顺序清理
-    if (g_infra.active_flags & INFRA_INIT_DS) {
-        // 清理数据结构
-        g_infra.active_flags &= ~INFRA_INIT_DS;
-    }
-
-    if (g_infra.active_flags & INFRA_INIT_LOG) {
-        // 清理日志系统
-        g_infra.active_flags &= ~INFRA_INIT_LOG;
-    }
-
-    if (g_infra.active_flags & INFRA_INIT_MEMORY) {
-        // 清理内存管理
+    // 清理内存管理
+    if (g_state.active_flags & INFRA_INIT_MEMORY) {
         infra_memory_cleanup();
-        g_infra.active_flags &= ~INFRA_INIT_MEMORY;
+        g_state.active_flags &= ~INFRA_INIT_MEMORY;
+    }
+
+    // 清理日志系统
+    if (g_state.active_flags & INFRA_INIT_LOG) {
+        infra_log_cleanup();
+        g_state.active_flags &= ~INFRA_INIT_LOG;
     }
 
     // 清理全局互斥锁
-    infra_mutex_destroy(g_infra.mutex);
+    infra_mutex_destroy(g_state.mutex);
 
     // 重置全局状态
-    g_infra.initialized = false;
-    g_infra.active_flags = 0;
+    g_state.initialized = false;
+    g_state.active_flags = 0;
 }
 
 bool infra_is_initialized(infra_init_flags_t flag) {
-    return g_infra.initialized && (g_infra.active_flags & flag) == flag;
+    return g_state.initialized && (g_state.active_flags & flag) == flag;
 }
 
 //-----------------------------------------------------------------------------
@@ -366,11 +137,11 @@ infra_error_t infra_get_status(infra_status_t* status) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    status->initialized = g_infra.initialized;
-    status->active_flags = g_infra.active_flags;
+    status->initialized = g_state.initialized;
+    status->active_flags = g_state.active_flags;
     
     // 获取内存统计信息
-    if (g_infra.active_flags & INFRA_INIT_MEMORY) {
+    if (g_state.active_flags & INFRA_INIT_MEMORY) {
         infra_memory_get_stats(&status->memory);
     } else {
         memset(&status->memory, 0, sizeof(infra_memory_stats_t));
@@ -569,136 +340,6 @@ void infra_buffer_reset(infra_buffer_t* buf) {
     if (buf) {
         buf->size = 0;
     }
-}
-
-//-----------------------------------------------------------------------------
-// Logging
-//-----------------------------------------------------------------------------
-
-void infra_log_set_level(int level) {
-    if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
-        g_infra.log.level = level;
-    }
-}
-
-void infra_log_set_callback(infra_log_callback_t callback) {
-    g_infra.log.callback = callback;
-}
-
-void infra_log(int level, const char* file, int line, const char* func,
-               const char* format, ...) {
-    // Check if logging is enabled for this level
-    if (!g_infra.initialized || level > g_infra.log.level || !format) {
-        return;
-    }
-
-    // Lock the log mutex if available
-    if (g_infra.log.mutex) {
-        infra_mutex_lock(g_infra.log.mutex);
-    }
-
-    // Format the message
-    char message[1024];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(message, sizeof(message), format, args);
-    va_end(args);
-
-    // Get log level string
-    const char* level_str = "UNKNOWN";
-    switch (level) {
-        case INFRA_LOG_LEVEL_ERROR: level_str = "ERROR"; break;
-        case INFRA_LOG_LEVEL_WARN:  level_str = "WARN"; break;
-        case INFRA_LOG_LEVEL_INFO:  level_str = "INFO"; break;
-        case INFRA_LOG_LEVEL_DEBUG: level_str = "DEBUG"; break;
-        case INFRA_LOG_LEVEL_TRACE: level_str = "TRACE"; break;
-    }
-
-    // Output to stderr (we'll add file output support later)
-    fprintf(stderr, "[%s] %s:%d %s(): %s\n", level_str, file, line, func, message);
-    fflush(stderr);  // Ensure output is visible immediately
-
-    // Call the callback if registered
-    if (g_infra.log.callback) {
-        g_infra.log.callback(level, file, line, func, message);
-    }
-
-    // Unlock the log mutex if available
-    if (g_infra.log.mutex) {
-        infra_mutex_unlock(g_infra.log.mutex);
-    }
-}
-
-//-----------------------------------------------------------------------------
-// I/O Operations
-//-----------------------------------------------------------------------------
-
-infra_error_t infra_printf(const char* format, ...) {
-    if (!format) {
-        return INFRA_ERROR_INVALID;
-    }
-    
-    va_list args;
-    va_start(args, format);
-    int result = infra_vfprintf(stdout, format, args);
-    va_end(args);
-    fflush(stdout);
-    
-    return (result >= 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-infra_error_t infra_fprintf(FILE* stream, const char* format, ...) {
-    if (!stream || !format) {
-        return INFRA_ERROR_INVALID;
-    }
-    
-    va_list args;
-    va_start(args, format);
-    int result = infra_vfprintf(stream, format, args);
-    va_end(args);
-    fflush(stream);
-    
-    return (result >= 0) ? INFRA_OK : INFRA_ERROR_IO;
-}
-
-int infra_vprintf(const char* format, va_list args) {
-    if (!format) {
-        return -1;
-    }
-    return vprintf(format, args);
-}
-
-int infra_vfprintf(FILE* stream, const char* format, va_list args) {
-    if (!stream || !format) {
-        return -1;
-    }
-    return vfprintf(stream, format, args);
-}
-
-int infra_vsnprintf(char* str, size_t size, const char* format, va_list args) {
-    if (!str || !format || size == 0) {
-        return -1;
-    }
-    
-    int ret = vsnprintf(str, size, format, args);
-    if (ret < 0) {
-        str[size - 1] = '\0';
-        return (int)size - 1;
-    }
-    if ((size_t)ret >= size) {
-        str[size - 1] = '\0';
-        return (int)size - 1;
-    }
-    return ret;
-}
-
-int infra_snprintf(char* str, size_t size, const char* format, ...)
-{
-    va_list args;
-    va_start(args, format);
-    int result = vsnprintf(str, size, format, args);
-    va_end(args);
-    return result;
 }
 
 //-----------------------------------------------------------------------------
