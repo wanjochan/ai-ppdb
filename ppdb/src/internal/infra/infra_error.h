@@ -51,6 +51,7 @@ typedef enum {
     INFRA_ERROR_THREAD_CREATE = -38,  // 线程创建失败
     INFRA_ERROR_THREAD_JOIN = -39,    // 线程join失败
     INFRA_ERROR_THREAD_DETACH = -40,  // 线程detach失败
+    INFRA_ERROR_SHUTDOWN = -41,       // 系统关闭中
     INFRA_ERROR_MAX
 } infra_error_t;
 

@@ -4,7 +4,6 @@
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_sync.h"
 #include "internal/infra/infra_thread.h"
-#include <setjmp.h>
 
 // 栈大小配置
 #define INFRA_STACK_MIN  (4 * 1024)     // 4KB 起始栈
