@@ -877,10 +877,6 @@ void infra_time_sleep(uint32_t ms) {
     infra_platform_sleep(ms);
 }
 
-void infra_time_yield(void) {
-    infra_platform_yield();
-}
-
 // 获取毫秒级时间戳
 uint64_t infra_time_ms(void) {
     struct timespec ts;
@@ -894,10 +890,6 @@ uint64_t infra_time_ms(void) {
 
 infra_error_t infra_sleep(uint32_t milliseconds) {
     return infra_platform_sleep(milliseconds);
-}
-
-infra_error_t infra_yield(void) {
-    return infra_platform_yield();
 }
 
 //-----------------------------------------------------------------------------

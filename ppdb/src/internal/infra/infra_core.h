@@ -73,7 +73,7 @@ infra_error_t infra_thread_join(infra_thread_t thread);
 //infra_thread_t infra_thread_self(void);
 
 infra_error_t infra_sleep(uint32_t milliseconds);
-infra_error_t infra_yield(void);
+// infra_error_t infra_yield(void);
 
 //-----------------------------------------------------------------------------
 // Log Levels
