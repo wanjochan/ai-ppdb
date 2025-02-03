@@ -393,4 +393,22 @@ infra_error_t infra_file_remove(const char* path);
 infra_error_t infra_file_rename(const char* old_path, const char* new_path);
 infra_error_t infra_file_exists(const char* path, bool* exists);
 
+// Configuration Builder API
+typedef struct infra_config_builder infra_config_builder_t;
+
+// Create a new config builder with default settings
+infra_config_builder_t* infra_config_builder_new(void);
+
+// Builder pattern methods
+infra_config_builder_t* infra_config_builder_set_memory_pool(infra_config_builder_t* builder, bool use_pool, size_t size);
+infra_config_builder_t* infra_config_builder_set_log_level(infra_config_builder_t* builder, int level);
+infra_config_builder_t* infra_config_builder_set_log_file(infra_config_builder_t* builder, const char* file);
+infra_config_builder_t* infra_config_builder_set_net_timeout(infra_config_builder_t* builder, int connect_ms, int read_ms, int write_ms);
+
+// Build and initialize
+infra_error_t infra_config_builder_build_and_init(infra_config_builder_t* builder);
+
+// Environment variable based configuration
+infra_error_t infra_init_from_env(void);
+
 #endif /* INFRA_CORE_H */

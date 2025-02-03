@@ -307,9 +307,9 @@ infra_error_t infra_memory_get_stats(infra_memory_stats_t* stats) {
 static void* allocate_memory(size_t size) {
     void* ptr = NULL;
 
-    // 首先检查 size 为 0 的情况
+    // 对于size为0的情况，分配最小块大小
     if (size == 0) {
-        return NULL;
+        size = 1;  // 确保至少分配1字节
     }
 
     if (g_memory.config.use_memory_pool) {

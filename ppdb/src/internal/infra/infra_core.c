@@ -144,6 +144,94 @@ infra_error_t infra_config_apply(const infra_config_t* config) {
 }
 
 //-----------------------------------------------------------------------------
+// Configuration Builder Implementation
+//-----------------------------------------------------------------------------
+
+struct infra_config_builder {
+    infra_config_t config;
+};
+
+infra_config_builder_t* infra_config_builder_new(void) {
+    infra_config_builder_t* builder = malloc(sizeof(infra_config_builder_t));
+    if (!builder) {
+        return NULL;
+    }
+    builder->config = INFRA_DEFAULT_CONFIG;
+    return builder;
+}
+
+infra_config_builder_t* infra_config_builder_set_memory_pool(infra_config_builder_t* builder, bool use_pool, size_t size) {
+    if (builder) {
+        builder->config.memory.use_memory_pool = use_pool;
+        builder->config.memory.pool_initial_size = size;
+    }
+    return builder;
+}
+
+infra_config_builder_t* infra_config_builder_set_log_level(infra_config_builder_t* builder, int level) {
+    if (builder) {
+        builder->config.log.level = level;
+    }
+    return builder;
+}
+
+infra_config_builder_t* infra_config_builder_set_log_file(infra_config_builder_t* builder, const char* file) {
+    if (builder) {
+        builder->config.log.log_file = file;
+    }
+    return builder;
+}
+
+infra_config_builder_t* infra_config_builder_set_net_timeout(infra_config_builder_t* builder, int connect_ms, int read_ms, int write_ms) {
+    if (builder) {
+        builder->config.net.connect_timeout_ms = connect_ms;
+        builder->config.net.read_timeout_ms = read_ms;
+        builder->config.net.write_timeout_ms = write_ms;
+    }
+    return builder;
+}
+
+infra_error_t infra_config_builder_build_and_init(infra_config_builder_t* builder) {
+    if (!builder) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    infra_error_t err = infra_init_with_config(INFRA_INIT_ALL, &builder->config);
+    free(builder);
+    return err;
+}
+
+infra_error_t infra_init_from_env(void) {
+    infra_config_t config = INFRA_DEFAULT_CONFIG;
+    
+    // Read memory pool configuration from environment
+    const char* pool_size = getenv("INFRA_MEMORY_POOL_SIZE");
+    if (pool_size) {
+        config.memory.use_memory_pool = true;
+        config.memory.pool_initial_size = atoi(pool_size);
+    }
+    
+    // Read log configuration from environment
+    const char* log_level = getenv("INFRA_LOG_LEVEL");
+    if (log_level) {
+        config.log.level = atoi(log_level);
+    }
+    
+    const char* log_file = getenv("INFRA_LOG_FILE");
+    if (log_file) {
+        config.log.log_file = log_file;
+    }
+    
+    // Read network configuration from environment
+    const char* connect_timeout = getenv("INFRA_NET_CONNECT_TIMEOUT");
+    if (connect_timeout) {
+        config.net.connect_timeout_ms = atoi(connect_timeout);
+    }
+    
+    return infra_init_with_config(INFRA_INIT_ALL, &config);
+}
+
+//-----------------------------------------------------------------------------
 // Initialization and Cleanup
 //-----------------------------------------------------------------------------
 

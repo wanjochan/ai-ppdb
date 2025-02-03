@@ -16,6 +16,11 @@ INFRA_SOURCES=(
     "${INFRA_DIR}/infra_core.c"
 )
 
+# 定义 infra 测试文件
+INFRA_TEST_SOURCES=(
+    "${TEST_DIR}/white/infra/test_infra_config.c"
+)
+
 # 编译 infra 库
 build_infra() {
     local build_dir="${BUILD_DIR}/infra"
@@ -72,5 +77,35 @@ build_infra() {
     ls -lh "${lib_file}"
 }
 
-# 执行构建
+# 编译和运行测试
+build_and_run_tests() {
+    local build_dir="${BUILD_DIR}/infra/tests"
+    mkdir -p "${build_dir}"
+
+    # 编译测试文件
+    for test_src in "${INFRA_TEST_SOURCES[@]}"; do
+        local test_name=$(basename "${test_src}" .c)
+        local test_bin="${build_dir}/${test_name}"
+        
+        echo "Compiling test: ${test_src}"
+        "${CC}" ${CFLAGS} -I"${PPDB_DIR}/src" -I"${PPDB_DIR}/test" \
+            "${test_src}" "${BUILD_DIR}/infra/libinfra.a" -o "${test_bin}"
+        
+        if [ $? -ne 0 ]; then
+            echo "Error: Failed to compile test ${test_src}"
+            exit 1
+        fi
+        
+        # 运行测试
+        echo "Running test: ${test_name}"
+        "${test_bin}"
+        if [ $? -ne 0 ]; then
+            echo "Error: Test ${test_name} failed"
+            exit 1
+        fi
+    done
+}
+
+# 执行构建和测试
 build_infra
+build_and_run_tests
