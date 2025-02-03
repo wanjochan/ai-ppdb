@@ -1,11 +1,13 @@
 #include "internal/peer/peer_rinetd.h"
-#include "internal/peer/peer_service.h"
-#include "internal/infra/infra_core.h"
-#include "internal/infra/infra_net.h"
 #include "internal/infra/infra_log.h"
-#include <poll.h>
+#include "internal/infra/infra_thread.h"
+#include "internal/infra/infra_net.h"
+#include "internal/infra/infra_error.h"
+#include "internal/poly/poly_poll.h"
+
 #include <errno.h>
 #include <string.h>
+#include <poll.h>
 
 // Default configuration
 static rinetd_config_t g_rinetd_default_config = {
@@ -95,6 +97,151 @@ static void* handle_connection(void* args) {
     return NULL;
 }
 
+// Forward data between two sockets
+static infra_error_t forward_data(infra_socket_t client, infra_socket_t server) {
+    INFRA_LOG_INFO("Starting data forwarding between client and server");
+    
+    poly_poll_t* poll = NULL;
+    infra_error_t err = poly_poll_create(&poll);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create poll: %d", err);
+        return err;
+    }
+
+    // Add both sockets to poll with read and error events
+    err = poly_poll_add(poll, client, POLLIN | POLLERR | POLLHUP);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to add client to poll: %d", err);
+        poly_poll_destroy(poll);
+        return err;
+    }
+
+    err = poly_poll_add(poll, server, POLLIN | POLLERR | POLLHUP);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to add server to poll: %d", err);
+        poly_poll_destroy(poll);
+        return err;
+    }
+
+    char client_buf[8192] = {0};
+    char server_buf[8192] = {0};
+    size_t client_buf_len = 0;
+    size_t server_buf_len = 0;
+    size_t total_client_to_server = 0;
+    size_t total_server_to_client = 0;
+
+    while (1) {
+        INFRA_LOG_DEBUG("Waiting for events...");
+        err = poly_poll_wait(poll, 30000); // 30 seconds timeout
+        if (err != INFRA_OK) {
+            if (err == INFRA_ERROR_TIMEOUT) {
+                INFRA_LOG_INFO("Poll timeout, no activity for 30 seconds");
+                break;
+            }
+            INFRA_LOG_ERROR("Poll failed: %d", err);
+            break;
+        }
+
+        for (size_t i = 0; i < poly_poll_get_count(poll); i++) {
+            int events = 0;
+            infra_socket_t sock = -1;
+            err = poly_poll_get_events(poll, i, &events);
+            if (err != INFRA_OK) continue;
+            err = poly_poll_get_socket(poll, i, &sock);
+            if (err != INFRA_OK) continue;
+
+            INFRA_LOG_DEBUG("Got events 0x%x for socket %d", events, (int)sock);
+
+            if (events & (POLLERR | POLLHUP)) {
+                INFRA_LOG_ERROR("Socket error or hangup on %s (events=0x%x)", 
+                    sock == client ? "client" : "server", events);
+                goto cleanup;
+            }
+
+            if (events & POLLIN) {
+                if (sock == client && client_buf_len < sizeof(client_buf)) {
+                    // Read from client
+                    size_t received = 0;
+                    err = infra_net_recv(client, client_buf + client_buf_len, 
+                        sizeof(client_buf) - client_buf_len, &received);
+                    if (err != INFRA_OK) {
+                        if (err != INFRA_ERROR_TIMEOUT) {
+                            INFRA_LOG_ERROR("Failed to receive from client: %d (errno=%d: %s)", 
+                                err, errno, strerror(errno));
+                            goto cleanup;
+                        }
+                    } else if (received == 0) {
+                        // Client closed connection
+                        INFRA_LOG_INFO("Client closed connection");
+                        goto cleanup;
+                    } else {
+                        client_buf_len += received;
+                        INFRA_LOG_INFO("Received %zu bytes from client", received);
+                        
+                        // Immediately try to send to server
+                        size_t sent = 0;
+                        err = infra_net_send(server, client_buf, client_buf_len, &sent);
+                        if (err != INFRA_OK) {
+                            if (err != INFRA_ERROR_TIMEOUT) {
+                                INFRA_LOG_ERROR("Failed to send to server: %d (errno=%d: %s)", 
+                                    err, errno, strerror(errno));
+                                goto cleanup;
+                            }
+                        } else {
+                            memmove(client_buf, client_buf + sent, client_buf_len - sent);
+                            client_buf_len -= sent;
+                            total_client_to_server += sent;
+                            INFRA_LOG_INFO("Sent %zu bytes to server", sent);
+                        }
+                    }
+                } else if (sock == server && server_buf_len < sizeof(server_buf)) {
+                    // Read from server
+                    size_t received = 0;
+                    err = infra_net_recv(server, server_buf + server_buf_len,
+                        sizeof(server_buf) - server_buf_len, &received);
+                    if (err != INFRA_OK) {
+                        if (err != INFRA_ERROR_TIMEOUT) {
+                            INFRA_LOG_ERROR("Failed to receive from server: %d (errno=%d: %s)", 
+                                err, errno, strerror(errno));
+                            goto cleanup;
+                        }
+                    } else if (received == 0) {
+                        // Server closed connection
+                        INFRA_LOG_INFO("Server closed connection");
+                        goto cleanup;
+                    } else {
+                        server_buf_len += received;
+                        INFRA_LOG_INFO("Received %zu bytes from server", received);
+                        
+                        // Immediately try to send to client
+                        size_t sent = 0;
+                        err = infra_net_send(client, server_buf, server_buf_len, &sent);
+                        if (err != INFRA_OK) {
+                            if (err != INFRA_ERROR_TIMEOUT) {
+                                INFRA_LOG_ERROR("Failed to send to client: %d (errno=%d: %s)", 
+                                    err, errno, strerror(errno));
+                                goto cleanup;
+                            }
+                        } else {
+                            memmove(server_buf, server_buf + sent, server_buf_len - sent);
+                            server_buf_len -= sent;
+                            total_server_to_client += sent;
+                            INFRA_LOG_INFO("Sent %zu bytes to client", sent);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+cleanup:
+    INFRA_LOG_INFO("Total bytes forwarded: client->server: %zu, server->client: %zu",
+        total_client_to_server, total_server_to_client);
+    poly_poll_destroy(poll);
+    return INFRA_OK;
+}
+
+// Handle a connection thread
 static void* handle_connection_thread(void* args) {
     rinetd_session_t* session = (rinetd_session_t*)args;
     if (!session) {
@@ -108,9 +255,6 @@ static void* handle_connection_thread(void* args) {
     if (err == INFRA_OK) {
         INFRA_LOG_INFO("New client connection from %s:%d", client_addr.ip, client_addr.port);
     }
-
-    INFRA_LOG_INFO("New connection, forwarding to %s:%d", 
-        session->rule.dst_addr, session->rule.dst_port);
 
     // Connect to destination
     infra_socket_t server = -1;
@@ -130,59 +274,34 @@ static void* handle_connection_thread(void* args) {
     }
     INFRA_LOG_INFO("Connected to %s:%d", dst_addr.ip, dst_addr.port);
 
-    // Forward data
-    char buffer[4096];
-    size_t received = 0;
-    size_t sent = 0;
-
-    // Client -> Server
-    INFRA_LOG_INFO("Waiting for data from client...");
-    err = infra_net_recv(session->client, buffer, sizeof(buffer), &received);
+    // Set both sockets to non-blocking mode
+    err = infra_net_set_nonblock(session->client, true);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to receive from client: %d (errno=%d: %s)", 
-            err, errno, strerror(errno));
-        goto cleanup;
+        INFRA_LOG_ERROR("Failed to set client socket to non-blocking mode: %d", err);
+        infra_net_close(server);
+        infra_net_close(session->client);
+        free(session);
+        return NULL;
     }
-    INFRA_LOG_INFO("Received %zu bytes from client: %.100s%s", 
-        received, buffer, received > 100 ? "..." : "");
 
-    INFRA_LOG_INFO("Sending data to server...");
-    err = infra_net_send(server, buffer, received, &sent);
+    err = infra_net_set_nonblock(server, true);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to send to server: %d (errno=%d: %s)", 
-            err, errno, strerror(errno));
-        goto cleanup;
+        INFRA_LOG_ERROR("Failed to set server socket to non-blocking mode: %d", err);
+        infra_net_close(server);
+        infra_net_close(session->client);
+        free(session);
+        return NULL;
     }
-    INFRA_LOG_INFO("Sent %zu bytes to server", sent);
 
-    // Server -> Client
-    received = 0;
-    sent = 0;
-    INFRA_LOG_INFO("Waiting for response from server...");
-    err = infra_net_recv(server, buffer, sizeof(buffer), &received);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to receive from server: %d (errno=%d: %s)", 
-            err, errno, strerror(errno));
-        goto cleanup;
-    }
-    INFRA_LOG_INFO("Received %zu bytes from server: %.100s%s", 
-        received, buffer, received > 100 ? "..." : "");
+    // Forward data in both directions
+    INFRA_LOG_INFO("Starting data forwarding...");
+    forward_data(session->client, server);
 
-    INFRA_LOG_INFO("Sending response to client...");
-    err = infra_net_send(session->client, buffer, received, &sent);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to send to client: %d (errno=%d: %s)", 
-            err, errno, strerror(errno));
-        goto cleanup;
-    }
-    INFRA_LOG_INFO("Sent %zu bytes to client", sent);
-
-cleanup:
+    // Cleanup
     INFRA_LOG_INFO("Closing connection");
     infra_net_close(server);
     infra_net_close(session->client);
     free(session);
-    INFRA_LOG_INFO("Connection closed");
     return NULL;
 }
 
