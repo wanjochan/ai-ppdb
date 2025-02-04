@@ -7,6 +7,8 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 // Basic value types
 typedef int64_t I64;
@@ -24,7 +26,10 @@ typedef enum ErrorCode {
     ERR_TYPE,      // Type error
     ERR_NAME,      // Name error
     ERR_MEMORY,    // Out of memory
-    ERR_RUNTIME    // Runtime error
+    ERR_RUNTIME,   // Runtime error
+    ERR_OVERFLOW,  // Numeric overflow
+    ERR_UNDERFLOW, // Numeric underflow
+    ERR_DIVZERO    // Division by zero
 } ErrorCode;
 
 // Object types
@@ -99,8 +104,6 @@ struct Object {
 // Core API
 Object* infra_script_eval(const char* code, Object* env);
 Object* infra_script_call(Object* fn, Object* args);
-Object* infra_script_get(Object* obj, const char* key);
-void infra_script_set(Object* obj, const char* key, Object* val);
 
 // Object creation
 Object* infra_script_new_nil(void);
@@ -118,8 +121,24 @@ Object* infra_script_new_error(ErrorCode code, const char* msg, const char* file
 void infra_script_retain(Object* obj);
 void infra_script_release(Object* obj);
 
-// Error handling
+// Type checking
+bool infra_script_is_nil(Object* obj);
+bool infra_script_is_i64(Object* obj);
+bool infra_script_is_f64(Object* obj);
+bool infra_script_is_number(Object* obj);
+bool infra_script_is_str(Object* obj);
+bool infra_script_is_function(Object* obj);
+bool infra_script_is_call(Object* obj);
+bool infra_script_is_dict(Object* obj);
+bool infra_script_is_array(Object* obj);
 bool infra_script_is_error(Object* obj);
+
+// Type conversion
+I64 infra_script_to_i64(Object* obj, bool* ok);
+F64 infra_script_to_f64(Object* obj, bool* ok);
+const char* infra_script_to_str(Object* obj, bool* ok);
+
+// Error handling
 ErrorCode infra_script_error_code(Object* obj);
 const char* infra_script_error_message(Object* obj);
 const char* infra_script_error_file(Object* obj);
@@ -130,9 +149,30 @@ void infra_script_array_push(Object* array, Object* item);
 Object* infra_script_array_get(Object* array, size_t index);
 size_t infra_script_array_size(Object* array);
 
+// Dictionary operations
+void infra_script_dict_set(Object* dict, Object* key, Object* value);
+Object* infra_script_dict_get(Object* dict, Object* key);
+size_t infra_script_dict_size(Object* dict);
+void infra_script_dict_del(Object* dict, Object* key);
+
 // Environment operations
 Object* infra_script_new_env(Object* parent);
 Object* infra_script_env_get(Object* env, const char* name);
 void infra_script_env_set(Object* env, const char* name, Object* value);
+void infra_script_env_del(Object* env, const char* name);
+
+// Arithmetic operations
+Object* infra_script_add(Object* left, Object* right);  // + operator
+Object* infra_script_sub(Object* left, Object* right);  // - operator
+Object* infra_script_mul(Object* left, Object* right);  // * operator
+Object* infra_script_div(Object* left, Object* right);  // / operator
+Object* infra_script_neg(Object* operand);             // unary -
+
+// Comparison operations
+bool infra_script_eq(Object* left, Object* right);     // == operator
+bool infra_script_lt(Object* left, Object* right);     // < operator
+bool infra_script_le(Object* left, Object* right);     // <= operator
+bool infra_script_gt(Object* left, Object* right);     // > operator
+bool infra_script_ge(Object* left, Object* right);     // >= operator
 
 #endif // INFRA_SCRIPT_H 

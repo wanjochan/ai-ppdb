@@ -156,14 +156,15 @@ int main(int argc, char* argv[]) {
     // Handle command
     char response[MAX_CMD_RESPONSE];
     err = service->cmd_handler(command, response, sizeof(response));
-    if (err != INFRA_OK) {
-        fprintf(stderr, "Command failed: %d\n", err);
-        return 1;
-    }
-
+    
     // Print response if any
     if (response[0] != '\0') {
         printf("%s", response);
+    }
+
+    // Exit with error if command failed
+    if (err != INFRA_OK) {
+        return 1;
     }
 
     // If this is a start command, keep running
