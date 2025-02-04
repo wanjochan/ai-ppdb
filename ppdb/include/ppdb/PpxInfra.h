@@ -2,10 +2,12 @@
 #define PPX_INFRA_H
 
 #include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxLog.h"
 
 typedef struct PpxInfra {
-    // Base
-    InfraxCore *core;  // Use pointer to avoid object slicing
+    // Base components
+    InfraxCore *core;   // Core functionality
+    InfraxLog *logger;  // Logging functionality
     
     // Methods
     struct PpxInfra* (*new)(void);

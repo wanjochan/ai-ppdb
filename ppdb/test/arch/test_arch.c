@@ -3,6 +3,7 @@
 #include "ppdb/PpxArch.h"
 #include "ppdb/PpxInfra.h"
 #include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxLog.h"
 
 // Test InfraxCore functionality
 void test_infrax_core() {
@@ -22,10 +23,16 @@ void test_ppx_infra() {
     PpxInfra* infra = ppx_infra_new();
     assert(infra != NULL);
     assert(infra->core != NULL);
+    assert(infra->logger != NULL);
     assert(infra->core->print != NULL);
     
     // Test core access
     infra->core->print(infra->core);
+    
+    // Test logging methods
+    infra->logger->info(infra->logger, "Testing PpxInfra logging: %s", "INFO");
+    infra->logger->warn(infra->logger, "Testing PpxInfra logging: %s", "WARN");
+    infra->logger->error(infra->logger, "Testing PpxInfra logging: %s", "ERROR");
     
     // Cleanup
     infra->free(infra);
@@ -38,9 +45,15 @@ void test_ppx_arch() {
     assert(arch != NULL);
     assert(arch->infra != NULL);
     assert(arch->infra->core != NULL);
+    assert(arch->infra->logger != NULL);
     
     // Test component access
     arch->infra->core->print(arch->infra->core);
+    
+    // Test logging through architecture
+    arch->infra->logger->info(arch->infra->logger, "Testing PpxArch logging: %s", "INFO");
+    arch->infra->logger->warn(arch->infra->logger, "Testing PpxArch logging: %s", "WARN");
+    arch->infra->logger->error(arch->infra->logger, "Testing PpxArch logging: %s", "ERROR");
     
     // Cleanup
     arch->free(arch);
