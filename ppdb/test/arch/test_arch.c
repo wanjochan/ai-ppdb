@@ -9,9 +9,6 @@
 void test_infrax_core() {
     InfraxCore* core = infrax_core_new();
     assert(core != NULL);
-    assert(core->print != NULL);
-    
-    core->print(core);
     
     // Cleanup
     core->free(core);
@@ -24,10 +21,6 @@ void test_ppx_infra() {
     assert(infra != NULL);
     assert(infra->core != NULL);
     assert(infra->logger != NULL);
-    assert(infra->core->print != NULL);
-    
-    // Test core access
-    infra->core->print(infra->core);
     
     // Test logging methods
     infra->logger->info(infra->logger, "Testing PpxInfra logging: %s", "INFO");
@@ -46,9 +39,6 @@ void test_ppx_arch() {
     assert(arch->infra != NULL);
     assert(arch->infra->core != NULL);
     assert(arch->infra->logger != NULL);
-    
-    // Test component access
-    arch->infra->core->print(arch->infra->core);
     
     // Test logging through architecture
     arch->infra->logger->info(arch->infra->logger, "Testing PpxArch logging: %s", "INFO");

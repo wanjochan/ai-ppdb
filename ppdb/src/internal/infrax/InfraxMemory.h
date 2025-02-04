@@ -5,20 +5,7 @@
 #include "InfraxMemoryPool.h"
 #include "InfraxMemoryGc.h"
 
-typedef enum {
-    MEMORY_MODE_BASE,    // 基础内存管理
-    MEMORY_MODE_POOL,    // 内存池模式
-    MEMORY_MODE_GC       // 垃圾回收模式
-} InfraxMemoryMode;
-
-typedef struct {
-    InfraxMemoryMode mode;
-    union {
-        InfraxMemoryPoolConfig pool_config;
-        InfraxMemoryGcConfig gc_config;
-    };
-} InfraxMemoryConfig;
-
+// Memory manager interface
 typedef struct InfraxMemory {
     // Current mode
     InfraxMemoryMode mode;
@@ -31,10 +18,7 @@ typedef struct InfraxMemory {
     };
     
     // Methods
-    struct InfraxMemory* (*new)(void);
     void (*free)(struct InfraxMemory*);
-    
-    // Configuration
     void (*set_config)(struct InfraxMemory*, const InfraxMemoryConfig* config);
     
     // Memory operations (delegates to current implementation)

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdarg.h>
 #include "internal/infrax/InfraxLog.h"
 
 // Private functions
@@ -25,33 +26,32 @@ static const char* level_to_str(LogLevel level) {
 }
 
 static void log_message(InfraxLog* self, LogLevel level, const char* format, va_list args) {
-    if (!self || !self->core || !format) return;
+    if (!self || !format) return;
+    
+    // Check log level
+    if (level < self->min_log_level) return;
     
     char time_str[32];
     get_time_str(time_str, sizeof(time_str));
     
-    // First format the message with the timestamp
+    // First format the message with the timestamp and level
     char msg_buffer[1024];  // Reasonable buffer size
-    int prefix_len = snprintf(msg_buffer, sizeof(msg_buffer), "[%s] ", time_str);
+    int prefix_len = snprintf(msg_buffer, sizeof(msg_buffer), "[%s][%s] ", 
+                            time_str, level_to_str(level));
     if (prefix_len < 0 || prefix_len >= sizeof(msg_buffer)) return;
     
     // Then format the actual message
-    va_list args_copy;
-    va_copy(args_copy, args);
-    vsnprintf(msg_buffer + prefix_len, sizeof(msg_buffer) - prefix_len, format, args_copy);
-    va_end(args_copy);
+    vsnprintf(msg_buffer + prefix_len, sizeof(msg_buffer) - prefix_len, format, args);
     
-    // Now pass the formatted message to core
-    if (self->core->log_message) {
-        self->core->log_message(self->core, level, "%s", msg_buffer);
-    }
+    // Output the message
+    fprintf(stderr, "%s\n", msg_buffer);
 }
 
 static void infrax_log_init(InfraxLog *self) {
     if (!self) return;
     
-    // Get the global InfraxCore instance
-    self->core = get_global_infra_core();
+    // Initialize data
+    self->min_log_level = LOG_LEVEL_INFO;  // Default log level
     
     // Initialize methods
     self->new = infrax_log_new;
@@ -74,17 +74,16 @@ InfraxLog* infrax_log_new(void) {
 
 void infrax_log_free(InfraxLog *self) {
     if (!self) return;
-    // Note: We don't free core as it's a reference to the global instance
     free(self);
 }
 
 void infrax_log_set_level(InfraxLog *self, LogLevel level) {
-    if (!self || !self->core) return;
-    self->core->set_log_level(self->core, level);
+    if (!self) return;
+    self->min_log_level = level;
 }
 
 void infrax_log_debug(InfraxLog *self, const char* format, ...) {
-    if (!self || !self->core) return;
+    if (!self) return;
     va_list args;
     va_start(args, format);
     log_message(self, LOG_LEVEL_DEBUG, format, args);
@@ -92,7 +91,7 @@ void infrax_log_debug(InfraxLog *self, const char* format, ...) {
 }
 
 void infrax_log_info(InfraxLog *self, const char* format, ...) {
-    if (!self || !self->core) return;
+    if (!self) return;
     va_list args;
     va_start(args, format);
     log_message(self, LOG_LEVEL_INFO, format, args);
@@ -100,7 +99,7 @@ void infrax_log_info(InfraxLog *self, const char* format, ...) {
 }
 
 void infrax_log_warn(InfraxLog *self, const char* format, ...) {
-    if (!self || !self->core) return;
+    if (!self) return;
     va_list args;
     va_start(args, format);
     log_message(self, LOG_LEVEL_WARN, format, args);
@@ -108,7 +107,7 @@ void infrax_log_warn(InfraxLog *self, const char* format, ...) {
 }
 
 void infrax_log_error(InfraxLog *self, const char* format, ...) {
-    if (!self || !self->core) return;
+    if (!self) return;
     va_list args;
     va_start(args, format);
     log_message(self, LOG_LEVEL_ERROR, format, args);

@@ -1,63 +1,100 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+// #include "InfraxMemoryConfig.h"
 #include "InfraxMemoryGc.h"
 
-// 私有函数声明
+// Forward declarations
 static void* gc_alloc(InfraxMemoryBase* base, size_t size);
 static void* gc_realloc(InfraxMemoryBase* base, void* ptr, size_t new_size);
 static void gc_dealloc(InfraxMemoryBase* base, void* ptr);
 static void* gc_memset(InfraxMemoryBase* base, void* ptr, int value, size_t size);
 static void gc_get_stats(InfraxMemoryBase* base, InfraxMemoryStats* stats);
 static void gc_reset_stats(InfraxMemoryBase* base);
+static void gc_set_config(InfraxMemoryBase* base, const InfraxMemoryConfig* config);
 
-static bool should_trigger_gc(InfraxMemoryGc* self);
-static void mark_phase(InfraxMemoryGc* self);
-static void sweep_phase(InfraxMemoryGc* self);
-static void scan_stack(InfraxMemoryGc* self);
-static void scan_memory_region(InfraxMemoryGc* self, void* start, void* end);
-static void mark_object(InfraxMemoryGc* self, void* ptr);
+// Private functions
 static GcHeader* get_header(void* ptr);
 static void* get_user_ptr(GcHeader* header);
 static bool is_pointer_valid(InfraxMemoryGc* self, void* ptr);
+static bool should_trigger_gc(InfraxMemoryGc* self);
+static void scan_stack(InfraxMemoryGc* self);
+static void mark_object(InfraxMemoryGc* self, void* ptr);
+static void sweep_phase(InfraxMemoryGc* self);
 
-// 构造函数
+// Public configuration function
+bool infrax_memory_gc_set_config(InfraxMemoryGc* self, const InfraxMemoryGcConfig* config) {
+    if (!self || !config) return false;
+    
+    // Copy configuration
+    memcpy(&self->config, config, sizeof(InfraxMemoryGcConfig));
+    
+    // Ensure valid configuration
+    if (self->config.heap_size == 0) {
+        self->config.heap_size = 1024 * 1024; // 1MB default
+    }
+    if (self->config.collection_threshold == 0) {
+        self->config.collection_threshold = self->config.heap_size / 2;
+    }
+    
+    // Free old heap if exists
+    if (self->heap_start) {
+        free(self->heap_start);
+        self->heap_start = NULL;
+        self->heap_size = 0;
+        self->free_list = NULL;
+    }
+    
+    // Allocate new heap
+    self->heap_start = malloc(self->config.heap_size);
+    if (!self->heap_start) return false;
+    
+    self->heap_size = self->config.heap_size;
+    self->free_list = self->heap_start;
+    
+    // Reset statistics
+    memset(&self->stats, 0, sizeof(InfraxMemoryStats));
+    
+    return true;
+}
+
+// Internal configuration function
+static void gc_set_config(InfraxMemoryBase* base, const InfraxMemoryConfig* config) {
+    if (!base || !config) return;
+    InfraxMemoryGc* self = (InfraxMemoryGc*)base;
+    infrax_memory_gc_set_config(self, &config->gc_config);
+}
+
+// Constructor
 InfraxMemoryGc* infrax_memory_gc_new(void) {
     InfraxMemoryGc* self = (InfraxMemoryGc*)malloc(sizeof(InfraxMemoryGc));
     if (!self) return NULL;
     
-    // 初始化基础结构
-    self->base.new = (InfraxMemoryBase* (*)(void))infrax_memory_gc_new;
-    self->base.free = (void (*)(InfraxMemoryBase*))infrax_memory_gc_free;
+    // Initialize base memory interface
     self->base.alloc = gc_alloc;
     self->base.realloc = gc_realloc;
     self->base.dealloc = gc_dealloc;
     self->base.memset = gc_memset;
     self->base.get_stats = gc_get_stats;
     self->base.reset_stats = gc_reset_stats;
+    self->base.set_config = gc_set_config;
     
-    // 初始化GC配置
-    self->config.initial_heap_size = 1024 * 1024;  // 1MB
-    self->config.gc_threshold = 1024 * 512;        // 512KB
-    self->config.enable_debug = false;
-    
-    // 初始化统计信息
-    memset(&self->stats, 0, sizeof(InfraxMemoryGcStats));
-    
-    // 初始化GC状态
+    // Initialize GC members
     self->heap_start = NULL;
     self->heap_size = 0;
+    self->free_list = NULL;
     self->objects = NULL;
     self->stack_bottom = NULL;
+    memset(&self->stats, 0, sizeof(InfraxMemoryStats));
     
     return self;
 }
 
-// 析构函数
+// Destructor
 void infrax_memory_gc_free(InfraxMemoryGc* self) {
     if (!self) return;
     
-    // 释放所有对象
+    // Free all allocated objects
     GcHeader* current = self->objects;
     while (current) {
         GcHeader* next = current->next;
@@ -65,6 +102,7 @@ void infrax_memory_gc_free(InfraxMemoryGc* self) {
         current = next;
     }
     
+    // Free the heap
     if (self->heap_start) {
         free(self->heap_start);
     }
@@ -72,129 +110,133 @@ void infrax_memory_gc_free(InfraxMemoryGc* self) {
     free(self);
 }
 
-// 内存分配
+// Memory operations
 static void* gc_alloc(InfraxMemoryBase* base, size_t size) {
+    if (!base || size == 0) return NULL;
     InfraxMemoryGc* self = (InfraxMemoryGc*)base;
-    if (!self || size == 0) return NULL;
     
-    // 检查是否需要GC
+    // Check if GC should be triggered
     if (should_trigger_gc(self)) {
         uint64_t start_time = (uint64_t)time(NULL) * 1000;
-        self->collect(self);
-        self->stats.last_gc_time_ms = (uint64_t)time(NULL) * 1000 - start_time;
+        scan_stack(self);
+        sweep_phase(self);
     }
     
-    // 分配内存
+    // Allocate new object
     GcHeader* header = (GcHeader*)malloc(sizeof(GcHeader) + size);
     if (!header) return NULL;
     
+    // Initialize header
     header->size = size;
     header->marked = false;
     header->next = self->objects;
     self->objects = header;
     
-    // 更新统计信息
-    self->stats.base_stats.current_usage += size;
-    self->stats.base_stats.total_allocations++;
-    if (self->stats.base_stats.current_usage > self->stats.base_stats.peak_usage) {
-        self->stats.base_stats.peak_usage = self->stats.base_stats.current_usage;
+    // Update statistics
+    self->stats.current_usage += size;
+    self->stats.total_allocations++;
+    if (self->stats.current_usage > self->stats.peak_usage) {
+        self->stats.peak_usage = self->stats.current_usage;
     }
     
     return get_user_ptr(header);
 }
 
-// 内存重分配
 static void* gc_realloc(InfraxMemoryBase* base, void* ptr, size_t new_size) {
     if (!base) return NULL;
-    if (!ptr) return base->alloc(base, new_size);
+    if (!ptr) return gc_alloc(base, new_size);
     if (new_size == 0) {
-        base->dealloc(base, ptr);
+        gc_dealloc(base, ptr);
         return NULL;
     }
     
+    InfraxMemoryGc* self = (InfraxMemoryGc*)base;
     GcHeader* header = get_header(ptr);
     if (new_size <= header->size) return ptr;
     
-    void* new_ptr = base->alloc(base, new_size);
+    // Allocate new block
+    void* new_ptr = gc_alloc(base, new_size);
     if (!new_ptr) return NULL;
     
+    // Copy data and free old block
     memcpy(new_ptr, ptr, header->size);
-    base->dealloc(base, ptr);
+    gc_dealloc(base, ptr);
     
     return new_ptr;
 }
 
-// 内存释放（在GC模式下，这个函数实际上不会立即释放内存）
 static void gc_dealloc(InfraxMemoryBase* base, void* ptr) {
-    // 在GC模式下，我们不直接释放内存，而是等待GC来处理
     if (!base || !ptr) return;
-    
-    // 但我们可以更新一些统计信息
     InfraxMemoryGc* self = (InfraxMemoryGc*)base;
+    
     GcHeader* header = get_header(ptr);
-    self->stats.base_stats.current_usage -= header->size;
+    if (!header) return;
+    
+    // Update statistics
+    self->stats.current_usage -= header->size;
+    self->stats.total_deallocations++;
+    
+    // Mark as free
+    header->marked = false;
 }
 
-// 内存设置
 static void* gc_memset(InfraxMemoryBase* base, void* ptr, int value, size_t size) {
     if (!base || !ptr) return NULL;
     return memset(ptr, value, size);
 }
 
-// 检查是否应该触发GC
+static void gc_get_stats(InfraxMemoryBase* base, InfraxMemoryStats* stats) {
+    if (!base || !stats) return;
+    InfraxMemoryGc* self = (InfraxMemoryGc*)base;
+    *stats = self->stats;
+}
+
+static void gc_reset_stats(InfraxMemoryBase* base) {
+    if (!base) return;
+    InfraxMemoryGc* self = (InfraxMemoryGc*)base;
+    memset(&self->stats, 0, sizeof(InfraxMemoryStats));
+}
+
+// GC implementation
 static bool should_trigger_gc(InfraxMemoryGc* self) {
     if (!self) return false;
-    
-    // 当前内存使用量超过阈值
-    return self->stats.base_stats.current_usage >= self->config.gc_threshold;
+    return self->stats.current_usage >= self->config.collection_threshold;
 }
 
-// 标记阶段
-static void mark_phase(InfraxMemoryGc* self) {
-    if (!self) return;
-    
-    // 从根集开始标记
-    scan_stack(self);
-    
-    // TODO: 标记全局变量和其他根集
-}
-
-// 扫描栈空间
 static void scan_stack(InfraxMemoryGc* self) {
     if (!self || !self->stack_bottom) return;
     
-    void* stack_top = &stack_top;  // 获取当前栈顶
-    scan_memory_region(self, stack_top, self->stack_bottom);
-}
-
-// 扫描内存区域
-static void scan_memory_region(InfraxMemoryGc* self, void* start, void* end) {
-    if (!self || !start || !end) return;
+    // Get current stack pointer
+    void* stack_top = &stack_top;
     
-    void** current = (void**)start;
-    while (current < (void**)end) {
-        void* ptr = *current;
-        if (is_pointer_valid(self, ptr)) {
-            mark_object(self, ptr);
+    // Scan stack for pointers
+    void* start = (stack_top < self->stack_bottom) ? stack_top : self->stack_bottom;
+    void* end = (stack_top < self->stack_bottom) ? self->stack_bottom : stack_top;
+    
+    for (void** p = start; p < (void**)end; p++) {
+        if (is_pointer_valid(self, *p)) {
+            mark_object(self, *p);
         }
-        current++;
     }
 }
 
-// 标记对象
 static void mark_object(InfraxMemoryGc* self, void* ptr) {
     if (!self || !ptr) return;
     
     GcHeader* header = get_header(ptr);
     if (!header || header->marked) return;
     
+    // Mark the object
     header->marked = true;
     
-    // 递归标记对象中的指针
-    scan_memory_region(self, ptr, (char*)ptr + header->size);
+    // Scan object's memory for more pointers
+    for (void** p = ptr; p < (void**)((char*)ptr + header->size); p++) {
+        if (is_pointer_valid(self, *p)) {
+            mark_object(self, *p);
+        }
+    }
 }
 
-// 清除阶段
 static void sweep_phase(InfraxMemoryGc* self) {
     if (!self) return;
     
@@ -203,77 +245,51 @@ static void sweep_phase(InfraxMemoryGc* self) {
         GcHeader* header = *current;
         
         if (!header->marked) {
-            // 未标记的对象需要被清除
+            // Remove from list and free
             *current = header->next;
-            
-            // 更新统计信息
-            self->stats.total_freed += header->size;
-            self->stats.total_collections++;
-            
+            self->stats.current_usage -= header->size;
             free(header);
         } else {
-            // 重置标记，为下次GC做准备
+            // Clear mark for next collection
             header->marked = false;
             current = &header->next;
         }
     }
 }
 
-// 执行GC
-static void gc_collect(InfraxMemoryGc* self) {
-    if (!self) return;
-    
-    mark_phase(self);
-    sweep_phase(self);
-}
-
-// 获取对象头
+// Helper functions
 static GcHeader* get_header(void* ptr) {
     if (!ptr) return NULL;
     return (GcHeader*)((char*)ptr - sizeof(GcHeader));
 }
 
-// 获取用户指针
 static void* get_user_ptr(GcHeader* header) {
     if (!header) return NULL;
     return (char*)header + sizeof(GcHeader);
 }
 
-// 检查指针是否有效
 static bool is_pointer_valid(InfraxMemoryGc* self, void* ptr) {
     if (!self || !ptr) return false;
     
-    // 检查指针是否在堆范围内
-    if (ptr < self->heap_start || ptr >= (char*)self->heap_start + self->heap_size) {
+    // Check if pointer is within heap bounds
+    char* heap_end = (char*)self->heap_start + self->heap_size;
+    if ((char*)ptr < (char*)self->heap_start || (char*)ptr >= heap_end) {
         return false;
     }
     
-    // 检查是否对齐
+    // Check alignment
     if ((uintptr_t)ptr % sizeof(void*) != 0) {
         return false;
     }
     
-    // 检查是否指向对象头
+    // Check if pointer points to a valid object
     GcHeader* header = get_header(ptr);
     GcHeader* current = self->objects;
+    
     while (current) {
         if (current == header) return true;
         current = current->next;
     }
     
     return false;
-}
-
-// 获取统计信息
-static void gc_get_stats(InfraxMemoryBase* base, InfraxMemoryStats* stats) {
-    if (!base || !stats) return;
-    InfraxMemoryGc* self = (InfraxMemoryGc*)base;
-    memcpy(stats, &self->stats.base_stats, sizeof(InfraxMemoryStats));
-}
-
-// 重置统计信息
-static void gc_reset_stats(InfraxMemoryBase* base) {
-    if (!base) return;
-    InfraxMemoryGc* self = (InfraxMemoryGc*)base;
-    memset(&self->stats, 0, sizeof(InfraxMemoryGcStats));
 }

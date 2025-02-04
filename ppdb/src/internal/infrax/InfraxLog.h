@@ -1,13 +1,11 @@
 #ifndef PPDB_INFRAX_LOG_H
 #define PPDB_INFRAX_LOG_H
 
-#include <stdarg.h>
 #include "internal/infrax/InfraxTypes.h"
-#include "internal/infrax/InfraxCore.h"
 
 typedef struct InfraxLog {
     // Properties
-    InfraxCore* core;  // Reference to InfraxCore instance
+    LogLevel min_log_level;  // Minimum log level to output
     
     // Methods
     struct InfraxLog* (*new)(void);
