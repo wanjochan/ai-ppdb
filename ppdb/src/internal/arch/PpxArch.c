@@ -1,8 +1,15 @@
-#include <stdlib.h>
+#include "cosmopolitan.h"
 #include "ppdb/PpxArch.h"
 #include "ppdb/PpxInfra.h"
 
-// Private functions
+// Global instance
+static PpxArch global_ppxArch = {
+    .infra = NULL,
+    .new = ppx_arch_new,
+    .free = ppx_arch_free
+};
+
+// Private initialization function
 static void ppx_arch_init(PpxArch* self) {
     if (!self) return;
     
@@ -14,19 +21,30 @@ static void ppx_arch_init(PpxArch* self) {
     self->free = ppx_arch_free;
 }
 
-// Public functions
+// Constructor implementation
 PpxArch* ppx_arch_new(void) {
-    PpxArch* arch = (PpxArch*)malloc(sizeof(PpxArch));
-    if (arch) {
-        ppx_arch_init(arch);
+    PpxArch* self = (PpxArch*)malloc(sizeof(PpxArch));
+    if (self) {
+        ppx_arch_init(self);
     }
-    return arch;
+    return self;
 }
 
+// Destructor implementation
 void ppx_arch_free(PpxArch* self) {
     if (!self) return;
     
-    // Don't free infra as it's a global instance
-    
-    free(self);
+    // Don't free global instance
+    if (self != &global_ppxArch) {
+        // Don't free infra as it's a global instance
+        free(self);
+    }
+}
+
+// Get global instance
+PpxArch* get_global_ppxArch(void) {
+    if (!global_ppxArch.infra) {
+        ppx_arch_init(&global_ppxArch);
+    }
+    return &global_ppxArch;
 }

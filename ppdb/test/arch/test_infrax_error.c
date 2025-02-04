@@ -1,60 +1,123 @@
-/*
- * test_infrax_error.c - Test cases for InfraxError module
- */
-
+#include "cosmopolitan.h"
+#include <assert.h>
+#include <pthread.h>
 #include "internal/infrax/InfraxError.h"
-#include "../white/framework/test_framework.h"
 
-void test_error_string(void) {
-    TEST_ASSERT_MSG(strcmp("Success", infrax_error_string(INFRAX_OK)) == 0,
-                   "Expected 'Success' for INFRAX_OK");
-    TEST_ASSERT_MSG(strcmp("Unknown error", infrax_error_string(INFRAX_ERROR_UNKNOWN)) == 0,
-                   "Expected 'Unknown error' for INFRAX_ERROR_UNKNOWN");
-    TEST_ASSERT_MSG(strcmp("No memory", infrax_error_string(INFRAX_ERROR_NO_MEMORY)) == 0,
-                   "Expected 'No memory' for INFRAX_ERROR_NO_MEMORY");
-    TEST_ASSERT_MSG(strcmp("Invalid parameter", infrax_error_string(INFRAX_ERROR_INVALID_PARAM)) == 0,
-                   "Expected 'Invalid parameter' for INFRAX_ERROR_INVALID_PARAM");
-    TEST_ASSERT_MSG(strcmp("Unknown error", infrax_error_string(-999)) == 0,
-                   "Expected 'Unknown error' for invalid error code");
+// 测试基本的错误操作
+void test_error_operations(void) {
+    InfraxError* error = infrax_error_new();
+    assert(error != NULL);
+    
+    // 测试初始状态
+    assert(error->code == 0);
+    assert(error->message[0] == '\0');
+    
+    // 测试设置错误
+    error->set(error, -1, "Test error message");
+    assert(error->code == -1);
+    assert(strcmp(error->get_message(error), "Test error message") == 0);
+    
+    // 测试清除错误
+    error->clear(error);
+    assert(error->code == 0);
+    assert(error->message[0] == '\0');
+    
+    error->free(error);
+    printf("Basic error operations test passed\n");
 }
 
-void test_expected_error(void) {
-    infrax_error_t test_error = INFRAX_ERROR_IO;
+// 用于线程测试的结构
+typedef struct {
+    infrax_error_t code;
+    const char* message;
+} ThreadTestData;
+
+// 线程函数
+void* thread_func(void* arg) {
+    ThreadTestData* data = (ThreadTestData*)arg;
     
-    // Test initial state
-    TEST_ASSERT_FALSE(infrax_is_expected_error(test_error));
+    // 获取线程本地错误实例
+    InfraxError* error = get_global_infrax_error();
+    assert(error != NULL);
     
-    // Test setting expected error
-    infrax_set_expected_error(test_error);
-    TEST_ASSERT_TRUE(infrax_is_expected_error(test_error));
-    TEST_ASSERT_FALSE(infrax_is_expected_error(INFRAX_ERROR_TIMEOUT)); // Different error
+    // 设置错误
+    error->set(error, data->code, data->message);
     
-    // Test clearing expected error
-    infrax_clear_expected_error();
-    TEST_ASSERT_FALSE(infrax_is_expected_error(test_error));
+    // 验证错误状态
+    assert(error->code == data->code);
+    assert(strcmp(error->get_message(error), data->message) == 0);
+    
+    return NULL;
 }
 
-void test_system_error_mapping(void) {
-    // Test system error to infrax error
-    TEST_ASSERT_EQUAL(INFRAX_OK, infrax_error_from_system(0));
-    TEST_ASSERT_EQUAL(INFRAX_ERROR_NO_MEMORY, infrax_error_from_system(ENOMEM));
-    TEST_ASSERT_EQUAL(INFRAX_ERROR_ALREADY_EXISTS, infrax_error_from_system(EEXIST));
-    TEST_ASSERT_EQUAL(INFRAX_ERROR_SYSTEM, infrax_error_from_system(999)); // Unknown system error
+// 测试线程本地存储
+void test_thread_local_storage(void) {
+    pthread_t thread1, thread2;
+    ThreadTestData data1 = {-1, "Error in thread 1"};
+    ThreadTestData data2 = {-2, "Error in thread 2"};
     
-    // Test infrax error to system error
-    TEST_ASSERT_EQUAL(0, infrax_error_to_system(INFRAX_OK));
-    TEST_ASSERT_EQUAL(ENOMEM, infrax_error_to_system(INFRAX_ERROR_NO_MEMORY));
-    TEST_ASSERT_EQUAL(EEXIST, infrax_error_to_system(INFRAX_ERROR_ALREADY_EXISTS));
-    TEST_ASSERT_EQUAL(EINVAL, infrax_error_to_system(INFRAX_ERROR_UNKNOWN)); // Unknown infrax error
+    // 创建两个线程
+    pthread_create(&thread1, NULL, thread_func, &data1);
+    pthread_create(&thread2, NULL, thread_func, &data2);
+    
+    // 等待线程完成
+    pthread_join(thread1, NULL);
+    pthread_join(thread2, NULL);
+    
+    // 主线程的错误应该是独立的
+    InfraxError* error = get_global_infrax_error();
+    assert(error != NULL);
+    assert(error->code == 0);  // 应该是初始状态
+    
+    printf("Thread local storage test passed\n");
+}
+
+// 测试全局实例
+void test_global_instance(void) {
+    InfraxError* error1 = get_global_infrax_error();
+    InfraxError* error2 = get_global_infrax_error();
+    
+    // 同一线程应该返回相同实例
+    assert(error1 == error2);
+    
+    // 测试方法是否正确初始化
+    assert(error1->new != NULL);
+    assert(error1->free != NULL);
+    assert(error1->set != NULL);
+    assert(error1->clear != NULL);
+    assert(error1->get_message != NULL);
+    
+    printf("Global instance test passed\n");
+}
+
+// 测试错误消息长度限制
+void test_message_length_limit(void) {
+    InfraxError* error = get_global_infrax_error();
+    assert(error != NULL);
+    
+    // 创建一个超长消息
+    char long_message[512];
+    memset(long_message, 'A', sizeof(long_message) - 1);
+    long_message[sizeof(long_message) - 1] = '\0';
+    
+    // 设置错误消息
+    error->set(error, -1, long_message);
+    
+    // 验证消息被正确截断
+    assert(strlen(error->message) < sizeof(error->message));
+    assert(error->message[sizeof(error->message) - 1] == '\0');
+    
+    printf("Message length limit test passed\n");
 }
 
 int main(void) {
-    TEST_BEGIN();
+    printf("Starting InfraxError tests...\n");
     
-    RUN_TEST(test_error_string);
-    RUN_TEST(test_expected_error);
-    RUN_TEST(test_system_error_mapping);
+    test_error_operations();
+    test_thread_local_storage();
+    test_global_instance();
+    test_message_length_limit();
     
-    TEST_END();
+    printf("All InfraxError tests passed!\n");
     return 0;
 }
