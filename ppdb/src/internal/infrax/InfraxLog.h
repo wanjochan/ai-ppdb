@@ -1,7 +1,14 @@
 #ifndef PPDB_INFRAX_LOG_H
 #define PPDB_INFRAX_LOG_H
 
-#include "internal/infrax/InfraxTypes.h"
+// #include "internal/infrax/InfraxTypes.h"
+
+typedef enum {
+    LOG_LEVEL_DEBUG,
+    LOG_LEVEL_INFO,
+    LOG_LEVEL_WARN,
+    LOG_LEVEL_ERROR
+} LogLevel;
 
 typedef struct InfraxLog {
     // Properties

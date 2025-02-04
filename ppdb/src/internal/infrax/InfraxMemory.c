@@ -2,172 +2,239 @@
 #include <string.h>
 #include "InfraxMemory.h"
 
-// Forward declarations of internal functions
-static void memory_free(InfraxMemory* self);
-static void memory_set_config(InfraxMemory* self, const InfraxMemoryConfig* config);
-static void* memory_alloc(InfraxMemory* self, size_t size);
-static void* memory_realloc(InfraxMemory* self, void* ptr, size_t new_size);
-static void memory_dealloc(InfraxMemory* self, void* ptr);
-static void* memory_memset(InfraxMemory* self, void* ptr, int value, size_t size);
-static void memory_get_stats(InfraxMemory* self, InfraxMemoryStats* stats);
+// Helper functions for memory pool
+static MemoryBlock* find_best_fit(InfraxMemory* self, size_t size) {
+    MemoryBlock* best = NULL;
+    MemoryBlock* current = self->free_list;
+    size_t min_size = (size_t)-1;
 
-// Constructor
-InfraxMemory* infrax_memory_new(void) {
+    while (current) {
+        if (!current->is_used && current->size >= size) {
+            if (current->size < min_size) {
+                min_size = current->size;
+                best = current;
+            }
+        }
+        current = current->next;
+    }
+    return best;
+}
+
+static void split_block(MemoryBlock* block, size_t size) {
+    size_t total_size = block->size;
+    size_t remaining = total_size - size - sizeof(MemoryBlock);
+    
+    if (remaining >= sizeof(MemoryBlock) + 8) {
+        MemoryBlock* new_block = (MemoryBlock*)((char*)block + sizeof(MemoryBlock) + size);
+        new_block->size = remaining - sizeof(MemoryBlock);
+        new_block->is_used = false;
+        new_block->is_gc_root = false;
+        new_block->next = block->next;
+        
+        block->size = size;
+        block->next = new_block;
+    }
+}
+
+static void merge_free_blocks(InfraxMemory* self) {
+    MemoryBlock* current = self->free_list;
+    
+    while (current && current->next) {
+        if (!current->is_used && !current->next->is_used) {
+            current->size += sizeof(MemoryBlock) + current->next->size;
+            current->next = current->next->next;
+        } else {
+            current = current->next;
+        }
+    }
+}
+
+// Helper functions for GC
+static void mark_from_roots(InfraxMemory* self) {
+    MemoryBlock* obj = self->gc_objects;
+    while (obj) {
+        if (obj->is_gc_root) {
+            obj->is_used = true;
+        }
+        obj = obj->next;
+    }
+}
+
+static void sweep_unused(InfraxMemory* self) {
+    MemoryBlock** obj_ptr = &self->gc_objects;
+    while (*obj_ptr) {
+        MemoryBlock* obj = *obj_ptr;
+        if (!obj->is_used && !obj->is_gc_root) {
+            *obj_ptr = obj->next;
+            self->stats.total_deallocations++;
+            self->stats.current_usage -= obj->size;
+            free(obj);
+        } else {
+            obj->is_used = false;  // Reset for next collection
+            obj_ptr = &obj->next;
+        }
+    }
+}
+
+// Core functions implementation
+InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
     InfraxMemory* self = (InfraxMemory*)malloc(sizeof(InfraxMemory));
     if (!self) return NULL;
-    
-    // Initialize function pointers
-    self->free = memory_free;
-    self->set_config = memory_set_config;
-    self->alloc = memory_alloc;
-    self->realloc = memory_realloc;
-    self->dealloc = memory_dealloc;
-    self->memset = memory_memset;
-    self->get_stats = memory_get_stats;
-    
-    // Set default mode and implementation
-    self->mode = MEMORY_MODE_BASE;
-    self->base = NULL;
-    
+
+    memset(self, 0, sizeof(InfraxMemory));
+    memcpy(&self->config, config, sizeof(InfraxMemoryConfig));
+
+    if (config->use_pool) {
+        self->pool_start = malloc(config->initial_size);
+        if (!self->pool_start) {
+            free(self);
+            return NULL;
+        }
+        
+        self->pool_size = config->initial_size;
+        self->free_list = self->pool_start;
+        self->free_list->size = config->initial_size - sizeof(MemoryBlock);
+        self->free_list->is_used = false;
+        self->free_list->is_gc_root = false;
+        self->free_list->next = NULL;
+    }
+
     return self;
 }
 
-// Destructor
-static void memory_free(InfraxMemory* self) {
+void infrax_memory_free(InfraxMemory* self) {
     if (!self) return;
     
-    // Free current implementation
-    switch (self->mode) {
-        case MEMORY_MODE_BASE:
-            if (self->base) infrax_memory_base_free(self->base);
-            break;
-        case MEMORY_MODE_POOL:
-            if (self->pool) infrax_memory_pool_free(self->pool);
-            break;
-        case MEMORY_MODE_GC:
-            if (self->gc) infrax_memory_gc_free(self->gc);
-            break;
+    if (self->pool_start) {
+        free(self->pool_start);
+    }
+    
+    // Free GC objects
+    MemoryBlock* obj = self->gc_objects;
+    while (obj) {
+        MemoryBlock* next = obj->next;
+        free(obj);
+        obj = next;
     }
     
     free(self);
 }
 
-// Configuration
-static void memory_set_config(InfraxMemory* self, const InfraxMemoryConfig* config) {
-    if (!self || !config) return;
+void* infrax_memory_alloc(InfraxMemory* self, size_t size) {
+    if (!self || size == 0) return NULL;
     
-    // Clean up old implementation
-    switch (self->mode) {
-        case MEMORY_MODE_BASE:
-            if (self->base) infrax_memory_base_free(self->base);
-            break;
-        case MEMORY_MODE_POOL:
-            if (self->pool) infrax_memory_pool_free(self->pool);
-            break;
-        case MEMORY_MODE_GC:
-            if (self->gc) infrax_memory_gc_free(self->gc);
-            break;
+    // Align size to 8 bytes
+    size = (size + 7) & ~7;
+    
+    void* ptr = NULL;
+    if (self->config.use_pool) {
+        // Try pool allocation first
+        MemoryBlock* block = find_best_fit(self, size);
+        if (block) {
+            split_block(block, size);
+            block->is_used = true;
+            block->is_gc_root = self->config.use_gc;
+            ptr = (char*)block + sizeof(MemoryBlock);
+        }
     }
     
-    // Initialize new implementation
-    self->mode = config->mode;
-    switch (config->mode) {
-        case MEMORY_MODE_BASE:
-            self->base = (InfraxMemoryBase*)malloc(sizeof(InfraxMemoryBase));
-            if (self->base) {
-                infrax_memory_base_init(self->base);
-                self->base->set_config = NULL; // 基础模式不需要配置
+    if (!ptr) {
+        // Fallback to direct allocation
+        size_t total_size = sizeof(MemoryBlock) + size;
+        MemoryBlock* block = malloc(total_size);
+        if (!block) return NULL;
+        
+        block->size = size;
+        block->is_used = true;
+        block->is_gc_root = self->config.use_gc;
+        
+        if (self->config.use_gc) {
+            block->next = self->gc_objects;
+            self->gc_objects = block;
+        } else {
+            block->next = NULL;
+        }
+        
+        ptr = (char*)block + sizeof(MemoryBlock);
+    }
+    
+    if (ptr) {
+        self->stats.total_allocations++;
+        self->stats.current_usage += size;
+        if (self->stats.current_usage > self->stats.peak_usage) {
+            self->stats.peak_usage = self->stats.current_usage;
+        }
+    }
+    
+    return ptr;
+}
+
+void infrax_memory_dealloc(InfraxMemory* self, void* ptr) {
+    if (!self || !ptr) return;
+    
+    MemoryBlock* block = (MemoryBlock*)((char*)ptr - sizeof(MemoryBlock));
+    size_t block_size = block->size;  // 保存大小以便后续使用
+    
+    if (self->config.use_pool) {
+        // Check if ptr is in pool range
+        if ((char*)ptr >= (char*)self->pool_start && 
+            (char*)ptr < (char*)self->pool_start + self->pool_size) {
+            block->is_used = false;
+            merge_free_blocks(self);
+            self->stats.total_deallocations++;
+            // 检查减法是否会导致溢出
+            if (self->stats.current_usage >= block_size) {
+                self->stats.current_usage -= block_size;
+            } else {
+                self->stats.current_usage = 0;
             }
-            break;
-            
-        case MEMORY_MODE_POOL:
-            self->pool = infrax_memory_pool_new();
-            if (self->pool) infrax_memory_pool_set_config(self->pool, &config->pool_config);
-            break;
-            
-        case MEMORY_MODE_GC:
-            self->gc = infrax_memory_gc_new();
-            if (self->gc) infrax_memory_gc_set_config(self->gc, &config->gc_config);
-            break;
+            return;
+        }
     }
-}
-
-// Memory operations
-static void* memory_alloc(InfraxMemory* self, size_t size) {
-    if (!self) return NULL;
     
-    switch (self->mode) {
-        case MEMORY_MODE_BASE:
-            return self->base ? self->base->alloc(self->base, size) : NULL;
-        case MEMORY_MODE_POOL:
-            return self->pool ? self->pool->base.alloc(&self->pool->base, size) : NULL;
-        case MEMORY_MODE_GC:
-            return self->gc ? self->gc->base.alloc(&self->gc->base, size) : NULL;
-        default:
-            return NULL;
+    if (!self->config.use_gc) {
+        self->stats.total_deallocations++;
+        // 检查减法是否会导致溢出
+        if (self->stats.current_usage >= block_size) {
+            self->stats.current_usage -= block_size;
+        } else {
+            self->stats.current_usage = 0;
+        }
+        free(block);
     }
+    // If using GC, memory will be freed during collection
 }
 
-static void* memory_realloc(InfraxMemory* self, void* ptr, size_t new_size) {
-    if (!self) return NULL;
+void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
+    if (!ptr) return infrax_memory_alloc(self, size);
+    if (size == 0) {
+        infrax_memory_dealloc(self, ptr);
+        return NULL;
+    }
     
-    switch (self->mode) {
-        case MEMORY_MODE_BASE:
-            return self->base ? self->base->realloc(self->base, ptr, new_size) : NULL;
-        case MEMORY_MODE_POOL:
-            return self->pool ? self->pool->base.realloc(&self->pool->base, ptr, new_size) : NULL;
-        case MEMORY_MODE_GC:
-            return self->gc ? self->gc->base.realloc(&self->gc->base, ptr, new_size) : NULL;
-        default:
-            return NULL;
-    }
-}
-
-static void memory_dealloc(InfraxMemory* self, void* ptr) {
-    if (!self) return;
+    MemoryBlock* block = (MemoryBlock*)((char*)ptr - sizeof(MemoryBlock));
+    if (block->size >= size) return ptr;
     
-    switch (self->mode) {
-        case MEMORY_MODE_BASE:
-            if (self->base) self->base->dealloc(self->base, ptr);
-            break;
-        case MEMORY_MODE_POOL:
-            if (self->pool) self->pool->base.dealloc(&self->pool->base, ptr);
-            break;
-        case MEMORY_MODE_GC:
-            if (self->gc) self->gc->base.dealloc(&self->gc->base, ptr);
-            break;
-    }
-}
-
-static void* memory_memset(InfraxMemory* self, void* ptr, int value, size_t size) {
-    if (!self) return NULL;
+    void* new_ptr = infrax_memory_alloc(self, size);
+    if (!new_ptr) return NULL;
     
-    switch (self->mode) {
-        case MEMORY_MODE_BASE:
-            return self->base ? self->base->memset(self->base, ptr, value, size) : NULL;
-        case MEMORY_MODE_POOL:
-            return self->pool ? self->pool->base.memset(&self->pool->base, ptr, value, size) : NULL;
-        case MEMORY_MODE_GC:
-            return self->gc ? self->gc->base.memset(&self->gc->base, ptr, value, size) : NULL;
-        default:
-            return NULL;
-    }
+    memcpy(new_ptr, ptr, block->size);
+    infrax_memory_dealloc(self, ptr);
+    return new_ptr;
 }
 
-static void memory_get_stats(InfraxMemory* self, InfraxMemoryStats* stats) {
+void infrax_memory_get_stats(const InfraxMemory* self, InfraxMemoryStats* stats) {
     if (!self || !stats) return;
+    memcpy(stats, &self->stats, sizeof(InfraxMemoryStats));
+}
+
+void infrax_memory_collect(InfraxMemory* self) {
+    if (!self || !self->config.use_gc) return;
     
-    switch (self->mode) {
-        case MEMORY_MODE_BASE:
-            if (self->base) self->base->get_stats(self->base, stats);
-            break;
-        case MEMORY_MODE_POOL:
-            if (self->pool) self->pool->base.get_stats(&self->pool->base, stats);
-            break;
-        case MEMORY_MODE_GC:
-            if (self->gc) self->gc->base.get_stats(&self->gc->base, stats);
-            break;
-        default:
-            memset(stats, 0, sizeof(InfraxMemoryStats));
+    if (self->stats.current_usage < self->config.gc_threshold) {
+        return;  // No need to collect yet
     }
+    
+    mark_from_roots(self);
+    sweep_unused(self);
 }

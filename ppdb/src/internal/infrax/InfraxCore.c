@@ -25,17 +25,8 @@ void* infrax_core_forward_call(void* (*target_func)(va_list), ...) {
     return result;
 }
 
-// // Private functions
-// static void infrax_core_print(InfraxCore *self) {
-//     if (!self) return;
-//     printf("InfraxCore: data=%d\n", self->data);
-// }
-
 static void infrax_core_init(InfraxCore *self) {
     if (!self) return;
-    
-    // Initialize data
-    self->data = 0;
     
     // Initialize methods
     self->new = infrax_core_new;
