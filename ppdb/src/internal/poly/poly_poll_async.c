@@ -3,9 +3,14 @@
 #include "internal/infra/infra_log.h"
 #include "internal/infra/infra_net.h"
 #include "internal/infra/infra_thread.h"
+#include "internal/infra/infra_time.h"
 
 #include <poll.h>
 #include <errno.h>
+
+#define THREAD_HEARTBEAT_INTERVAL 1000  // 心跳间隔1秒
+#define THREAD_HEARTBEAT_TIMEOUT 5000   // 心跳超时5秒
+#define THREAD_CHECK_INTERVAL 2000      // 检查间隔2秒
 
 // 服务状态
 typedef enum {
@@ -22,6 +27,8 @@ typedef struct thread_context {
     poly_poll_context_t* ctx;
     bool running;
     struct thread_context* next;  // 用于线程链表
+    uint64_t last_heartbeat;     // 最后一次心跳时间
+    bool needs_restart;          // 是否需要重启
 } thread_context_t;
 
 // 线程管理器
@@ -98,6 +105,100 @@ static void remove_thread(thread_manager_t* mgr, thread_context_t* thread) {
     infra_mutex_unlock(&mgr->mutex);
 }
 
+// 线程心跳检测协程
+static void thread_monitor_coroutine(void* arg) {
+    poly_poll_context_t* ctx = arg;
+    if (!ctx) return;
+    
+    INFRA_LOG_INFO("Thread monitor coroutine started");
+    
+    while (ctx->state == SERVICE_STATE_RUNNING) {
+        uint64_t current_time = infra_get_current_time_ms();
+        
+        infra_mutex_lock(&ctx->thread_mgr.mutex);
+        thread_context_t* thread = ctx->thread_mgr.head;
+        thread_context_t* prev = NULL;
+        
+        while (thread) {
+            bool restart_thread = false;
+            thread_context_t* next = thread->next;  // 保存next指针，因为thread可能被释放
+            
+            // 检查心跳超时
+            if (current_time - thread->last_heartbeat > THREAD_HEARTBEAT_TIMEOUT &&
+                !thread->needs_restart) {  // 避免重复标记
+                INFRA_LOG_WARN("Thread %d heartbeat timeout, marking for restart", 
+                              thread->thread_id);
+                thread->needs_restart = true;
+            }
+            
+            // 如果需要重启且线程已经停止
+            if (thread->needs_restart && !thread->running) {
+                INFRA_LOG_INFO("Restarting thread %d", thread->thread_id);
+                restart_thread = true;
+                
+                // 创建新线程
+                thread_context_t* new_thread = malloc(sizeof(*new_thread));
+                if (!new_thread) {
+                    INFRA_LOG_ERROR("Failed to allocate memory for new thread");
+                    restart_thread = false;
+                } else {
+                    // 初始化新线程上下文
+                    new_thread->thread_id = thread->thread_id;
+                    new_thread->ctx = ctx;
+                    new_thread->running = false;
+                    new_thread->next = next;  // 使用保存的next
+                    new_thread->last_heartbeat = current_time;
+                    new_thread->needs_restart = false;
+                    
+                    // 替换旧线程
+                    if (prev) {
+                        prev->next = new_thread;
+                    } else {
+                        ctx->thread_mgr.head = new_thread;
+                    }
+                    
+                    // 启动新线程
+                    infra_error_t err = infra_thread_pool_submit(
+                        ctx->thread_pool, thread_worker, new_thread);
+                    if (err != INFRA_OK) {
+                        INFRA_LOG_ERROR("Failed to start new thread %d", thread->thread_id);
+                        // 恢复链表
+                        if (prev) {
+                            prev->next = thread;
+                        } else {
+                            ctx->thread_mgr.head = thread;
+                        }
+                        free(new_thread);
+                        restart_thread = false;
+                    }
+                }
+                
+                // 只有在成功创建和启动新线程后才释放旧线程
+                if (restart_thread) {
+                    thread_context_t* old_thread = thread;
+                    thread = new_thread;  // 更新当前线程指针
+                    free(old_thread);
+                }
+            }
+            
+            // 如果没有重启，更新prev指针
+            if (!restart_thread) {
+                prev = thread;
+            }
+            
+            thread = next;  // 使用保存的next继续遍历
+        }
+        
+        infra_mutex_unlock(&ctx->thread_mgr.mutex);
+        
+        // 休眠一段时间再检查
+        infra_sleep_ms(THREAD_CHECK_INTERVAL);
+        infra_async_yield();
+    }
+    
+    INFRA_LOG_INFO("Thread monitor coroutine stopped");
+}
+
 // 线程池工作函数
 static void* thread_worker(void* arg) {
     thread_context_t* ctx = arg;
@@ -106,11 +207,17 @@ static void* thread_worker(void* arg) {
         return NULL;
     }
     
-    ctx->running = true;
+    // 使用原子操作设置running标志
+    __atomic_store_n(&ctx->running, true, __ATOMIC_SEQ_CST);
+    ctx->last_heartbeat = infra_get_current_time_ms();
     INFRA_LOG_INFO("Worker thread %d started", ctx->thread_id);
     
     // 创建线程特定的协程调度器
-    while (ctx->running && ctx->ctx->state == SERVICE_STATE_RUNNING) {
+    while (__atomic_load_n(&ctx->running, __ATOMIC_SEQ_CST) && 
+           ctx->ctx->state == SERVICE_STATE_RUNNING) {
+        // 更新心跳
+        ctx->last_heartbeat = infra_get_current_time_ms();
+        
         // 运行协程调度器
         infra_async_run();
         
@@ -126,90 +233,20 @@ static void* thread_worker(void* arg) {
     }
     
     INFRA_LOG_INFO("Worker thread %d stopping", ctx->thread_id);
-    ctx->running = false;
+    
+    // 使用原子操作清除running标志
+    __atomic_store_n(&ctx->running, false, __ATOMIC_SEQ_CST);
     
     // 从线程管理器移除自己
     remove_thread(&ctx->ctx->thread_mgr, ctx);
-    free(ctx);
+    
+    // 如果线程不是被标记为需要重启，则释放资源
+    // 如果需要重启，让监控协程来释放资源
+    if (!ctx->needs_restart) {
+        free(ctx);
+    }
+    
     return NULL;
-}
-
-// accept协程 - 在主线程中运行
-static void accept_coroutine(void* arg) {
-    poly_poll_context_t* ctx = arg;
-    if (!ctx) {
-        INFRA_LOG_ERROR("Invalid context in accept_coroutine");
-        return;
-    }
-    
-    INFRA_LOG_INFO("Accept coroutine started");
-    
-    while (ctx->state == SERVICE_STATE_RUNNING) {
-        // poll监听
-        int n = poll(ctx->poll_fds, ctx->poll_count, 100);  // 100ms超时
-        if (n < 0) {
-            if (errno == EINTR) {
-                infra_async_yield();
-                continue;
-            }
-            INFRA_LOG_ERROR("Poll failed: %s", strerror(errno));
-            ctx->state = SERVICE_STATE_ERROR;
-            break;
-        }
-        
-        // 处理就绪的文件描述符
-        for (size_t i = 0; i < ctx->poll_count && n > 0; i++) {
-            if (ctx->poll_fds[i].revents & POLLIN) {
-                n--;
-                
-                // 接受新连接
-                infra_socket_t client;
-                infra_error_t err = infra_net_accept(
-                    (infra_socket_t)(intptr_t)ctx->poll_fds[i].fd, 
-                    &client
-                );
-                
-                if (err == INFRA_ERROR_WOULD_BLOCK) {
-                    infra_async_yield();
-                    continue;
-                }
-                if (err != INFRA_OK) {
-                    INFRA_LOG_ERROR("Accept failed: %d", err);
-                    continue;
-                }
-                
-                // 创建客户端处理参数
-                struct {
-                    infra_socket_t client;
-                    void* user_data;
-                    poly_poll_handler_fn handler;
-                    poly_poll_context_t* ctx;
-                }* args = malloc(sizeof(*args));
-                
-                if (!args) {
-                    INFRA_LOG_ERROR("Failed to allocate client args");
-                    infra_net_close(client);
-                    continue;
-                }
-                
-                args->client = client;
-                args->user_data = ctx->poll_data[i];
-                args->handler = ctx->handler;
-                args->ctx = ctx;
-                
-                // 增加活跃协程计数
-                __atomic_fetch_add(&ctx->active_coroutines, 1, __ATOMIC_SEQ_CST);
-                
-                // 创建协程处理连接
-                infra_async_create(handle_client, args);
-            }
-        }
-        
-        // 让出CPU
-        infra_async_yield();
-    }
-    
-    INFRA_LOG_INFO("Accept coroutine exiting, state: %d", ctx->state);
 }
 
 // 初始化
@@ -232,12 +269,25 @@ infra_error_t poly_poll_init(poly_poll_context_t* ctx, const poly_poll_config_t*
         return err;
     }
     
+    // 使用配置项，设置合理的默认值
+    int min_threads = config->min_threads > 0 ? config->min_threads : 4;
+    int max_threads = config->max_threads > 0 ? config->max_threads : 8;
+    int queue_size = config->queue_size > 0 ? config->queue_size : 1000;
+    
+    // 确保min_threads不大于max_threads
+    if (min_threads > max_threads) {
+        min_threads = max_threads;
+    }
+    
     // 创建线程池
     infra_thread_pool_config_t pool_config = {
-        .min_threads = 4,  // 默认4个线程
-        .max_threads = 8,  // 最大8个线程
-        .queue_size = 1000 // 队列大小
+        .min_threads = min_threads,
+        .max_threads = max_threads,
+        .queue_size = queue_size
     };
+    
+    INFRA_LOG_INFO("Creating thread pool with min=%d, max=%d, queue=%d threads", 
+                   min_threads, max_threads, queue_size);
     
     err = infra_thread_pool_create(&pool_config, &ctx->thread_pool);
     if (err != INFRA_OK) {
@@ -245,8 +295,8 @@ infra_error_t poly_poll_init(poly_poll_context_t* ctx, const poly_poll_config_t*
         return err;
     }
     
-    // 创建poll数组
-    ctx->poll_size = 16;  // 初始大小
+    // 初始化poll数组，使用配置的max_listeners
+    ctx->poll_size = config->max_listeners > 0 ? config->max_listeners : 16;
     ctx->poll_count = 0;
     ctx->poll_fds = malloc(sizeof(struct pollfd) * ctx->poll_size);
     ctx->poll_data = malloc(sizeof(void*) * ctx->poll_size);
@@ -259,45 +309,6 @@ infra_error_t poly_poll_init(poly_poll_context_t* ctx, const poly_poll_config_t*
     return INFRA_OK;
 }
 
-// 添加监听器
-infra_error_t poly_poll_add_listener(poly_poll_context_t* ctx, const poly_poll_listener_t* listener) {
-    if (!ctx || !listener || ctx->state != SERVICE_STATE_INIT) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    // 检查是否需要扩容
-    if (ctx->poll_count >= ctx->poll_size) {
-        size_t new_size = ctx->poll_size * 2;
-        struct pollfd* new_fds = realloc(ctx->poll_fds, sizeof(struct pollfd) * new_size);
-        void** new_data = realloc(ctx->poll_data, sizeof(void*) * new_size);
-        
-        if (!new_fds || !new_data) {
-            if (new_fds) ctx->poll_fds = new_fds;
-            if (new_data) ctx->poll_data = new_data;
-            return INFRA_ERROR_NO_MEMORY;
-        }
-        
-        ctx->poll_fds = new_fds;
-        ctx->poll_data = new_data;
-        ctx->poll_size = new_size;
-    }
-    
-    // 添加到poll数组
-    ctx->poll_fds[ctx->poll_count].fd = (int)(intptr_t)listener->sock;
-    ctx->poll_fds[ctx->poll_count].events = POLLIN;
-    ctx->poll_data[ctx->poll_count] = listener->user_data;
-    ctx->poll_count++;
-    
-    return INFRA_OK;
-}
-
-// 设置处理函数
-void poly_poll_set_handler(poly_poll_context_t* ctx, poly_poll_handler_fn handler) {
-    if (ctx && ctx->state == SERVICE_STATE_INIT) {
-        ctx->handler = handler;
-    }
-}
-
 // 启动服务
 infra_error_t poly_poll_start(poly_poll_context_t* ctx) {
     if (!ctx || !ctx->handler || ctx->state != SERVICE_STATE_INIT) {
@@ -307,7 +318,8 @@ infra_error_t poly_poll_start(poly_poll_context_t* ctx) {
     ctx->state = SERVICE_STATE_RUNNING;
     
     // 创建工作线程
-    for (int i = 0; i < 4; i++) {  // 创建4个工作线程
+    int thread_count = ctx->thread_pool->min_threads;
+    for (int i = 0; i < thread_count; i++) {
         thread_context_t* thread_ctx = malloc(sizeof(*thread_ctx));
         if (!thread_ctx) {
             ctx->state = SERVICE_STATE_ERROR;
@@ -318,6 +330,8 @@ infra_error_t poly_poll_start(poly_poll_context_t* ctx) {
         thread_ctx->ctx = ctx;
         thread_ctx->running = false;
         thread_ctx->next = NULL;
+        thread_ctx->last_heartbeat = infra_get_current_time_ms();
+        thread_ctx->needs_restart = false;
         
         // 添加到线程管理器
         infra_error_t err = add_thread(&ctx->thread_mgr, thread_ctx);
@@ -338,6 +352,9 @@ infra_error_t poly_poll_start(poly_poll_context_t* ctx) {
     
     // 创建accept协程
     infra_async_create(accept_coroutine, ctx);
+    
+    // 创建线程监控协程
+    infra_async_create(thread_monitor_coroutine, ctx);
     
     // 主线程运行协程调度器
     while (ctx->state == SERVICE_STATE_RUNNING) {
