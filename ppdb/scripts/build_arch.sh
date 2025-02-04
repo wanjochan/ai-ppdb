@@ -28,8 +28,8 @@ build_arch() {
     # Clean old library
     rm -vf "${lib_file}"
 
-    # Set compile flags
-    CFLAGS="${CFLAGS} -I${PPDB_DIR}/src -I${PPDB_DIR}/include"
+    # Set compile flags with all necessary include paths
+    CFLAGS="${CFLAGS} -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${SRC_DIR}"
 
     # Compile all source files
     for src in "${ARCH_SOURCES[@]}"; do
@@ -63,13 +63,14 @@ build_tests() {
     
     mkdir -p "${test_dir}"
 
-    # Compile and link tests
+    # Compile and link tests with all necessary include paths
     for src in "${TEST_SOURCES[@]}"; do
         local test_name="$(basename "${src}" .c)"
         local test_bin="${test_dir}/${test_name}"
         
         echo "Building test: ${test_name}"
-        "${CC}" ${CFLAGS} "${src}" -L"${build_dir}" -larch -o "${test_bin}"
+        "${CC}" ${CFLAGS} -I"${PPDB_DIR}/include" -I"${PPDB_DIR}/src" -I"${SRC_DIR}" \
+            "${src}" -L"${build_dir}" -larch -o "${test_bin}"
         
         if [ -x "${test_bin}" ]; then
             echo "Running test: ${test_name}"
