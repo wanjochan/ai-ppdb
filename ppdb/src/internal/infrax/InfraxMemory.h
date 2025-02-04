@@ -58,4 +58,21 @@ void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size);
 void infrax_memory_get_stats(const InfraxMemory* self, InfraxMemoryStats* stats);
 void infrax_memory_collect(InfraxMemory* self);  // 触发GC
 
+/**
+notes for gc
+
+// 为每个脚本/协程创建独立的内存管理器
+InfraxMemoryConfig config = {
+    .initial_size = 64 * 1024,    // 较小的初始大小
+    .use_gc = true,
+    .use_pool = true,             // 配合使用内存池提高性能
+    .gc_threshold = 32 * 1024     // 较小的GC阈值
+};
+
+需要注意的点：
+协程切换时可能需要暂停GC
+考虑实现分代GC以提高性能
+对于跨协程共享的对象，需要特别处理其引用计数
+可以考虑在协程yield点进行增量GC
+ */
 #endif // INFRAX_MEMORY_H

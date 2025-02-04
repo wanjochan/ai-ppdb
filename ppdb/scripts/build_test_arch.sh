@@ -25,6 +25,7 @@ build_and_run_test() {
     "${CC}" ${CFLAGS} \
         -I"${PPDB_DIR}/include" \
         -I"${PPDB_DIR}/src" \
+        -I"${PPDB_DIR}" \
         test_arch.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_arch.exe"
@@ -41,6 +42,7 @@ build_and_run_test() {
     "${CC}" ${CFLAGS} \
         -I"${PPDB_DIR}/include" \
         -I"${PPDB_DIR}/src" \
+        -I"${PPDB_DIR}" \
         test_infrax_log.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_infrax_log.exe"
@@ -57,6 +59,7 @@ build_and_run_test() {
     "${CC}" ${CFLAGS} \
         -I"${PPDB_DIR}/include" \
         -I"${PPDB_DIR}/src" \
+        -I"${PPDB_DIR}" \
         test_infrax_memory.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_infrax_memory.exe"
@@ -66,6 +69,25 @@ build_and_run_test() {
         "${BUILD_DIR}/arch/test_infrax_memory.exe"
     else
         echo "Error: Failed to build memory management tests"
+        exit 1
+    fi
+
+    # Build and run error handling test
+    "${CC}" ${CFLAGS} \
+        -I"${PPDB_DIR}/include" \
+        -I"${PPDB_DIR}/src" \
+        -I"${PPDB_DIR}" \
+        -I"${PPDB_DIR}/test/white" \
+        "${PPDB_DIR}/test/white/framework/test_framework.c" \
+        test_infrax_error.c \
+        -L"${BUILD_DIR}/arch" -larch \
+        -o "${BUILD_DIR}/arch/test_infrax_error.exe"
+
+    if [ $? -eq 0 ]; then
+        echo "Running error handling tests..."
+        "${BUILD_DIR}/arch/test_infrax_error.exe"
+    else
+        echo "Error: Failed to build error handling tests"
         exit 1
     fi
 }

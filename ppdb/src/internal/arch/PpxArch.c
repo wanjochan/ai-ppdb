@@ -7,7 +7,7 @@ static void ppx_arch_init(PpxArch* self) {
     if (!self) return;
     
     // Initialize infra
-    self->infra = ppx_infra_new();
+    self->infra = get_global_ppxInfra();
     
     // Initialize methods
     self->new = ppx_arch_new;
@@ -26,10 +26,7 @@ PpxArch* ppx_arch_new(void) {
 void ppx_arch_free(PpxArch* self) {
     if (!self) return;
     
-    // Free infra
-    if (self->infra) {
-        self->infra->free(self->infra);
-    }
+    // Don't free infra as it's a global instance
     
     free(self);
 }

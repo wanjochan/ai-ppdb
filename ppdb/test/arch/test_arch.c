@@ -4,6 +4,7 @@
 #include "ppdb/PpxInfra.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
+#include "internal/infrax/InfraxError.h"
 
 // Test InfraxCore functionality
 void test_infrax_core() {
@@ -21,6 +22,7 @@ void test_ppx_infra() {
     assert(infra != NULL);
     assert(infra->core != NULL);
     assert(infra->logger != NULL);
+    assert(infra->error != NULL);
     
     // Test logging methods
     infra->logger->info(infra->logger, "Testing PpxInfra logging: %s", "INFO");
@@ -39,6 +41,7 @@ void test_ppx_arch() {
     assert(arch->infra != NULL);
     assert(arch->infra->core != NULL);
     assert(arch->infra->logger != NULL);
+    assert(arch->infra->error != NULL);
     
     // Test logging through architecture
     arch->infra->logger->info(arch->infra->logger, "Testing PpxArch logging: %s", "INFO");

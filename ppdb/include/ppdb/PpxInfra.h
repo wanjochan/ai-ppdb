@@ -3,11 +3,13 @@
 
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
+#include "internal/infrax/InfraxError.h"
 
 typedef struct PpxInfra {
     // Base components
     InfraxCore *core;   // Core functionality
     InfraxLog *logger;  // Logging functionality
+    InfraxError *error; // Error handling functionality
     
     // Methods
     struct PpxInfra* (*new)(void);
@@ -17,5 +19,8 @@ typedef struct PpxInfra {
 // Constructor and destructor
 PpxInfra* ppx_infra_new(void);
 void ppx_infra_free(PpxInfra* self);
+
+// Global instance
+PpxInfra* get_global_ppxInfra(void);
 
 #endif // PPX_INFRA_H
