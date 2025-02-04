@@ -2,121 +2,154 @@
 #include <assert.h>
 #include <pthread.h>
 #include "internal/infrax/InfraxError.h"
+#include "ppdb/PpxInfra.h"
 
-// 测试基本的错误操作
+// Test basic error operations
 void test_error_operations(void) {
-    InfraxError* error = infrax_error_new();
-    assert(error != NULL);
+    InfraxError error = infrax_error_create(0, NULL);
     
-    // 测试初始状态
-    assert(error->code == 0);
-    assert(error->message[0] == '\0');
+    // Test initial state
+    assert(error.code == 0);
+    assert(strlen(error.message) == 0);
     
-    // 测试设置错误
-    error->set(error, -1, "Test error message");
-    assert(error->code == -1);
-    assert(strcmp(error->get_message(error), "Test error message") == 0);
+    // Test setting error
+    error.set(&error, -1, "Test error message");
+    assert(error.code == -1);
+    assert(strcmp(error.message, "Test error message") == 0);
     
-    // 测试清除错误
-    error->clear(error);
-    assert(error->code == 0);
-    assert(error->message[0] == '\0');
+    // Test clearing error
+    error.clear(&error);
+    assert(error.code == 0);
+    assert(strlen(error.message) == 0);
     
-    error->free(error);
     printf("Basic error operations test passed\n");
 }
 
-// 用于线程测试的结构
-typedef struct {
-    infrax_error_t code;
-    const char* message;
-} ThreadTestData;
+// Test new_error functionality
+void test_new_error(void) {
+    PpxInfra* infra = get_global_ppxInfra();
+    assert(infra != NULL);
+    
+    // Test creating new error
+    InfraxError e1 = infra->new_error(1, "Test error");
+    assert(e1.code == 1);
+    assert(strcmp(e1.message, "Test error") == 0);
+    
+    // Test message truncation
+    char long_message[512];
+    memset(long_message, 'A', sizeof(long_message));
+    long_message[511] = '\0';
+    
+    InfraxError e2 = infra->new_error(2, long_message);
+    assert(e2.code == 2);
+    assert(strlen(e2.message) == 127);  // Should be truncated
+    assert(e2.message[127] == '\0');    // Should be null terminated
+    
+    // Test empty message
+    InfraxError e3 = infra->new_error(3, "");
+    assert(e3.code == 3);
+    assert(strlen(e3.message) == 0);
+    
+    // Test NULL message
+    InfraxError e4 = infra->new_error(4, NULL);
+    assert(e4.code == 4);
+    assert(strlen(e4.message) == 0);
+    
+    printf("New error functionality test passed\n");
+}
 
-// 线程函数
-void* thread_func(void* arg) {
-    ThreadTestData* data = (ThreadTestData*)arg;
+// Test error value copying
+void test_error_value_semantics(void) {
+    PpxInfra* infra = get_global_ppxInfra();
+    assert(infra != NULL);
     
-    // 获取线程本地错误实例
-    InfraxError* error = get_global_infrax_error();
-    assert(error != NULL);
+    // Test error value assignment
+    InfraxError e1 = infra->new_error(1, "Original error");
+    InfraxError e2 = e1;  // Copy the error
     
-    // 设置错误
-    error->set(error, data->code, data->message);
+    assert(e1.code == e2.code);
+    assert(strcmp(e1.message, e2.message) == 0);
     
-    // 验证错误状态
-    assert(error->code == data->code);
-    assert(strcmp(error->get_message(error), data->message) == 0);
+    // Modify e1 and verify e2 remains unchanged
+    e1 = infra->new_error(2, "Modified error");
+    assert(e2.code == 1);
+    assert(strcmp(e2.message, "Original error") == 0);
+    
+    printf("Error value semantics test passed\n");
+}
+
+// Thread function for testing thread local storage
+void* thread_function(void* arg) {
+    PpxInfra* infra = get_global_ppxInfra();
+    assert(infra != NULL);
+    
+    InfraxError error = infra->new_error(-2, "Thread specific error");
+    
+    // Verify thread-specific error
+    assert(error.code == -2);
+    assert(strcmp(error.message, "Thread specific error") == 0);
     
     return NULL;
 }
 
-// 测试线程本地存储
-void test_thread_local_storage(void) {
-    pthread_t thread1, thread2;
-    ThreadTestData data1 = {-1, "Error in thread 1"};
-    ThreadTestData data2 = {-2, "Error in thread 2"};
+// Test thread safety
+void test_thread_safety(void) {
+    PpxInfra* infra = get_global_ppxInfra();
+    assert(infra != NULL);
     
-    // 创建两个线程
-    pthread_create(&thread1, NULL, thread_func, &data1);
-    pthread_create(&thread2, NULL, thread_func, &data2);
+    InfraxError main_error = infra->new_error(-1, "Main thread error");
     
-    // 等待线程完成
-    pthread_join(thread1, NULL);
-    pthread_join(thread2, NULL);
+    pthread_t thread;
+    pthread_create(&thread, NULL, thread_function, NULL);
+    pthread_join(thread, NULL);
     
-    // 主线程的错误应该是独立的
-    InfraxError* error = get_global_infrax_error();
-    assert(error != NULL);
-    assert(error->code == 0);  // 应该是初始状态
+    // Verify main thread error remains unchanged
+    assert(main_error.code == -1);
+    assert(strcmp(main_error.message, "Main thread error") == 0);
     
-    printf("Thread local storage test passed\n");
+    printf("Thread safety test passed\n");
 }
 
-// 测试全局实例
-void test_global_instance(void) {
-    InfraxError* error1 = get_global_infrax_error();
-    InfraxError* error2 = get_global_infrax_error();
+// Test error handling in functions
+InfraxError process_with_error(int value) {
+    PpxInfra* infra = get_global_ppxInfra();
+    assert(infra != NULL);
     
-    // 同一线程应该返回相同实例
-    assert(error1 == error2);
-    
-    // 测试方法是否正确初始化
-    assert(error1->new != NULL);
-    assert(error1->free != NULL);
-    assert(error1->set != NULL);
-    assert(error1->clear != NULL);
-    assert(error1->get_message != NULL);
-    
-    printf("Global instance test passed\n");
+    if (value < 0) {
+        return infra->new_error(-1, "Negative value not allowed");
+    }
+    if (value > 100) {
+        return infra->new_error(-2, "Value too large");
+    }
+    return infra->new_error(0, "Success");
 }
 
-// 测试错误消息长度限制
-void test_message_length_limit(void) {
-    InfraxError* error = get_global_infrax_error();
-    assert(error != NULL);
+void test_error_handling(void) {
+    // Test error cases
+    InfraxError e1 = process_with_error(-5);
+    assert(e1.code == -1);
+    assert(strcmp(e1.message, "Negative value not allowed") == 0);
     
-    // 创建一个超长消息
-    char long_message[512];
-    memset(long_message, 'A', sizeof(long_message) - 1);
-    long_message[sizeof(long_message) - 1] = '\0';
+    InfraxError e2 = process_with_error(150);
+    assert(e2.code == -2);
+    assert(strcmp(e2.message, "Value too large") == 0);
     
-    // 设置错误消息
-    error->set(error, -1, long_message);
+    // Test success case
+    InfraxError e3 = process_with_error(50);
+    assert(e3.code == 0);
+    assert(strcmp(e3.message, "Success") == 0);
     
-    // 验证消息被正确截断
-    assert(strlen(error->message) < sizeof(error->message));
-    assert(error->message[sizeof(error->message) - 1] == '\0');
-    
-    printf("Message length limit test passed\n");
+    printf("Error handling test passed\n");
 }
 
 int main(void) {
     printf("Starting InfraxError tests...\n");
     
     test_error_operations();
-    test_thread_local_storage();
-    test_global_instance();
-    test_message_length_limit();
+    test_new_error();
+    test_error_value_semantics();
+    test_thread_safety();
+    test_error_handling();
     
     printf("All InfraxError tests passed!\n");
     return 0;

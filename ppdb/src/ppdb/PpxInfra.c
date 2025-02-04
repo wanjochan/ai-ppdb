@@ -3,12 +3,23 @@
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
 
+// Helper function to create a new error value
+static InfraxError ppx_infra_new_error(infrax_error_t code, const char* message) {
+    InfraxError error = {.code = code};
+    if (message) {
+        strncpy(error.message, message, sizeof(error.message) - 1);
+    }
+    error.message[sizeof(error.message) - 1] = '\0';  // Ensure null termination
+    return error;
+}
+
 // Define a global singleton PpxInfra instance initialized only once.
 static PpxInfra global_ppxInfra = {
     .core = NULL,
     .logger = NULL,
     .new = ppx_infra_new,
-    .free = ppx_infra_free
+    .free = ppx_infra_free,
+    .new_error = ppx_infra_new_error
 };
 
 // Private initialization function
@@ -22,6 +33,7 @@ static void ppx_infra_init(PpxInfra *self) {
     // Initialize methods
     self->new = ppx_infra_new;
     self->free = ppx_infra_free;
+    self->new_error = ppx_infra_new_error;
 }
 
 // Constructor implementation

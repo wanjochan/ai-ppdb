@@ -3,6 +3,7 @@
 
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
+#include "internal/infrax/InfraxError.h"
 
 typedef struct PpxInfra {
     // Base components
@@ -12,6 +13,7 @@ typedef struct PpxInfra {
     // Methods
     struct PpxInfra* (*new)(void);
     void (*free)(struct PpxInfra*);
+    InfraxError (*new_error)(infrax_error_t code, const char* message);
 } PpxInfra;
 
 // Constructor and destructor

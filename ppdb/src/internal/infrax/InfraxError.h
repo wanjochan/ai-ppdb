@@ -3,6 +3,8 @@
 
 #include "cosmopolitan.h"
 
+//注意，InfraxError 用值。不用指针
+
 typedef int32_t infrax_error_t;
 
 // Forward declaration
@@ -12,33 +14,23 @@ typedef struct InfraxError InfraxError;
 struct InfraxError {
     // Error state
     infrax_error_t code;
-    char message[256];
+    char message[128];
     // TODO: Add stack trace support when solution is available
     // void* stack_frames[32];
     // int stack_depth;
     
-    // Methods
-    struct InfraxError* (*new)(void);
-    void (*free)(struct InfraxError* self);
-    
     // Error operations
     void (*set)(struct InfraxError* self, infrax_error_t code, const char* message);
     void (*clear)(struct InfraxError* self);
-    const char* (*get_message)(struct InfraxError* self);
+    const char* (*get_message)(const struct InfraxError* self);
 };
-
-// Constructor
-InfraxError* infrax_error_new(void);
-
-// Destructor
-void infrax_error_free(InfraxError* self);
 
 // Error operations
 void infrax_error_set(InfraxError* self, infrax_error_t code, const char* message);
 void infrax_error_clear(InfraxError* self);
-const char* infrax_error_get_message(InfraxError* self);
+const char* infrax_error_get_message(const InfraxError* self);
 
-// Get thread-local error instance
-InfraxError* get_global_infrax_error(void);
+// Create a new error instance
+InfraxError infrax_error_create(infrax_error_t code, const char* message);
 
 #endif // INFRAX_ERROR_H_
