@@ -2,17 +2,12 @@
 #define PPDB_INFRAX_LOG_H
 
 #include <stdarg.h>
-
-typedef enum {
-    LOG_LEVEL_DEBUG,
-    LOG_LEVEL_INFO,
-    LOG_LEVEL_WARN,
-    LOG_LEVEL_ERROR
-} LogLevel;
+#include "internal/infrax/InfraxTypes.h"
+#include "internal/infrax/InfraxCore.h"
 
 typedef struct InfraxLog {
     // Properties
-    LogLevel min_level;
+    InfraxCore* core;  // Reference to InfraxCore instance
     
     // Methods
     struct InfraxLog* (*new)(void);
@@ -34,5 +29,7 @@ void infrax_log_debug(InfraxLog* self, const char* format, ...);
 void infrax_log_info(InfraxLog* self, const char* format, ...);
 void infrax_log_warn(InfraxLog* self, const char* format, ...);
 void infrax_log_error(InfraxLog* self, const char* format, ...);
+
+InfraxLog* get_global_infra_log(void);
 
 #endif // PPDB_INFRAX_LOG_H

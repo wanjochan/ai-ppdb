@@ -27,11 +27,11 @@ build_and_run_test() {
         -I"${PPDB_DIR}/src" \
         test_arch.c \
         -L"${BUILD_DIR}/arch" -larch \
-        -o "${BUILD_DIR}/arch/test_arch"
+        -o "${BUILD_DIR}/arch/test_arch.exe"
 
     if [ $? -eq 0 ]; then
         echo "Running main arch tests..."
-        "${BUILD_DIR}/arch/test_arch"
+        "${BUILD_DIR}/arch/test_arch.exe"
     else
         echo "Error: Failed to build main arch tests"
         exit 1
@@ -52,7 +52,23 @@ build_and_run_test() {
         echo "Error: Failed to build infra log tests"
         exit 1
     fi
+
+    # Build and run memory management test
+    "${CC}" ${CFLAGS} \
+        -I"${PPDB_DIR}/include" \
+        -I"${PPDB_DIR}/src" \
+        test_infrax_memory.c \
+        -L"${BUILD_DIR}/arch" -larch \
+        -o "${BUILD_DIR}/arch/test_infrax_memory.exe"
+
+    if [ $? -eq 0 ]; then
+        echo "Running memory management tests..."
+        "${BUILD_DIR}/arch/test_infrax_memory.exe"
+    else
+        echo "Error: Failed to build memory management tests"
+        exit 1
+    fi
 }
 
 # Main execution
-build_and_run_test 
+build_and_run_test
