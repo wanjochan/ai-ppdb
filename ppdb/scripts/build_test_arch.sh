@@ -21,6 +21,7 @@ build_and_run_test() {
     echo "Building and running tests..."
     cd "${TEST_DIR}/arch" || exit 1
     
+    # Build and run main arch test
     "${CC}" ${CFLAGS} \
         -I"${PPDB_DIR}/include" \
         -I"${PPDB_DIR}/src" \
@@ -29,10 +30,26 @@ build_and_run_test() {
         -o "${BUILD_DIR}/arch/test_arch"
 
     if [ $? -eq 0 ]; then
-        echo "Running tests..."
+        echo "Running main arch tests..."
         "${BUILD_DIR}/arch/test_arch"
     else
-        echo "Error: Failed to build tests"
+        echo "Error: Failed to build main arch tests"
+        exit 1
+    fi
+
+    # Build and run infra log test
+    "${CC}" ${CFLAGS} \
+        -I"${PPDB_DIR}/include" \
+        -I"${PPDB_DIR}/src" \
+        test_infra_log.c \
+        -L"${BUILD_DIR}/arch" -larch \
+        -o "${BUILD_DIR}/arch/test_infra_log.exe"
+
+    if [ $? -eq 0 ]; then
+        echo "Running infra log tests..."
+        "${BUILD_DIR}/arch/test_infra_log.exe"
+    else
+        echo "Error: Failed to build infra log tests"
         exit 1
     fi
 }

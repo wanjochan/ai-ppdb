@@ -4,9 +4,13 @@
 source "$(dirname "$0")/build_env.sh"
 source "$(dirname "$0")/build_common.sh"
 
+# Set compile flags with all necessary include paths
+CFLAGS="${CFLAGS} -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${SRC_DIR}"
+
 # Define source files for new architecture
 ARCH_SOURCES=(
     "${SRC_DIR}/internal/infra/InfraCore.c"
+    "${SRC_DIR}/internal/infra/InfraLog.c"
     "${SRC_DIR}/internal/infra/PpdbInfra.c"
     "${SRC_DIR}/internal/arch/PpdbArch.c"
 )
@@ -21,39 +25,44 @@ build_arch() {
     local build_dir="${BUILD_DIR}/arch"
     local lib_file="${build_dir}/libarch.a"
     local arch_objects=()
+    local need_rebuild=0
 
     # Create build directory
     mkdir -p "${build_dir}"
 
-    # Clean old library
-    rm -vf "${lib_file}"
-
-    # Set compile flags with all necessary include paths
-    CFLAGS="${CFLAGS} -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${SRC_DIR}"
-
     # Compile all source files
     for src in "${ARCH_SOURCES[@]}"; do
         local obj="${build_dir}/$(basename "${src}" .c).o"
-        echo "Compiling: ${src}"
-        "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
-        if [ $? -ne 0 ]; then
-            echo "Error: Failed to compile ${src}"
-            exit 1
+        
+        # Check if we need to rebuild
+        if [ ! -f "${obj}" ] || [ "${src}" -nt "${obj}" ]; then
+            echo "Compiling: ${src}"
+            "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
+            if [ $? -ne 0 ]; then
+                echo "Error: Failed to compile ${src}"
+                exit 1
+            fi
+            need_rebuild=1
+        else
+            echo "Skipping: ${src} (up to date)"
         fi
         arch_objects+=("${obj}")
     done
 
-    # Create static library
-    echo "Creating static library: ${lib_file}"
-    cd "${build_dir}" || exit 1
-    "${AR}" rcs "${lib_file}" *.o
-    if [ $? -ne 0 ]; then
-        echo "Failed to create arch library"
-        exit 1
+    # Create static library only if needed
+    if [ ${need_rebuild} -eq 1 ] || [ ! -f "${lib_file}" ]; then
+        echo "Creating static library: ${lib_file}"
+        rm -f "${lib_file}"
+        cd "${build_dir}" || exit 1
+        "${AR}" rcs "${lib_file}" *.o
+        if [ $? -ne 0 ]; then
+            echo "Failed to create arch library"
+            exit 1
+        fi
+        ls -l "${lib_file}"
+    else
+        echo "Static library is up to date: ${lib_file}"
     fi
-
-    # Show library info
-    ls -lh "${lib_file}"
 }
 
 # Build and run tests
