@@ -41,13 +41,13 @@ build_and_run_test() {
     "${CC}" ${CFLAGS} \
         -I"${PPDB_DIR}/include" \
         -I"${PPDB_DIR}/src" \
-        test_infra_log.c \
+        test_infrax_log.c \
         -L"${BUILD_DIR}/arch" -larch \
-        -o "${BUILD_DIR}/arch/test_infra_log.exe"
+        -o "${BUILD_DIR}/arch/test_infrax_log.exe"
 
     if [ $? -eq 0 ]; then
         echo "Running infra log tests..."
-        "${BUILD_DIR}/arch/test_infra_log.exe"
+        "${BUILD_DIR}/arch/test_infrax_log.exe"
     else
         echo "Error: Failed to build infra log tests"
         exit 1

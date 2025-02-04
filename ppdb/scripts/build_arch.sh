@@ -9,10 +9,10 @@ CFLAGS="${CFLAGS} -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${SRC_DIR}"
 
 # Define source files for new architecture
 ARCH_SOURCES=(
-    "${SRC_DIR}/internal/infra/InfraCore.c"
-    "${SRC_DIR}/internal/infra/InfraLog.c"
-    "${SRC_DIR}/internal/infra/PpdbInfra.c"
-    "${SRC_DIR}/internal/arch/PpdbArch.c"
+    "${SRC_DIR}/internal/infrax/InfraxCore.c"
+    "${SRC_DIR}/internal/infrax/InfraxLog.c"
+    "${SRC_DIR}/internal/infra/PpxInfra.c"
+    "${SRC_DIR}/internal/arch/PpxArch.c"
 )
 
 # Define test sources

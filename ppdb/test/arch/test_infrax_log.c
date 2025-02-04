@@ -1,9 +1,9 @@
 #include <stdio.h>
-#include "internal/infra/InfraLog.h"
+#include "internal/infrax/InfraxLog.h"
 
 int main() {
     // Create a new logger instance
-    InfraLog* logger = infra_log_new();
+    InfraxLog* logger = infrax_log_new();
     if (!logger) {
         fprintf(stderr, "Failed to create logger\n");
         return 1;

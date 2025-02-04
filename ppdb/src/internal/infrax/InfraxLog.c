@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "internal/infra/InfraLog.h"
+#include "internal/infrax/InfraxLog.h"
 
 // Private functions
 static void get_time_str(char* buffer, size_t size) {
@@ -24,7 +24,7 @@ static const char* level_to_str(LogLevel level) {
     }
 }
 
-static void log_message(InfraLog* self, LogLevel level, const char* format, va_list args) {
+static void log_message(InfraxLog* self, LogLevel level, const char* format, va_list args) {
     if (!self || level < self->min_level) return;
     
     char time_str[32];
@@ -35,63 +35,63 @@ static void log_message(InfraLog* self, LogLevel level, const char* format, va_l
     fprintf(stderr, "\n");
 }
 
-static void infra_log_init(InfraLog* self) {
+static void infrax_log_init(InfraxLog* self) {
     if (!self) return;
     
     // Initialize properties
     self->min_level = LOG_LEVEL_INFO;
     
     // Initialize methods
-    self->new = infra_log_new;
-    self->free = infra_log_free;
-    self->set_level = infra_log_set_level;
-    self->debug = infra_log_debug;
-    self->info = infra_log_info;
-    self->warn = infra_log_warn;
-    self->error = infra_log_error;
+    self->new = infrax_log_new;
+    self->free = infrax_log_free;
+    self->set_level = infrax_log_set_level;
+    self->debug = infrax_log_debug;
+    self->info = infrax_log_info;
+    self->warn = infrax_log_warn;
+    self->error = infrax_log_error;
 }
 
 // Public functions
-InfraLog* infra_log_new(void) {
-    InfraLog* log = (InfraLog*)malloc(sizeof(InfraLog));
+InfraxLog* infrax_log_new(void) {
+    InfraxLog* log = (InfraxLog*)malloc(sizeof(InfraxLog));
     if (log) {
-        infra_log_init(log);
+        infrax_log_init(log);
     }
     return log;
 }
 
-void infra_log_free(InfraLog* self) {
+void infrax_log_free(InfraxLog* self) {
     if (!self) return;
     free(self);
 }
 
-void infra_log_set_level(InfraLog* self, LogLevel level) {
+void infrax_log_set_level(InfraxLog* self, LogLevel level) {
     if (!self) return;
     self->min_level = level;
 }
 
-void infra_log_debug(InfraLog* self, const char* format, ...) {
+void infrax_log_debug(InfraxLog* self, const char* format, ...) {
     va_list args;
     va_start(args, format);
     log_message(self, LOG_LEVEL_DEBUG, format, args);
     va_end(args);
 }
 
-void infra_log_info(InfraLog* self, const char* format, ...) {
+void infrax_log_info(InfraxLog* self, const char* format, ...) {
     va_list args;
     va_start(args, format);
     log_message(self, LOG_LEVEL_INFO, format, args);
     va_end(args);
 }
 
-void infra_log_warn(InfraLog* self, const char* format, ...) {
+void infrax_log_warn(InfraxLog* self, const char* format, ...) {
     va_list args;
     va_start(args, format);
     log_message(self, LOG_LEVEL_WARN, format, args);
     va_end(args);
 }
 
-void infra_log_error(InfraLog* self, const char* format, ...) {
+void infrax_log_error(InfraxLog* self, const char* format, ...) {
     va_list args;
     va_start(args, format);
     log_message(self, LOG_LEVEL_ERROR, format, args);
