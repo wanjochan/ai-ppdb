@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-// #include "InfraxMemoryConfig.h"
 #include "InfraxMemoryGc.h"
 
 // Forward declarations
