@@ -490,6 +490,9 @@ infra_error_t sqlite3_init(void) {
         return INFRA_ERROR_INVALID_STATE;
     }
 
+    // 设置日志级别为全局日志级别
+    infra_log_set_level(infra_log_get_level());
+
     // Allocate service state
     sqlite3_state_t* state = (sqlite3_state_t*)infra_malloc(sizeof(sqlite3_state_t));
     if (!state) {

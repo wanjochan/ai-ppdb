@@ -83,7 +83,7 @@ infra_error_t infra_init(void) {
         return err;
     }
 
-    // Initialize log module first
+    // Initialize log module first with default level
     err = infra_log_init(g_log_level, NULL);
     if (err != INFRA_OK) {
         fprintf(stderr, "Failed to initialize log module\n");
