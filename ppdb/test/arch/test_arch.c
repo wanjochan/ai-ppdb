@@ -15,29 +15,22 @@ void test_infrax_core(void) {
 }
 
 void test_ppx_infra(void) {
-    // Test instance creation
-    PpxInfra* infra = PpxInfra_CLASS.new();
+    // Test global instance
+    const PpxInfra* infra = ppx_infra();
     assert(infra != NULL);
     assert(infra->core != NULL);
     assert(infra->logger != NULL);
-    assert(infra->klass == &PpxInfra_CLASS);
-    assert(infra->logger->klass == &InfraxLog_CLASS);
     
     // Test logging functionality
     infra->logger->info(infra->logger, "Testing PpxInfra logging: %s", "INFO");
     infra->logger->warn(infra->logger, "Testing PpxInfra logging: %s", "WARN");
     infra->logger->error(infra->logger, "Testing PpxInfra logging: %s", "ERROR");
     
-    // Test instance cleanup
-    PpxInfra_CLASS.free(infra);
-    
-    // Test global instance
-    PpxInfra* global_infra = get_global_ppxInfra();
-    assert(global_infra != NULL);
-    assert(global_infra->core != NULL);
-    assert(global_infra->logger != NULL);
-    assert(global_infra->klass == &PpxInfra_CLASS);
-    assert(global_infra->logger->klass == &InfraxLog_CLASS);
+    // Get instance again to test singleton behavior
+    const PpxInfra* infra2 = ppx_infra();
+    assert(infra2 == infra);  // Should be the same instance
+    assert(infra2->core == infra->core);
+    assert(infra2->logger == infra->logger);
     
     printf("PpxInfra tests passed\n");
 }

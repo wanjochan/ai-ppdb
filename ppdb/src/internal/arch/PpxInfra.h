@@ -4,29 +4,15 @@
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
 
-// Forward declarations
-typedef struct PpxInfra PpxInfra;
-typedef struct PpxInfraClass PpxInfraClass;
+typedef struct {
+    InfraxCore *core;   
+    InfraxLog *logger;  
+    // 未来可以方便地添加新组件
+    // InfraxMemory *memory;
+    // InfraxThread *thread;
+} PpxInfra;
 
-// The "static" interface (like static methods in OOP)
-struct PpxInfraClass {
-    PpxInfra* (*new)(void);
-    void (*free)(PpxInfra* self);
-};
-
-// The instance structure
-struct PpxInfra {
-    const PpxInfraClass* klass;  // 指向"类"方法表
-    
-    // Base components
-    InfraxCore *core;   // Core functionality
-    InfraxLog *logger;  // Logging functionality
-};
-
-// The "static" interface instance (like Java's Class object)
-extern const PpxInfraClass PpxInfra_CLASS;
-
-// Global instance
-PpxInfra* get_global_ppxInfra(void);
+// 全局单例
+const PpxInfra* ppx_infra(void);
 
 #endif // PPX_INFRA_H

@@ -485,7 +485,7 @@ infra_error_t sqlite3_init(void) {
     return INFRA_OK;
 }
 
-infra_error_t sqlite3_start(const poly_config_t* config) {
+infra_error_t sqlite3_start(void) {
     // 如果状态是 INIT 或 STOPPED，先尝试初始化
     if (g_sqlite3_service.state == PEER_SERVICE_STATE_INIT ||
         g_sqlite3_service.state == PEER_SERVICE_STATE_STOPPED) {
@@ -506,19 +506,6 @@ infra_error_t sqlite3_start(const poly_config_t* config) {
         g_sqlite3_service.state != PEER_SERVICE_STATE_STOPPED) {
         INFRA_LOG_ERROR("Service is in invalid state: %d", g_sqlite3_service.state);
         return INFRA_ERROR_INVALID_STATE;
-    }
-
-    // 从配置中获取服务配置
-    for (int i = 0; i < config->service_count; i++) {
-        const poly_service_config_t* svc = &config->services[i];
-        if (svc->type == POLY_SERVICE_SQLITE) {
-            strncpy(state->host, svc->listen_host, SQLITE3_MAX_HOST_LEN - 1);
-            state->host[SQLITE3_MAX_HOST_LEN - 1] = '\0';
-            state->port = svc->listen_port;
-            strncpy(state->db_path, svc->backend, SQLITE3_MAX_PATH_LEN - 1);
-            state->db_path[SQLITE3_MAX_PATH_LEN - 1] = '\0';
-            break;
-        }
     }
 
     // Initialize poll context
@@ -687,7 +674,7 @@ infra_error_t sqlite3_cmd_handler(const char* cmd, char* response, size_t size) 
             }
         }
         
-        infra_error_t err = sqlite3_start(NULL);
+        infra_error_t err = sqlite3_start();
         if (err == INFRA_OK) {
             snprintf(response, size, "SQLite3 service started");
         } else {

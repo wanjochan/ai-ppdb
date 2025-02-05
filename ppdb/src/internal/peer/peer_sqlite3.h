@@ -3,6 +3,7 @@
 
 #include "internal/peer/peer_service.h"
 #include "internal/infra/infra_core.h"
+#include "internal/poly/poly_cmdline.h"
 
 // Service state
 typedef struct {
