@@ -18,6 +18,10 @@
 #define MAX_SERVICES 16
 #define MAX_CMD_RESPONSE 4096
 
+// Forward declarations
+static const char* get_service_type_name(poly_service_type_t type);
+static infra_error_t handle_rinetd_cmd(const poly_config_t* config, int argc, char** argv);
+
 // Global service registry
 typedef struct {
     peer_service_t* services[MAX_SERVICES];
@@ -69,205 +73,211 @@ peer_service_state_t peer_service_get_state(const char* name) {
     return service->state;
 }
 
-// Print usage information
-static void print_usage(const char* program) {
-    printf("Usage: %s [global options] <service> <command> [command_options]\n\n", program);
-    printf("Global options:\n");
-    printf("  --log-level=<level>   Set log level (0-5)\n");
-    printf("  --config=<path>      Load config from file\n");
-    printf("\nAvailable services:\n");
-    
-    for (int i = 0; i < g_registry.service_count; i++) {
-        printf("  %s\n", g_registry.services[i]->config.name);
+// Apply service configuration
+infra_error_t peer_service_apply_config(const char* name, const poly_service_config_t* config) {
+    peer_service_t* service = peer_service_get_by_name(name);
+    if (!service) {
+        return INFRA_ERROR_NOT_FOUND;
     }
-    
-    printf("\nCommon commands:\n");
-    printf("  start     Start the service\n");
-    printf("  stop      Stop the service\n");
-    printf("  status    Show service status\n");
+
+    if (service->apply_config) {
+        return service->apply_config(config);
+    }
+
+    return INFRA_OK;
 }
 
-int main(int argc, char* argv[]) {
-    infra_error_t err;
-    int log_level = INFRA_LOG_LEVEL_INFO;  // 默认日志级别
-    const char* config_path = NULL;
-    const char* service_name = NULL;
-    const char* command = NULL;
+// Start service
+infra_error_t peer_service_start(const char* name) {
+    peer_service_t* service = peer_service_get_by_name(name);
+    if (!service) {
+        return INFRA_ERROR_NOT_FOUND;
+    }
 
-    // 定义全局选项
-    static const poly_cmd_option_t global_options[] = {
-        {"log-level", "Set log level (0-5)", true},
-        {"config", "Load config from file", true},
-        {"help", "Show help information", false},
-        {"", "", false}  // 结束标记
+    if (service->state == PEER_SERVICE_STATE_RUNNING) {
+        return INFRA_ERROR_ALREADY_EXISTS;
+    }
+
+    // Initialize if needed
+    if (service->state == PEER_SERVICE_STATE_INIT) {
+        infra_error_t err = service->init();
+        if (err != INFRA_OK) {
+            return err;
+        }
+    }
+
+    // Start service
+    return service->start();
+}
+
+// Stop service
+infra_error_t peer_service_stop(const char* name) {
+    peer_service_t* service = peer_service_get_by_name(name);
+    if (!service) {
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    if (service->state != PEER_SERVICE_STATE_RUNNING) {
+        return INFRA_OK;
+    }
+
+    return service->stop();
+}
+
+// Register commands
+static void register_commands(void) {
+    static const poly_cmd_option_t rinetd_options[] = {
+        {"start", "Start the service in foreground", false},
+        {"stop", "Stop the service", false},
+        {"status", "Show service status", false},
+        {"daemon", "Run as daemon in background", false},
+        {"config", "Configuration file path", true},
+        {"log-level", "Log level (0-5)", true}
     };
 
-    // 初始化命令行框架
+    static const poly_cmd_t commands[] = {
+        {
+            .name = "rinetd",
+            .desc = "Manage rinetd service",
+            .options = rinetd_options,
+            .option_count = sizeof(rinetd_options) / sizeof(rinetd_options[0]),
+            .handler = handle_rinetd_cmd
+        }
+    };
+
+    for (int i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+        poly_cmdline_register(&commands[i]);
+    }
+}
+
+// Helper function to get service type name
+static const char* get_service_type_name(poly_service_type_t type) {
+    switch (type) {
+        case POLY_SERVICE_RINETD: return "rinetd";
+        case POLY_SERVICE_SQLITE: return "sqlite3";
+        case POLY_SERVICE_MEMKV: return "memkv";
+        case POLY_SERVICE_DISKV: return "diskv";
+        default: return "unknown";
+    }
+}
+
+// Handle rinetd command
+static infra_error_t handle_rinetd_cmd(const poly_config_t* config, int argc, char** argv) {
+    bool start_flag = false;
+    bool stop_flag = false;
+    bool status_flag = false;
+    bool daemon_flag = false;
+
+    // Parse command options
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--start") == 0) {
+            start_flag = true;
+        } else if (strcmp(argv[i], "--stop") == 0) {
+            stop_flag = true;
+        } else if (strcmp(argv[i], "--status") == 0) {
+            status_flag = true;
+        } else if (strcmp(argv[i], "--daemon") == 0) {
+            daemon_flag = true;
+            start_flag = true;  // --daemon 隐含 --start
+        }
+    }
+
+    // Default to status if no action specified
+    if (!start_flag && !stop_flag && !status_flag) {
+        status_flag = true;
+    }
+
+    // Handle actions
+    if (start_flag) {
+        // 如果配置文件中有该服务的配置，先应用配置
+        bool has_config = false;
+        for (int i = 0; i < config->service_count; i++) {
+            const poly_service_config_t* svc_config = &config->services[i];
+            if (svc_config->type == POLY_SERVICE_RINETD) {
+                infra_error_t err = peer_service_apply_config("rinetd", svc_config);
+                if (err != INFRA_OK) {
+                    return err;
+                }
+                has_config = true;
+            }
+        }
+
+        if (!has_config) {
+            INFRA_LOG_ERROR("No rinetd configuration found");
+            return INFRA_ERROR_NOT_FOUND;
+        }
+
+        // 启动服务
+        infra_error_t err = peer_service_start("rinetd");
+        if (err != INFRA_OK) {
+            return err;
+        }
+
+        // 如果不是守护进程模式,则等待服务结束
+        if (!daemon_flag) {
+            peer_service_t* service = peer_service_get_by_name("rinetd");
+            if (!service) {
+                return INFRA_ERROR_NOT_FOUND;
+            }
+
+            // 等待服务结束或者收到中断信号
+            while (service->state == PEER_SERVICE_STATE_RUNNING) {
+                infra_sleep(100);  // 睡眠100ms
+            }
+        }
+
+        return INFRA_OK;
+    } else if (stop_flag) {
+        return peer_service_stop("rinetd");
+    } else {
+        // Show status
+        peer_service_t* service = peer_service_get_by_name("rinetd");
+        if (!service) {
+            printf("Service rinetd not found\n");
+            return INFRA_ERROR_NOT_FOUND;
+        }
+
+        char response[MAX_CMD_RESPONSE];
+        return service->cmd_handler("status", response, sizeof(response));
+    }
+}
+
+// Main entry
+int main(int argc, char** argv) {
+    // Initialize infrastructure
+    infra_error_t err = infra_init();
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to initialize infrastructure: %d\n", err);
+        return 1;
+    }
+
+    // Initialize command line framework
     err = poly_cmdline_init();
     if (err != INFRA_OK) {
-        fprintf(stderr, "Failed to initialize command line framework\n");
+        fprintf(stderr, "Failed to initialize command line framework: %d\n", err);
         return 1;
     }
 
-    // 处理全局选项
-    for (int i = 1; i < argc; i++) {
-        if (strncmp(argv[i], "--", 2) == 0) {
-            const char* option = argv[i] + 2;
-            const char* value = strchr(option, '=');
-            char option_name[POLY_CMD_MAX_NAME];
-            
-            if (value) {
-                size_t name_len = value - option;
-                strncpy(option_name, option, name_len);
-                option_name[name_len] = '\0';
-                value++;  // 跳过等号
-            } else {
-                strncpy(option_name, option, sizeof(option_name) - 1);
-                option_name[sizeof(option_name) - 1] = '\0';
-                value = NULL;
-            }
-
-            // 查找选项
-            for (int j = 0; global_options[j].name[0]; j++) {
-                if (strcmp(option_name, global_options[j].name) == 0) {
-                    if (strcmp(option_name, "log-level") == 0 && value) {
-                        log_level = atoi(value);
-                        if (log_level < 0 || log_level > 5) {
-                            fprintf(stderr, "Invalid log level: %d\n", log_level);
-                            return 1;
-                        }
-                    } else if (strcmp(option_name, "config") == 0 && value) {
-                        config_path = value;
-                    } else if (strcmp(option_name, "help") == 0) {
-                        print_usage(argv[0]);
-                        return 0;
-                    }
-                    break;
-                }
-            }
-        } else if (!service_name) {
-            service_name = argv[i];
-        } else if (!command) {
-            command = argv[i];
-        }
-    }
-
-    // 检查必需的参数
-    if (!service_name || !command) {
-        print_usage(argv[0]);
-        return 1;
-    }
-
-    // Initialize logging with the specified level
-    infra_core_set_log_level(log_level);
-    err = infra_log_init(log_level, NULL);
-    if (err != INFRA_OK) {
-        fprintf(stderr, "Failed to initialize logging: %d\n", err);
-        return 1;
-    }
-
-    // Initialize infrastructure
-    err = infra_init();
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to initialize infrastructure: %d", err);
-        return 1;
-    }
+    // Register commands
+    register_commands();
 
     // Register services
-    err = peer_service_register(peer_rinetd_get_service());
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register rinetd service: %d", err);
-        return 1;
-    }
-
+#ifdef DEV_RINETD
+    peer_service_register(peer_rinetd_get_service());
+#endif
 #ifdef DEV_MEMKV
-    err = peer_service_register(peer_memkv_get_service());
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register memkv service: %d", err);
-        return 1;
-    }
+    peer_service_register(peer_memkv_get_service());
 #endif
-
 #ifdef DEV_SQLITE3
-    err = peer_service_register(&g_sqlite3_service);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to register sqlite3 service: %d", err);
-        return 1;
-    }
+    peer_service_register(peer_sqlite3_get_service());
 #endif
 
-    // Get service
-    peer_service_t* service = peer_service_get_by_name(service_name);
-    if (!service) {
-        fprintf(stderr, "Unknown service: %s\n", service_name);
-        return 1;
-    }
-
-    // Load config if provided
-    if (config_path) {
-        if (strcmp(service_name, "rinetd") == 0) {
-            err = rinetd_load_config(config_path);
-            if (err != INFRA_OK) {
-                fprintf(stderr, "Failed to load config: %d\n", err);
-                return 1;
-            }
-        }
-#ifdef DEV_SQLITE3
-        else if (strcmp(service_name, "sqlite3") == 0) {
-            // Initialize service first
-            err = sqlite3_init();
-            if (err != INFRA_OK) {
-                fprintf(stderr, "Failed to initialize sqlite3 service: %d\n", err);
-                return 1;
-            }
-
-            // Build command with config path
-            char cmd[512];
-            snprintf(cmd, sizeof(cmd), "start --config=%s", config_path);
-            char resp[MAX_CMD_RESPONSE];
-            err = service->cmd_handler(cmd, resp, sizeof(resp));
-            if (err != INFRA_OK) {
-                fprintf(stderr, "%s\n", resp);
-                return 1;
-            }
-            printf("%s\n", resp);
-            return 0;
-        }
-#endif
-    }
-
-    // Handle command
-    char response[MAX_CMD_RESPONSE];
-    err = service->cmd_handler(command, response, sizeof(response));
+    // Execute command
+    err = poly_cmdline_execute(argc, argv);
     
-    // Print response if any
-    if (response[0] != '\0') {
-        printf("%s", response);
-    }
-
-    // Exit with error if command failed
-    if (err != INFRA_OK) {
-        return 1;
-    }
-
-    // If this is a start command, keep running
-    if (strcmp(command, "start") == 0) {
-        // Wait for user input to stop
-        printf("Press Enter to stop the service...\n");
-        getchar();
-
-        // Stop the service
-        err = service->cmd_handler("stop", response, sizeof(response));
-        if (err != INFRA_OK) {
-            fprintf(stderr, "Failed to stop service: %d\n", err);
-            return 1;
-        }
-
-        // Print response if any
-        if (response[0] != '\0') {
-            printf("%s", response);
-        }
-    }
-
-    return 0;
+    // Cleanup
+    poly_cmdline_cleanup();
+    infra_cleanup();
+    
+    return err == INFRA_OK ? 0 : 1;
 }

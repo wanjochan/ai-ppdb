@@ -30,6 +30,7 @@ peer_service_t g_rinetd_service = {
     .start = rinetd_start,
     .stop = rinetd_stop,
     .cmd_handler = rinetd_cmd_handler,
+    .apply_config = rinetd_apply_config
 };
 
 // Global variables
@@ -536,7 +537,19 @@ infra_error_t rinetd_cmd_handler(const char* cmd, char* response, size_t size) {
                 state_str = "stopped";
                 break;
         }
-        snprintf(response, size, "Service is %s\n", state_str);
+
+        int written = snprintf(response, size, "Service state: %s\n", state_str);
+        if (g_rinetd_service.state == PEER_SERVICE_STATE_RUNNING) {
+            written += snprintf(response + written, size - written, "\nActive forwarding rules:\n");
+            for (int i = 0; i < g_rinetd_default_config.rules.count; i++) {
+                rinetd_rule_t* rule = &g_rinetd_default_config.rules.rules[i];
+                written += snprintf(response + written, size - written, 
+                    "  %s:%d -> %s:%d\n",
+                    rule->src_addr, rule->src_port,
+                    rule->dst_addr, rule->dst_port);
+            }
+        }
+        printf("%s", response);
         return INFRA_OK;
     }
 
@@ -548,49 +561,109 @@ peer_service_t* peer_rinetd_get_service(void) {
     return &g_rinetd_service;
 }
 
+// Apply configuration from poly_service_config
+infra_error_t rinetd_apply_config(const poly_service_config_t* config) {
+    if (!config) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    INFRA_LOG_INFO("Applying rinetd configuration");
+
+    // 清空现有规则
+    g_rinetd_default_config.rules.count = 0;
+
+    // 解析监听地址和端口
+    strncpy(g_rinetd_default_config.bind_addr, config->listen_host, sizeof(g_rinetd_default_config.bind_addr) - 1);
+    g_rinetd_default_config.bind_port = config->listen_port;
+
+    // 添加转发规则
+    rinetd_rule_t rule = {0};
+    strncpy(rule.src_addr, config->listen_host, sizeof(rule.src_addr) - 1);
+    rule.src_port = config->listen_port;
+    
+    // 解析目标地址和端口
+    const char* target_host = config->target_host;
+    int target_port = config->target_port;
+    
+    if (target_host && target_port > 0) {
+        strncpy(rule.dst_addr, target_host, sizeof(rule.dst_addr) - 1);
+        rule.dst_port = target_port;
+        
+        // 添加规则
+        if (g_rinetd_default_config.rules.count < MAX_FORWARD_RULES) {
+            memcpy(&g_rinetd_default_config.rules.rules[g_rinetd_default_config.rules.count],
+                   &rule, sizeof(rinetd_rule_t));
+            g_rinetd_default_config.rules.count++;
+            INFRA_LOG_INFO("Added forward rule: %s:%d -> %s:%d",
+                          rule.src_addr, rule.src_port,
+                          rule.dst_addr, rule.dst_port);
+        } else {
+            INFRA_LOG_ERROR("Too many forward rules");
+            return INFRA_ERROR_NO_MEMORY;
+        }
+    }
+
+    return INFRA_OK;
+}
+
 // Load configuration from file
 infra_error_t rinetd_load_config(const char* path) {
+    if (!path) {
+        path = RINETD_DEFAULT_CONFIG_FILE;
+    }
+
+    INFRA_LOG_INFO("Loading rinetd configuration from %s", path);
+
     FILE* fp = fopen(path, "r");
     if (!fp) {
         INFRA_LOG_ERROR("Failed to open config file: %s", path);
         return INFRA_ERROR_IO;
     }
 
-    // Reset rules
+    // 清空现有规则
     g_rinetd_default_config.rules.count = 0;
 
     char line[256];
+    int line_num = 0;
+
     while (fgets(line, sizeof(line), fp)) {
-        // Skip comments and empty lines
+        line_num++;
+        
+        // 跳过空行和注释
         if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') {
             continue;
         }
 
-        // Parse line
+        // 解析规则
         char src_addr[64], dst_addr[64];
         int src_port, dst_port;
-        if (sscanf(line, "%63s %d %63s %d", src_addr, &src_port, dst_addr, &dst_port) != 4) {
-            INFRA_LOG_WARN("Invalid config line: %s", line);
-            continue;
+        
+        if (sscanf(line, "%63s %d %63s %d", src_addr, &src_port, dst_addr, &dst_port) == 4) {
+            if (g_rinetd_default_config.rules.count >= MAX_FORWARD_RULES) {
+                INFRA_LOG_ERROR("Too many forward rules");
+                fclose(fp);
+                return INFRA_ERROR_NO_MEMORY;
+            }
+
+            rinetd_rule_t* rule = &g_rinetd_default_config.rules.rules[g_rinetd_default_config.rules.count];
+            strncpy(rule->src_addr, src_addr, sizeof(rule->src_addr) - 1);
+            rule->src_port = src_port;
+            strncpy(rule->dst_addr, dst_addr, sizeof(rule->dst_addr) - 1);
+            rule->dst_port = dst_port;
+            
+            g_rinetd_default_config.rules.count++;
+            INFRA_LOG_INFO("Added forward rule: %s:%d -> %s:%d",
+                          rule->src_addr, rule->src_port,
+                          rule->dst_addr, rule->dst_port);
+        } else {
+            INFRA_LOG_ERROR("Invalid config line %d: %s", line_num, line);
+            fclose(fp);
+            return INFRA_ERROR_INVALID_PARAM;
         }
-
-        // Add forward rule
-        if (g_rinetd_default_config.rules.count >= MAX_FORWARD_RULES) {
-            INFRA_LOG_WARN("Too many forward rules, ignoring: %s", line);
-            continue;
-        }
-
-        rinetd_rule_t* rule = &g_rinetd_default_config.rules.rules[g_rinetd_default_config.rules.count++];
-        strncpy(rule->src_addr, src_addr, sizeof(rule->src_addr) - 1);
-        rule->src_port = src_port;
-        strncpy(rule->dst_addr, dst_addr, sizeof(rule->dst_addr) - 1);
-        rule->dst_port = dst_port;
-
-        INFRA_LOG_INFO("Added forward rule: %s:%d -> %s:%d", 
-            src_addr, src_port, dst_addr, dst_port);
     }
 
     fclose(fp);
+    INFRA_LOG_INFO("Loaded %d forward rules", g_rinetd_default_config.rules.count);
     return INFRA_OK;
 }
 

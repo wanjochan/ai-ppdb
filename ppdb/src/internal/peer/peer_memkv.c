@@ -1070,6 +1070,39 @@ infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
         for (int i = 1; i < argc; i++) {
             if (strncmp(argv[i], "--config=", 9) == 0) {
                 config_file = argv[i] + 9;
+                FILE* fp = fopen(config_file, "r");
+                if (fp) {
+                    char line[1024];
+                    if (fgets(line, sizeof(line), fp)) {
+                        char host[256];
+                        int port;
+                        char engine[64];
+                        char plugin[256];
+                        
+                        // 尝试解析配置行
+                        int matched = sscanf(line, "%255s %d %63s %255s", host, &port, engine, plugin);
+                        INFRA_LOG_INFO("Parsing config file: matched=%d, host=%s, port=%d, engine=%s", 
+                                      matched, host, port, engine);
+                        
+                        if (matched >= 3) {
+                            g_memkv_state.port = port;
+                            if (g_memkv_state.engine) free(g_memkv_state.engine);
+                            g_memkv_state.engine = strdup(engine);
+                            if (matched > 3 && plugin[0] != '#') {  // 如果不是注释
+                                if (g_memkv_state.plugin) free(g_memkv_state.plugin);
+                                g_memkv_state.plugin = strdup(plugin);
+                            }
+                            INFRA_LOG_INFO("Config loaded: port=%d, engine=%s, plugin=%s",
+                                          g_memkv_state.port, g_memkv_state.engine,
+                                          g_memkv_state.plugin ? g_memkv_state.plugin : "none");
+                        } else {
+                            INFRA_LOG_ERROR("Failed to parse config line: %s", line);
+                        }
+                    }
+                    fclose(fp);
+                } else {
+                    INFRA_LOG_ERROR("Failed to open config file: %s", config_file);
+                }
                 break;
             }
             else if (strncmp(argv[i], "--port=", 7) == 0) {
@@ -1080,43 +1113,6 @@ infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
             }
             else if (strncmp(argv[i], "--plugin=", 9) == 0) {
                 g_memkv_state.plugin = strdup(argv[i] + 9);
-            }
-        }
-
-        // 如果指定了配置文件，读取配置
-        if (config_file) {
-            FILE* fp = fopen(config_file, "r");
-            if (fp) {
-                char line[1024];
-                if (fgets(line, sizeof(line), fp)) {
-                    char host[256];
-                    int port;
-                    char engine[64];
-                    char plugin[256];
-                    
-                    // 尝试解析配置行
-                    int matched = sscanf(line, "%255s %d %63s %255s", host, &port, engine, plugin);
-                    INFRA_LOG_INFO("Parsing config file: matched=%d, host=%s, port=%d, engine=%s", 
-                                  matched, host, port, engine);
-                    
-                    if (matched >= 3) {
-                        g_memkv_state.port = port;
-                        if (g_memkv_state.engine) free(g_memkv_state.engine);
-                        g_memkv_state.engine = strdup(engine);
-                        if (matched > 3 && plugin[0] != '#') {  // 如果不是注释
-                            if (g_memkv_state.plugin) free(g_memkv_state.plugin);
-                            g_memkv_state.plugin = strdup(plugin);
-                        }
-                        INFRA_LOG_INFO("Config loaded: port=%d, engine=%s, plugin=%s",
-                                      g_memkv_state.port, g_memkv_state.engine,
-                                      g_memkv_state.plugin ? g_memkv_state.plugin : "none");
-                    } else {
-                        INFRA_LOG_ERROR("Failed to parse config line: %s", line);
-                    }
-                }
-                fclose(fp);
-            } else {
-                INFRA_LOG_ERROR("Failed to open config file: %s", config_file);
             }
         }
 

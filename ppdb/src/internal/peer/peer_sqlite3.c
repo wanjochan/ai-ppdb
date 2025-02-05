@@ -16,6 +16,8 @@
 #define SQLITE3_MAX_PATH_LEN 256
 #define SQLITE3_MAX_SQL_LEN 4096
 #define SQLITE3_MAX_CONNECTIONS 128
+#define SQLITE3_DEFAULT_CONFIG_FILE "./sqlite3.conf"
+#define SQLITE3_MAX_HOST_LEN 64
 
 //-----------------------------------------------------------------------------
 // Types
@@ -32,6 +34,9 @@ typedef struct {
 // Service state
 typedef struct {
     char db_path[SQLITE3_MAX_PATH_LEN]; // Database path
+    char config_path[SQLITE3_MAX_PATH_LEN]; // Config file path
+    char host[SQLITE3_MAX_HOST_LEN];    // Host to bind to
+    int port;                           // Port to bind to
     infra_socket_t listener;            // Listener socket
     volatile bool running;              // Service running flag
     infra_mutex_t mutex;                // Service mutex
@@ -388,33 +393,109 @@ cleanup:
 // Service lifecycle
 //-----------------------------------------------------------------------------
 
+// Read configuration from file
+static infra_error_t read_config(sqlite3_state_t* state) {
+    INFRA_LOG_INFO("Attempting to read config from: %s", state->config_path);
+    
+    // Try to open the config file
+    FILE* fp = NULL;
+    const char* config_path = state->config_path;
+    
+    // First try as is (might be absolute path)
+    fp = fopen(config_path, "r");
+    if (!fp) {
+        return INFRA_ERROR_IO;
+        // INFRA_LOG_INFO("Failed to open config directly, trying with ppdb/ prefix");
+        // // Try with ppdb/ prefix
+        // char prefixed_path[SQLITE3_MAX_PATH_LEN];
+        // snprintf(prefixed_path, sizeof(prefixed_path), "ppdb/%s", config_path);
+        // fp = fopen(prefixed_path, "r");
+        
+        // if (!fp) {
+        //     INFRA_LOG_ERROR("Failed to open config file: %s (also tried %s)", 
+        //         config_path, prefixed_path);
+        //     return INFRA_ERROR_IO;
+        // }
+        // // Update the config path to the one that worked
+        // INFRA_LOG_INFO("Successfully opened config with ppdb/ prefix: %s", prefixed_path);
+        // strncpy(state->config_path, prefixed_path, SQLITE3_MAX_PATH_LEN - 1);
+        // state->config_path[SQLITE3_MAX_PATH_LEN - 1] = '\0';
+    } else {
+        INFRA_LOG_INFO("Successfully opened config directly: %s", config_path);
+    }
+
+    char line[SQLITE3_MAX_PATH_LEN];
+    if (fgets(line, sizeof(line), fp) == NULL) {
+        INFRA_LOG_ERROR("Failed to read config file");
+        fclose(fp);
+        return INFRA_ERROR_IO;
+    }
+
+    INFRA_LOG_INFO("Read config line: %s", line);
+
+    // Parse the first non-comment line
+    char host[SQLITE3_MAX_HOST_LEN];
+    int port;
+    char db_type[32];
+    char db_path[SQLITE3_MAX_PATH_LEN];
+
+    while (line[0] == '#' || line[0] == '\n') {
+        INFRA_LOG_INFO("Skipping comment/empty line: %s", line);
+        if (fgets(line, sizeof(line), fp) == NULL) {
+            INFRA_LOG_ERROR("No valid configuration found");
+            fclose(fp);
+            return INFRA_ERROR_IO;
+        }
+    }
+
+    if (sscanf(line, "%s %d %s %s", host, &port, db_type, db_path) != 4) {
+        INFRA_LOG_ERROR("Invalid config format in line: %s", line);
+        fclose(fp);
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    INFRA_LOG_INFO("Parsed config - host: %s, port: %d, type: %s, path: %s",
+        host, port, db_type, db_path);
+
+    strncpy(state->host, host, SQLITE3_MAX_HOST_LEN - 1);
+    state->host[SQLITE3_MAX_HOST_LEN - 1] = '\0';
+    state->port = port;
+    strncpy(state->db_path, db_path, SQLITE3_MAX_PATH_LEN - 1);
+    state->db_path[SQLITE3_MAX_PATH_LEN - 1] = '\0';
+
+    fclose(fp);
+    INFRA_LOG_INFO("Configuration loaded successfully");
+    return INFRA_OK;
+}
+
 infra_error_t sqlite3_init(void) {
     if (g_sqlite3_service.state != PEER_SERVICE_STATE_INIT &&
         g_sqlite3_service.state != PEER_SERVICE_STATE_STOPPED) {
         return INFRA_ERROR_INVALID_STATE;
     }
 
-    // Initialize service state
+    // Allocate service state
     sqlite3_state_t* state = (sqlite3_state_t*)infra_malloc(sizeof(sqlite3_state_t));
     if (!state) {
         return INFRA_ERROR_NO_MEMORY;
     }
+
+    // Initialize state
     memset(state, 0, sizeof(sqlite3_state_t));
-    
-    state->running = false;
-    state->listener = 0;
-    state->poll_ctx = NULL;
+    strncpy(state->config_path, SQLITE3_DEFAULT_CONFIG_FILE, SQLITE3_MAX_PATH_LEN - 1);
+    state->config_path[SQLITE3_MAX_PATH_LEN - 1] = '\0';
 
     // Initialize mutex
     infra_error_t err = infra_mutex_create(&state->mutex);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to initialize mutex");
         infra_free(state);
         return err;
     }
 
+    // Set service state
     g_sqlite3_service.config.user_data = state;
     g_sqlite3_service.state = PEER_SERVICE_STATE_READY;
+
     return INFRA_OK;
 }
 
@@ -431,6 +512,12 @@ infra_error_t sqlite3_start(void) {
     if (!state) {
         INFRA_LOG_ERROR("Service state not initialized");
         return INFRA_ERROR_INVALID_STATE;
+    }
+
+    // Read configuration
+    infra_error_t err = read_config(state);
+    if (err != INFRA_OK) {
+        return err;
     }
 
     // 检查服务状态
@@ -455,7 +542,7 @@ infra_error_t sqlite3_start(void) {
         .max_listeners = 1
     };
 
-    infra_error_t err = poly_poll_init(state->poll_ctx, &poll_config);
+    err = poly_poll_init(state->poll_ctx, &poll_config);
     if (err != INFRA_OK) {
         infra_free(state->poll_ctx);
         state->poll_ctx = NULL;
@@ -465,10 +552,11 @@ infra_error_t sqlite3_start(void) {
 
     // Add listener to poll context
     poly_poll_listener_t listener_config = {
-        .bind_port = 5433, // TODO Use port from config
+        .bind_port = state->port,
         .user_data = NULL
     };
-    strcpy(listener_config.bind_addr, "0.0.0.0");//TODO user host from config
+    strncpy(listener_config.bind_addr, state->host, sizeof(listener_config.bind_addr) - 1);
+    listener_config.bind_addr[sizeof(listener_config.bind_addr) - 1] = '\0';
 
     err = poly_poll_add_listener(state->poll_ctx, &listener_config);
     if (err != INFRA_OK) {
@@ -571,8 +659,13 @@ infra_error_t sqlite3_cmd_handler(const char* cmd, char* response, size_t size) 
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // 解析命令参数
-    char cmd_copy[256];
+    sqlite3_state_t* state = get_state();
+    if (!state) {
+        return INFRA_ERROR_INVALID_STATE;
+    }
+
+    // Parse command
+    char cmd_copy[SQLITE3_MAX_PATH_LEN];
     strncpy(cmd_copy, cmd, sizeof(cmd_copy) - 1);
     cmd_copy[sizeof(cmd_copy) - 1] = '\0';
 
@@ -584,13 +677,31 @@ infra_error_t sqlite3_cmd_handler(const char* cmd, char* response, size_t size) 
         token = strtok(NULL, " ");
     }
 
-    // 处理命令
-    if (argc == 0) {
-        snprintf(response, size, "Error: Empty command");
+    if (argc < 1) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    if (strcmp(argv[0], "status") == 0) {
+    // Handle commands
+    if (strcmp(argv[0], "start") == 0) {
+        // Look for --config parameter
+        for (int i = 1; i < argc; i++) {
+            if (strncmp(argv[i], "--config=", 9) == 0) {
+                const char* config_path = argv[i] + 9;
+                strncpy(state->config_path, config_path, SQLITE3_MAX_PATH_LEN - 1);
+                state->config_path[SQLITE3_MAX_PATH_LEN - 1] = '\0';
+                break;
+            }
+        }
+        
+        infra_error_t err = sqlite3_start();
+        if (err == INFRA_OK) {
+            snprintf(response, size, "SQLite3 service started");
+        } else {
+            snprintf(response, size, "Failed to start SQLite3 service: %d", err);
+        }
+        return err;
+    }
+    else if (strcmp(argv[0], "status") == 0) {
         const char* state_str = "unknown";
         switch (g_sqlite3_service.state) {
             case PEER_SERVICE_STATE_INIT:
@@ -606,69 +717,17 @@ infra_error_t sqlite3_cmd_handler(const char* cmd, char* response, size_t size) 
                 state_str = "stopped";
                 break;
         }
-        snprintf(response, size, "SQLite3 service is %s\n", state_str);
-        return INFRA_OK;
-    }
-    else if (strcmp(argv[0], "start") == 0) {
-        // 检查数据库路径参数
-        const char* db_path = NULL;
-        for (int i = 1; i < argc; i++) {
-            if (strncmp(argv[i], "--db=", 5) == 0) {
-                db_path = argv[i] + 5;
-                break;
-            }
-        }
-
-        // 如果没有指定数据库路径，使用内存数据库
-        if (!db_path) {
-            db_path = "file::memory:?cache=shared";
-        }
-
-        // 确保服务已初始化
-        if (g_sqlite3_service.state == PEER_SERVICE_STATE_INIT || g_sqlite3_service.config.user_data == NULL) {
-            infra_error_t err = sqlite3_init();
-            if (err != INFRA_OK) {
-                snprintf(response, size, "Failed to initialize SQLite3 service: %d\n", err);
-                return err;
-            }
-        }
-
-        sqlite3_state_t* state = get_state();
-        if (!state) {
-            snprintf(response, size, "Service state not initialized\n");
-            return INFRA_ERROR_INVALID_STATE;
-        }
-
-        // 保存数据库路径
-        strncpy(state->db_path, db_path, sizeof(state->db_path) - 1);
-        state->db_path[sizeof(state->db_path) - 1] = '\0';
-
-        // 启动服务
-        infra_error_t err = sqlite3_start();
-        if (err != INFRA_OK) {
-            snprintf(response, size, "Failed to start SQLite3 service: %d\n", err);
-            return err;
-        }
-
-        snprintf(response, size, "SQLite3 service started\n");
+        snprintf(response, size, "SQLite3 service is %s", state_str);
         return INFRA_OK;
     }
     else if (strcmp(argv[0], "stop") == 0) {
-        sqlite3_state_t* state = get_state();
-        if (!state) {
-            snprintf(response, size, "Service state not initialized\n");
-            return INFRA_ERROR_INVALID_STATE;
-        }
-
-        // 停止服务
         infra_error_t err = sqlite3_stop();
-        if (err != INFRA_OK) {
-            snprintf(response, size, "Failed to stop SQLite3 service: %d\n", err);
-            return err;
+        if (err == INFRA_OK) {
+            snprintf(response, size, "SQLite3 service stopped");
+        } else {
+            snprintf(response, size, "Failed to stop SQLite3 service: %d", err);
         }
-
-        snprintf(response, size, "SQLite3 service stopped\n");
-        return INFRA_OK;
+        return err;
     }
 
     snprintf(response, size, "Unknown command: %s", argv[0]);

@@ -50,6 +50,7 @@ bool rinetd_is_running(void);
 infra_error_t rinetd_cmd_handler(const char* cmd, char* response, size_t size);
 infra_error_t rinetd_load_config(const char* path);
 infra_error_t rinetd_save_config(const char* path);
+infra_error_t rinetd_apply_config(const poly_service_config_t* config);
 
 // Get rinetd service instance
 peer_service_t* peer_rinetd_get_service(void);

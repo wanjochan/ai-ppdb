@@ -87,10 +87,15 @@ infra_error_t poly_cmdline_parse_config(const char* config_file, poly_config_t* 
     
     while (fgets(line, sizeof(line), fp)) {
         line_num++;
-        trim_string(line);
         
         // 跳过空行和注释
-        if (line[0] == '\0' || line[0] == '#') {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r' || line[0] == '\0') {
+            continue;
+        }
+
+        // 去除行尾的空白字符
+        trim_string(line);
+        if (line[0] == '\0') {
             continue;
         }
 
@@ -102,6 +107,9 @@ infra_error_t poly_cmdline_parse_config(const char* config_file, poly_config_t* 
         }
 
         infra_error_t err = parse_service_line(line, &config->services[config->service_count]);
+        if (err == INFRA_ERROR_SKIP) {
+            continue;
+        }
         if (err != INFRA_OK) {
             INFRA_LOG_ERROR("Failed to parse service config at line %d", line_num);
             fclose(fp);
@@ -109,6 +117,11 @@ infra_error_t poly_cmdline_parse_config(const char* config_file, poly_config_t* 
         }
 
         config->service_count++;
+        INFRA_LOG_INFO("Added service: %s:%d -> %s:%d",
+            config->services[config->service_count-1].listen_host,
+            config->services[config->service_count-1].listen_port,
+            config->services[config->service_count-1].target_host,
+            config->services[config->service_count-1].target_port);
     }
 
     fclose(fp);
@@ -223,32 +236,36 @@ static poly_service_type_t get_service_type(const char* type_str) {
 }
 
 static infra_error_t parse_service_line(char* line, poly_service_config_t* service) {
-    char* tokens[6];
-    int token_count = 0;
-    char* token = strtok(line, " \t");
+    // 跳过空行和注释
+    if (line[0] == '#' || line[0] == '\n' || line[0] == '\r' || line[0] == '\0') {
+        return INFRA_ERROR_SKIP;
+    }
+
+    // 去除行尾的空白字符
+    trim_string(line);
+    if (line[0] == '\0') {
+        return INFRA_ERROR_SKIP;
+    }
+
+    char src_addr[64], dst_addr[64];
+    int src_port, dst_port;
     
-    while (token && token_count < 6) {
-        tokens[token_count++] = token;
-        token = strtok(NULL, " \t");
+    if (sscanf(line, "%63s %d %63s %d", src_addr, &src_port, dst_addr, &dst_port) == 4) {
+        // 设置服务类型为 rinetd
+        service->type = POLY_SERVICE_RINETD;
+        
+        // 设置监听地址和端口
+        strncpy(service->listen_host, src_addr, POLY_CMD_MAX_NAME - 1);
+        service->listen_port = src_port;
+        
+        // 设置目标地址和端口
+        strncpy(service->target_host, dst_addr, POLY_CMD_MAX_NAME - 1);
+        service->target_port = dst_port;
+        
+        return INFRA_OK;
     }
     
-    if (token_count < 4) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    // 解析监听地址和端口
-    strncpy(service->listen_host, tokens[0], POLY_CMD_MAX_NAME - 1);
-    service->listen_port = atoi(tokens[1]);
-    
-    // 解析服务类型和后端配置
-    service->type = get_service_type(tokens[2]);
-    if (service->type == -1) {
-        return INFRA_ERROR_INVALID_PARAM;
-    }
-    
-    strncpy(service->backend, tokens[3], POLY_CMD_MAX_VALUE - 1);
-    
-    return INFRA_OK;
+    return INFRA_ERROR_INVALID_PARAM;
 }
 
 const poly_cmd_t* poly_cmdline_get_commands(int* count) {
