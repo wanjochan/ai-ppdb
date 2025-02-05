@@ -3,6 +3,7 @@
 ## 整体架构
 
 PPDB采用分层架构设计，自下而上分为三层:
+(注意，正在重构 PPX（INFRAX, POLYX, PEERX））)
 
 ### 1. Infra层 (基础设施层)
 - 基于cosmopolitan提供跨平台支持

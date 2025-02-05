@@ -1,34 +1,90 @@
 #ifndef PPDB_INFRAX_CORE_H
 #define PPDB_INFRAX_CORE_H
 
+#include "cosmopolitan.h"
+// #include "internal/infrax/InfraxError.h"
+
+//-----------------------------------------------------------------------------
+// Basic Types
+//-----------------------------------------------------------------------------
+
+typedef int32_t InfraxI32;
+
+// Forward declaration
+typedef struct InfraxError InfraxError;
+
+// Error structure definition
+struct InfraxError {
+    // Error state
+    InfraxI32 code;
+    char message[128];
+    // TODO: Add stack trace support when solution is available
+    // void* stack_frames[32];
+    // int stack_depth;
+    // (char stack_trace[1024])dump_stack()
+};
+
+typedef uint64_t InfraxTime;//
+typedef uint32_t InfraxFlags;
+typedef uint64_t InfraxHandle;
+typedef int InfraxBool;
+
+#define INFRAX_TRUE  1
+#define INFRAX_FALSE 0
+
+//-----------------------------------------------------------------------------
+// Thread Types
+//-----------------------------------------------------------------------------
+
+typedef void* InfraxMutex;
+typedef void* InfraxMutexAttr;
+typedef void* InfraxCond;
+typedef void* InfraxCondAttr;
+typedef void* InfraxThread;
+typedef void* InfraxThreadAttr;
+typedef void* (*InfraxThreadFunc)(void*);
+
 // Forward declaration
 typedef struct InfraxCore InfraxCore;
 
 // Core structure definition
 struct InfraxCore {
-    // Public methods
-    struct InfraxCore* (*new)(void);     // constructor: infrax_core_new()
-    void (*free)(struct InfraxCore *self);// destructor: infrax_core_free()
-    
+    // core 特别，不需要构建的，完全全局，用来放全局静态函数
+    // // Public methods
+    // struct InfraxCore* (*new)(void);     // constructor: infrax_core_new()
+    // void (*free)(struct InfraxCore *self);// destructor: infrax_core_free()
+    InfraxError (*new_error)(InfraxI32 code, const char* message); 
     // Printf forwarding
-    int (*printf)(const char* format, ...);
+    int (*printf)(InfraxCore *self, const char* format, ...);
     
     // Parameter forwarding function
-    void* (*forward_call)(void* (*target_func)(), ...);
+    void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);
+
+    // // Time management
+    InfraxTime (*time_now_ms)(InfraxCore *self);
+    InfraxTime (*time_monotonic_ms)(struct InfraxCore *self);
+    void (*sleep_ms)(struct InfraxCore *self, uint32_t milliseconds);
+
+    // // Thread operations
+    // InfraxError (*thread_create)(struct InfraxCore *self, InfraxThread* thread, InfraxThreadFunc func, void* arg);
+    // InfraxError (*thread_join)(struct InfraxCore *self, InfraxThread thread);
+
+    // // Mutex operations
+    // InfraxError (*mutex_create)(struct InfraxCore *self, InfraxMutex* mutex);
+    // void (*mutex_destroy)(struct InfraxCore *self, InfraxMutex mutex);
+    // InfraxError (*mutex_lock)(struct InfraxCore *self, InfraxMutex mutex);
+    // InfraxError (*mutex_unlock)(struct InfraxCore *self, InfraxMutex mutex);
+
+    // // Condition variable operations
+    // InfraxError (*cond_init)(struct InfraxCore *self, InfraxCond* cond);
+    // void (*cond_destroy)(struct InfraxCore *self, InfraxCond cond);
+    // InfraxError (*cond_wait)(struct InfraxCore *self, InfraxCond cond, InfraxMutex mutex);
+    // InfraxError (*cond_timedwait)(struct InfraxCore *self, InfraxCond cond, InfraxMutex mutex, uint32_t timeout_ms);
+    // InfraxError (*cond_signal)(struct InfraxCore *self, InfraxCond cond);
+    // InfraxError (*cond_broadcast)(struct InfraxCore *self, InfraxCond cond);
 };
 
-// Constructor - creates and initializes a new instance
-InfraxCore* infrax_core_new(void);
-
-// Destructor - cleans up and frees the instance
-void infrax_core_free(InfraxCore *self);
-
-// Printf forwarding function
-int infrax_core_printf(const char* format, ...);
-
-// Parameter forwarding function
-void* infrax_core_forward_call(void* (*target_func)(va_list), ...);
-
-InfraxCore* get_global_infra_core(void);
+extern InfraxCore g_infrax_core;  // global infrax core for tricks
+InfraxCore* get_global_infrax_core(void);
 
 #endif // PPDB_INFRAX_CORE_H

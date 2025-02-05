@@ -3,9 +3,12 @@
 #include "ppdb/PpxArch.h"
 
 void test_infrax_core(void) {
-    InfraxCore* core = get_global_infra_core();
+    InfraxCore* core = get_global_infrax_core();
     assert(core != NULL);
-    printf("InfraxCore tests passed\n");
+    //core->time_now(core);
+    core->printf(core, "time_now_ms=%d",core->time_now_ms(core));
+    core->printf(core, "time_monotonic_ms=%d",core->time_monotonic_ms(core));
+    core->printf(core, "InfraxCore tests passed\n");
 }
 
 void test_ppx_infra(void) {

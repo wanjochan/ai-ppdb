@@ -1,37 +1,32 @@
 #include "cosmopolitan.h"
 #include <assert.h>
 #include <pthread.h>
-#include "internal/infrax/InfraxError.h"
 #include "ppdb/PpxInfra.h"
 
 // Test basic error operations
 void test_error_operations(void) {
-    InfraxError error = infrax_error_create(0, NULL);
+    InfraxCore* core = get_global_infrax_core();
+    InfraxError error = core->new_error(0, NULL);
     
     // Test initial state
     assert(error.code == 0);
     assert(strlen(error.message) == 0);
     
-    // Test setting error
-    error.set(&error, -1, "Test error message");
-    assert(error.code == -1);
-    assert(strcmp(error.message, "Test error message") == 0);
-    
-    // Test clearing error
-    error.clear(&error);
-    assert(error.code == 0);
-    assert(strlen(error.message) == 0);
+    //not recommend but should work:
+    InfraxError error2 = g_infrax_core.new_error(2, "error 2");
+    assert(error2.code == 2);
+    assert(strcmp(error2.message, "error 2") == 0);
     
     printf("Basic error operations test passed\n");
 }
 
 // Test new_error functionality
 void test_new_error(void) {
-    PpxInfra* infra = get_global_ppxInfra();
-    assert(infra != NULL);
+    InfraxCore* core = get_global_infrax_core();
+    assert(core != NULL);
     
     // Test creating new error
-    InfraxError e1 = infra->new_error(1, "Test error");
+    InfraxError e1 = core->new_error(1, "Test error");
     assert(e1.code == 1);
     assert(strcmp(e1.message, "Test error") == 0);
     
@@ -40,18 +35,18 @@ void test_new_error(void) {
     memset(long_message, 'A', sizeof(long_message));
     long_message[511] = '\0';
     
-    InfraxError e2 = infra->new_error(2, long_message);
+    InfraxError e2 = core->new_error(2, long_message);
     assert(e2.code == 2);
     assert(strlen(e2.message) == 127);  // Should be truncated
     assert(e2.message[127] == '\0');    // Should be null terminated
     
     // Test empty message
-    InfraxError e3 = infra->new_error(3, "");
+    InfraxError e3 = core->new_error(3, "");
     assert(e3.code == 3);
     assert(strlen(e3.message) == 0);
     
     // Test NULL message
-    InfraxError e4 = infra->new_error(4, NULL);
+    InfraxError e4 = core->new_error(4, NULL);
     assert(e4.code == 4);
     assert(strlen(e4.message) == 0);
     
@@ -60,18 +55,18 @@ void test_new_error(void) {
 
 // Test error value copying
 void test_error_value_semantics(void) {
-    PpxInfra* infra = get_global_ppxInfra();
-    assert(infra != NULL);
+    InfraxCore* core = get_global_infrax_core();
+    assert(core != NULL);
     
     // Test error value assignment
-    InfraxError e1 = infra->new_error(1, "Original error");
+    InfraxError e1 = core->new_error(1, "Original error");
     InfraxError e2 = e1;  // Copy the error
     
     assert(e1.code == e2.code);
     assert(strcmp(e1.message, e2.message) == 0);
     
     // Modify e1 and verify e2 remains unchanged
-    e1 = infra->new_error(2, "Modified error");
+    e1 = core->new_error(2, "Modified error");
     assert(e2.code == 1);
     assert(strcmp(e2.message, "Original error") == 0);
     
@@ -80,10 +75,10 @@ void test_error_value_semantics(void) {
 
 // Thread function for testing thread local storage
 void* thread_function(void* arg) {
-    PpxInfra* infra = get_global_ppxInfra();
-    assert(infra != NULL);
+    InfraxCore* core = get_global_infrax_core();
+    assert(core != NULL);
     
-    InfraxError error = infra->new_error(-2, "Thread specific error");
+    InfraxError error = core->new_error(-2, "Thread specific error");
     
     // Verify thread-specific error
     assert(error.code == -2);
@@ -94,10 +89,10 @@ void* thread_function(void* arg) {
 
 // Test thread safety
 void test_thread_safety(void) {
-    PpxInfra* infra = get_global_ppxInfra();
-    assert(infra != NULL);
+    InfraxCore* core = get_global_infrax_core();
+    assert(core != NULL);
     
-    InfraxError main_error = infra->new_error(-1, "Main thread error");
+    InfraxError main_error = core->new_error(-1, "Main thread error");
     
     pthread_t thread;
     pthread_create(&thread, NULL, thread_function, NULL);
@@ -112,16 +107,16 @@ void test_thread_safety(void) {
 
 // Test error handling in functions
 InfraxError process_with_error(int value) {
-    PpxInfra* infra = get_global_ppxInfra();
-    assert(infra != NULL);
+    InfraxCore* core = get_global_infrax_core();
+    assert(core != NULL);
     
     if (value < 0) {
-        return infra->new_error(-1, "Negative value not allowed");
+        return core->new_error(-1, "Negative value not allowed");
     }
     if (value > 100) {
-        return infra->new_error(-2, "Value too large");
+        return core->new_error(-2, "Value too large");
     }
-    return infra->new_error(0, "Success");
+    return core->new_error(0, "Success");
 }
 
 void test_error_handling(void) {
