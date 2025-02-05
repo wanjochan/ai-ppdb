@@ -22,6 +22,13 @@ typedef enum {
     POLY_SERVICE_DISKV
 } poly_service_type_t;
 
+// Command line argument
+typedef struct {
+    char name[POLY_CMD_MAX_NAME];
+    char value[POLY_CMD_MAX_VALUE];
+    bool has_value;
+} poly_cmd_arg_t;
+
 // Service configuration
 typedef struct {
     poly_service_type_t type;
@@ -34,7 +41,8 @@ typedef struct {
 
 // Global configuration
 typedef struct {
-    char config_file[POLY_CMD_MAX_VALUE];
+    poly_cmd_arg_t args[POLY_CMD_MAX_ARGS];
+    int arg_count;
     int log_level;
     poly_service_config_t services[POLY_CMD_MAX_SERVICES];
     int service_count;
@@ -107,9 +115,42 @@ infra_error_t poly_cmdline_help(const char *cmd_name);
 const poly_cmd_t* poly_cmdline_get_commands(int* count);
 
 /**
+ * @brief Get current configuration file path
+ * @return Configuration file path, or NULL if not set
+ */
+// const char* poly_cmdline_get_config_path(void);
+
+/**
  * @brief Cleanup command line framework
  * @return infra_error_t Error code
  */
 infra_error_t poly_cmdline_cleanup(void);
+
+/**
+ * @brief Get option value from command line arguments
+ * @param config Current configuration context
+ * @param option Option name (e.g. "--config")
+ * @param value Buffer to store option value
+ * @param size Size of value buffer
+ * @return INFRA_OK if option found and value copied, INFRA_ERROR_NOT_FOUND if option not found
+ */
+infra_error_t poly_cmdline_get_option(const poly_config_t* config, const char* option, char* value, size_t size);
+
+/**
+ * @brief Check if option exists in command line arguments
+ * @param config Current configuration context
+ * @param option Option name (e.g. "--daemon")
+ * @return true if option exists, false otherwise
+ */
+bool poly_cmdline_has_option(const poly_config_t* config, const char* option);
+
+/**
+ * @brief Get integer option value from command line arguments
+ * @param config Current configuration context
+ * @param option Option name (e.g. "--log-level")
+ * @param value Pointer to store integer value
+ * @return INFRA_OK if option found and value parsed, INFRA_ERROR_NOT_FOUND if option not found
+ */
+infra_error_t poly_cmdline_get_int_option(const poly_config_t* config, const char* option, int* value);
 
 #endif /* PPDB_POLY_CMDLINE_H */ 

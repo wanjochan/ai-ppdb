@@ -23,4 +23,7 @@ infra_error_t sqlite3_start(void);
 infra_error_t sqlite3_stop(void);
 infra_error_t sqlite3_cmd_handler(const char* cmd, char* response, size_t size);
 
+// 获取服务实例
+peer_service_t* peer_sqlite3_get_service(void);
+
 #endif /* PEER_SQLITE3_H */
