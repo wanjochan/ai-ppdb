@@ -9,7 +9,7 @@
 //-----------------------------------------------------------------------------
 
 typedef int32_t InfraxI32;
-
+typedef uint32_t InfraxU32;
 // Forward declaration
 typedef struct InfraxError InfraxError;
 

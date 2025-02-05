@@ -73,29 +73,162 @@ static void infrax_core_sleep_ms(InfraxCore *self, uint32_t milliseconds) {
     nanosleep(&ts, NULL);
 }
 
-// static InfraxError infrax_core_thread_create(InfraxCore *self, InfraxThread* thread, InfraxThreadFunc func, void* arg) {
-//     pthread_t* pthread = malloc(sizeof(pthread_t));
-//     if (!pthread) {
-//         return INFRAX_ERROR_OUT_OF_MEMORY;
-//     }
-    
-//     if (pthread_create(pthread, NULL, func, arg) != 0) {
-//         free(pthread);
-//         return INFRAX_ERROR_THREAD_CREATE;
-//     }
-    
-//     *thread = pthread;
-//     return INFRAX_OK;
-// }
+InfraxU32 infrax_core_random(InfraxCore *self) {
+    return rand();  // 使用标准库的 rand 函数
+}
 
-// static InfraxError infrax_core_thread_join(InfraxCore *self, InfraxThread thread) {
-//     pthread_t* pthread = thread;
-//     if (pthread_join(*pthread, NULL) != 0) {
-//         return INFRAX_ERROR_THREAD_JOIN;
-//     }
-//     free(pthread);
-//     return INFRAX_OK;
-// }
+void infra_random_seed(InfraxCore *self, uint32_t seed) {
+    srand(seed);  // 使用标准库的 srand 函数
+}
+
+// Note: PATH_MAX is typically 4096 bytes on Linux/Unix systems
+// We should return allocated string to avoid buffer overflow risks
+// TODO: Consider changing function signature to:
+// char* infrax_get_cwd(InfraxCore *self, InfraxError *error);
+// 
+// 建议修改方案:
+// 1. 改为返回动态分配的字符串,避免缓冲区溢出风险
+// 2. 通过 error 参数返回错误信息
+// 3. 调用方负责释放返回的字符串
+// 4. 实现示例:
+//    char* cwd = infrax_get_cwd(core, &error);
+//    if(error.code != 0) {
+//        // handle error
+//    }
+//    // use cwd
+//    free(cwd);
+// 系统路径长度上限:
+// Linux/Unix: PATH_MAX 通常是 4096 字节
+// Windows: MAX_PATH 通常是 260 字符
+// macOS: PATH_MAX 通常是 1024 字节
+// 为了兼容性和安全性,我们使用 4096 作为上限
+// #define INFRAX_PATH_MAX 4096
+InfraxError infrax_get_cwd(InfraxCore *self, char* buffer, size_t size) {
+    
+    if (!buffer || size == 0) {
+        return self->new_error(1, "Invalid buffer or size");
+    }
+
+    if (!getcwd(buffer, size)) {
+        return self->new_error(2, "Failed to get current working directory");
+    }
+
+    return self->new_error(0, NULL);
+}
+// String operations
+static size_t infrax_core_strlen(InfraxCore *self, const char* s) {
+    if (!s) return 0;
+    size_t len = 0;
+    while (s[len]) len++;
+    return len;
+}
+
+static char* infrax_core_strcpy(InfraxCore *self, char* dest, const char* src) {
+    if (!dest || !src) return NULL;
+    char* d = dest;
+    while ((*d++ = *src++));
+    return dest;
+}
+
+static char* infrax_core_strncpy(InfraxCore *self, char* dest, const char* src, size_t n) {
+    if (!dest || !src || !n) return NULL;
+    char* d = dest;
+    while (n > 0 && (*d++ = *src++)) n--;
+    while (n-- > 0) *d++ = '\0';
+    return dest;
+}
+
+static char* infrax_core_strcat(InfraxCore *self, char* dest, const char* src) {
+    if (!dest || !src) return NULL;
+    char* d = dest;
+    while (*d) d++;
+    while ((*d++ = *src++));
+    return dest;
+}
+
+static char* infrax_core_strncat(InfraxCore *self, char* dest, const char* src, size_t n) {
+    if (!dest || !src || !n) return NULL;
+    char* d = dest;
+    while (*d) d++;
+    while (n-- > 0 && (*d++ = *src++));
+    *d = '\0';
+    return dest;
+}
+
+static int infrax_core_strcmp(InfraxCore *self, const char* s1, const char* s2) {
+    if (!s1 || !s2) return s1 ? 1 : (s2 ? -1 : 0);
+    while (*s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return *(unsigned char*)s1 - *(unsigned char*)s2;
+}
+
+static int infrax_core_strncmp(InfraxCore *self, const char* s1, const char* s2, size_t n) {
+    if (!s1 || !s2 || !n) return 0;
+    while (n-- > 0 && *s1 && (*s1 == *s2)) {
+        s1++;
+        s2++;
+    }
+    return n < 0 ? 0 : *(unsigned char*)s1 - *(unsigned char*)s2;
+}
+
+static char* infrax_core_strchr(InfraxCore *self, const char* s, int c) {
+    if (!s) return NULL;
+    while (*s && *s != (char)c) s++;
+    return *s == (char)c ? (char*)s : NULL;
+}
+
+static char* infrax_core_strrchr(InfraxCore *self, const char* s, int c) {
+    if (!s) return NULL;
+    const char* found = NULL;
+    while (*s) {
+        if (*s == (char)c) found = s;
+        s++;
+    }
+    if ((char)c == '\0') return (char*)s;
+    return (char*)found;
+}
+
+static char* infrax_core_strstr(InfraxCore *self, const char* haystack, const char* needle) {
+    if (!haystack || !needle) return NULL;
+    if (!*needle) return (char*)haystack;
+    
+    char* h = (char*)haystack;
+    while (*h) {
+        char* h1 = h;
+        const char* n = needle;
+        while (*h1 && *n && *h1 == *n) {
+            h1++;
+            n++;
+        }
+        if (!*n) return h;
+        h++;
+    }
+    return NULL;
+}
+
+static char* infrax_core_strdup(InfraxCore *self, const char* s) {
+    if (!s) return NULL;
+    size_t len = infrax_core_strlen(self, s) + 1;
+    char* new_str = malloc(len);
+    if (new_str) {
+        infrax_core_strcpy(self, new_str, s);
+    }
+    return new_str;
+}
+
+static char* infrax_core_strndup(InfraxCore *self, const char* s, size_t n) {
+    if (!s) return NULL;
+    size_t len = infrax_core_strlen(self, s);
+    if (len > n) len = n;
+    char* new_str = malloc(len + 1);
+    if (new_str) {
+        infrax_core_strncpy(self, new_str, s, len);
+        new_str[len] = '\0';
+    }
+    return new_str;
+}
 
 // static InfraxError infrax_core_mutex_create(InfraxCore *self, InfraxMutex* mutex) {
 //     pthread_mutex_t* pmutex = malloc(sizeof(pthread_mutex_t));

@@ -54,9 +54,4 @@ struct InfraxThread {
 // The "static" interface instance
 extern const InfraxThreadClass InfraxThread_CLASS;
 
-// // Global thread operations 我们的架构不暴露方法
-// InfraxError infrax_thread_start(InfraxThread* self);
-// InfraxError infrax_thread_join(InfraxThread* self, void** result);
-// InfraxThreadId infrax_thread_get_current_id(void);
-
 #endif /* INFRAX_THREAD_H */
