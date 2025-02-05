@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include "internal/arch/PpxArch.h"
 #include "internal/infrax/InfraxMemory.h"
 
 // 测试基础内存管理
@@ -15,7 +16,8 @@ void test_base_memory() {
         .gc_threshold = 0
     };
     
-    InfraxMemory* memory = infrax_memory_new(&config);
+    // 使用类接口创建实例
+    InfraxMemory* memory = InfraxMemory_CLASS.new(&config);
     assert(memory != NULL);
     
     // 测试分配和写入
@@ -37,8 +39,7 @@ void test_base_memory() {
     
     // 清理
     infrax_memory_dealloc(memory, str);
-    infrax_memory_free(memory);
-    printf("Base Memory tests passed\n");
+    InfraxMemory_CLASS.free(memory);
 }
 
 // 测试内存池
@@ -52,8 +53,8 @@ void test_pool_memory() {
         .use_pool = true,
         .gc_threshold = 0
     };
-    
-    InfraxMemory* memory = infrax_memory_new(&config);
+
+    InfraxMemory* memory = InfraxMemory_CLASS.new(&config);
     assert(memory != NULL);
     printf("Memory instance created successfully\n");
     
@@ -141,8 +142,7 @@ void test_pool_memory() {
     
     // 清理
     printf("Cleaning up memory pool...\n");
-    infrax_memory_free(memory);
-    printf("Memory pool tests passed\n");
+    InfraxMemory_CLASS.free(memory);
 }
 
 // 测试垃圾回收
@@ -156,7 +156,7 @@ void test_gc_memory() {
         .gc_threshold = 512 * 1024  // 512KB
     };
     
-    InfraxMemory* memory = infrax_memory_new(&config);
+    InfraxMemory* memory = InfraxMemory_CLASS.new(&config);
     assert(memory != NULL);
     
     // 分配一个根对象
@@ -177,7 +177,7 @@ void test_gc_memory() {
     
     // 清理
     infrax_memory_dealloc(memory, root);
-    infrax_memory_free(memory);
+    InfraxMemory_CLASS.free(memory);
     printf("GC Memory tests passed\n");
 }
 

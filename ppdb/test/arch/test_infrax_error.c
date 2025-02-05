@@ -1,7 +1,7 @@
 #include "cosmopolitan.h"
 #include <assert.h>
 #include <pthread.h>
-#include "ppdb/PpxInfra.h"
+#include "internal/infrax/InfraxCore.h"
 
 // Test basic error operations
 void test_error_operations(void) {

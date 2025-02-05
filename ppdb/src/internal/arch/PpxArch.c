@@ -1,13 +1,9 @@
 #include "cosmopolitan.h"
-#include "ppdb/PpxArch.h"
-#include "ppdb/PpxInfra.h"
+#include "PpxArch.h"
+#include "PpxInfra.h"
 
-// Global instance
-static PpxArch global_ppxArch = {
-    .infra = NULL,
-    .new = ppx_arch_new,
-    .free = ppx_arch_free
-};
+// Forward declaration of static variables
+static PpxArch global_ppxArch;
 
 // Private initialization function
 static void ppx_arch_init(PpxArch* self) {
@@ -16,9 +12,8 @@ static void ppx_arch_init(PpxArch* self) {
     // Initialize infra
     self->infra = get_global_ppxInfra();
     
-    // Initialize methods
-    self->new = ppx_arch_new;
-    self->free = ppx_arch_free;
+    // Initialize class pointer
+    self->klass = &PpxArch_CLASS;
 }
 
 // Constructor implementation
@@ -40,6 +35,18 @@ void ppx_arch_free(PpxArch* self) {
         free(self);
     }
 }
+
+// The "static" interface implementation
+const PpxArchClass PpxArch_CLASS = {
+    .new = ppx_arch_new,
+    .free = ppx_arch_free
+};
+
+// Global instance initialization
+static PpxArch global_ppxArch = {
+    .klass = &PpxArch_CLASS,
+    .infra = NULL
+};
 
 // Get global instance
 PpxArch* get_global_ppxArch(void) {

@@ -29,8 +29,20 @@ typedef struct {
     size_t gc_threshold;    // GC触发阈值
 } InfraxMemoryConfig;
 
-// Memory manager
-typedef struct InfraxMemory {
+// Forward declarations
+typedef struct InfraxMemory InfraxMemory;
+typedef struct InfraxMemoryClass InfraxMemoryClass;
+
+// The "static" interface (like static methods in OOP)
+struct InfraxMemoryClass {
+    InfraxMemory* (*new)(const InfraxMemoryConfig* config);
+    void (*free)(InfraxMemory* self);
+};
+
+// The instance structure
+struct InfraxMemory {
+    const InfraxMemoryClass* klass;  // 指向"类"方法表
+    
     // Configuration
     InfraxMemoryConfig config;
     InfraxMemoryStats stats;
@@ -43,11 +55,10 @@ typedef struct InfraxMemory {
     // GC data
     MemoryBlock* gc_objects;
     void* stack_bottom;
-} InfraxMemory;
+};
 
-// Core functions
-InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config);
-void infrax_memory_free(InfraxMemory* self);
+// The "static" interface instance (like Java's Class object)
+extern const InfraxMemoryClass InfraxMemory_CLASS;
 
 // Memory operations
 void* infrax_memory_alloc(InfraxMemory* self, size_t size);

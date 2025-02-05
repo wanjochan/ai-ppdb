@@ -2,6 +2,16 @@
 #include <string.h>
 #include "InfraxMemory.h"
 
+// Forward declarations of internal functions
+static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config);
+static void infrax_memory_free(InfraxMemory* self);
+
+// The "static" interface implementation
+const InfraxMemoryClass InfraxMemory_CLASS = {
+    .new = infrax_memory_new,
+    .free = infrax_memory_free
+};
+
 // Helper functions for memory pool
 static MemoryBlock* find_best_fit(InfraxMemory* self, size_t size) {
     MemoryBlock* best = NULL;
@@ -77,12 +87,15 @@ static void sweep_unused(InfraxMemory* self) {
 }
 
 // Core functions implementation
-InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
+static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
     InfraxMemory* self = (InfraxMemory*)malloc(sizeof(InfraxMemory));
     if (!self) return NULL;
 
     memset(self, 0, sizeof(InfraxMemory));
     memcpy(&self->config, config, sizeof(InfraxMemoryConfig));
+    
+    // Set the class pointer
+    self->klass = &InfraxMemory_CLASS;
 
     if (config->use_pool) {
         self->pool_start = malloc(config->initial_size);
@@ -102,7 +115,7 @@ InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
     return self;
 }
 
-void infrax_memory_free(InfraxMemory* self) {
+static void infrax_memory_free(InfraxMemory* self) {
     if (!self) return;
     
     if (self->pool_start) {

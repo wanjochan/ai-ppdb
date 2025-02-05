@@ -1,8 +1,6 @@
 #ifndef PPDB_INFRAX_LOG_H
 #define PPDB_INFRAX_LOG_H
 
-// #include "internal/infrax/InfraxTypes.h"
-
 typedef enum {
     LOG_LEVEL_DEBUG,
     LOG_LEVEL_INFO,
