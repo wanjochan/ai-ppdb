@@ -8,31 +8,35 @@ typedef enum {
     LOG_LEVEL_ERROR
 } LogLevel;
 
-typedef struct InfraxLog {
+// Forward declarations
+typedef struct InfraxLog InfraxLog;
+typedef struct InfraxLogClass InfraxLogClass;
+
+// The "static" interface (like static methods in OOP)
+struct InfraxLogClass {
+    InfraxLog* (*new)(void);
+    void (*free)(InfraxLog* self);
+};
+
+// The instance structure
+struct InfraxLog {
+    const InfraxLogClass* klass;  // 指向"类"方法表
+    
     // Properties
     LogLevel min_log_level;  // Minimum log level to output
     
-    // Methods
-    struct InfraxLog* (*new)(void);
-    void (*free)(struct InfraxLog*);
-    void (*set_level)(struct InfraxLog*, LogLevel level);
-    void (*debug)(struct InfraxLog*, const char* format, ...);
-    void (*info)(struct InfraxLog*, const char* format, ...);
-    void (*warn)(struct InfraxLog*, const char* format, ...);
-    void (*error)(struct InfraxLog*, const char* format, ...);
-} InfraxLog;
+    // Instance methods
+    void (*set_level)(InfraxLog* self, LogLevel level);
+    void (*debug)(InfraxLog* self, const char* format, ...);
+    void (*info)(InfraxLog* self, const char* format, ...);
+    void (*warn)(InfraxLog* self, const char* format, ...);
+    void (*error)(InfraxLog* self, const char* format, ...);
+};
 
-// Constructor and destructor
-InfraxLog* infrax_log_new(void);
-void infrax_log_free(InfraxLog* self);
+// The "static" interface instance (like Java's Class object)
+extern const InfraxLogClass InfraxLog_CLASS;
 
-// Public methods
-void infrax_log_set_level(InfraxLog* self, LogLevel level);
-void infrax_log_debug(InfraxLog* self, const char* format, ...);
-void infrax_log_info(InfraxLog* self, const char* format, ...);
-void infrax_log_warn(InfraxLog* self, const char* format, ...);
-void infrax_log_error(InfraxLog* self, const char* format, ...);
-
-InfraxLog* get_global_infra_log(void);
+// Global instance
+InfraxLog* get_global_infrax_log(void);
 
 #endif // PPDB_INFRAX_LOG_H

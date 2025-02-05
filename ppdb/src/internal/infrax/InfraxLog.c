@@ -5,6 +5,9 @@
 #include <stdarg.h>
 #include "internal/infrax/InfraxLog.h"
 
+// Forward declaration of static variables
+static InfraxLog global_infra_log;
+
 // Private functions
 static void get_time_str(char* buffer, size_t size) {
     time_t now;
@@ -47,42 +50,13 @@ static void log_message(InfraxLog* self, LogLevel level, const char* format, va_
     fprintf(stderr, "%s\n", msg_buffer);
 }
 
-static void infrax_log_init(InfraxLog *self) {
-    if (!self) return;
-    
-    // Initialize data
-    self->min_log_level = LOG_LEVEL_INFO;  // Default log level
-    
-    // Initialize methods
-    self->new = infrax_log_new;
-    self->free = infrax_log_free;
-    self->set_level = infrax_log_set_level;
-    self->debug = infrax_log_debug;
-    self->info = infrax_log_info;
-    self->warn = infrax_log_warn;
-    self->error = infrax_log_error;
-}
-
-// Public functions
-InfraxLog* infrax_log_new(void) {
-    InfraxLog *log = (InfraxLog*)malloc(sizeof(InfraxLog));
-    if (log) {
-        infrax_log_init(log);
-    }
-    return log;
-}
-
-void infrax_log_free(InfraxLog *self) {
-    if (!self) return;
-    free(self);
-}
-
-void infrax_log_set_level(InfraxLog *self, LogLevel level) {
+// Instance methods
+static void infrax_log_set_level(InfraxLog* self, LogLevel level) {
     if (!self) return;
     self->min_log_level = level;
 }
 
-void infrax_log_debug(InfraxLog *self, const char* format, ...) {
+static void infrax_log_debug(InfraxLog* self, const char* format, ...) {
     if (!self) return;
     va_list args;
     va_start(args, format);
@@ -90,7 +64,7 @@ void infrax_log_debug(InfraxLog *self, const char* format, ...) {
     va_end(args);
 }
 
-void infrax_log_info(InfraxLog *self, const char* format, ...) {
+static void infrax_log_info(InfraxLog* self, const char* format, ...) {
     if (!self) return;
     va_list args;
     va_start(args, format);
@@ -98,7 +72,7 @@ void infrax_log_info(InfraxLog *self, const char* format, ...) {
     va_end(args);
 }
 
-void infrax_log_warn(InfraxLog *self, const char* format, ...) {
+static void infrax_log_warn(InfraxLog* self, const char* format, ...) {
     if (!self) return;
     va_list args;
     va_start(args, format);
@@ -106,7 +80,7 @@ void infrax_log_warn(InfraxLog *self, const char* format, ...) {
     va_end(args);
 }
 
-void infrax_log_error(InfraxLog *self, const char* format, ...) {
+static void infrax_log_error(InfraxLog* self, const char* format, ...) {
     if (!self) return;
     va_list args;
     va_start(args, format);
@@ -114,14 +88,64 @@ void infrax_log_error(InfraxLog *self, const char* format, ...) {
     va_end(args);
 }
 
-// Global instance
-static InfraxLog global_infra_log = {0};
-static int global_infra_log_initialized = 0;
+// Private initialization function
+static void infrax_log_init(InfraxLog* self) {
+    if (!self) return;
+    
+    // Initialize class pointer
+    self->klass = &InfraxLog_CLASS;
+    
+    // Initialize data
+    self->min_log_level = LOG_LEVEL_INFO;  // Default log level
+    
+    // Initialize instance methods
+    self->set_level = infrax_log_set_level;
+    self->debug = infrax_log_debug;
+    self->info = infrax_log_info;
+    self->warn = infrax_log_warn;
+    self->error = infrax_log_error;
+}
 
-InfraxLog* get_global_infra_log(void) {
-    if (!global_infra_log_initialized) {
-        infrax_log_init(&global_infra_log);
-        global_infra_log_initialized = 1;
+// Constructor implementation
+static InfraxLog* infrax_log_new(void) {
+    InfraxLog* self = (InfraxLog*)malloc(sizeof(InfraxLog));
+    if (self) {
+        infrax_log_init(self);
     }
-    return &global_infra_log;
+    return self;
+}
+
+// Destructor implementation
+static void infrax_log_free(InfraxLog* self) {
+    if (!self) return;
+    
+    // Don't free global instance
+    if (self != &global_infra_log) {
+        free(self);
+    }
+}
+
+// The "static" interface implementation
+const InfraxLogClass InfraxLog_CLASS = {
+    .new = infrax_log_new,
+    .free = infrax_log_free
+};
+
+// Global instance initialization
+static InfraxLog global_infrax_log = {
+    .klass = &InfraxLog_CLASS,
+    .min_log_level = LOG_LEVEL_INFO,
+    .set_level = infrax_log_set_level,
+    .debug = infrax_log_debug,
+    .info = infrax_log_info,
+    .warn = infrax_log_warn,
+    .error = infrax_log_error
+};
+
+// Get global instance
+InfraxLog* get_global_infrax_log(void) {
+    if (!global_infrax_log.klass) {
+        infrax_log_init(&global_infrax_log);
+    }
+    return &global_infrax_log;
 }

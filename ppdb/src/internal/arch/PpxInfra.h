@@ -3,22 +3,28 @@
 
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
-// #include "internal/infrax/InfraxError.h"
 
-typedef struct PpxInfra {
+// Forward declarations
+typedef struct PpxInfra PpxInfra;
+typedef struct PpxInfraClass PpxInfraClass;
+
+// The "static" interface (like static methods in OOP)
+struct PpxInfraClass {
+    PpxInfra* (*new)(void);
+    void (*free)(PpxInfra* self);
+};
+
+// The instance structure
+struct PpxInfra {
+    const PpxInfraClass* klass;  // 指向"类"方法表
+    
     // Base components
     InfraxCore *core;   // Core functionality
     InfraxLog *logger;  // Logging functionality
-    
-    // Methods
-    struct PpxInfra* (*new)(void);
-    void (*free)(struct PpxInfra*);
-    InfraxError (*new_error)(InfraxI32 code, const char* message);
-} PpxInfra;
+};
 
-// Constructor and destructor
-PpxInfra* ppx_infra_new(void);
-void ppx_infra_free(PpxInfra* self);
+// The "static" interface instance (like Java's Class object)
+extern const PpxInfraClass PpxInfra_CLASS;
 
 // Global instance
 PpxInfra* get_global_ppxInfra(void);

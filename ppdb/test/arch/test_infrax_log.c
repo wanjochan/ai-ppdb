@@ -1,13 +1,17 @@
 #include <stdio.h>
 #include "internal/infrax/InfraxLog.h"
+#include <assert.h>
 
 int main() {
     // Create a new logger instance
-    InfraxLog* logger = infrax_log_new();
+    InfraxLog* logger = InfraxLog_CLASS.new();
     if (!logger) {
         fprintf(stderr, "Failed to create logger\n");
         return 1;
     }
+    
+    // Verify class pointer
+    assert(logger->klass == &InfraxLog_CLASS);
 
     // Test different log levels
     logger->debug(logger, "This is a debug message");
@@ -26,8 +30,13 @@ int main() {
     logger->warn(logger, "This warning message should appear");
     logger->error(logger, "This error message should appear");
 
+    // Test global instance
+    InfraxLog* global_logger = get_global_infrax_log();
+    assert(global_logger != NULL);
+    assert(global_logger->klass == &InfraxLog_CLASS);
+
     // Clean up
-    logger->free(logger);
+    InfraxLog_CLASS.free(logger);
     printf("All tests completed successfully\n");
     return 0;
 }

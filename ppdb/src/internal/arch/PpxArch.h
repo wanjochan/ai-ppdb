@@ -25,10 +25,6 @@ struct PpxArch {
 
 extern const PpxArchClass PpxArch_CLASS;
 
-// // Core functions
-// PpxArch* ppx_arch_new(void);
-// void ppx_arch_free(PpxArch* self);
-
 // Global instance
 PpxArch* get_global_ppxArch(void);
 

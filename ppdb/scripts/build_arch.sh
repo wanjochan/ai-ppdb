@@ -11,7 +11,7 @@ CFLAGS="${CFLAGS} -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${SRC_DIR}"
 ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxCore.c"
     "${SRC_DIR}/internal/infrax/InfraxLog.c"
-    "${SRC_DIR}/ppdb/PpxInfra.c"
+    "${SRC_DIR}/internal/arch/PpxInfra.c"
     "${SRC_DIR}/internal/arch/PpxArch.c"
     "${SRC_DIR}/internal/infrax/InfraxMemory.c"
 )

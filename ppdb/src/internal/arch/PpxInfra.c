@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include "cosmopolitan.h"
 #include "PpxInfra.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
@@ -13,31 +14,23 @@
 //     return error;
 // }
 
-// Define a global singleton PpxInfra instance initialized only once.
-static PpxInfra global_ppxInfra = {
-    .core = NULL,
-    .logger = NULL,
-    .new = ppx_infra_new,
-    .free = ppx_infra_free,
-    // .new_error = ppx_infra_new_error
-};
+// Forward declaration of static variables
+static PpxInfra global_ppxInfra;
 
 // Private initialization function
-static void ppx_infra_init(PpxInfra *self) {
+static void ppx_infra_init(PpxInfra* self) {
     if (!self) return;
+    
+    // Initialize class pointer
+    self->klass = &PpxInfra_CLASS;
     
     // Initialize components
     self->core = get_global_infrax_core();
-    self->logger = get_global_infra_log();
-    
-    // Initialize methods
-    self->new = ppx_infra_new;
-    self->free = ppx_infra_free;
-    // self->new_error = ppx_infra_new_error;
+    self->logger = get_global_infrax_log();
 }
 
 // Constructor implementation
-PpxInfra* ppx_infra_new(void) {
+static PpxInfra* ppx_infra_new(void) {
     PpxInfra* self = (PpxInfra*)malloc(sizeof(PpxInfra));
     if (self) {
         ppx_infra_init(self);
@@ -46,22 +39,30 @@ PpxInfra* ppx_infra_new(void) {
 }
 
 // Destructor implementation
-void ppx_infra_free(PpxInfra* self) {
+static void ppx_infra_free(PpxInfra* self) {
     if (!self) return;
     
-    // Don't free global components
+    // Don't free global instance
     if (self != &global_ppxInfra) {
-        //if (self->core) {
-        //    self->core->free(self->core);
-        //}
-        if (self->logger) {
-            self->logger->free(self->logger);
-        }
+        // Don't free core and logger as they are global instances
         free(self);
     }
 }
 
-// Public interface to retrieve the global PpxInfra instance.
+// The "static" interface implementation
+const PpxInfraClass PpxInfra_CLASS = {
+    .new = ppx_infra_new,
+    .free = ppx_infra_free
+};
+
+// Global instance initialization
+static PpxInfra global_ppxInfra = {
+    .klass = &PpxInfra_CLASS,
+    .core = NULL,
+    .logger = NULL
+};
+
+// Get global instance
 PpxInfra* get_global_ppxInfra(void) {
     if (!global_ppxInfra.core) {
         ppx_infra_init(&global_ppxInfra);
