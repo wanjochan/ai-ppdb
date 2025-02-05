@@ -9,6 +9,8 @@
 #include <string.h>
 #include <poll.h>
 
+#define RINETD_DEFAULT_CONFIG_FILE "./rinetd.conf"
+
 // Default configuration
 static rinetd_config_t g_rinetd_default_config = {
     .rules = {
@@ -338,24 +340,16 @@ static void* handle_connection_thread(void* args) {
 // Initialize rinetd service
 infra_error_t rinetd_init(void) {
     INFRA_LOG_TRACE("rinetd_init: current state=%d", g_rinetd_service.state);
-    if (g_rinetd_service.state != PEER_SERVICE_STATE_INIT &&
-        g_rinetd_service.state != PEER_SERVICE_STATE_STOPPED) {
-        return INFRA_ERROR_INVALID_STATE;
+
+    // 设置日志级别为全局日志级别
+    infra_log_set_level(infra_log_get_level());
+
+    // 初始化服务状态
+    if (g_rinetd_service.state != PEER_SERVICE_STATE_INIT) {
+        return INFRA_OK;
     }
 
-    // Get config file path from command line
-    // Since we don't have direct access to command line arguments,
-    // we'll use a default config file path for now
-    const char* config_path = "ppdb/rinetd2.conf";
-    if (config_path) {
-        INFRA_LOG_INFO("Loading config from %s", config_path);
-        infra_error_t err = rinetd_load_config(config_path);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to load config: %d", err);
-            return err;
-        }
-    }
-
+    // 不在这里加载配置文件，而是在start命令中加载
     g_rinetd_service.state = PEER_SERVICE_STATE_READY;
     INFRA_LOG_TRACE("rinetd_init: state changed to READY");
     return INFRA_OK;
@@ -505,11 +499,9 @@ infra_error_t rinetd_cmd_handler(const char* cmd, char* response, size_t size) {
         // First initialize if needed
         if (g_rinetd_service.state == PEER_SERVICE_STATE_INIT || 
             g_rinetd_service.state == PEER_SERVICE_STATE_STOPPED) {
-            infra_error_t err = rinetd_init();
-            if (err != INFRA_OK) {
-                snprintf(response, size, "Failed to initialize service: %d\n", err);
-                return err;
-            }
+            
+            // 配置文件已经在ppdb.c中通过rinetd_load_config加载
+            g_rinetd_service.state = PEER_SERVICE_STATE_READY;
         }
         
         // Then start the service

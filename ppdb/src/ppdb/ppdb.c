@@ -89,28 +89,87 @@ static void print_usage(const char* program) {
 
 int main(int argc, char* argv[]) {
     infra_error_t err;
-
-    // Process global options first
-    int arg_index = 1;
+    int log_level = INFRA_LOG_LEVEL_INFO;  // 默认日志级别
     const char* config_path = NULL;
-    while (arg_index < argc && strncmp(argv[arg_index], "--", 2) == 0) {
-        if (strncmp(argv[arg_index], "--log-level=", 11) == 0) {
-            int level = atoi(argv[arg_index] + 11);
-            if (level < 0 || level > 5) {
-                fprintf(stderr, "Invalid log level: %d\n", level);
-                return 1;
+    const char* service_name = NULL;
+    const char* command = NULL;
+
+    // 定义全局选项
+    static const poly_cmd_option_t global_options[] = {
+        {"log-level", "Set log level (0-5)", true},
+        {"config", "Load config from file", true},
+        {"help", "Show help information", false},
+        {"", "", false}  // 结束标记
+    };
+
+    // 初始化命令行框架
+    err = poly_cmdline_init();
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to initialize command line framework\n");
+        return 1;
+    }
+
+    // 处理全局选项
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], "--", 2) == 0) {
+            const char* option = argv[i] + 2;
+            const char* value = strchr(option, '=');
+            char option_name[POLY_CMD_MAX_NAME];
+            
+            if (value) {
+                size_t name_len = value - option;
+                strncpy(option_name, option, name_len);
+                option_name[name_len] = '\0';
+                value++;  // 跳过等号
+            } else {
+                strncpy(option_name, option, sizeof(option_name) - 1);
+                option_name[sizeof(option_name) - 1] = '\0';
+                value = NULL;
             }
-            infra_core_set_log_level(level);
-        } else if (strncmp(argv[arg_index], "--config=", 9) == 0) {
-            config_path = argv[arg_index] + 9;
+
+            // 查找选项
+            for (int j = 0; global_options[j].name[0]; j++) {
+                if (strcmp(option_name, global_options[j].name) == 0) {
+                    if (strcmp(option_name, "log-level") == 0 && value) {
+                        log_level = atoi(value);
+                        if (log_level < 0 || log_level > 5) {
+                            fprintf(stderr, "Invalid log level: %d\n", log_level);
+                            return 1;
+                        }
+                    } else if (strcmp(option_name, "config") == 0 && value) {
+                        config_path = value;
+                    } else if (strcmp(option_name, "help") == 0) {
+                        print_usage(argv[0]);
+                        return 0;
+                    }
+                    break;
+                }
+            }
+        } else if (!service_name) {
+            service_name = argv[i];
+        } else if (!command) {
+            command = argv[i];
         }
-        arg_index++;
+    }
+
+    // 检查必需的参数
+    if (!service_name || !command) {
+        print_usage(argv[0]);
+        return 1;
+    }
+
+    // Initialize logging with the specified level
+    infra_core_set_log_level(log_level);
+    err = infra_log_init(log_level, NULL);
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to initialize logging: %d\n", err);
+        return 1;
     }
 
     // Initialize infrastructure
     err = infra_init();
     if (err != INFRA_OK) {
-        fprintf(stderr, "Failed to initialize infrastructure: %d\n", err);
+        INFRA_LOG_ERROR("Failed to initialize infrastructure: %d", err);
         return 1;
     }
 
@@ -137,21 +196,6 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    // Parse command line
-    if (argc < 3) {
-        print_usage(argv[0]);
-        return 1;
-    }
-
-    // Get service and command
-    if (arg_index >= argc - 1) {
-        print_usage(argv[0]);
-        return 1;
-    }
-
-    const char* service_name = argv[arg_index++];
-    const char* command = argv[arg_index++];
-
     // Get service
     peer_service_t* service = peer_service_get_by_name(service_name);
     if (!service) {
@@ -170,40 +214,24 @@ int main(int argc, char* argv[]) {
         }
 #ifdef DEV_SQLITE3
         else if (strcmp(service_name, "sqlite3") == 0) {
-            // 先初始化服务
+            // Initialize service first
             err = sqlite3_init();
             if (err != INFRA_OK) {
                 fprintf(stderr, "Failed to initialize sqlite3 service: %d\n", err);
                 return 1;
             }
 
-            // 读取配置文件
-            FILE* fp = fopen(config_path, "r");
-            if (!fp) {
-                fprintf(stderr, "Failed to open config file: %s\n", config_path);
+            // Build command with config path
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd), "start --config=%s", config_path);
+            char resp[MAX_CMD_RESPONSE];
+            err = service->cmd_handler(cmd, resp, sizeof(resp));
+            if (err != INFRA_OK) {
+                fprintf(stderr, "%s\n", resp);
                 return 1;
             }
-
-            char line[256];
-            if (fgets(line, sizeof(line), fp)) {
-                // 解析配置行：127.0.0.1 11211 sqlite file::memory:?cache=shared
-                char ip[64], db_path[256];
-                int port;
-                char type[32];
-                if (sscanf(line, "%s %d %s %s", ip, &port, type, db_path) == 4) {
-                    // 通过命令处理器设置数据库路径
-                    char cmd[512];
-                    snprintf(cmd, sizeof(cmd), "start --db=%s", db_path);
-                    char resp[MAX_CMD_RESPONSE];
-                    err = service->cmd_handler(cmd, resp, sizeof(resp));
-                    if (err != INFRA_OK) {
-                        fprintf(stderr, "Failed to set database path: %s\n", resp);
-                        fclose(fp);
-                        return 1;
-                    }
-                }
-            }
-            fclose(fp);
+            printf("%s\n", resp);
+            return 0;
         }
 #endif
     }
