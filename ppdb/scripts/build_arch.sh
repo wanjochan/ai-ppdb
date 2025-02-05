@@ -12,7 +12,6 @@ ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxCore.c"
     "${SRC_DIR}/internal/infrax/InfraxLog.c"
     "${SRC_DIR}/internal/arch/PpxInfra.c"
-    "${SRC_DIR}/internal/arch/PpxArch.c"
     "${SRC_DIR}/internal/infrax/InfraxMemory.c"
     "${SRC_DIR}/internal/infrax/InfraxThread.c"
     "${SRC_DIR}/internal/infrax/InfraxSync.c"

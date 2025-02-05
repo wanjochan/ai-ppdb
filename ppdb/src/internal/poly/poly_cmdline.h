@@ -11,6 +11,34 @@
 #define POLY_CMD_MAX_NAME 32
 #define POLY_CMD_MAX_DESC 256
 #define POLY_CMD_MAX_ARGS 16
+#define POLY_CMD_MAX_VALUE 1024
+#define POLY_CMD_MAX_SERVICES 32
+
+// Service types
+typedef enum {
+    POLY_SERVICE_RINETD,
+    POLY_SERVICE_SQLITE,
+    POLY_SERVICE_MEMKV,
+    POLY_SERVICE_DISKV
+} poly_service_type_t;
+
+// Service configuration
+typedef struct {
+    poly_service_type_t type;
+    char listen_host[POLY_CMD_MAX_NAME];
+    int listen_port;
+    char target_host[POLY_CMD_MAX_NAME];
+    int target_port;
+    char backend[POLY_CMD_MAX_VALUE];
+} poly_service_config_t;
+
+// Global configuration
+typedef struct {
+    char config_file[POLY_CMD_MAX_VALUE];
+    int log_level;
+    poly_service_config_t services[POLY_CMD_MAX_SERVICES];
+    int service_count;
+} poly_config_t;
 
 typedef struct poly_cmd_option {
     char name[POLY_CMD_MAX_NAME];
@@ -23,7 +51,7 @@ typedef struct poly_cmd {
     char desc[POLY_CMD_MAX_DESC];
     const poly_cmd_option_t *options;
     int option_count;
-    infra_error_t (*handler)(int argc, char **argv);
+    infra_error_t (*handler)(const poly_config_t *config, int argc, char **argv);
 } poly_cmd_t;
 
 /**
@@ -38,6 +66,23 @@ infra_error_t poly_cmdline_init(void);
  * @return infra_error_t Error code
  */
 infra_error_t poly_cmdline_register(const poly_cmd_t *cmd);
+
+/**
+ * @brief Parse configuration file
+ * @param config_file Path to configuration file
+ * @param config Output configuration structure
+ * @return infra_error_t Error code
+ */
+infra_error_t poly_cmdline_parse_config(const char *config_file, poly_config_t *config);
+
+/**
+ * @brief Parse command line arguments
+ * @param argc Argument count
+ * @param argv Argument values
+ * @param config Output configuration structure
+ * @return infra_error_t Error code
+ */
+infra_error_t poly_cmdline_parse_args(int argc, char **argv, poly_config_t *config);
 
 /**
  * @brief Execute command line

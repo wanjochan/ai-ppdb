@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
-#include "internal/arch/PpxArch.h"
 #include "internal/infrax/InfraxMemory.h"
 
 // 测试基础内存管理

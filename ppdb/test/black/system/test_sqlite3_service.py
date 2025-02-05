@@ -12,7 +12,7 @@ logging.basicConfig(
 )
 
 class SQLite3Client:
-    def __init__(self, host='localhost', port=5433):
+    def __init__(self, host='localhost', port=15433):
         self.host = host
         self.port = port
         self.sock = None

@@ -27,6 +27,7 @@ static void ppx_infra_init(PpxInfra* self) {
     // Initialize components
     self->core = get_global_infrax_core();
     self->logger = get_global_infrax_log();
+    //TODO if add new_memory?
 }
 
 // Constructor implementation
