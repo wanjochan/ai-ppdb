@@ -10,7 +10,7 @@ mkdir -p "${BUILD_DIR}/obj"
 
 # 设置条件编译选项
 ENABLE_RINETD=1
-ENABLE_MEMKV=0
+ENABLE_MEMKV=1
 ENABLE_SQLITE3=1
 
 # 添加条件编译宏定义

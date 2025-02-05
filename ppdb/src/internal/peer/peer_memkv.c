@@ -1,33 +1,31 @@
-#include "peer_service.h"
-#include "../infra/infra_core.h"
-#include "../infra/infra_net.h"
-#include "../infra/infra_sync.h"
-#include "../infra/infra_memory.h"
-#include "../infra/infra_error.h"
-#include "../poly/poly_db.h"
-#include "../poly/poly_poll.h"
+#include "internal/infra/infra_core.h"
+#include "internal/infra/infra_error.h"
+#include "internal/infra/infra_net.h"
+#include "internal/infra/infra_sync.h"
+#include "internal/infra/infra_log.h"
+#include "internal/infra/infra_thread.h"
+#include "internal/poly/poly_db.h"
+#include "internal/poly/poly_poll.h"
+#include "internal/poly/poly_cmdline.h"
+#include "internal/peer/peer_service.h"
+#include "internal/peer/peer_memkv.h"
 #include <netinet/tcp.h>  // 添加TCP_NODELAY的定义
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <sys/socket.h>
-#include "infra/infra_log.h"
-#include "infra/infra_net.h"
-#include "infra/infra_core.h"
-#include "poly/poly_cmdline.h"
-#include "poly/poly_poll.h"
-#include "poly/poly_db.h"
+#include <fcntl.h>
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
 //-----------------------------------------------------------------------------
 
-static infra_error_t memkv_init(void);
-static infra_error_t memkv_cleanup(void);
-static infra_error_t memkv_start(void);
-static infra_error_t memkv_stop(void);
-static infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size);
+infra_error_t memkv_init(void);
+infra_error_t memkv_cleanup(void);
+infra_error_t memkv_start(void);
+infra_error_t memkv_stop(void);
+infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size);
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -44,7 +42,7 @@ static infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t s
 #define MEMKV_ERROR INFRA_ERROR
 
 // Command Line Options
-static const struct poly_cmd_option memkv_options[] = {
+static const poly_cmd_option_t memkv_options[] = {
     {"port", "Server port", true},
     {"start", "Start the service", false},
     {"stop", "Stop the service", false},
@@ -72,17 +70,14 @@ typedef struct {
     char* engine;
     char* plugin;
     bool running;
-    poly_poll_t* poll_ctx;
+    poly_poll_context_t* poll_ctx;
 } memkv_config_t;
 
 //-----------------------------------------------------------------------------
 // Global Variables
 //-----------------------------------------------------------------------------
 
-static memkv_config_t g_config = {0};
-static bool g_initialized = false;
-
-// 服务实例
+// Global service instance
 peer_service_t g_memkv_service = {
     .config = {
         .name = "memkv",
@@ -96,6 +91,15 @@ peer_service_t g_memkv_service = {
     .cmd_handler = memkv_cmd_handler
 };
 
+// Global state
+static struct {
+    bool running;
+    int port;
+    char* engine;
+    char* plugin;
+    poly_poll_context_t* poll_ctx;
+} g_memkv_state = {0};
+
 //-----------------------------------------------------------------------------
 // Helper Functions
 //-----------------------------------------------------------------------------
@@ -104,12 +108,12 @@ static infra_error_t db_init(poly_db_t** db) {
     if (!db) return INFRA_ERROR_INVALID_PARAM;
     
     poly_db_config_t config = {
-        .type = strcmp(g_config.engine, "duckdb") == 0 ? 
+        .type = strcmp(g_memkv_state.engine, "duckdb") == 0 ? 
                 POLY_DB_TYPE_DUCKDB : POLY_DB_TYPE_SQLITE,
-        .url = g_config.plugin ? g_config.plugin : ":memory:",
+        .url = g_memkv_state.plugin ? g_memkv_state.plugin : ":memory:",
         .max_memory = 0,
         .read_only = false,
-        .plugin_path = g_config.plugin,
+        .plugin_path = g_memkv_state.plugin,
         .allow_fallback = true
     };
 
@@ -338,13 +342,13 @@ static void handle_set(memkv_conn_t* conn, const char* key, const char* flags_st
     
     // 设置更长的接收超时
     struct timeval orig_tv, new_tv;
-    int sock_fd = infra_net_socket_fd(conn->sock);
+    socklen_t tv_len = sizeof(struct timeval);
+    int sock_fd = (int)conn->sock;  // infra_socket_t is intptr_t
     if (sock_fd < 0) {
         printf("DEBUG: Invalid socket fd\n");
         free(data);
         return;
     }
-    socklen_t tv_len = sizeof(struct timeval);
     getsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &orig_tv, &tv_len);
     
     new_tv.tv_sec = 30;  // 减少单次超时时间，但增加重试次数
@@ -593,178 +597,84 @@ static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* va
     }
 }
 
-static void handle_connection(void* arg) {
-    if (!arg) {
-        printf("DEBUG: Invalid connection arguments\n");
+// Forward declarations
+static void handle_connection_wrapper(void* args);
+static void handle_request_wrapper(void* args);
+
+static void handle_request(poly_poll_handler_args_t* args) {
+    if (!args) {
+        INFRA_LOG_ERROR("Invalid connection args");
         return;
     }
 
-    poly_poll_handler_args_t* args = (poly_poll_handler_args_t*)arg;
-    if (!args->client) {
-        printf("DEBUG: Invalid client socket\n");
-        free(args);
+    infra_socket_t client = args->client;
+    memkv_conn_t* conn_state = (memkv_conn_t*)args->user_data;
+    if (!conn_state) {
+        INFRA_LOG_ERROR("Connection state not initialized");
         return;
     }
 
-    printf("DEBUG: New connection accepted\n");
+    // Get client address
+    infra_net_addr_t addr;
+    char client_addr[64];
     
-    // 初始化连接结构
-    memkv_conn_t conn = {0};  // 初始化所有字段为0
-    conn.sock = args->client;
-    
-    // 设置socket配置
-    int sock_fd = infra_net_socket_fd(conn.sock);
-    if (sock_fd < 0) {
-        printf("DEBUG: Invalid socket fd\n");
-        goto cleanup;
-    }
-
-    // 设置超时
-    struct timeval tv;
-    tv.tv_sec = 300;  // 5分钟超时
-    tv.tv_usec = 0;
-    if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv) < 0) {
-        printf("DEBUG: Failed to set SO_RCVTIMEO\n");
-    }
-    if (setsockopt(sock_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof tv) < 0) {
-        printf("DEBUG: Failed to set SO_SNDTIMEO\n");
-    }
-
-    // 设置缓冲区
-    int buf_size = MEMKV_BUFFER_SIZE;
-    if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size)) < 0) {
-        printf("DEBUG: Failed to set SO_RCVBUF to %d\n", buf_size);
-    }
-    if (setsockopt(sock_fd, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size)) < 0) {
-        printf("DEBUG: Failed to set SO_SNDBUF to %d\n", buf_size);
-    }
-
-    // 禁用Nagle算法
-    int flag = 1;
-    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) < 0) {
-        printf("DEBUG: Failed to set TCP_NODELAY\n");
-    }
-
-    // 启用TCP保活
-    if (setsockopt(sock_fd, SOL_SOCKET, SO_KEEPALIVE, &flag, sizeof(flag)) < 0) {
-        printf("DEBUG: Failed to set SO_KEEPALIVE\n");
-    }
-
-    // 设置TCP保活参数
-#ifdef TCP_KEEPIDLE
-    int keepalive_time = 60;  // 60秒无数据时发送保活包
-    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepalive_time, sizeof(keepalive_time)) < 0) {
-        printf("DEBUG: Failed to set TCP_KEEPIDLE\n");
-    }
-#endif
-
-#ifdef TCP_KEEPINTVL
-    int keepalive_intvl = 10;  // 每10秒发送一次保活包
-    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepalive_intvl, sizeof(keepalive_intvl)) < 0) {
-        printf("DEBUG: Failed to set TCP_KEEPINTVL\n");
-    }
-#endif
-
-#ifdef TCP_KEEPCNT
-    int keepalive_probes = 6;  // 最多发送6次保活包
-    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_KEEPCNT, &keepalive_probes, sizeof(keepalive_probes)) < 0) {
-        printf("DEBUG: Failed to set TCP_KEEPCNT\n");
-    }
-#endif
-
-    // 分配接收缓冲区
-    conn.rx_buf = malloc(MEMKV_BUFFER_SIZE);
-    if (!conn.rx_buf) {
-        printf("DEBUG: Failed to allocate rx buffer\n");
-        goto cleanup;
-    }
-    
-    // 初始化数据库
-    infra_error_t err = db_init(&conn.store);
+    infra_error_t err = infra_net_get_peer_addr(client, &addr);
     if (err != INFRA_OK) {
-        printf("DEBUG: Failed to initialize database: err=%d\n", err);
-        goto cleanup;
+        INFRA_LOG_ERROR("Failed to get peer address: %d", err);
+        return;
     }
 
-    printf("DEBUG: Connection setup complete, entering command loop\n");
+    infra_net_addr_to_string(&addr, client_addr, sizeof(client_addr));
+    INFRA_LOG_INFO("Processing request from %s", client_addr);
 
-    // 命令处理循环
-    while (!conn.should_close) {
-        char cmd_line[1024];  // 使用较小的命令行缓冲区
-        size_t cmd_len = 0;
-        bool has_data = false;
-
-        // 读取命令行
-        while (cmd_len < sizeof(cmd_line) - 1) {
-            size_t received = 0;
-            err = infra_net_recv(conn.sock, cmd_line + cmd_len, 1, &received);
-            
-            if (err != INFRA_OK) {
-                if (err == INFRA_ERROR_TIMEOUT) {
-                    if (!has_data) {
-                        continue;  // 如果还没收到任何数据，继续等待
-                    }
-                    printf("DEBUG: Command read timeout with partial data\n");
-                    goto cleanup;
-                }
-                if (err == INFRA_ERROR_CLOSED) {
-                    printf("DEBUG: Connection closed by peer\n");
-                    goto cleanup;
-                }
-                printf("DEBUG: Command read error: %d\n", err);
-                goto cleanup;
-            }
-            
-            if (received == 0) {
-                printf("DEBUG: Connection closed by peer\n");
-                goto cleanup;
-            }
-            
-            has_data = true;
-            cmd_len++;
-            
-            if (cmd_len >= 2 && cmd_line[cmd_len-2] == '\r' && cmd_line[cmd_len-1] == '\n') {
-                cmd_line[cmd_len-2] = '\0';
-                printf("DEBUG: Received command: [%s]\n", cmd_line);
-                break;
-            }
+    // Process data
+    size_t received = 0;
+    err = infra_net_recv(conn_state->sock, conn_state->rx_buf + conn_state->rx_len, 
+        MEMKV_BUFFER_SIZE - conn_state->rx_len - 1, &received);
+    if (err != INFRA_OK) {
+        if (err != INFRA_ERROR_TIMEOUT) {
+            INFRA_LOG_ERROR("Failed to receive from %s: %d", client_addr, err);
+            conn_state->should_close = true;
         }
+        return;
+    }
+    
+    if (received == 0) {
+        INFRA_LOG_INFO("Client disconnected: %s", client_addr);
+        conn_state->should_close = true;
+        return;
+    }
 
-        if (cmd_len >= sizeof(cmd_line) - 1) {
-            printf("DEBUG: Command too long\n");
-            if (infra_net_send(conn.sock, "CLIENT_ERROR line too long\r\n", 26, NULL) != INFRA_OK) {
-                goto cleanup;
-            }
-            continue;
-        }
+    conn_state->rx_len += received;
+    conn_state->rx_buf[conn_state->rx_len] = '\0';
 
-        if (cmd_len == 0) {
-            printf("DEBUG: Empty command received\n");
-            continue;
-        }
+    // Process complete commands
+    char* cmd_start = conn_state->rx_buf;
+    char* cmd_end;
+    while ((cmd_end = strstr(cmd_start, "\r\n")) != NULL) {
+        *cmd_end = '\0';
+        INFRA_LOG_DEBUG("Processing command from %s: %s", client_addr, cmd_start);
 
+        // Parse command
         char* saveptr = NULL;
-        char* cmd = strtok_r(cmd_line, " ", &saveptr);
+        char* cmd = strtok_r(cmd_start, " ", &saveptr);
         if (!cmd) {
-            printf("DEBUG: Invalid command format\n");
+            if (infra_net_send(conn_state->sock, "ERROR\r\n", 7, NULL) != INFRA_OK) {
+                conn_state->should_close = true;
+                return;
+            }
             continue;
         }
 
-        printf("DEBUG: Processing command: %s\n", cmd);
-
-        if (strcasecmp(cmd, "quit") == 0) {
-            printf("DEBUG: Client requested quit\n");
-            goto cleanup;
-        }
-        
-        // 处理其他命令...
+        // Handle commands
         if (strcasecmp(cmd, "get") == 0) {
             char* key = strtok_r(NULL, " ", &saveptr);
             if (key) {
-                handle_get(&conn, key);
+                handle_get(conn_state, key);
             } else {
-                if (infra_net_send(conn.sock, "CLIENT_ERROR no key\r\n", 20, NULL) != INFRA_OK) {
-                    goto cleanup;
+                if (infra_net_send(conn_state->sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL) != INFRA_OK) {
+                    conn_state->should_close = true;
+                    return;
                 }
             }
         }
@@ -772,28 +682,26 @@ static void handle_connection(void* arg) {
             char* key = strtok_r(NULL, " ", &saveptr);
             char* flags = strtok_r(NULL, " ", &saveptr);
             char* exptime = strtok_r(NULL, " ", &saveptr);
-            char* bytes_str = strtok_r(NULL, " ", &saveptr);
+            char* bytes = strtok_r(NULL, " ", &saveptr);
             char* noreply = strtok_r(NULL, " ", &saveptr);
-
-            if (!key || !flags || !exptime || !bytes_str) {
-                printf("DEBUG: SET command missing parameters\n");
-                if (infra_net_send(conn.sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL) != INFRA_OK) {
-                    goto cleanup;
+            if (key && flags && exptime && bytes) {
+                handle_set(conn_state, key, flags, exptime, bytes, noreply && strcmp(noreply, "noreply") == 0);
+            } else {
+                if (infra_net_send(conn_state->sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL) != INFRA_OK) {
+                    conn_state->should_close = true;
+                    return;
                 }
-                continue;
             }
-
-            handle_set(&conn, key, flags, exptime, bytes_str, noreply && strcmp(noreply, "noreply") == 0);
-            if (conn.should_close) goto cleanup;
         }
         else if (strcasecmp(cmd, "delete") == 0) {
             char* key = strtok_r(NULL, " ", &saveptr);
             char* noreply = strtok_r(NULL, " ", &saveptr);
             if (key) {
-                handle_delete(&conn, key, noreply && strcmp(noreply, "noreply") == 0);
+                handle_delete(conn_state, key, noreply && strcmp(noreply, "noreply") == 0);
             } else {
-                if (infra_net_send(conn.sock, "CLIENT_ERROR no key\r\n", 20, NULL) != INFRA_OK) {
-                    goto cleanup;
+                if (infra_net_send(conn_state->sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL) != INFRA_OK) {
+                    conn_state->should_close = true;
+                    return;
                 }
             }
         }
@@ -801,150 +709,444 @@ static void handle_connection(void* arg) {
             char* key = strtok_r(NULL, " ", &saveptr);
             char* value = strtok_r(NULL, " ", &saveptr);
             if (key && value) {
-                handle_incr_decr(&conn, key, value, strcasecmp(cmd, "incr") == 0);
-                if (conn.should_close) goto cleanup;
+                handle_incr_decr(conn_state, key, value, strcasecmp(cmd, "incr") == 0);
             } else {
-                if (infra_net_send(conn.sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL) != INFRA_OK) {
-                    goto cleanup;
+                if (infra_net_send(conn_state->sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL) != INFRA_OK) {
+                    conn_state->should_close = true;
+                    return;
                 }
             }
         }
         else if (strcasecmp(cmd, "flush_all") == 0) {
             char* delay = strtok_r(NULL, " ", &saveptr);  // 忽略延迟参数
             char* noreply = strtok_r(NULL, " ", &saveptr);
-            handle_flush(&conn, noreply && strcmp(noreply, "noreply") == 0);
+            handle_flush(conn_state, noreply && strcmp(noreply, "noreply") == 0);
+        }
+        else if (strcasecmp(cmd, "quit") == 0) {
+            conn_state->should_close = true;
+            break;
         }
         else {
-            printf("DEBUG: Unknown command: %s\n", cmd);
-            if (infra_net_send(conn.sock, "ERROR\r\n", 7, NULL) != INFRA_OK) {
-                goto cleanup;
+            INFRA_LOG_DEBUG("Unknown command from %s: %s", client_addr, cmd);
+            if (infra_net_send(conn_state->sock, "ERROR\r\n", 7, NULL) != INFRA_OK) {
+                conn_state->should_close = true;
+                return;
             }
+        }
+
+        // Move to next command
+        cmd_start = cmd_end + 2;
+        conn_state->rx_len -= (cmd_start - conn_state->rx_buf);
+        if (conn_state->rx_len > 0) {
+            memmove(conn_state->rx_buf, cmd_start, conn_state->rx_len);
         }
     }
 
-cleanup:
-    printf("DEBUG: Cleaning up connection\n");
-    if (conn.store) {
-        poly_db_close(conn.store);
-        conn.store = NULL;
+    // Check if connection should be closed
+    if (conn_state->should_close) {
+        INFRA_LOG_INFO("Closing connection from %s", client_addr);
+        if (conn_state->store) {
+            poly_db_close(conn_state->store);
+            conn_state->store = NULL;
+        }
+        if (conn_state->rx_buf) {
+            infra_free(conn_state->rx_buf);
+            conn_state->rx_buf = NULL;
+        }
+        infra_free(conn_state);
+        args->user_data = NULL;
     }
-    if (conn.rx_buf) {
-        free(conn.rx_buf);
-        conn.rx_buf = NULL;
+}
+
+static void handle_request_wrapper(void* args) {
+    handle_request((poly_poll_handler_args_t*)args);
+}
+
+static void handle_connection(poly_poll_handler_args_t* args) {
+    if (!args) {
+        INFRA_LOG_ERROR("Invalid connection args");
+        return;
     }
-    if (conn.sock) {
-        infra_net_close(conn.sock);
-        conn.sock = NULL;
+
+    infra_socket_t client = args->client;
+
+    // Get client address
+    infra_net_addr_t addr;
+    char client_addr[64];
+    
+    infra_error_t err = infra_net_get_peer_addr(client, &addr);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to get peer address: %d", err);
+        return;
     }
-    if (args) {
-        free(args);
-        args = NULL;
+
+    infra_net_addr_to_string(&addr, client_addr, sizeof(client_addr));
+    INFRA_LOG_INFO("New client connection from %s", client_addr);
+
+    // Set socket to non-blocking mode
+    err = infra_net_set_nonblock(client, true);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set non-blocking mode: %d", err);
+        return;
     }
+
+    // Initialize connection state
+    memkv_conn_t* conn_state = (memkv_conn_t*)infra_malloc(sizeof(memkv_conn_t));
+    if (!conn_state) {
+        INFRA_LOG_ERROR("Failed to allocate connection state");
+        return;
+    }
+    memset(conn_state, 0, sizeof(memkv_conn_t));
+    
+    conn_state->sock = client;
+    conn_state->rx_buf = infra_malloc(MEMKV_BUFFER_SIZE);
+    if (!conn_state->rx_buf) {
+        INFRA_LOG_ERROR("Failed to allocate receive buffer");
+        infra_free(conn_state);
+        return;
+    }
+    conn_state->rx_len = 0;
+    conn_state->should_close = false;
+
+    // Initialize database connection
+    err = db_init(&conn_state->store);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to initialize database: %d", err);
+        infra_free(conn_state->rx_buf);
+        infra_free(conn_state);
+        return;
+    }
+
+    // Set TCP_NODELAY to improve latency
+    int sock_fd = (int)client;
+    int flag = 1;
+    if (setsockopt(sock_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag)) < 0) {
+        INFRA_LOG_ERROR("Failed to set TCP_NODELAY");
+    }
+
+    // Set connection state in args
+    args->user_data = conn_state;
+}
+
+static void handle_connection_wrapper(void* args) {
+    handle_connection((poly_poll_handler_args_t*)args);
 }
 
 //-----------------------------------------------------------------------------
 // Service Interface Implementation
 //-----------------------------------------------------------------------------
 
-static infra_error_t memkv_init(void) {
-    if (g_initialized) return INFRA_OK;
+infra_error_t memkv_init(void) {
+    if (g_memkv_service.state != PEER_SERVICE_STATE_INIT &&
+        g_memkv_service.state != PEER_SERVICE_STATE_STOPPED) {
+        return INFRA_ERROR_INVALID_STATE;
+    }
     
     // Set default values
-    g_config.port = MEMKV_DEFAULT_PORT;
-    g_config.engine = "sqlite";  // Default to SQLite
-    g_config.plugin = NULL;
-    g_config.running = false;
-    g_config.poll_ctx = NULL;
+    g_memkv_state.port = MEMKV_DEFAULT_PORT;
+    g_memkv_state.engine = "sqlite";  // Default to SQLite
+    g_memkv_state.plugin = NULL;
+    g_memkv_state.running = false;
+    g_memkv_state.poll_ctx = NULL;
 
-    g_initialized = true;
+    g_memkv_service.state = PEER_SERVICE_STATE_READY;
     return INFRA_OK;
 }
 
-static infra_error_t memkv_cleanup(void) {
-    if (g_config.running) memkv_stop();
-    g_initialized = false;
-    return INFRA_OK;
-}
-
-static infra_error_t memkv_start(void) {
-    infra_error_t err;
-
-    if (!g_initialized) {
-        return INFRA_ERROR_NOT_INITIALIZED;
+infra_error_t memkv_cleanup(void) {
+    if (g_memkv_service.state == PEER_SERVICE_STATE_RUNNING) {
+        INFRA_LOG_ERROR("Cannot cleanup while service is running");
+        return INFRA_ERROR_INVALID_STATE;
     }
 
-    if (g_config.running) {
+    // Stop service if running
+    if (g_memkv_state.running) {
+        memkv_stop();
+    }
+
+    // Reset all state
+    g_memkv_state.port = 0;
+    g_memkv_state.running = false;
+    g_memkv_state.poll_ctx = NULL;
+
+    if (g_memkv_state.engine) {
+        free(g_memkv_state.engine);
+        g_memkv_state.engine = NULL;
+    }
+    if (g_memkv_state.plugin) {
+        free(g_memkv_state.plugin);
+        g_memkv_state.plugin = NULL;
+    }
+    
+    g_memkv_service.state = PEER_SERVICE_STATE_INIT;
+    return INFRA_OK;
+}
+
+infra_error_t memkv_start(void) {
+    infra_error_t err;
+
+    // 如果状态是 INIT，先尝试初始化
+    if (g_memkv_service.state == PEER_SERVICE_STATE_INIT) {
+        err = memkv_init();
+        if (err != INFRA_OK) {
+            return err;
+        }
+    }
+
+    if (g_memkv_service.state != PEER_SERVICE_STATE_READY &&
+        g_memkv_service.state != PEER_SERVICE_STATE_STOPPED) {
+        INFRA_LOG_ERROR("Service is in invalid state: %d", g_memkv_service.state);
+        return INFRA_ERROR_INVALID_STATE;
+    }
+
+    if (g_memkv_state.running) {
         return INFRA_ERROR_ALREADY_EXISTS;
     }
 
-    g_memkv_service.state = PEER_SERVICE_STATE_RUNNING;
+    // 确保端口已设置，如果没有设置则使用默认端口
+    if (g_memkv_state.port <= 0) {
+        g_memkv_state.port = MEMKV_DEFAULT_PORT;
+    }
+
+    INFRA_LOG_INFO("Initializing MemKV service with port=%d", g_memkv_state.port);
 
     // Create poll context
-    poly_poll_t* poll;
-    err = poly_poll_create(&poll);
-    if (err != INFRA_OK) {
+    poly_poll_config_t poll_config = {
+        .min_threads = 1,
+        .max_threads = 4,
+        .queue_size = 1000,
+        .max_listeners = 1
+    };
+
+    g_memkv_state.poll_ctx = (poly_poll_context_t*)infra_malloc(sizeof(poly_poll_context_t));
+    if (!g_memkv_state.poll_ctx) {
+        INFRA_LOG_ERROR("Failed to allocate poll context");
+        g_memkv_state.poll_ctx = NULL;
         g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
         return INFRA_ERROR_NO_MEMORY;
     }
-    g_config.poll_ctx = poll;
 
-    // Initialize database
-    poly_db_t* db;
-    err = db_init(&db);
+    err = poly_poll_init(g_memkv_state.poll_ctx, &poll_config);
     if (err != INFRA_OK) {
-        poly_poll_destroy(g_config.poll_ctx);
-        g_config.poll_ctx = NULL;
+        INFRA_LOG_ERROR("Failed to create poll context: %d", err);
+        infra_free(g_memkv_state.poll_ctx);
+        g_memkv_state.poll_ctx = NULL;
         g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
         return err;
     }
 
-    g_config.running = true;
+    // Set request handler
+    poly_poll_set_handler(g_memkv_state.poll_ctx, handle_connection_wrapper);
+
+    // Add listener
+    poly_poll_listener_t listener_config = {0};  // 清零所有字段
+    listener_config.bind_port = g_memkv_state.port;
+    listener_config.user_data = NULL;
+    strcpy(listener_config.bind_addr, "0.0.0.0");//TODO user host from config
+
+    INFRA_LOG_INFO("Adding listener on %s:%d", listener_config.bind_addr, listener_config.bind_port);
+
+    err = poly_poll_add_listener(g_memkv_state.poll_ctx, &listener_config);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to add listener: %d", err);
+        poly_poll_cleanup(g_memkv_state.poll_ctx);
+        infra_free(g_memkv_state.poll_ctx);
+        g_memkv_state.poll_ctx = NULL;
+        g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
+        return err;
+    }
+
+    // Start polling in a new thread
+    g_memkv_state.running = true;
+    infra_thread_t thread;
+    err = infra_thread_create(&thread, (infra_thread_func_t)poly_poll_start, g_memkv_state.poll_ctx);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to create polling thread: %d", err);
+        g_memkv_state.running = false;
+        poly_poll_cleanup(g_memkv_state.poll_ctx);
+        infra_free(g_memkv_state.poll_ctx);
+        g_memkv_state.poll_ctx = NULL;
+        g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
+        return err;
+    }
+
+    // 等待服务启动
+    infra_sleep(100);  // 等待100ms让服务启动
+
+    INFRA_LOG_INFO("MemKV service started successfully on port %d", g_memkv_state.port);
+
+    g_memkv_service.state = PEER_SERVICE_STATE_RUNNING;
     return INFRA_OK;
 }
 
-static infra_error_t memkv_stop(void) {
-    if (!g_initialized) {
-        return INFRA_ERROR_NOT_INITIALIZED;
+infra_error_t memkv_stop(void) {
+    if (g_memkv_service.state != PEER_SERVICE_STATE_RUNNING) {
+        INFRA_LOG_ERROR("Service is not running");
+        return INFRA_ERROR_INVALID_STATE;
     }
 
-    if (!g_config.running) {
+    if (!g_memkv_state.running) {
         return INFRA_OK;
     }
 
-    g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
-    
-    if (g_config.poll_ctx) {
-        poly_poll_destroy(g_config.poll_ctx);
-        g_config.poll_ctx = NULL;
+    // Stop the service
+    g_memkv_state.running = false;
+
+    // Cleanup poll context
+    if (g_memkv_state.poll_ctx) {
+        poly_poll_cleanup(g_memkv_state.poll_ctx);
+        infra_free(g_memkv_state.poll_ctx);
+        g_memkv_state.poll_ctx = NULL;
     }
 
-    g_config.running = false;
+    // Free engine and plugin strings if allocated
+    if (g_memkv_state.engine) {
+        free(g_memkv_state.engine);
+        g_memkv_state.engine = NULL;
+    }
+    if (g_memkv_state.plugin) {
+        free(g_memkv_state.plugin);
+        g_memkv_state.plugin = NULL;
+    }
+
+    g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
     return INFRA_OK;
 }
 
-static infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
+infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
     if (!cmd || !response || size == 0) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
-    // Parse command
-    if (strcmp(cmd, "start") == 0) {
-        return memkv_start();
-    } else if (strcmp(cmd, "stop") == 0) {
-        return memkv_stop();
-    } else if (strcmp(cmd, "status") == 0) {
+    // 解析命令参数
+    char cmd_copy[256];
+    strncpy(cmd_copy, cmd, sizeof(cmd_copy) - 1);
+    cmd_copy[sizeof(cmd_copy) - 1] = '\0';
+
+    char* argv[16];
+    int argc = 0;
+    char* token = strtok(cmd_copy, " ");
+    while (token && argc < 16) {
+        argv[argc++] = token;
+        token = strtok(NULL, " ");
+    }
+
+    // 处理命令
+    if (argc == 0) {
+        snprintf(response, size, "Error: Empty command");
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (strcmp(argv[0], "status") == 0) {
+        const char* state_str = "unknown";
+        switch (g_memkv_service.state) {
+            case PEER_SERVICE_STATE_INIT:
+                state_str = "initialized";
+                break;
+            case PEER_SERVICE_STATE_READY:
+                state_str = "ready";
+                break;
+            case PEER_SERVICE_STATE_RUNNING:
+                state_str = "running";
+                break;
+            case PEER_SERVICE_STATE_STOPPED:
+                state_str = "stopped";
+                break;
+        }
         snprintf(response, size, "MemKV Service Status:\n"
                 "State: %s\n"
                 "Port: %d\n"
                 "Engine: %s\n"
                 "Plugin: %s\n",
-                g_config.running ? "Running" : "Stopped",
-                g_config.port,
-                g_config.engine ? g_config.engine : "none",
-                g_config.plugin ? g_config.plugin : "none");
+                state_str,
+                g_memkv_state.port,
+                g_memkv_state.engine ? g_memkv_state.engine : "none",
+                g_memkv_state.plugin ? g_memkv_state.plugin : "none");
+        return INFRA_OK;
+    }
+    else if (strcmp(argv[0], "start") == 0) {
+        // 解析配置参数
+        const char* config_file = NULL;
+        for (int i = 1; i < argc; i++) {
+            if (strncmp(argv[i], "--config=", 9) == 0) {
+                config_file = argv[i] + 9;
+                break;
+            }
+            else if (strncmp(argv[i], "--port=", 7) == 0) {
+                g_memkv_state.port = atoi(argv[i] + 7);
+            }
+            else if (strncmp(argv[i], "--engine=", 9) == 0) {
+                g_memkv_state.engine = strdup(argv[i] + 9);
+            }
+            else if (strncmp(argv[i], "--plugin=", 9) == 0) {
+                g_memkv_state.plugin = strdup(argv[i] + 9);
+            }
+        }
+
+        // 如果指定了配置文件，读取配置
+        if (config_file) {
+            FILE* fp = fopen(config_file, "r");
+            if (fp) {
+                char line[1024];
+                if (fgets(line, sizeof(line), fp)) {
+                    char host[256];
+                    int port;
+                    char engine[64];
+                    char plugin[256];
+                    
+                    // 尝试解析配置行
+                    int matched = sscanf(line, "%255s %d %63s %255s", host, &port, engine, plugin);
+                    INFRA_LOG_INFO("Parsing config file: matched=%d, host=%s, port=%d, engine=%s", 
+                                  matched, host, port, engine);
+                    
+                    if (matched >= 3) {
+                        g_memkv_state.port = port;
+                        if (g_memkv_state.engine) free(g_memkv_state.engine);
+                        g_memkv_state.engine = strdup(engine);
+                        if (matched > 3 && plugin[0] != '#') {  // 如果不是注释
+                            if (g_memkv_state.plugin) free(g_memkv_state.plugin);
+                            g_memkv_state.plugin = strdup(plugin);
+                        }
+                        INFRA_LOG_INFO("Config loaded: port=%d, engine=%s, plugin=%s",
+                                      g_memkv_state.port, g_memkv_state.engine,
+                                      g_memkv_state.plugin ? g_memkv_state.plugin : "none");
+                    } else {
+                        INFRA_LOG_ERROR("Failed to parse config line: %s", line);
+                    }
+                }
+                fclose(fp);
+            } else {
+                INFRA_LOG_ERROR("Failed to open config file: %s", config_file);
+            }
+        }
+
+        // 启动服务
+        infra_error_t err = memkv_start();
+        if (err != INFRA_OK) {
+            snprintf(response, size, "Failed to start MemKV service: %d\n", err);
+            return err;
+        }
+
+        snprintf(response, size, "MemKV service started\n");
+        return INFRA_OK;
+    }
+    else if (strcmp(argv[0], "stop") == 0) {
+        // 停止服务
+        infra_error_t err = memkv_stop();
+        if (err != INFRA_OK) {
+            snprintf(response, size, "Failed to stop MemKV service: %d\n", err);
+            return err;
+        }
+
+        snprintf(response, size, "MemKV service stopped\n");
         return INFRA_OK;
     }
 
-    snprintf(response, size, "Unknown command: %s", cmd);
-    return INFRA_ERROR_INVALID_PARAM;
+    snprintf(response, size, "Unknown command: %s", argv[0]);
+    return INFRA_ERROR_NOT_FOUND;
+}
+
+// Get memkv service instance
+peer_service_t* peer_memkv_get_service(void) {
+    return &g_memkv_service;
 }

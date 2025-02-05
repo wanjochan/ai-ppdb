@@ -1,717 +1,442 @@
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
-#include <semaphore.h>
-#include <errno.h>
-#include <time.h>
+#include "libc/thread/thread.h"
+#include "libc/thread/semaphore.h"
+#include "libc/atomic.h"
 #include "InfraxSync.h"
 #include "InfraxMemory.h"
 #include "InfraxCore.h"
+
+// Helper function for memory management
+static InfraxMemory* get_memory_manager(void) {
+    InfraxMemoryConfig mem_config = {
+        .initial_size = 64 * 1024,
+        .use_gc = true,
+        .use_pool = true,
+        .gc_threshold = 32 * 1024
+    };
+    return InfraxMemory_CLASS.new(&mem_config);
+}
 
 //-----------------------------------------------------------------------------
 // Mutex Implementation
 //-----------------------------------------------------------------------------
 
-// Forward declarations of instance methods
-static InfraxError mutex_lock(InfraxMutex* self);
-static InfraxError mutex_try_lock(InfraxMutex* self);
-static InfraxError mutex_unlock(InfraxMutex* self);
-
-// Constructor implementation
-static InfraxMutex* infrax_mutex_new(void) {
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
-    };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return NULL;
-    }
-
-    InfraxMutex* self = memory->alloc(memory, sizeof(InfraxMutex));
-    if (!self) {
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize mutex
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    
-    int result = pthread_mutex_init(&self->native_handle, &attr);
-    pthread_mutexattr_destroy(&attr);
-    
-    if (result != 0) {
-        memory->dealloc(memory, self);
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize instance
-    self->klass = &InfraxMutex_CLASS;
-    self->is_initialized = true;
-
-    // Set instance methods
-    self->lock = mutex_lock;
-    self->try_lock = mutex_try_lock;
-    self->unlock = mutex_unlock;
-
-    return self;
-}
-
-// Destructor implementation
-static void infrax_mutex_free(InfraxMutex* self) {
-    if (!self) {
-        return;
-    }
-
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
-    };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return;
-    }
-
-    if (self->is_initialized) {
-        pthread_mutex_destroy(&self->native_handle);
-    }
-
-    memory->dealloc(memory, self);
-    InfraxMemory_CLASS.free(memory);
-}
-
-// Instance methods implementation
-static InfraxError mutex_lock(InfraxMutex* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError mutex_lock(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid mutex");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized mutex"
+        };
     }
 
-    int result = pthread_mutex_lock(&self->native_handle);
+    int result = pthread_mutex_lock(&self->native_handle.mutex);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_LOCK_FAILED, "Failed to lock mutex");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_LOCK_FAILED,
+            .message = "Failed to lock mutex"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError mutex_try_lock(InfraxMutex* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError mutex_try_lock(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid mutex");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized mutex"
+        };
     }
 
-    int result = pthread_mutex_trylock(&self->native_handle);
+    int result = pthread_mutex_trylock(&self->native_handle.mutex);
     if (result == EBUSY) {
-        return core->new_error(INFRAX_ERROR_SYNC_TIMEOUT, "Mutex is locked");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WOULD_BLOCK,
+            .message = "Mutex is locked"
+        };
     } else if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_LOCK_FAILED, "Failed to try lock mutex");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_LOCK_FAILED,
+            .message = "Failed to lock mutex"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError mutex_unlock(InfraxMutex* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError mutex_unlock(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid mutex");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized mutex"
+        };
     }
 
-    int result = pthread_mutex_unlock(&self->native_handle);
+    int result = pthread_mutex_unlock(&self->native_handle.mutex);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_UNLOCK_FAILED, "Failed to unlock mutex");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_UNLOCK_FAILED,
+            .message = "Failed to unlock mutex"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
-
-// The class instance
-const InfraxMutexClass InfraxMutex_CLASS = {
-    .new = infrax_mutex_new,
-    .free = infrax_mutex_free
-};
 
 //-----------------------------------------------------------------------------
 // RWLock Implementation
 //-----------------------------------------------------------------------------
 
-// Forward declarations of instance methods
-static InfraxError rwlock_read_lock(InfraxRWLock* self);
-static InfraxError rwlock_try_read_lock(InfraxRWLock* self);
-static InfraxError rwlock_read_unlock(InfraxRWLock* self);
-static InfraxError rwlock_write_lock(InfraxRWLock* self);
-static InfraxError rwlock_try_write_lock(InfraxRWLock* self);
-static InfraxError rwlock_write_unlock(InfraxRWLock* self);
-
-// Constructor implementation
-static InfraxRWLock* infrax_rwlock_new(void) {
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
-    };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return NULL;
-    }
-
-    InfraxRWLock* self = memory->alloc(memory, sizeof(InfraxRWLock));
-    if (!self) {
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize rwlock
-    pthread_rwlockattr_t attr;
-    pthread_rwlockattr_init(&attr);
-    pthread_rwlockattr_setpshared(&attr, PTHREAD_PROCESS_PRIVATE);
-    
-    int result = pthread_rwlock_init(&self->native_handle, &attr);
-    pthread_rwlockattr_destroy(&attr);
-    
-    if (result != 0) {
-        memory->dealloc(memory, self);
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize instance
-    self->klass = &InfraxRWLock_CLASS;
-    self->is_initialized = true;
-
-    // Set instance methods
-    self->read_lock = rwlock_read_lock;
-    self->try_read_lock = rwlock_try_read_lock;
-    self->read_unlock = rwlock_read_unlock;
-    self->write_lock = rwlock_write_lock;
-    self->try_write_lock = rwlock_try_write_lock;
-    self->write_unlock = rwlock_write_unlock;
-
-    return self;
-}
-
-// Destructor implementation
-static void infrax_rwlock_free(InfraxRWLock* self) {
-    if (!self) {
-        return;
-    }
-
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
-    };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return;
-    }
-
-    if (self->is_initialized) {
-        pthread_rwlock_destroy(&self->native_handle);
-    }
-
-    memory->dealloc(memory, self);
-    InfraxMemory_CLASS.free(memory);
-}
-
-// Instance methods implementation
-static InfraxError rwlock_read_lock(InfraxRWLock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError rwlock_read_lock(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid rwlock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized rwlock"
+        };
     }
 
-    int result = pthread_rwlock_rdlock(&self->native_handle);
+    int result = pthread_rwlock_rdlock(&self->native_handle.rwlock);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_LOCK_FAILED, "Failed to acquire read lock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_LOCK_FAILED,
+            .message = "Failed to acquire read lock"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError rwlock_try_read_lock(InfraxRWLock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError rwlock_try_read_lock(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid rwlock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized rwlock"
+        };
     }
 
-    int result = pthread_rwlock_tryrdlock(&self->native_handle);
+    int result = pthread_rwlock_tryrdlock(&self->native_handle.rwlock);
     if (result == EBUSY) {
-        return core->new_error(INFRAX_ERROR_SYNC_TIMEOUT, "RWLock is locked");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WOULD_BLOCK,
+            .message = "Read lock is held by another thread"
+        };
     } else if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_LOCK_FAILED, "Failed to try read lock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_LOCK_FAILED,
+            .message = "Failed to acquire read lock"
+        };
     }
 
-    return core->new_error(0, "");
-}
-
-static InfraxError rwlock_read_unlock(InfraxRWLock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
-    if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid rwlock");
-    }
-
-    int result = pthread_rwlock_unlock(&self->native_handle);
-    if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_UNLOCK_FAILED, "Failed to release read lock");
-    }
-
-    return core->new_error(0, "");
-}
-
-static InfraxError rwlock_write_lock(InfraxRWLock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
-    if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid rwlock");
-    }
-
-    int result = pthread_rwlock_wrlock(&self->native_handle);
-    if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_LOCK_FAILED, "Failed to acquire write lock");
-    }
-
-    return core->new_error(0, "");
-}
-
-static InfraxError rwlock_try_write_lock(InfraxRWLock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
-    if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid rwlock");
-    }
-
-    int result = pthread_rwlock_trywrlock(&self->native_handle);
-    if (result == EBUSY) {
-        return core->new_error(INFRAX_ERROR_SYNC_TIMEOUT, "RWLock is locked");
-    } else if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_LOCK_FAILED, "Failed to try write lock");
-    }
-
-    return core->new_error(0, "");
-}
-
-static InfraxError rwlock_write_unlock(InfraxRWLock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
-    if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid rwlock");
-    }
-
-    int result = pthread_rwlock_unlock(&self->native_handle);
-    if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_UNLOCK_FAILED, "Failed to release write lock");
-    }
-
-    return core->new_error(0, "");
-}
-
-// The class instance
-const InfraxRWLockClass InfraxRWLock_CLASS = {
-    .new = infrax_rwlock_new,
-    .free = infrax_rwlock_free
-};
-
-//-----------------------------------------------------------------------------
-// Spinlock Implementation
-//-----------------------------------------------------------------------------
-
-// Forward declarations of instance methods
-static InfraxError spinlock_lock(InfraxSpinlock* self);
-static InfraxError spinlock_try_lock(InfraxSpinlock* self);
-static InfraxError spinlock_unlock(InfraxSpinlock* self);
-
-// Constructor implementation
-static InfraxSpinlock* infrax_spinlock_new(void) {
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
     };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return NULL;
-    }
-
-    InfraxSpinlock* self = memory->alloc(memory, sizeof(InfraxSpinlock));
-    if (!self) {
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize spinlock
-    int result = pthread_spin_init(&self->native_handle, PTHREAD_PROCESS_PRIVATE);
-    if (result != 0) {
-        memory->dealloc(memory, self);
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize instance
-    self->klass = &InfraxSpinlock_CLASS;
-    self->is_initialized = true;
-
-    // Set instance methods
-    self->lock = spinlock_lock;
-    self->try_lock = spinlock_try_lock;
-    self->unlock = spinlock_unlock;
-
-    return self;
 }
 
-// Destructor implementation
-static void infrax_spinlock_free(InfraxSpinlock* self) {
-    if (!self) {
-        return;
+static InfraxError rwlock_read_unlock(InfraxSync* self) {
+    if (!self || !self->is_initialized) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized rwlock"
+        };
     }
 
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
+    int result = pthread_rwlock_unlock(&self->native_handle.rwlock);
+    if (result != 0) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_UNLOCK_FAILED,
+            .message = "Failed to release read lock"
+        };
+    }
+
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
     };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return;
-    }
-
-    if (self->is_initialized) {
-        pthread_spin_destroy(&self->native_handle);
-    }
-
-    memory->dealloc(memory, self);
-    InfraxMemory_CLASS.free(memory);
 }
 
-// Instance methods implementation
-static InfraxError spinlock_lock(InfraxSpinlock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError rwlock_write_lock(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid spinlock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized rwlock"
+        };
     }
 
-    int result = pthread_spin_lock(&self->native_handle);
+    int result = pthread_rwlock_wrlock(&self->native_handle.rwlock);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_LOCK_FAILED, "Failed to acquire spinlock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_LOCK_FAILED,
+            .message = "Failed to acquire write lock"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError spinlock_try_lock(InfraxSpinlock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError rwlock_try_write_lock(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid spinlock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized rwlock"
+        };
     }
 
-    int result = pthread_spin_trylock(&self->native_handle);
+    int result = pthread_rwlock_trywrlock(&self->native_handle.rwlock);
     if (result == EBUSY) {
-        return core->new_error(INFRAX_ERROR_SYNC_TIMEOUT, "Spinlock is locked");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WOULD_BLOCK,
+            .message = "Write lock is held by another thread"
+        };
     } else if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_LOCK_FAILED, "Failed to try spinlock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_LOCK_FAILED,
+            .message = "Failed to acquire write lock"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError spinlock_unlock(InfraxSpinlock* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError rwlock_write_unlock(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid spinlock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized rwlock"
+        };
     }
 
-    int result = pthread_spin_unlock(&self->native_handle);
+    int result = pthread_rwlock_unlock(&self->native_handle.rwlock);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_UNLOCK_FAILED, "Failed to release spinlock");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_UNLOCK_FAILED,
+            .message = "Failed to release write lock"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-// The class instance
-const InfraxSpinlockClass InfraxSpinlock_CLASS = {
-    .new = infrax_spinlock_new,
-    .free = infrax_spinlock_free
-};
+static InfraxError spinlock_lock(InfraxSync* self) {
+    if (!self || !self->is_initialized) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized spinlock"
+        };
+    }
+
+    int result = pthread_spin_lock(&self->native_handle.spinlock);
+    if (result != 0) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_LOCK_FAILED,
+            .message = "Failed to acquire spinlock"
+        };
+    }
+
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
+}
+
+static InfraxError spinlock_try_lock(InfraxSync* self) {
+    if (!self || !self->is_initialized) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized spinlock"
+        };
+    }
+
+    int result = pthread_spin_trylock(&self->native_handle.spinlock);
+    if (result == EBUSY) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WOULD_BLOCK,
+            .message = "Spinlock is held by another thread"
+        };
+    } else if (result != 0) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_LOCK_FAILED,
+            .message = "Failed to acquire spinlock"
+        };
+    }
+
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
+}
+
+static InfraxError spinlock_unlock(InfraxSync* self) {
+    if (!self || !self->is_initialized) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized spinlock"
+        };
+    }
+
+    int result = pthread_spin_unlock(&self->native_handle.spinlock);
+    if (result != 0) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_UNLOCK_FAILED,
+            .message = "Failed to release spinlock"
+        };
+    }
+
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
+}
 
 //-----------------------------------------------------------------------------
 // Semaphore Implementation
 //-----------------------------------------------------------------------------
 
-// Forward declarations of instance methods
-static InfraxError semaphore_wait(InfraxSemaphore* self);
-static InfraxError semaphore_try_wait(InfraxSemaphore* self);
-static InfraxError semaphore_post(InfraxSemaphore* self);
-static InfraxError semaphore_get_value(InfraxSemaphore* self, int* value);
+static InfraxError semaphore_wait(InfraxSync* self) {
+    if (!self || !self->is_initialized) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized semaphore"
+        };
+    }
 
-// Constructor implementation
-static InfraxSemaphore* infrax_semaphore_new(unsigned int initial_value) {
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
+    int result = sem_wait(&self->native_handle.semaphore);
+    if (result != 0) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WAIT_FAILED,
+            .message = "Failed to wait on semaphore"
+        };
+    }
+
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
     };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return NULL;
-    }
-
-    InfraxSemaphore* self = memory->alloc(memory, sizeof(InfraxSemaphore));
-    if (!self) {
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize semaphore
-    int result = sem_init(&self->native_handle, 0, initial_value);
-    if (result != 0) {
-        memory->dealloc(memory, self);
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize instance
-    self->klass = &InfraxSemaphore_CLASS;
-    self->is_initialized = true;
-
-    // Set instance methods
-    self->wait = semaphore_wait;
-    self->try_wait = semaphore_try_wait;
-    self->post = semaphore_post;
-    self->get_value = semaphore_get_value;
-
-    return self;
 }
 
-// Destructor implementation
-static void infrax_semaphore_free(InfraxSemaphore* self) {
-    if (!self) {
-        return;
+static InfraxError semaphore_try_wait(InfraxSync* self) {
+    if (!self || !self->is_initialized) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized semaphore"
+        };
     }
 
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
+    int result = sem_trywait(&self->native_handle.semaphore);
+    if (result == -1 && errno == EAGAIN) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WOULD_BLOCK,
+            .message = "Semaphore count is zero"
+        };
+    } else if (result != 0) {
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WAIT_FAILED,
+            .message = "Failed to try wait on semaphore"
+        };
+    }
+
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
     };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return;
-    }
-
-    if (self->is_initialized) {
-        sem_destroy(&self->native_handle);
-    }
-
-    memory->dealloc(memory, self);
-    InfraxMemory_CLASS.free(memory);
 }
 
-// Instance methods implementation
-static InfraxError semaphore_wait(InfraxSemaphore* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError semaphore_post(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid semaphore");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized semaphore"
+        };
     }
 
-    int result = sem_wait(&self->native_handle);
+    int result = sem_post(&self->native_handle.semaphore);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_WAIT_FAILED, "Failed to wait on semaphore");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_SIGNAL_FAILED,
+            .message = "Failed to post to semaphore"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError semaphore_try_wait(InfraxSemaphore* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
-    if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid semaphore");
-    }
-
-    int result = sem_trywait(&self->native_handle);
-    if (result == -1) {
-        if (errno == EAGAIN) {
-            return core->new_error(INFRAX_ERROR_SYNC_TIMEOUT, "Semaphore is not available");
-        } else {
-            return core->new_error(INFRAX_ERROR_SYNC_WAIT_FAILED, "Failed to try wait on semaphore");
-        }
-    }
-
-    return core->new_error(0, "");
-}
-
-static InfraxError semaphore_post(InfraxSemaphore* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
-    if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid semaphore");
-    }
-
-    int result = sem_post(&self->native_handle);
-    if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_SIGNAL_FAILED, "Failed to post semaphore");
-    }
-
-    return core->new_error(0, "");
-}
-
-static InfraxError semaphore_get_value(InfraxSemaphore* self, int* value) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError semaphore_get_value(InfraxSync* self, int* value) {
     if (!self || !self->is_initialized || !value) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid semaphore or value pointer");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized semaphore"
+        };
     }
 
-    int result = sem_getvalue(&self->native_handle, value);
+    int result = sem_getvalue(&self->native_handle.semaphore, value);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Failed to get semaphore value");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WAIT_FAILED,
+            .message = "Failed to get semaphore value"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
-
-// The class instance
-const InfraxSemaphoreClass InfraxSemaphore_CLASS = {
-    .new = infrax_semaphore_new,
-    .free = infrax_semaphore_free
-};
 
 //-----------------------------------------------------------------------------
 // Condition Variable Implementation
 //-----------------------------------------------------------------------------
 
-// Forward declarations of instance methods
-static InfraxError cond_wait(InfraxCond* self, InfraxMutex* mutex);
-static InfraxError cond_timedwait(InfraxCond* self, InfraxMutex* mutex, InfraxTime timeout_ms);
-static InfraxError cond_signal(InfraxCond* self);
-static InfraxError cond_broadcast(InfraxCond* self);
-
-// Constructor implementation
-static InfraxCond* infrax_cond_new(void) {
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
-    };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return NULL;
-    }
-
-    InfraxCond* self = memory->alloc(memory, sizeof(InfraxCond));
-    if (!self) {
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize condition variable
-    pthread_condattr_t attr;
-    pthread_condattr_init(&attr);
-    pthread_condattr_setpshared(&attr, PTHREAD_PROCESS_PRIVATE);
-    
-    int result = pthread_cond_init(&self->native_handle, &attr);
-    pthread_condattr_destroy(&attr);
-    
-    if (result != 0) {
-        memory->dealloc(memory, self);
-        InfraxMemory_CLASS.free(memory);
-        return NULL;
-    }
-
-    // Initialize instance
-    self->klass = &InfraxCond_CLASS;
-    self->is_initialized = true;
-
-    // Set instance methods
-    self->wait = cond_wait;
-    self->timedwait = cond_timedwait;
-    self->signal = cond_signal;
-    self->broadcast = cond_broadcast;
-
-    return self;
-}
-
-// Destructor implementation
-static void infrax_cond_free(InfraxCond* self) {
-    if (!self) {
-        return;
-    }
-
-    // 获取全局内存管理器
-    InfraxMemoryConfig mem_config = {
-        .initial_size = 64 * 1024,
-        .use_gc = true,
-        .use_pool = true,
-        .gc_threshold = 32 * 1024
-    };
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&mem_config);
-    if (!memory) {
-        return;
-    }
-
-    if (self->is_initialized) {
-        pthread_cond_destroy(&self->native_handle);
-    }
-
-    memory->dealloc(memory, self);
-    InfraxMemory_CLASS.free(memory);
-}
-
-// Instance methods implementation
-static InfraxError cond_wait(InfraxCond* self, InfraxMutex* mutex) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError cond_wait(InfraxSync* self, InfraxSync* mutex) {
     if (!self || !self->is_initialized || !mutex || !mutex->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid condition variable or mutex");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized condition variable"
+        };
     }
 
-    int result = pthread_cond_wait(&self->native_handle, &mutex->native_handle);
+    int result = pthread_cond_wait(&self->native_handle.cond, &mutex->native_handle.mutex);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_WAIT_FAILED, "Failed to wait on condition variable");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WAIT_FAILED,
+            .message = "Failed to wait on condition variable"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError cond_timedwait(InfraxCond* self, InfraxMutex* mutex, InfraxTime timeout_ms) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError cond_timedwait(InfraxSync* self, InfraxSync* mutex, InfraxTime timeout_ms) {
     if (!self || !self->is_initialized || !mutex || !mutex->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid condition variable or mutex");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized condition variable"
+        };
     }
 
     struct timespec ts;
@@ -723,48 +448,255 @@ static InfraxError cond_timedwait(InfraxCond* self, InfraxMutex* mutex, InfraxTi
         ts.tv_nsec -= 1000000000;
     }
 
-    int result = pthread_cond_timedwait(&self->native_handle, &mutex->native_handle, &ts);
+    int result = pthread_cond_timedwait(&self->native_handle.cond, &mutex->native_handle.mutex, &ts);
     if (result == ETIMEDOUT) {
-        return core->new_error(INFRAX_ERROR_SYNC_TIMEOUT, "Condition variable wait timed out");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_TIMEOUT,
+            .message = "Timed out waiting on condition variable"
+        };
     } else if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_WAIT_FAILED, "Failed to wait on condition variable");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_WAIT_FAILED,
+            .message = "Failed to wait on condition variable"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError cond_signal(InfraxCond* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError cond_signal(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid condition variable");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized condition variable"
+        };
     }
 
-    int result = pthread_cond_signal(&self->native_handle);
+    int result = pthread_cond_signal(&self->native_handle.cond);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_SIGNAL_FAILED, "Failed to signal condition variable");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_SIGNAL_FAILED,
+            .message = "Failed to signal condition variable"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-static InfraxError cond_broadcast(InfraxCond* self) {
-    InfraxCore* core = get_global_infrax_core();
-    
+static InfraxError cond_broadcast(InfraxSync* self) {
     if (!self || !self->is_initialized) {
-        return core->new_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid condition variable");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_INVALID_ARGUMENT,
+            .message = "Invalid argument or uninitialized condition variable"
+        };
     }
 
-    int result = pthread_cond_broadcast(&self->native_handle);
+    int result = pthread_cond_broadcast(&self->native_handle.cond);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_SYNC_SIGNAL_FAILED, "Failed to broadcast condition variable");
+        return (InfraxError) {
+            .code = INFRAX_ERROR_SYNC_SIGNAL_FAILED,
+            .message = "Failed to broadcast condition variable"
+        };
     }
 
-    return core->new_error(0, "");
+    return (InfraxError) {
+        .code = INFRAX_ERROR_OK,
+        .message = "Success"
+    };
 }
 
-// The class instance
-const InfraxCondClass InfraxCond_CLASS = {
-    .new = infrax_cond_new,
-    .free = infrax_cond_free
-}; 
+//-----------------------------------------------------------------------------
+// Atomic Operations Implementation
+//-----------------------------------------------------------------------------
+
+static int64_t infrax_atomic_load(InfraxSync* self) {
+    return atomic_load(&self->value);
+}
+
+static void infrax_atomic_store(InfraxSync* self, int64_t value) {
+    atomic_store(&self->value, value);
+}
+
+static int64_t infrax_atomic_exchange(InfraxSync* self, int64_t value) {
+    return atomic_exchange(&self->value, value);
+}
+
+static bool infrax_atomic_compare_exchange(InfraxSync* self, int64_t* expected, int64_t desired) {
+    return atomic_compare_exchange_strong(&self->value, expected, desired);
+}
+
+static int64_t infrax_atomic_fetch_add(InfraxSync* self, int64_t value) {
+    return atomic_fetch_add(&self->value, value);
+}
+
+static int64_t infrax_atomic_fetch_sub(InfraxSync* self, int64_t value) {
+    return atomic_fetch_sub(&self->value, value);
+}
+
+static int64_t infrax_atomic_fetch_and(InfraxSync* self, int64_t value) {
+    return atomic_fetch_and(&self->value, value);
+}
+
+static int64_t infrax_atomic_fetch_or(InfraxSync* self, int64_t value) {
+    return atomic_fetch_or(&self->value, value);
+}
+
+static int64_t infrax_atomic_fetch_xor(InfraxSync* self, int64_t value) {
+    return atomic_fetch_xor(&self->value, value);
+}
+
+//-----------------------------------------------------------------------------
+// Constructor and Destructor Implementation
+//-----------------------------------------------------------------------------
+
+static InfraxSync* infrax_sync_new(InfraxSyncType type) {
+    InfraxMemory* memory = get_memory_manager();
+    if (!memory) {
+        return NULL;
+    }
+
+    InfraxSync* self = memory->alloc(memory, sizeof(InfraxSync));
+    if (!self) {
+        InfraxMemory_CLASS.free(memory);
+        return NULL;
+    }
+
+    self->type = type;
+    int result = 0;
+
+    switch (type) {
+        case INFRAX_SYNC_TYPE_MUTEX:
+            // Initialize mutex with recursive attribute
+            pthread_mutexattr_t mutex_attr;
+            pthread_mutexattr_init(&mutex_attr);
+            pthread_mutexattr_settype(&mutex_attr, PTHREAD_MUTEX_RECURSIVE);
+            result = pthread_mutex_init(&self->native_handle.mutex, &mutex_attr);
+            pthread_mutexattr_destroy(&mutex_attr);
+            break;
+
+        case INFRAX_SYNC_TYPE_RWLOCK:
+            result = pthread_rwlock_init(&self->native_handle.rwlock, NULL);
+            break;
+
+        case INFRAX_SYNC_TYPE_SPINLOCK:
+            result = pthread_spin_init(&self->native_handle.spinlock, PTHREAD_PROCESS_PRIVATE);
+            break;
+
+        case INFRAX_SYNC_TYPE_SEMAPHORE:
+            result = sem_init(&self->native_handle.semaphore, 0, 1);
+            break;
+
+        case INFRAX_SYNC_TYPE_CONDITION:
+            result = pthread_cond_init(&self->native_handle.cond, NULL);
+            break;
+
+        case INFRAX_SYNC_TYPE_ATOMIC:
+            result = 0;  // Atomic operations don't need initialization
+            break;
+
+        default:
+            memory->dealloc(memory, self);
+            InfraxMemory_CLASS.free(memory);
+            return NULL;
+    }
+
+    if (result != 0) {
+        memory->dealloc(memory, self);
+        InfraxMemory_CLASS.free(memory);
+        return NULL;
+    }
+
+    self->klass = &InfraxSync_CLASS;
+    self->is_initialized = true;
+    atomic_init(&self->value, 0);
+
+    self->mutex_lock = mutex_lock;
+    self->mutex_try_lock = mutex_try_lock;
+    self->mutex_unlock = mutex_unlock;
+
+    self->rwlock_read_lock = rwlock_read_lock;
+    self->rwlock_try_read_lock = rwlock_try_read_lock;
+    self->rwlock_read_unlock = rwlock_read_unlock;
+    self->rwlock_write_lock = rwlock_write_lock;
+    self->rwlock_try_write_lock = rwlock_try_write_lock;
+    self->rwlock_write_unlock = rwlock_write_unlock;
+
+    self->spinlock_lock = spinlock_lock;
+    self->spinlock_try_lock = spinlock_try_lock;
+    self->spinlock_unlock = spinlock_unlock;
+
+    self->semaphore_wait = semaphore_wait;
+    self->semaphore_try_wait = semaphore_try_wait;
+    self->semaphore_post = semaphore_post;
+    self->semaphore_get_value = semaphore_get_value;
+
+    self->cond_wait = cond_wait;
+    self->cond_timedwait = cond_timedwait;
+    self->cond_signal = cond_signal;
+    self->cond_broadcast = cond_broadcast;
+
+    self->atomic_load = infrax_atomic_load;
+    self->atomic_store = infrax_atomic_store;
+    self->atomic_exchange = infrax_atomic_exchange;
+    self->atomic_compare_exchange = infrax_atomic_compare_exchange;
+    self->atomic_fetch_add = infrax_atomic_fetch_add;
+    self->atomic_fetch_sub = infrax_atomic_fetch_sub;
+    self->atomic_fetch_and = infrax_atomic_fetch_and;
+    self->atomic_fetch_or = infrax_atomic_fetch_or;
+    self->atomic_fetch_xor = infrax_atomic_fetch_xor;
+
+    return self;
+}
+
+static void infrax_sync_free(InfraxSync* self) {
+    if (!self) {
+        return;
+    }
+
+    InfraxMemory* memory = get_memory_manager();
+    if (!memory) {
+        return;
+    }
+
+    if (self->is_initialized) {
+        switch (self->type) {
+            case INFRAX_SYNC_TYPE_MUTEX:
+                pthread_mutex_destroy(&self->native_handle.mutex);
+                break;
+
+            case INFRAX_SYNC_TYPE_RWLOCK:
+                pthread_rwlock_destroy(&self->native_handle.rwlock);
+                break;
+
+            case INFRAX_SYNC_TYPE_SPINLOCK:
+                pthread_spin_destroy(&self->native_handle.spinlock);
+                break;
+
+            case INFRAX_SYNC_TYPE_SEMAPHORE:
+                sem_destroy(&self->native_handle.semaphore);
+                break;
+
+            case INFRAX_SYNC_TYPE_CONDITION:
+                pthread_cond_destroy(&self->native_handle.cond);
+                break;
+        }
+    }
+
+    memory->dealloc(memory, self);
+    InfraxMemory_CLASS.free(memory);
+}
+
+//-----------------------------------------------------------------------------
+// Class Instance
+//-----------------------------------------------------------------------------
+
+const InfraxSyncClass InfraxSync_CLASS = {
+    .new = infrax_sync_new,
+    .free = infrax_sync_free
+};

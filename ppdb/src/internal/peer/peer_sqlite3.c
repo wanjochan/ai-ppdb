@@ -465,10 +465,10 @@ infra_error_t sqlite3_start(void) {
 
     // Add listener to poll context
     poly_poll_listener_t listener_config = {
-        .bind_port = 5433,
+        .bind_port = 5433, // TODO Use port from config
         .user_data = NULL
     };
-    strcpy(listener_config.bind_addr, "0.0.0.0");
+    strcpy(listener_config.bind_addr, "0.0.0.0");//TODO user host from config
 
     err = poly_poll_add_listener(state->poll_ctx, &listener_config);
     if (err != INFRA_OK) {

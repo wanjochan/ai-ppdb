@@ -36,9 +36,9 @@ typedef uint64_t InfraxHandle;
 #define INFRAX_ERROR_OK 0
 #define INFRAX_ERROR_INVALID_PARAM -1
 #define INFRAX_ERROR_NO_MEMORY -2
-#define INFRAX_ERROR_SYNC_DESTROY -3
-#define INFRAX_ERROR_SYNC_TIMEOUT -4
-#define INFRAX_ERROR_WOULD_BLOCK -5
+// #define INFRAX_ERROR_SYNC_DESTROY -3
+// #define INFRAX_ERROR_SYNC_TIMEOUT -4
+// #define INFRAX_ERROR_WOULD_BLOCK -5
 
 //-----------------------------------------------------------------------------
 // Thread Types

@@ -8,196 +8,99 @@ Semaphore (信号量)
 Condition (条件变量)
 Atomic (原子操作)
 */
-#include <stdbool.h>
-#include <pthread.h>
+#include "libc/thread/thread.h"
+#include "libc/thread/semaphore.h"
+#include "libc/atomic.h"
 #include "InfraxCore.h"
 
 // Error codes
-#define INFRAX_ERROR_SYNC_INVALID_ARGUMENT -1
-#define INFRAX_ERROR_SYNC_INIT_FAILED -2
-#define INFRAX_ERROR_SYNC_LOCK_FAILED -3
-#define INFRAX_ERROR_SYNC_UNLOCK_FAILED -4
-#define INFRAX_ERROR_SYNC_WAIT_FAILED -5
-#define INFRAX_ERROR_SYNC_SIGNAL_FAILED -6
-#define INFRAX_ERROR_SYNC_TIMEOUT -7
+#define INFRAX_ERROR_SYNC_OK = 0
+#define INFRAX_ERROR_SYNC_INVALID_ARGUMENT -101
+#define INFRAX_ERROR_SYNC_INIT_FAILED -102
+#define INFRAX_ERROR_SYNC_LOCK_FAILED -103
+#define INFRAX_ERROR_SYNC_UNLOCK_FAILED -104
+#define INFRAX_ERROR_SYNC_WAIT_FAILED -105
+#define INFRAX_ERROR_SYNC_SIGNAL_FAILED -106
+#define INFRAX_ERROR_SYNC_TIMEOUT -107
+#define INFRAX_ERROR_SYNC_WOULD_BLOCK -108
 
 typedef struct InfraxSync  InfraxSync;
 typedef struct InfraxSyncClass InfraxSyncClass;
 
+// Sync type
+typedef enum {
+    INFRAX_SYNC_TYPE_MUTEX,
+    INFRAX_SYNC_TYPE_RWLOCK,
+    INFRAX_SYNC_TYPE_SPINLOCK,
+    INFRAX_SYNC_TYPE_SEMAPHORE,
+    INFRAX_SYNC_TYPE_CONDITION,
+    INFRAX_SYNC_TYPE_ATOMIC
+} InfraxSyncType;
+
 struct InfraxSyncClass {
-    InfraxSync* (*new)(void);
+    InfraxSync* (*new)(InfraxSyncType type);
     void (*free)(InfraxSync* self);
 };
 
 struct InfraxSync {
     const InfraxSyncClass* klass;
-    pthread_mutex_t native_handle;
     bool is_initialized;
+    InfraxSyncType type;
+
+    // Native handles for different synchronization primitives
+    union {
+        pthread_mutex_t mutex;
+        pthread_rwlock_t rwlock;
+        pthread_spinlock_t spinlock;
+        sem_t semaphore;
+        pthread_cond_t cond;
+    } native_handle;
 
     // Instance methods
-    InfraxError (*lock)(InfraxSync* self);
-    InfraxError (*try_lock)(InfraxSync* self);
-    InfraxError (*unlock)(InfraxSync* self);
+    InfraxError (*mutex_lock)(InfraxSync* self);
+    InfraxError (*mutex_try_lock)(InfraxSync* self);
+    InfraxError (*mutex_unlock)(InfraxSync* self);
+
+    InfraxError (*rwlock_read_lock)(InfraxSync* self);
+    InfraxError (*rwlock_try_read_lock)(InfraxSync* self);
+    InfraxError (*rwlock_read_unlock)(InfraxSync* self);
+    InfraxError (*rwlock_write_lock)(InfraxSync* self);
+    InfraxError (*rwlock_try_write_lock)(InfraxSync* self);
+    InfraxError (*rwlock_write_unlock)(InfraxSync* self);
+
+    InfraxError (*spinlock_lock)(InfraxSync* self);
+    InfraxError (*spinlock_try_lock)(InfraxSync* self);
+    InfraxError (*spinlock_unlock)(InfraxSync* self);
+
+    InfraxError (*semaphore_wait)(InfraxSync* self);
+    InfraxError (*semaphore_try_wait)(InfraxSync* self);
+    InfraxError (*semaphore_post)(InfraxSync* self);
+    InfraxError (*semaphore_get_value)(InfraxSync* self, int* value);
+
+    InfraxError (*cond_wait)(InfraxSync* self, InfraxSync* mutex);
+    InfraxError (*cond_timedwait)(InfraxSync* self, InfraxSync* mutex, InfraxTime timeout_ms);
+    InfraxError (*cond_signal)(InfraxSync* self);
+    InfraxError (*cond_broadcast)(InfraxSync* self);
+    int64_t (*cond_exchange)(InfraxSync* self, int64_t value);
+    bool (*cond_compare_exchange)(InfraxSync* self, int64_t* expected, int64_t desired);
+    InfraxError (*cond_fetch_add)(InfraxSync* self, int64_t value);
+    InfraxError (*cond_fetch_sub)(InfraxSync* self, int64_t value);
+    InfraxError (*cond_fetch_and)(InfraxSync* self, int64_t value);
+    InfraxError (*cond_fetch_or)(InfraxSync* self, int64_t value);
+    InfraxError (*cond_fetch_xor)(InfraxSync* self, int64_t value);
+    
+    _Atomic int64_t value;
+    int64_t (*atomic_load)(InfraxSync* self);
+    void (*atomic_store)(InfraxSync* self, int64_t value);
+    int64_t (*atomic_exchange)(InfraxSync* self, int64_t value);
+    bool (*atomic_compare_exchange)(InfraxSync* self, int64_t* expected, int64_t desired);
+    int64_t (*atomic_fetch_add)(InfraxSync* self, int64_t value);
+    int64_t (*atomic_fetch_sub)(InfraxSync* self, int64_t value);
+    int64_t (*atomic_fetch_and)(InfraxSync* self, int64_t value);
+    int64_t (*atomic_fetch_or)(InfraxSync* self, int64_t value);
+    int64_t (*atomic_fetch_xor)(InfraxSync* self, int64_t value);
 };
+
 extern const InfraxSyncClass InfraxSync_CLASS;
 
-
-// //-----------------------------------------------------------------------------
-// // Mutex
-// //-----------------------------------------------------------------------------
-// typedef struct InfraxMutex InfraxMutex;
-// typedef struct InfraxMutexClass InfraxMutexClass;
-
-// struct InfraxMutexClass {
-//     InfraxMutex* (*new)(void);
-//     void (*free)(InfraxMutex* self);
-// };
-
-// struct InfraxMutex {
-//     const InfraxMutexClass* klass;
-//     pthread_mutex_t native_handle;
-//     bool is_initialized;
-
-//     // Instance methods
-//     InfraxError (*lock)(InfraxMutex* self);
-//     InfraxError (*try_lock)(InfraxMutex* self);
-//     InfraxError (*unlock)(InfraxMutex* self);
-// };
-
-// //-----------------------------------------------------------------------------
-// // RWLock
-// //-----------------------------------------------------------------------------
-// typedef struct InfraxRWLock InfraxRWLock;
-// typedef struct InfraxRWLockClass InfraxRWLockClass;
-
-// struct InfraxRWLockClass {
-//     InfraxRWLock* (*new)(void);
-//     void (*free)(InfraxRWLock* self);
-// };
-
-// struct InfraxRWLock {
-//     const InfraxRWLockClass* klass;
-//     pthread_rwlock_t native_handle;
-//     bool is_initialized;
-
-//     // Instance methods
-//     InfraxError (*read_lock)(InfraxRWLock* self);
-//     InfraxError (*try_read_lock)(InfraxRWLock* self);
-//     InfraxError (*read_unlock)(InfraxRWLock* self);
-//     InfraxError (*write_lock)(InfraxRWLock* self);
-//     InfraxError (*try_write_lock)(InfraxRWLock* self);
-//     InfraxError (*write_unlock)(InfraxRWLock* self);
-// };
-
-// //-----------------------------------------------------------------------------
-// // Spinlock
-// //-----------------------------------------------------------------------------
-// typedef struct InfraxSpinlock InfraxSpinlock;
-// typedef struct InfraxSpinlockClass InfraxSpinlockClass;
-
-// struct InfraxSpinlockClass {
-//     InfraxSpinlock* (*new)(void);
-//     void (*free)(InfraxSpinlock* self);
-// };
-
-// struct InfraxSpinlock {
-//     const InfraxSpinlockClass* klass;
-//     pthread_spinlock_t native_handle;
-//     bool is_initialized;
-
-//     // Instance methods
-//     InfraxError (*lock)(InfraxSpinlock* self);
-//     InfraxError (*try_lock)(InfraxSpinlock* self);
-//     InfraxError (*unlock)(InfraxSpinlock* self);
-// };
-
-// //-----------------------------------------------------------------------------
-// // Semaphore
-// //-----------------------------------------------------------------------------
-// typedef struct InfraxSemaphore InfraxSemaphore;
-// typedef struct InfraxSemaphoreClass InfraxSemaphoreClass;
-
-// struct InfraxSemaphoreClass {
-//     InfraxSemaphore* (*new)(unsigned int initial_value);
-//     void (*free)(InfraxSemaphore* self);
-// };
-
-// struct InfraxSemaphore {
-//     const InfraxSemaphoreClass* klass;
-//     sem_t native_handle;
-//     bool is_initialized;
-
-//     // Instance methods
-//     InfraxError (*wait)(InfraxSemaphore* self);
-//     InfraxError (*try_wait)(InfraxSemaphore* self);
-//     InfraxError (*post)(InfraxSemaphore* self);
-//     InfraxError (*get_value)(InfraxSemaphore* self, int* value);
-// };
-
-// //-----------------------------------------------------------------------------
-// // Condition Variable
-// //-----------------------------------------------------------------------------
-// typedef struct InfraxCond InfraxCond;
-// typedef struct InfraxCondClass InfraxCondClass;
-
-// struct InfraxCondClass {
-//     InfraxCond* (*new)(void);
-//     void (*free)(InfraxCond* self);
-// };
-
-// struct InfraxCond {
-//     const InfraxCondClass* klass;
-//     pthread_cond_t native_handle;
-//     bool is_initialized;
-
-//     // Instance methods
-//     InfraxError (*wait)(InfraxCond* self, InfraxMutex* mutex);
-//     InfraxError (*timedwait)(InfraxCond* self, InfraxMutex* mutex, InfraxTime timeout_ms);
-//     InfraxError (*signal)(InfraxCond* self);
-//     InfraxError (*broadcast)(InfraxCond* self);
-
-//     int64_t (*exchange)(InfraxAtomic* self, int64_t value);
-//     bool (*compare_exchange)(InfraxAtomic* self, int64_t* expected, int64_t desired);
-//     int64_t (*fetch_add)(InfraxAtomic* self, int64_t value);
-//     int64_t (*fetch_sub)(InfraxAtomic* self, int64_t value);
-//     int64_t (*fetch_and)(InfraxAtomic* self, int64_t value);
-//     int64_t (*fetch_or)(InfraxAtomic* self, int64_t value);
-//     int64_t (*fetch_xor)(InfraxAtomic* self, int64_t value);
-// };
-
-// //-----------------------------------------------------------------------------
-// // Atomic Operations
-// //-----------------------------------------------------------------------------
-// typedef struct InfraxAtomic InfraxAtomic;
-// typedef struct InfraxAtomicClass InfraxAtomicClass;
-
-// struct InfraxAtomicClass {
-//     InfraxAtomic* (*new)(void);
-//     void (*free)(InfraxAtomic* self);
-// };
-
-// struct InfraxAtomic {
-//     const InfraxAtomicClass* klass;
-//     _Atomic int64_t value;
-
-//     // Instance methods
-//     int64_t (*load)(InfraxAtomic* self);
-//     void (*store)(InfraxAtomic* self, int64_t value);
-//     int64_t (*exchange)(InfraxAtomic* self, int64_t value);
-//     bool (*compare_exchange)(InfraxAtomic* self, int64_t* expected, int64_t desired);
-//     int64_t (*fetch_add)(InfraxAtomic* self, int64_t value);
-//     int64_t (*fetch_sub)(InfraxAtomic* self, int64_t value);
-//     int64_t (*fetch_and)(InfraxAtomic* self, int64_t value);
-//     int64_t (*fetch_or)(InfraxAtomic* self, int64_t value);
-//     int64_t (*fetch_xor)(InfraxAtomic* self, int64_t value);
-// };
-
-// // The "static" interface instances
-// extern const InfraxMutexClass InfraxMutex_CLASS;
-// extern const InfraxRWLockClass InfraxRWLock_CLASS;
-// extern const InfraxSpinlockClass InfraxSpinlock_CLASS;
-// extern const InfraxSemaphoreClass InfraxSemaphore_CLASS;
-// extern const InfraxCondClass InfraxCond_CLASS;
-// extern const InfraxAtomicClass InfraxAtomic_CLASS;
-
-#endif // INFRAX_SYNC_H 
+#endif // INFRAX_SYNC_H
