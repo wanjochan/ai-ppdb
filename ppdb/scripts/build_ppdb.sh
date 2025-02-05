@@ -15,15 +15,15 @@ ENABLE_MEMKV=0
 
 # 添加条件编译宏定义
 if [ "${ENABLE_RINETD}" = "1" ]; then
-    CFLAGS="${CFLAGS} -DDEV_RINETD"
+    export CFLAGS="${CFLAGS} -DDEV_RINETD"
 fi
 
 if [ "${ENABLE_MEMKV}" = "1" ]; then
-    CFLAGS="${CFLAGS} -DDEV_MEMKV"
+    export CFLAGS="${CFLAGS} -DDEV_MEMKV"
 fi
 
 if [ "${ENABLE_SQLITE3}" = "1" ]; then
-    CFLAGS="${CFLAGS} -DDEV_SQLITE3"
+    export CFLAGS="${CFLAGS} -DDEV_SQLITE3"
 fi
 
 # 清理旧的可执行文件

@@ -62,8 +62,38 @@ peer_service_t g_sqlite3_service = {
     .cleanup = sqlite3_cleanup,
     .start = sqlite3_start,
     .stop = sqlite3_stop,
-    .cmd_handler = sqlite3_cmd_handler
+    .cmd_handler = sqlite3_cmd_handler,
+    .apply_config = sqlite3_apply_config
 };
+
+// Apply configuration
+infra_error_t sqlite3_apply_config(const poly_service_config_t* config) {
+    if (!config) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    sqlite3_state_t* state = get_state();
+    if (!state) {
+        INFRA_LOG_ERROR("Service state not initialized");
+        return INFRA_ERROR_INVALID_STATE;
+    }
+
+    // 从配置中获取服务配置
+    strncpy(state->host, config->listen_host, SQLITE3_MAX_HOST_LEN - 1);
+    state->host[SQLITE3_MAX_HOST_LEN - 1] = '\0';
+    state->port = config->listen_port;
+    
+    // 如果提供了后端路径，使用它作为数据库路径
+    if (config->backend && config->backend[0]) {
+        strncpy(state->db_path, config->backend, SQLITE3_MAX_PATH_LEN - 1);
+        state->db_path[SQLITE3_MAX_PATH_LEN - 1] = '\0';
+    }
+
+    INFRA_LOG_INFO("Applied configuration - host: %s, port: %d, db_path: %s",
+        state->host, state->port, state->db_path);
+
+    return INFRA_OK;
+}
 
 //-----------------------------------------------------------------------------
 // Connection handling

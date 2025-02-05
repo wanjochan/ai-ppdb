@@ -23,6 +23,7 @@ infra_error_t sqlite3_cleanup(void);
 infra_error_t sqlite3_start(void);
 infra_error_t sqlite3_stop(void);
 infra_error_t sqlite3_cmd_handler(const char* cmd, char* response, size_t size);
+infra_error_t sqlite3_apply_config(const poly_service_config_t* config);
 
 // 获取服务实例
 peer_service_t* peer_sqlite3_get_service(void);

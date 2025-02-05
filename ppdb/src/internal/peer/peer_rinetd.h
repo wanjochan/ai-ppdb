@@ -48,8 +48,11 @@ infra_error_t rinetd_start(void);
 infra_error_t rinetd_stop(void);
 bool rinetd_is_running(void);
 infra_error_t rinetd_cmd_handler(const char* cmd, char* response, size_t size);
+
+//这两个是不是没用的？
 infra_error_t rinetd_load_config(const char* path);
 infra_error_t rinetd_save_config(const char* path);
+
 infra_error_t rinetd_apply_config(const poly_service_config_t* config);
 
 // Get rinetd service instance

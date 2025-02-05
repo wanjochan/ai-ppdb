@@ -135,6 +135,21 @@ infra_error_t peer_service_stop(const char* name) {
     return service->stop();
 }
 
+// Initialize service
+infra_error_t peer_service_init(const char* name) {
+    peer_service_t* service = peer_service_get_by_name(name);
+    if (!service) {
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    if (service->state != PEER_SERVICE_STATE_INIT && 
+        service->state != PEER_SERVICE_STATE_STOPPED) {
+        return INFRA_OK;  // Already initialized
+    }
+
+    return service->init();
+}
+
 // 注册命令
 static infra_error_t ppdb_register_command(const poly_cmd_t* cmd) {
     if (!cmd || !cmd->name[0] || !cmd->handler) {
@@ -447,12 +462,66 @@ static infra_error_t handle_rinetd_cmd(const poly_config_t* config, int argc, ch
     }
 }
 
+// Parse sqlite3 config file
+static infra_error_t parse_sqlite3_config(const char* config_file, poly_config_t* config) {
+    FILE* fp = fopen(config_file, "r");
+    if (!fp) {
+        INFRA_LOG_ERROR("Failed to open config file: %s", config_file);
+        return INFRA_ERROR_IO;
+    }
+
+    char line[1024];
+    int line_num = 0;
+    config->service_count = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        line_num++;
+        
+        // Skip empty lines and comments
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r' || line[0] == '\0') {
+            continue;
+        }
+
+        // Parse sqlite3 config
+        char listen_addr[64], db_type[32], backend_path[256];
+        int listen_port;
+        
+        if (sscanf(line, "%63s %d %31s %255s", listen_addr, &listen_port, db_type, backend_path) != 4) {
+            INFRA_LOG_ERROR("Invalid config at line %d: %s", line_num, line);
+            fclose(fp);
+            return INFRA_ERROR_INVALID_PARAM;
+        }
+
+        if (config->service_count >= POLY_CMD_MAX_SERVICES) {
+            INFRA_LOG_ERROR("Too many services defined");
+            fclose(fp);
+            return INFRA_ERROR_NO_MEMORY;
+        }
+
+        // Add sqlite3 service config
+        poly_service_config_t* svc = &config->services[config->service_count];
+        svc->type = POLY_SERVICE_SQLITE;
+        strncpy(svc->listen_host, listen_addr, POLY_CMD_MAX_NAME - 1);
+        svc->listen_port = listen_port;
+        strncpy(svc->backend, backend_path, POLY_CMD_MAX_VALUE - 1);
+        
+        INFRA_LOG_INFO("Added sqlite3 service: %s:%d, backend: %s",
+            svc->listen_host, svc->listen_port, svc->backend);
+            
+        config->service_count++;
+    }
+
+    fclose(fp);
+    return INFRA_OK;
+}
+
 // Handle sqlite3 command
 static infra_error_t handle_sqlite3_cmd(const poly_config_t* config, int argc, char** argv) {
     bool start_flag = false;
     bool stop_flag = false;
     bool status_flag = false;
     bool daemon_flag = false;
+    char config_path[POLY_CMD_MAX_VALUE] = {0};
 
     // Parse command options
     for (int i = 1; i < argc; i++) {
@@ -475,12 +544,34 @@ static infra_error_t handle_sqlite3_cmd(const poly_config_t* config, int argc, c
 
     // Handle actions
     if (start_flag) {
-        // 如果配置文件中有该服务的配置，先应用配置
+        // 获取配置文件路径
+        infra_error_t err = poly_cmdline_get_option(config, "--config", config_path, sizeof(config_path));
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("No config file specified");
+            return err;
+        }
+
+        // 解析配置文件
+        poly_config_t file_config = {0};
+        err = parse_sqlite3_config(config_path, &file_config);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to parse config file: %s", config_path);
+            return err;
+        }
+
+        // 初始化服务
+        err = peer_service_init("sqlite3");
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to initialize service");
+            return err;
+        }
+
+        // 应用配置
         bool has_config = false;
-        for (int i = 0; i < config->service_count; i++) {
-            const poly_service_config_t* svc_config = &config->services[i];
+        for (int i = 0; i < file_config.service_count; i++) {
+            const poly_service_config_t* svc_config = &file_config.services[i];
             if (svc_config->type == POLY_SERVICE_SQLITE) {
-                infra_error_t err = peer_service_apply_config("sqlite3", svc_config);
+                err = peer_service_apply_config("sqlite3", svc_config);
                 if (err != INFRA_OK) {
                     return err;
                 }
@@ -494,7 +585,7 @@ static infra_error_t handle_sqlite3_cmd(const poly_config_t* config, int argc, c
         }
 
         // 启动服务
-        infra_error_t err = peer_service_start("sqlite3");
+        err = peer_service_start("sqlite3");
         if (err != INFRA_OK) {
             return err;
         }
