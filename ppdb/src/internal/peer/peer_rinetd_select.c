@@ -309,9 +309,11 @@ static infra_error_t create_listener(int rule_index) {
 
 infra_error_t rinetd_start(void) {
     if (g_context.running) {
+        INFRA_LOG_DEBUG("rinetd_start: service already running, g_context.running=%d", g_context.running);
         return INFRA_ERROR_BUSY;
     }
 
+    INFRA_LOG_DEBUG("rinetd_start: starting service, g_context.running=%d", g_context.running);
     // 检查是否有规则
     if (g_context.rule_count == 0) {
         INFRA_LOG_ERROR("No rules configured");
@@ -433,9 +435,11 @@ infra_error_t rinetd_start(void) {
 
 infra_error_t rinetd_stop(void) {
     if (!g_context.running) {
+        INFRA_LOG_DEBUG("rinetd_stop: service not running, g_context.running=%d", g_context.running);
         return INFRA_OK;
     }
 
+    INFRA_LOG_DEBUG("rinetd_stop: stopping service, g_context.running=%d", g_context.running);
     g_context.running = false;
     
     // 清理所有监听器
@@ -575,5 +579,3 @@ infra_error_t rinetd_load_config(const char* path) {
     INFRA_LOG_INFO("Loaded %d rules from %s", g_context.rule_count, path);
     return INFRA_OK;
 } 
-
-

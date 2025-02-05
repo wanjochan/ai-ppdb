@@ -131,12 +131,18 @@ static infra_error_t forward_data(infra_socket_t client, infra_socket_t server) 
     size_t total_server_to_client = 0;
 
     while (1) {
+        // Check if service is stopping
+        if (!g_rinetd_state.running) {
+            INFRA_LOG_INFO("Service is stopping, closing connection");
+            break;
+        }
+
         INFRA_LOG_DEBUG("Waiting for events...");
-        err = poly_poll_wait(poll, 30000); // 30 seconds timeout
+        err = poly_poll_wait(poll, 1000); // 1 second timeout
         if (err != INFRA_OK) {
             if (err == INFRA_ERROR_TIMEOUT) {
-                INFRA_LOG_INFO("Poll timeout, no activity for 30 seconds");
-                break;
+                INFRA_LOG_DEBUG("Poll timeout, no activity for 1 second");
+                continue;
             }
             INFRA_LOG_ERROR("Poll failed: %d", err);
             break;
@@ -264,14 +270,38 @@ static void* handle_connection_thread(void* args) {
     strncpy(dst_addr.ip, session->rule.dst_addr, sizeof(dst_addr.ip) - 1);
 
     INFRA_LOG_INFO("Connecting to %s:%d", dst_addr.ip, dst_addr.port);
-    err = infra_net_connect(&dst_addr, &server);
+
+    // Try to connect with timeout and retries
+    int max_retries = 3;
+    int retry_count = 0;
+    while (retry_count < max_retries) {
+        err = infra_net_connect(&dst_addr, &server);
+        if (err == INFRA_OK) {
+            break;
+        }
+        INFRA_LOG_ERROR("Failed to connect to %s:%d: %d (errno=%d: %s), retry %d/%d", 
+            dst_addr.ip, dst_addr.port, err, errno, strerror(errno), 
+            retry_count + 1, max_retries);
+        
+        if (!g_rinetd_state.running) {
+            INFRA_LOG_INFO("Service is stopping, abort connection");
+            infra_net_close(session->client);
+            free(session);
+            return NULL;
+        }
+
+        // Wait a bit before retry
+        infra_sleep(100);
+        retry_count++;
+    }
+
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to connect to %s:%d: %d (errno=%d: %s)", 
-            dst_addr.ip, dst_addr.port, err, errno, strerror(errno));
+        INFRA_LOG_ERROR("Failed to connect after %d retries", max_retries);
         infra_net_close(session->client);
         free(session);
         return NULL;
     }
+
     INFRA_LOG_INFO("Connected to %s:%d", dst_addr.ip, dst_addr.port);
 
     // Set both sockets to non-blocking mode
@@ -307,6 +337,7 @@ static void* handle_connection_thread(void* args) {
 
 // Initialize rinetd service
 infra_error_t rinetd_init(void) {
+    INFRA_LOG_TRACE("rinetd_init: current state=%d", g_rinetd_service.state);
     if (g_rinetd_service.state != PEER_SERVICE_STATE_INIT &&
         g_rinetd_service.state != PEER_SERVICE_STATE_STOPPED) {
         return INFRA_ERROR_INVALID_STATE;
@@ -326,14 +357,23 @@ infra_error_t rinetd_init(void) {
     }
 
     g_rinetd_service.state = PEER_SERVICE_STATE_READY;
+    INFRA_LOG_TRACE("rinetd_init: state changed to READY");
     return INFRA_OK;
 }
 
 // Start rinetd service
 infra_error_t rinetd_start(void) {
-    if (g_rinetd_service.state != PEER_SERVICE_STATE_READY) {
+    INFRA_LOG_TRACE("rinetd_start: current state=%d, running=%d", g_rinetd_service.state, g_rinetd_state.running);
+    
+    if (g_rinetd_service.state != PEER_SERVICE_STATE_READY && 
+        g_rinetd_service.state != PEER_SERVICE_STATE_STOPPED) {
+        INFRA_LOG_ERROR("rinetd_start: invalid state: %d", g_rinetd_service.state);
         return INFRA_ERROR_INVALID_STATE;
     }
+
+    // Reset state
+    g_rinetd_state.running = true;
+    g_rinetd_service.state = PEER_SERVICE_STATE_READY;
 
     // Start all rules
     for (int i = 0; i < g_rinetd_default_config.rules.count; i++) {
@@ -402,19 +442,23 @@ infra_error_t rinetd_start(void) {
             rule->dst_addr, rule->dst_port);
     }
 
-    g_rinetd_state.running = true;
     g_rinetd_service.state = PEER_SERVICE_STATE_RUNNING;
+    INFRA_LOG_TRACE("rinetd_start: state changed to RUNNING, running=true");
     return INFRA_OK;
 }
 
 // Stop rinetd service
 infra_error_t rinetd_stop(void) {
+    INFRA_LOG_TRACE("rinetd_stop: current state=%d, running=%d", g_rinetd_service.state, g_rinetd_state.running);
+    
     if (g_rinetd_service.state != PEER_SERVICE_STATE_RUNNING) {
+        INFRA_LOG_ERROR("rinetd_stop: invalid state: %d", g_rinetd_service.state);
         return INFRA_ERROR_INVALID_STATE;
     }
 
     // Signal threads to stop
     g_rinetd_state.running = false;
+    INFRA_LOG_TRACE("rinetd_stop: running set to false");
 
     // Close all listeners and wait for threads
     for (int i = 0; i < g_rinetd_default_config.rules.count; i++) {
@@ -422,15 +466,26 @@ infra_error_t rinetd_stop(void) {
         
         // Close listener to unblock accept
         if (rule->listener >= 0) {
+            INFRA_LOG_TRACE("rinetd_stop: closing listener for rule %d", i);
             infra_net_close(rule->listener);
             rule->listener = -1;
         }
 
         // Wait for accept thread to finish
-        infra_thread_join(rule->thread);
+        if (rule->thread) {
+            INFRA_LOG_TRACE("rinetd_stop: waiting for thread %d to finish", i);
+            infra_thread_join(rule->thread);
+            rule->thread = NULL;
+            INFRA_LOG_TRACE("rinetd_stop: thread %d finished", i);
+        }
     }
 
+    // Give some time for any remaining connections to close
+    INFRA_LOG_TRACE("rinetd_stop: waiting for remaining connections to close");
+    infra_sleep(100);  // Wait 100ms
+
     g_rinetd_service.state = PEER_SERVICE_STATE_STOPPED;
+    INFRA_LOG_TRACE("rinetd_stop: state changed to STOPPED");
     return INFRA_OK;
 }
 

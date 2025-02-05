@@ -24,6 +24,9 @@ static struct {
     .mutex = NULL
 };
 
+// 全局变量
+static int g_log_level = INFRA_LOG_LEVEL_INFO;  // Default log level
+
 // 自动初始化
 static void __attribute__((constructor)) infra_auto_init(void) {
     //infra_fprintf(stdout, "infra_auto_init()\n");
@@ -52,6 +55,15 @@ static void __attribute__((destructor)) infra_auto_cleanup(void) {
     infra_cleanup();
 }
 
+// Set log level before init
+void infra_core_set_log_level(int level) {
+    g_log_level = level;
+    // 如果已经初始化，则直接设置日志级别
+    if (g_state.initialized) {
+        infra_log_set_level(level);
+    }
+}
+
 //-----------------------------------------------------------------------------
 // Initialization and Cleanup
 //-----------------------------------------------------------------------------
@@ -72,7 +84,7 @@ infra_error_t infra_init(void) {
     }
 
     // Initialize log module first
-    err = infra_log_init(INFRA_LOG_LEVEL_INFO, NULL);
+    err = infra_log_init(g_log_level, NULL);
     if (err != INFRA_OK) {
         fprintf(stderr, "Failed to initialize log module\n");
         return err;

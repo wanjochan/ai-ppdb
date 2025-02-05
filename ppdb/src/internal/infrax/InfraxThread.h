@@ -6,44 +6,57 @@
 #ifndef INFRAX_THREAD_H
 #define INFRAX_THREAD_H
 
+#include <stdbool.h>
+#include <pthread.h>
 #include "InfraxCore.h"
 
+// Thread ID type
+typedef unsigned long InfraxThreadId;
+
+// Error codes
+#define INFRAX_ERROR_INVALID_ARGUMENT -1
+#define INFRAX_ERROR_THREAD_CREATE_FAILED -2
+#define INFRAX_ERROR_THREAD_JOIN_FAILED -3
+
+// Forward declarations
 typedef struct InfraxThread InfraxThread;
+typedef struct InfraxThreadClass InfraxThreadClass;
 
-/**
- * @brief Create a new thread
- * @param name Thread name for identification
- * @param entry_point Function pointer to thread entry point
- * @param arg Argument to pass to thread function
- * @return Pointer to InfraxThread or NULL on failure
- */
-InfraxThread* infrax_thread_create(const char* name, void* (*entry_point)(void*), void* arg);
+// Thread configuration
+typedef struct {
+    const char* name;
+    void* (*entry_point)(void*);
+    void* arg;
+} InfraxThreadConfig;
 
-/**
- * @brief Start the thread execution
- * @param thread Pointer to InfraxThread instance
- * @return 0 on success, error code on failure
- */
-int infrax_thread_start(InfraxThread* thread);
+// The "static" interface (like static methods in OOP)
+struct InfraxThreadClass {
+    InfraxThread* (*new)(const InfraxThreadConfig* config);
+    void (*free)(InfraxThread* self);
+};
 
-/**
- * @brief Wait for thread completion
- * @param thread Pointer to InfraxThread instance
- * @param result Pointer to store thread result
- * @return 0 on success, error code on failure
- */
-int infrax_thread_join(InfraxThread* thread, void** result);
+// The instance structure
+struct InfraxThread {
+    const InfraxThreadClass* klass;  // Points to the "class" method table
+    
+    // Thread data
+    InfraxThreadConfig config;
+    pthread_t native_handle;
+    bool is_running;
+    void* result;
 
-/**
- * @brief Destroy thread resources
- * @param thread Pointer to InfraxThread instance
- */
-void infrax_thread_destroy(InfraxThread* thread);
+    // Instance methods
+    InfraxError (*start)(InfraxThread* self);
+    InfraxError (*join)(InfraxThread* self, void** result);
+    InfraxThreadId (*tid)(InfraxThread* self);
+};
 
-/**
- * @brief Get current thread ID
- * @return Thread ID of calling thread
- */
-unsigned long infrax_thread_get_current_id(void);
+// The "static" interface instance
+extern const InfraxThreadClass InfraxThread_CLASS;
+
+// // Global thread operations 我们的架构不暴露方法
+// InfraxError infrax_thread_start(InfraxThread* self);
+// InfraxError infrax_thread_join(InfraxThread* self, void** result);
+// InfraxThreadId infrax_thread_get_current_id(void);
 
 #endif /* INFRAX_THREAD_H */

@@ -40,7 +40,6 @@ typedef void* InfraxMutex;
 typedef void* InfraxMutexAttr;
 typedef void* InfraxCond;
 typedef void* InfraxCondAttr;
-typedef void* InfraxThread;
 typedef void* InfraxThreadAttr;
 typedef void* (*InfraxThreadFunc)(void*);
 
@@ -64,24 +63,6 @@ struct InfraxCore {
     InfraxTime (*time_now_ms)(InfraxCore *self);
     InfraxTime (*time_monotonic_ms)(struct InfraxCore *self);
     void (*sleep_ms)(struct InfraxCore *self, uint32_t milliseconds);
-
-    // // Thread operations
-    // InfraxError (*thread_create)(struct InfraxCore *self, InfraxThread* thread, InfraxThreadFunc func, void* arg);
-    // InfraxError (*thread_join)(struct InfraxCore *self, InfraxThread thread);
-
-    // // Mutex operations
-    // InfraxError (*mutex_create)(struct InfraxCore *self, InfraxMutex* mutex);
-    // void (*mutex_destroy)(struct InfraxCore *self, InfraxMutex mutex);
-    // InfraxError (*mutex_lock)(struct InfraxCore *self, InfraxMutex mutex);
-    // InfraxError (*mutex_unlock)(struct InfraxCore *self, InfraxMutex mutex);
-
-    // // Condition variable operations
-    // InfraxError (*cond_init)(struct InfraxCore *self, InfraxCond* cond);
-    // void (*cond_destroy)(struct InfraxCore *self, InfraxCond cond);
-    // InfraxError (*cond_wait)(struct InfraxCore *self, InfraxCond cond, InfraxMutex mutex);
-    // InfraxError (*cond_timedwait)(struct InfraxCore *self, InfraxCond cond, InfraxMutex mutex, uint32_t timeout_ms);
-    // InfraxError (*cond_signal)(struct InfraxCore *self, InfraxCond cond);
-    // InfraxError (*cond_broadcast)(struct InfraxCore *self, InfraxCond cond);
 };
 
 extern InfraxCore g_infrax_core;  // global infrax core for tricks

@@ -97,6 +97,12 @@ infra_error_t infra_init(void);  // 使用默认配置
 void infra_cleanup(void);
 bool infra_is_initialized(infra_init_flags_t flag);
 
+// Set log level before init
+void infra_core_set_log_level(int level);
+
+// Initialize infrastructure
+infra_error_t infra_core_init(void);
+
 //-----------------------------------------------------------------------------
 // Status and Health
 //-----------------------------------------------------------------------------

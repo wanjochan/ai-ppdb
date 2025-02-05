@@ -55,19 +55,17 @@ struct InfraxMemory {
     // GC data
     MemoryBlock* gc_objects;
     void* stack_bottom;
+
+    // Instance methods
+    void* (*alloc)(InfraxMemory* self, size_t size);
+    void (*dealloc)(InfraxMemory* self, void* ptr); 
+    void* (*realloc)(InfraxMemory* self, void* ptr, size_t size);
+    void (*get_stats)(const InfraxMemory* self, InfraxMemoryStats* stats);
+    void (*collect)(InfraxMemory* self);
 };
 
 // The "static" interface instance (like Java's Class object)
 extern const InfraxMemoryClass InfraxMemory_CLASS;
-
-// Memory operations
-void* infrax_memory_alloc(InfraxMemory* self, size_t size);
-void infrax_memory_dealloc(InfraxMemory* self, void* ptr);
-void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size);
-
-// Utility functions
-void infrax_memory_get_stats(const InfraxMemory* self, InfraxMemoryStats* stats);
-void infrax_memory_collect(InfraxMemory* self);  // 触发GC
 
 /**
 notes for gc

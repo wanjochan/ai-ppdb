@@ -6,6 +6,13 @@
 static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config);
 static void infrax_memory_free(InfraxMemory* self);
 
+// Forward declarations of instance methods
+static void* infrax_memory_alloc(InfraxMemory* self, size_t size);
+static void infrax_memory_dealloc(InfraxMemory* self, void* ptr);
+static void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size);
+static void infrax_memory_get_stats(const InfraxMemory* self, InfraxMemoryStats* stats);
+static void infrax_memory_collect(InfraxMemory* self);
+
 // The "static" interface implementation
 const InfraxMemoryClass InfraxMemory_CLASS = {
     .new = infrax_memory_new,
@@ -97,6 +104,13 @@ static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
     // Set the class pointer
     self->klass = &InfraxMemory_CLASS;
 
+    // Initialize instance methods
+    self->alloc = infrax_memory_alloc;
+    self->dealloc = infrax_memory_dealloc;
+    self->realloc = infrax_memory_realloc;
+    self->get_stats = infrax_memory_get_stats;
+    self->collect = infrax_memory_collect;
+
     if (config->use_pool) {
         self->pool_start = malloc(config->initial_size);
         if (!self->pool_start) {
@@ -133,7 +147,7 @@ static void infrax_memory_free(InfraxMemory* self) {
     free(self);
 }
 
-void* infrax_memory_alloc(InfraxMemory* self, size_t size) {
+static void* infrax_memory_alloc(InfraxMemory* self, size_t size) {
     if (!self || size == 0) return NULL;
     
     // Align size to 8 bytes
@@ -182,7 +196,7 @@ void* infrax_memory_alloc(InfraxMemory* self, size_t size) {
     return ptr;
 }
 
-void infrax_memory_dealloc(InfraxMemory* self, void* ptr) {
+static void infrax_memory_dealloc(InfraxMemory* self, void* ptr) {
     if (!self || !ptr) return;
     
     MemoryBlock* block = (MemoryBlock*)((char*)ptr - sizeof(MemoryBlock));
@@ -218,7 +232,7 @@ void infrax_memory_dealloc(InfraxMemory* self, void* ptr) {
     // If using GC, memory will be freed during collection
 }
 
-void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
+static void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
     if (!ptr) return infrax_memory_alloc(self, size);
     if (size == 0) {
         infrax_memory_dealloc(self, ptr);
@@ -236,12 +250,12 @@ void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
     return new_ptr;
 }
 
-void infrax_memory_get_stats(const InfraxMemory* self, InfraxMemoryStats* stats) {
+static void infrax_memory_get_stats(const InfraxMemory* self, InfraxMemoryStats* stats) {
     if (!self || !stats) return;
     memcpy(stats, &self->stats, sizeof(InfraxMemoryStats));
 }
 
-void infrax_memory_collect(InfraxMemory* self) {
+static void infrax_memory_collect(InfraxMemory* self) {
     if (!self || !self->config.use_gc) return;
     
     if (self->stats.current_usage < self->config.gc_threshold) {

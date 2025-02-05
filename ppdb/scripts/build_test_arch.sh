@@ -90,6 +90,23 @@ build_and_run_test() {
         echo "Error: Failed to build error handling tests"
         exit 1
     fi
+
+    # Build and run thread test
+    "${CC}" ${CFLAGS} \
+        -I"${PPDB_DIR}/include" \
+        -I"${PPDB_DIR}/src" \
+        -I"${PPDB_DIR}" \
+        test_infrax_thread.c \
+        -L"${BUILD_DIR}/arch" -larch \
+        -o "${BUILD_DIR}/arch/test_infrax_thread.exe"
+
+    if [ $? -eq 0 ]; then
+        echo "Running thread tests..."
+        "${BUILD_DIR}/arch/test_infrax_thread.exe"
+    else
+        echo "Error: Failed to build thread tests"
+        exit 1
+    fi
 }
 
 # Main execution

@@ -138,10 +138,15 @@ for i in {1..3}; do
 done
 
 # 链接所有目标文件和库
+LIBS="-L${BUILD_DIR}/infra -linfra -L${BUILD_DIR}/poly -lpoly"
+
+# 根据功能启用添加相应的库
+if [ "${ENABLE_SQLITE3}" = "1" ]; then
+    LIBS="${LIBS} -L${BUILD_DIR}/sqlite3 -lsqlite3"
+fi
+
 "${CC}" ${LDFLAGS} "${OBJECTS[@]}" \
-    -L"${BUILD_DIR}/infra" -linfra \
-    -L"${BUILD_DIR}/poly" -lpoly \
-    -L"${BUILD_DIR}/sqlite3" -lsqlite3 \
+    ${LIBS} \
     -o "${BUILD_DIR}/ppdb_latest.exe"
 if [ $? -ne 0 ]; then
     echo "Error: Linking failed"

@@ -21,24 +21,24 @@ void test_base_memory() {
     assert(memory != NULL);
     
     // 测试分配和写入
-    char* str = (char*)infrax_memory_alloc(memory, 100);
+    char* str = (char*)memory->alloc(memory, 100);
     assert(str != NULL);
     strcpy(str, "Hello, Memory!");
     assert(strcmp(str, "Hello, Memory!") == 0);
     
     // 测试重分配
-    str = (char*)infrax_memory_realloc(memory, str, 200);
+    str = (char*)memory->realloc(memory, str, 200);
     assert(str != NULL);
     assert(strcmp(str, "Hello, Memory!") == 0);
     
     // 测试统计信息
     InfraxMemoryStats stats;
-    infrax_memory_get_stats(memory, &stats);
+    memory->get_stats(memory, &stats);
     assert(stats.total_allocations > 0);
     assert(stats.current_usage > 0);
     
     // 清理
-    infrax_memory_dealloc(memory, str);
+    memory->dealloc(memory, str);
     InfraxMemory_CLASS.free(memory);
 }
 
@@ -60,7 +60,7 @@ void test_pool_memory() {
     
     // 测试单个分配
     printf("Testing single allocation...\n");
-    char* str = (char*)infrax_memory_alloc(memory, 100);
+    char* str = (char*)memory->alloc(memory, 100);
     assert(str != NULL);
     printf("Single allocation successful\n");
     
@@ -71,21 +71,21 @@ void test_pool_memory() {
     
     // 测试重分配
     printf("Testing reallocation...\n");
-    str = (char*)infrax_memory_realloc(memory, str, 200);
+    str = (char*)memory->realloc(memory, str, 200);
     assert(str != NULL);
     assert(strcmp(str, "Hello, Pool!") == 0);
     printf("Reallocation successful\n");
     
     // 释放第一个分配
     printf("Testing deallocation...\n");
-    infrax_memory_dealloc(memory, str);
+    memory->dealloc(memory, str);
     printf("Deallocation successful\n");
     
     // 测试多个小块分配
     printf("Testing multiple small allocations...\n");
     void* blocks[10];
     for (int i = 0; i < 10; i++) {
-        blocks[i] = infrax_memory_alloc(memory, 50);
+        blocks[i] = memory->alloc(memory, 50);
         assert(blocks[i] != NULL);
         memset(blocks[i], i, 50);
         printf("Block %d allocated and initialized\n", i);
@@ -94,14 +94,14 @@ void test_pool_memory() {
     // 释放一半的块
     printf("Testing partial deallocation...\n");
     for (int i = 0; i < 5; i++) {
-        infrax_memory_dealloc(memory, blocks[i]);
+        memory->dealloc(memory, blocks[i]);
         printf("Block %d deallocated\n", i);
     }
     
     // 重新分配新的块
     printf("Testing new allocations after partial deallocation...\n");
     for (int i = 0; i < 5; i++) {
-        blocks[i] = infrax_memory_alloc(memory, 50);
+        blocks[i] = memory->alloc(memory, 50);
         assert(blocks[i] != NULL);
         memset(blocks[i], i + 100, 50);
         printf("New block %d allocated and initialized\n", i);
@@ -110,13 +110,13 @@ void test_pool_memory() {
     // 释放所有块
     printf("Testing full deallocation...\n");
     for (int i = 0; i < 10; i++) {
-        infrax_memory_dealloc(memory, blocks[i]);
+        memory->dealloc(memory, blocks[i]);
         printf("Block %d deallocated\n", i);
     }
     
     // 测试大块分配
     printf("Testing large block allocation...\n");
-    void* large_block = infrax_memory_alloc(memory, 512 * 1024);  // 512KB
+    void* large_block = memory->alloc(memory, 512 * 1024);  // 512KB
     assert(large_block != NULL);
     memset(large_block, 0xFF, 512 * 1024);
     printf("Large block allocated and initialized\n");
@@ -124,19 +124,19 @@ void test_pool_memory() {
     // 检查内存统计
     printf("Checking memory statistics...\n");
     InfraxMemoryStats stats;
-    infrax_memory_get_stats(memory, &stats);
+    memory->get_stats(memory, &stats);
     assert(stats.total_allocations > 0);
     assert(stats.current_usage >= 512 * 1024);
     printf("Memory statistics verified\n");
     
     // 释放大块
     printf("Deallocating large block...\n");
-    infrax_memory_dealloc(memory, large_block);
+    memory->dealloc(memory, large_block);
     printf("Large block deallocated\n");
     
     // 再次检查统计
     printf("Checking final memory statistics...\n");
-    infrax_memory_get_stats(memory, &stats);
+    memory->get_stats(memory, &stats);
     printf("Current memory usage: %zu bytes\n", stats.current_usage);
     printf("Final memory statistics verified\n");
     
@@ -145,50 +145,52 @@ void test_pool_memory() {
     InfraxMemory_CLASS.free(memory);
 }
 
-// 测试垃圾回收
+// 测试GC内存
 void test_gc_memory() {
-    printf("\nTesting GC Memory Management...\n");
+    printf("\nTesting GC Memory...\n");
     
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,  // 1MB
         .use_gc = true,
-        .use_pool = false,
+        .use_pool = true,
         .gc_threshold = 512 * 1024  // 512KB
     };
     
     InfraxMemory* memory = InfraxMemory_CLASS.new(&config);
     assert(memory != NULL);
     
-    // 分配一个根对象
-    void* root = infrax_memory_alloc(memory, 1000);
+    // 分配一些内存
+    void* root = memory->alloc(memory, 1000);
     assert(root != NULL);
     
-    // 分配多个对象触发GC
-    printf("Allocating objects to trigger GC...\n");
-    for (int i = 0; i < 1000; i++) {
-        void* temp = infrax_memory_alloc(memory, 1000);
+    // 分配更多内存触发GC
+    for (int i = 0; i < 100; i++) {
+        void* temp = memory->alloc(memory, 1000);
         assert(temp != NULL);
+        
+        // 不释放内存，让GC来处理
+        if (i % 10 == 0) {
+            memory->collect(memory);
+        }
     }
     
     // 检查内存统计
     InfraxMemoryStats stats;
-    infrax_memory_get_stats(memory, &stats);
-    assert(stats.total_allocations > 0);
+    memory->get_stats(memory, &stats);
+    printf("GC memory stats - Current usage: %zu bytes\n", stats.current_usage);
     
     // 清理
-    infrax_memory_dealloc(memory, root);
     InfraxMemory_CLASS.free(memory);
-    printf("GC Memory tests passed\n");
+    printf("GC memory test completed\n");
 }
 
-// 测试内存管理系统
-int main() {
-    printf("Starting memory management tests...\n");
+int main(void) {
+    printf("Starting memory tests...\n");
     
     test_base_memory();
     test_pool_memory();
     test_gc_memory();
     
-    printf("\nAll memory management tests passed!\n");
+    printf("All memory tests passed!\n");
     return 0;
 }

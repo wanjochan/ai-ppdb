@@ -14,6 +14,7 @@ ARCH_SOURCES=(
     "${SRC_DIR}/internal/arch/PpxInfra.c"
     "${SRC_DIR}/internal/arch/PpxArch.c"
     "${SRC_DIR}/internal/infrax/InfraxMemory.c"
+    "${SRC_DIR}/internal/infrax/InfraxThread.c"
 )
 
 # Define test sources
