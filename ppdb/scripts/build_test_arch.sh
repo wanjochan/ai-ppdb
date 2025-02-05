@@ -107,6 +107,23 @@ build_and_run_test() {
         echo "Error: Failed to build thread tests"
         exit 1
     fi
+
+    # Build and run sync test
+    "${CC}" ${CFLAGS} \
+        -I"${PPDB_DIR}/include" \
+        -I"${PPDB_DIR}/src" \
+        -I"${PPDB_DIR}" \
+        test_infrax_sync.c \
+        -L"${BUILD_DIR}/arch" -larch \
+        -o "${BUILD_DIR}/arch/test_infrax_sync.exe"
+
+    if [ $? -eq 0 ]; then
+        echo "Running sync tests..."
+        "${BUILD_DIR}/arch/test_infrax_sync.exe"
+    else
+        echo "Error: Failed to build sync tests"
+        exit 1
+    fi
 }
 
 # Main execution

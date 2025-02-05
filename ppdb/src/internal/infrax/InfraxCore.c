@@ -230,6 +230,33 @@ static char* infrax_core_strndup(InfraxCore *self, const char* s, size_t n) {
     return new_str;
 }
 
+/* TODO
+//-----------------------------------------------------------------------------
+// File Operations
+//-----------------------------------------------------------------------------
+
+#define INFRA_FILE_CREATE  (1 << 0)
+#define INFRA_FILE_RDONLY  (1 << 1)
+#define INFRA_FILE_WRONLY  (1 << 2)
+#define INFRA_FILE_RDWR    (INFRA_FILE_RDONLY | INFRA_FILE_WRONLY)
+#define INFRA_FILE_APPEND  (1 << 3)
+#define INFRA_FILE_TRUNC   (1 << 4)
+
+#define INFRA_SEEK_SET 0
+#define INFRA_SEEK_CUR 1
+#define INFRA_SEEK_END 2
+
+infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle);
+infra_error_t infra_file_close(INFRA_CORE_Handle_t handle);
+infra_error_t infra_file_read(INFRA_CORE_Handle_t handle, void* buffer, size_t size, size_t* bytes_read);
+infra_error_t infra_file_write(INFRA_CORE_Handle_t handle, const void* buffer, size_t size, size_t* bytes_written);
+infra_error_t infra_file_seek(INFRA_CORE_Handle_t handle, int64_t offset, int whence);
+infra_error_t infra_file_size(INFRA_CORE_Handle_t handle, size_t* size);
+infra_error_t infra_file_remove(const char* path);
+infra_error_t infra_file_rename(const char* old_path, const char* new_path);
+infra_error_t infra_file_exists(const char* path, bool* exists);
+*/
+
 // static InfraxError infrax_core_mutex_create(InfraxCore *self, InfraxMutex* mutex) {
 //     pthread_mutex_t* pmutex = malloc(sizeof(pthread_mutex_t));
 //     if (!pmutex) {

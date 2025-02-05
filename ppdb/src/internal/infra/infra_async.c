@@ -13,7 +13,7 @@ typedef struct {
 static __thread coroutine_queue_t g_coroutine_queue = {
     .ready = NULL,
     .current = NULL,
-    .env = {{0}}
+    .env = {0}
 };
 
 // 创建新协程

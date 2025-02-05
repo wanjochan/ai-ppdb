@@ -2,8 +2,15 @@
 #include "internal/infra/infra_core.h"
 #include "internal/infra/infra_log.h"
 #include "internal/peer/peer_service.h"
+#ifdef DEV_RINETD
 #include "internal/peer/peer_rinetd.h"
+#endif
+#ifdef DEV_MEMKV
 #include "internal/peer/peer_memkv.h"
+#endif
+#ifdef DEV_SQLITE3
+#include "internal/peer/peer_sqlite3.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -122,6 +129,14 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
+#ifdef DEV_SQLITE3
+    err = peer_service_register(&g_sqlite3_service);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to register sqlite3 service: %d", err);
+        return 1;
+    }
+#endif
+
     // Parse command line
     if (argc < 3) {
         print_usage(argv[0]);
@@ -145,12 +160,52 @@ int main(int argc, char* argv[]) {
     }
 
     // Load config if provided
-    if (config_path && strcmp(service_name, "rinetd") == 0) {
-        err = rinetd_load_config(config_path);
-        if (err != INFRA_OK) {
-            fprintf(stderr, "Failed to load config: %d\n", err);
-            return 1;
+    if (config_path) {
+        if (strcmp(service_name, "rinetd") == 0) {
+            err = rinetd_load_config(config_path);
+            if (err != INFRA_OK) {
+                fprintf(stderr, "Failed to load config: %d\n", err);
+                return 1;
+            }
         }
+#ifdef DEV_SQLITE3
+        else if (strcmp(service_name, "sqlite3") == 0) {
+            // 先初始化服务
+            err = sqlite3_init();
+            if (err != INFRA_OK) {
+                fprintf(stderr, "Failed to initialize sqlite3 service: %d\n", err);
+                return 1;
+            }
+
+            // 读取配置文件
+            FILE* fp = fopen(config_path, "r");
+            if (!fp) {
+                fprintf(stderr, "Failed to open config file: %s\n", config_path);
+                return 1;
+            }
+
+            char line[256];
+            if (fgets(line, sizeof(line), fp)) {
+                // 解析配置行：127.0.0.1 11211 sqlite file::memory:?cache=shared
+                char ip[64], db_path[256];
+                int port;
+                char type[32];
+                if (sscanf(line, "%s %d %s %s", ip, &port, type, db_path) == 4) {
+                    // 通过命令处理器设置数据库路径
+                    char cmd[512];
+                    snprintf(cmd, sizeof(cmd), "start --db=%s", db_path);
+                    char resp[MAX_CMD_RESPONSE];
+                    err = service->cmd_handler(cmd, resp, sizeof(resp));
+                    if (err != INFRA_OK) {
+                        fprintf(stderr, "Failed to set database path: %s\n", resp);
+                        fclose(fp);
+                        return 1;
+                    }
+                }
+            }
+            fclose(fp);
+        }
+#endif
     }
 
     // Handle command
