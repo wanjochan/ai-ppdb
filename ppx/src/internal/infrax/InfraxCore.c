@@ -26,22 +26,48 @@ void* infrax_core_forward_call(InfraxCore *self,void* (*target_func)(va_list), .
     return result;
 }
 
-// static void infrax_core_init(InfraxCore *self) {
-//     if (!self) return;
-    
-//     // Initialize methods
-//     self->new = infrax_core_new;
-//     self->free = infrax_core_free;
-//     // self->print = infrax_core_print;
-//     self->forward_call = infrax_core_forward_call;
-//     self->printf = infrax_core_printf;
-// }
+static void infrax_core_yield(InfraxCore *self) {
+    sched_yield();
+}
 
-// // Private implementation
-// struct InfraxCoreImpl {
-//     InfraxCore interface;  // must be first
-//     // private members if needed
-// };
+int infrax_core_pid(InfraxCore *self) {
+    return getpid();
+}
+
+// Network byte order conversion implementations
+static uint16_t infrax_core_host_to_net16(InfraxCore *self, uint16_t host16) {
+    return htons(host16);
+}
+
+static uint32_t infrax_core_host_to_net32(InfraxCore *self, uint32_t host32) {
+    return htonl(host32);
+}
+
+static uint64_t infrax_core_host_to_net64(InfraxCore *self, uint64_t host64) {
+    // htonll is not standard on all platforms, so we implement it
+    #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        return ((uint64_t)htonl((uint32_t)host64) << 32) | htonl((uint32_t)(host64 >> 32));
+    #else
+        return host64;
+    #endif
+}
+
+static uint16_t infrax_core_net_to_host16(InfraxCore *self, uint16_t net16) {
+    return ntohs(net16);
+}
+
+static uint32_t infrax_core_net_to_host32(InfraxCore *self, uint32_t net32) {
+    return ntohl(net32);
+}
+
+static uint64_t infrax_core_net_to_host64(InfraxCore *self, uint64_t net64) {
+    // ntohll is not standard on all platforms, so we implement it
+    #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+        return ((uint64_t)ntohl((uint32_t)net64) << 32) | ntohl((uint32_t)(net64 >> 32));
+    #else
+        return net64;
+    #endif
+}
 
 // Function implementations
 static InfraxTime infrax_core_time_now_ms(InfraxCore *self) {
@@ -220,6 +246,7 @@ static char* infrax_core_strndup(InfraxCore *self, const char* s, size_t n) {
     return new_str;
 }
 
+
 /* TODO
 //-----------------------------------------------------------------------------
 // File Operations
@@ -393,9 +420,35 @@ infra_error_t infra_file_exists(const char* path, bool* exists);
 InfraxCore g_infrax_core = {
     .printf = infrax_core_printf,
     .forward_call = infrax_core_forward_call,
+    
+    // String operations
+    .strlen = infrax_core_strlen,
+    .strcpy = infrax_core_strcpy,
+    .strncpy = infrax_core_strncpy,
+    .strcat = infrax_core_strcat,
+    .strncat = infrax_core_strncat,
+    .strcmp = infrax_core_strcmp,
+    .strncmp = infrax_core_strncmp,
+    .strchr = infrax_core_strchr,
+    .strrchr = infrax_core_strrchr,
+    .strstr = infrax_core_strstr,
+    .strdup = infrax_core_strdup,
+    .strndup = infrax_core_strndup,
+    
+    // Time management
     .time_now_ms = infrax_core_time_now_ms,
     .time_monotonic_ms = infrax_core_time_monotonic_ms,
-    .sleep_ms = infrax_core_sleep_ms
+    .sleep_ms = infrax_core_sleep_ms,
+    .yield = infrax_core_yield,
+    .pid = infrax_core_pid,
+    
+    // Network byte order conversion
+    .host_to_net16 = infrax_core_host_to_net16,
+    .host_to_net32 = infrax_core_host_to_net32,
+    .host_to_net64 = infrax_core_host_to_net64,
+    .net_to_host16 = infrax_core_net_to_host16,
+    .net_to_host32 = infrax_core_net_to_host32,
+    .net_to_host64 = infrax_core_net_to_host64
 };
 
 // Return global instance
