@@ -36,11 +36,11 @@ peer_service_t g_rinetd_service = {
 // Global variables
 static struct {
     bool running;
+    poly_poll_context_t* poll_ctx;  // 添加 poll context
 } g_rinetd_state = {0};
 
 // Forward declarations
-static void* handle_connection(void* args);
-static void* handle_connection_thread(void* args);
+static void handle_connection(void* args);
 
 // Find forward rule for address and port
 static rinetd_rule_t* find_forward_rule(const char* addr, uint16_t port) {
@@ -50,53 +50,6 @@ static rinetd_rule_t* find_forward_rule(const char* addr, uint16_t port) {
             return rule;
         }
     }
-    return NULL;
-}
-
-// Handle a client connection
-static void* handle_connection(void* args) {
-    rinetd_rule_t* rule = (rinetd_rule_t*)args;
-    if (!rule || rule->listener < 0) {
-        return NULL;
-    }
-
-    while (g_rinetd_state.running) {
-        infra_socket_t client = -1;
-        infra_net_addr_t client_addr;
-        infra_error_t err = infra_net_accept(rule->listener, &client, &client_addr);
-        if (err != INFRA_OK) {
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                // Non-blocking mode, no connection available
-                usleep(10000);  // Sleep 10ms
-                continue;
-            }
-            if (g_rinetd_state.running) {
-                INFRA_LOG_ERROR("Failed to accept connection: %d", err);
-            }
-            break;
-        }
-
-        // Create a new session
-        rinetd_session_t* session = malloc(sizeof(rinetd_session_t));
-        if (!session) {
-            INFRA_LOG_ERROR("Failed to allocate session memory");
-            infra_net_close(client);
-            continue;
-        }
-
-        session->client = client;
-        memcpy(&session->rule, rule, sizeof(rinetd_rule_t));
-
-        // Handle the connection in a new thread
-        infra_thread_t thread;
-        err = infra_thread_create(&thread, handle_connection_thread, session);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to create thread: %d", err);
-            free(session);
-            infra_net_close(client);
-        }
-    }
-
     return NULL;
 }
 
@@ -250,17 +203,27 @@ cleanup:
     return INFRA_OK;
 }
 
-// Handle a connection thread
-static void* handle_connection_thread(void* args) {
-    rinetd_session_t* session = (rinetd_session_t*)args;
-    if (!session) {
-        INFRA_LOG_ERROR("Invalid session");
-        return NULL;
+// Handle a connection
+static void handle_connection(void* args) {
+    if (!args) {
+        INFRA_LOG_ERROR("Invalid handler args");
+        return;
+    }
+
+    poly_poll_handler_args_t* handler_args = (poly_poll_handler_args_t*)args;
+    infra_socket_t client = handler_args->client;
+    rinetd_rule_t* rule = (rinetd_rule_t*)handler_args->user_data;
+    
+    if (!rule) {
+        INFRA_LOG_ERROR("Invalid rule data");
+        infra_net_close(client);
+        free(handler_args);
+        return;
     }
 
     // Get client address
     infra_net_addr_t client_addr;
-    infra_error_t err = infra_net_get_peer_addr(session->client, &client_addr);
+    infra_error_t err = infra_net_get_peer_addr(client, &client_addr);
     if (err == INFRA_OK) {
         INFRA_LOG_INFO("New client connection from %s:%d", client_addr.ip, client_addr.port);
     }
@@ -268,9 +231,9 @@ static void* handle_connection_thread(void* args) {
     // Connect to destination
     infra_socket_t server = -1;
     infra_net_addr_t dst_addr = {
-        .port = session->rule.dst_port
+        .port = rule->dst_port
     };
-    strncpy(dst_addr.ip, session->rule.dst_addr, sizeof(dst_addr.ip) - 1);
+    strncpy(dst_addr.ip, rule->dst_addr, sizeof(dst_addr.ip) - 1);
 
     INFRA_LOG_INFO("Connecting to %s:%d", dst_addr.ip, dst_addr.port);
 
@@ -288,54 +251,52 @@ static void* handle_connection_thread(void* args) {
         
         if (!g_rinetd_state.running) {
             INFRA_LOG_INFO("Service is stopping, abort connection");
-            infra_net_close(session->client);
-            free(session);
-            return NULL;
+            infra_net_close(client);
+            free(handler_args);
+            return;
         }
 
-        // Wait a bit before retry
         infra_sleep(100);
         retry_count++;
     }
 
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to connect after %d retries", max_retries);
-        infra_net_close(session->client);
-        free(session);
-        return NULL;
+        infra_net_close(client);
+        free(handler_args);
+        return;
     }
 
     INFRA_LOG_INFO("Connected to %s:%d", dst_addr.ip, dst_addr.port);
 
     // Set both sockets to non-blocking mode
-    err = infra_net_set_nonblock(session->client, true);
+    err = infra_net_set_nonblock(client, true);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to set client socket to non-blocking mode: %d", err);
         infra_net_close(server);
-        infra_net_close(session->client);
-        free(session);
-        return NULL;
+        infra_net_close(client);
+        free(handler_args);
+        return;
     }
 
     err = infra_net_set_nonblock(server, true);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to set server socket to non-blocking mode: %d", err);
         infra_net_close(server);
-        infra_net_close(session->client);
-        free(session);
-        return NULL;
+        infra_net_close(client);
+        free(handler_args);
+        return;
     }
 
     // Forward data in both directions
     INFRA_LOG_INFO("Starting data forwarding...");
-    forward_data(session->client, server);
+    forward_data(client, server);
 
     // Cleanup
     INFRA_LOG_INFO("Closing connection");
     infra_net_close(server);
-    infra_net_close(session->client);
-    free(session);
-    return NULL;
+    infra_net_close(client);
+    free(handler_args);
 }
 
 // Initialize rinetd service
@@ -350,7 +311,6 @@ infra_error_t rinetd_init(void) {
         return INFRA_OK;
     }
 
-    // 不在这里加载配置文件，而是在start命令中加载
     g_rinetd_service.state = PEER_SERVICE_STATE_READY;
     INFRA_LOG_TRACE("rinetd_init: state changed to READY");
     return INFRA_OK;
@@ -358,7 +318,8 @@ infra_error_t rinetd_init(void) {
 
 // Start rinetd service
 infra_error_t rinetd_start(void) {
-    INFRA_LOG_TRACE("rinetd_start: current state=%d, running=%d", g_rinetd_service.state, g_rinetd_state.running);
+    INFRA_LOG_TRACE("rinetd_start: current state=%d, running=%d", 
+        g_rinetd_service.state, g_rinetd_state.running);
     
     if (g_rinetd_service.state != PEER_SERVICE_STATE_READY && 
         g_rinetd_service.state != PEER_SERVICE_STATE_STOPPED) {
@@ -366,118 +327,89 @@ infra_error_t rinetd_start(void) {
         return INFRA_ERROR_INVALID_STATE;
     }
 
-    // Reset state
-    g_rinetd_state.running = true;
-    g_rinetd_service.state = PEER_SERVICE_STATE_READY;
+    // 创建 poll context
+    g_rinetd_state.poll_ctx = (poly_poll_context_t*)infra_malloc(sizeof(poly_poll_context_t));
+    if (!g_rinetd_state.poll_ctx) {
+        return INFRA_ERROR_NO_MEMORY;
+    }
 
-    // Start all rules
+    // 初始化 poll context
+    poly_poll_config_t config = {
+        .min_threads = 4,
+        .max_threads = 8,
+        .queue_size = 1000,
+        .max_listeners = g_rinetd_default_config.rules.count
+    };
+
+    infra_error_t err = poly_poll_init(g_rinetd_state.poll_ctx, &config);
+    if (err != INFRA_OK) {
+        infra_free(g_rinetd_state.poll_ctx);
+        g_rinetd_state.poll_ctx = NULL;
+        return err;
+    }
+
+    // 为每个规则添加监听器
     for (int i = 0; i < g_rinetd_default_config.rules.count; i++) {
         rinetd_rule_t* rule = &g_rinetd_default_config.rules.rules[i];
-
-        // Create listener socket
-        infra_socket_t listener = -1;
-        infra_error_t err = infra_net_create(&listener, false);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to create listener for rule %d: %d", i, err);
-            continue;
-        }
-
-        // Set socket options
-        int optval = 1;
-        err = infra_net_set_option(listener, INFRA_SOL_SOCKET, INFRA_SO_REUSEADDR, &optval, sizeof(optval));
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to set socket options for rule %d: %d", i, err);
-            infra_net_close(listener);
-            continue;
-        }
-
-        // Set non-blocking mode
-        err = infra_net_set_nonblock(listener, true);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to set non-blocking mode for rule %d: %d", i, err);
-            infra_net_close(listener);
-            continue;
-        }
-
-        // Bind and listen
-        infra_net_addr_t addr = {
-            .port = rule->src_port
+        
+        poly_poll_listener_t listener = {
+            .bind_port = rule->src_port,
+            .user_data = rule
         };
-        strncpy(addr.ip, rule->src_addr, sizeof(addr.ip) - 1);
+        strncpy(listener.bind_addr, rule->src_addr, sizeof(listener.bind_addr) - 1);
 
-        err = infra_net_bind(listener, &addr);
+        err = poly_poll_add_listener(g_rinetd_state.poll_ctx, &listener);
         if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to bind %s:%d for rule %d: %d", 
-                rule->src_addr, rule->src_port, i, err);
-            infra_net_close(listener);
+            INFRA_LOG_ERROR("Failed to add listener for rule %d: %d", i, err);
             continue;
         }
 
-        err = infra_net_listen(listener, SOMAXCONN);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to listen on %s:%d for rule %d: %d", 
-                rule->src_addr, rule->src_port, i, err);
-            infra_net_close(listener);
-            continue;
-        }
-
-        // Save listener
-        rule->listener = listener;
-
-        // Create accept thread
-        err = infra_thread_create(&rule->thread, handle_connection, rule);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to create thread for rule %d: %d", i, err);
-            infra_net_close(listener);
-            continue;
-        }
-
-        INFRA_LOG_INFO("Started forwarding %s:%d -> %s:%d", 
+        INFRA_LOG_INFO("Added forward rule: %s:%d -> %s:%d",
             rule->src_addr, rule->src_port,
             rule->dst_addr, rule->dst_port);
     }
 
+    // 设置连接处理函数
+    poly_poll_set_handler(g_rinetd_state.poll_ctx, handle_connection);
+
+    // 启动服务
+    g_rinetd_state.running = true;
     g_rinetd_service.state = PEER_SERVICE_STATE_RUNNING;
-    INFRA_LOG_TRACE("rinetd_start: state changed to RUNNING, running=true");
+
+    // 启动 poll
+    err = poly_poll_start(g_rinetd_state.poll_ctx);
+    if (err != INFRA_OK) {
+        g_rinetd_state.running = false;
+        g_rinetd_service.state = PEER_SERVICE_STATE_STOPPED;
+        poly_poll_cleanup(g_rinetd_state.poll_ctx);
+        infra_free(g_rinetd_state.poll_ctx);
+        g_rinetd_state.poll_ctx = NULL;
+        return err;
+    }
+
+    INFRA_LOG_TRACE("rinetd_start: state changed to RUNNING");
     return INFRA_OK;
 }
 
 // Stop rinetd service
 infra_error_t rinetd_stop(void) {
-    INFRA_LOG_TRACE("rinetd_stop: current state=%d, running=%d", g_rinetd_service.state, g_rinetd_state.running);
+    INFRA_LOG_TRACE("rinetd_stop: current state=%d, running=%d", 
+        g_rinetd_service.state, g_rinetd_state.running);
     
     if (g_rinetd_service.state != PEER_SERVICE_STATE_RUNNING) {
         INFRA_LOG_ERROR("rinetd_stop: invalid state: %d", g_rinetd_service.state);
         return INFRA_ERROR_INVALID_STATE;
     }
 
-    // Signal threads to stop
+    // 停止服务
     g_rinetd_state.running = false;
-    INFRA_LOG_TRACE("rinetd_stop: running set to false");
 
-    // Close all listeners and wait for threads
-    for (int i = 0; i < g_rinetd_default_config.rules.count; i++) {
-        rinetd_rule_t* rule = &g_rinetd_default_config.rules.rules[i];
-        
-        // Close listener to unblock accept
-        if (rule->listener >= 0) {
-            INFRA_LOG_TRACE("rinetd_stop: closing listener for rule %d", i);
-            infra_net_close(rule->listener);
-            rule->listener = -1;
-        }
-
-        // Wait for accept thread to finish
-        if (rule->thread) {
-            INFRA_LOG_TRACE("rinetd_stop: waiting for thread %d to finish", i);
-            infra_thread_join(rule->thread);
-            rule->thread = NULL;
-            INFRA_LOG_TRACE("rinetd_stop: thread %d finished", i);
-        }
+    if (g_rinetd_state.poll_ctx) {
+        poly_poll_stop(g_rinetd_state.poll_ctx);
+        poly_poll_cleanup(g_rinetd_state.poll_ctx);
+        infra_free(g_rinetd_state.poll_ctx);
+        g_rinetd_state.poll_ctx = NULL;
     }
-
-    // Give some time for any remaining connections to close
-    INFRA_LOG_TRACE("rinetd_stop: waiting for remaining connections to close");
-    infra_sleep(100);  // Wait 100ms
 
     g_rinetd_service.state = PEER_SERVICE_STATE_STOPPED;
     INFRA_LOG_TRACE("rinetd_stop: state changed to STOPPED");
