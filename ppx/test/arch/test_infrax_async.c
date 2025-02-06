@@ -27,9 +27,12 @@ static void test_coroutine_func(void* arg) {
             if (INFRAX_ERROR_IS_OK(err)) {
                 // 运行定时器直到完成
                 while (!timer->is_done(timer)) {
-                    timer->yield(timer);
-                    InfraxAsyncRun();
+                    InfraxAsyncRun();  // 运行调度器
                 }
+            }
+            // 确保定时器完成后再释放
+            while (!timer->is_done(timer)) {
+                InfraxAsyncRun();
             }
             InfraxAsync_CLASS.free(timer);
         }

@@ -16,6 +16,7 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <fcntl.h>
+#include <ctype.h>  // 添加 ctype.h 头文件
 
 //-----------------------------------------------------------------------------
 // Forward Declarations
@@ -69,6 +70,7 @@ typedef struct {
     poly_db_t* store;                 // Database connection
     char* rx_buf;                     // Receive buffer
     size_t rx_len;                    // Current buffer length
+    size_t rx_pos;                    // Current read position
     bool should_close;                // Connection close flag
     volatile bool is_closing;         // Connection is being destroyed
     volatile bool is_initialized;     // Connection is fully initialized
@@ -359,55 +361,47 @@ static void handle_get(memkv_conn_t* conn, const char* key) {
     printf("DEBUG: GET result: err=%d, value=%p, value_len=%zu\n", err, value, value_len);
     
     if (err == INFRA_OK && value && value_len > 0) {
-        // 准备完整响应
-        char* response = NULL;
-        size_t total_len = 0;
-        
-        // 计算所需总长度
+        // 发送头部
         char header[128];
         int header_len = snprintf(header, sizeof(header), 
                                 "VALUE %s %u %zu\r\n", key, flags, value_len);
         
-        total_len = header_len + value_len + 2 + 5; // header + value + \r\n + END\r\n
-        response = malloc(total_len);
-        
-        if (!response) {
-            INFRA_LOG_ERROR("Failed to allocate response buffer");
-            free(value);
+        err = send_all(conn->sock, header, header_len);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send header: %d", err);
+            conn->should_close = true;
+            infra_free(value);
             return;
         }
         
-        // 组装完整响应
-        memcpy(response, header, header_len);
-        memcpy(response + header_len, value, value_len);
-        memcpy(response + header_len + value_len, "\r\n", 2);
-        memcpy(response + header_len + value_len + 2, "END\r\n", 5);
-        
-        // 发送完整响应
-        err = send_all(conn->sock, response, total_len);
+        // 发送值
+        err = send_all(conn->sock, value, value_len);
         if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send response: %d", err);
+            INFRA_LOG_ERROR("Failed to send value: %d", err);
+            conn->should_close = true;
+            infra_free(value);
+            return;
+        }
+        
+        // 发送行结束符
+        err = send_all(conn->sock, "\r\n", 2);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send line ending: %d", err);
+            conn->should_close = true;
+            infra_free(value);
+            return;
         }
         
         // 清理资源
-        free(response);
-        free(value);
-    } else {
-        // 如果没有找到值，只发送 END
-        const char* not_found = "END\r\n";
-        err = send_all(conn->sock, not_found, strlen(not_found));
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send END response: %d", err);
-        }
-        if (value) {
-            free(value);
-        }
+        infra_free(value);
     }
+    
+    printf("DEBUG: GET command completed for key='%s', should_close=%d\n", key, conn->should_close);
 }
 
 static void handle_set(memkv_conn_t* conn, const char* key, const char* flags_str,
                       const char* exptime_str, const char* bytes_str, bool noreply,
-                      const char* data_ptr) {  // 添加 data_ptr 参数
+                      const char* data_ptr) {
     infra_error_t err = INFRA_OK;
     
     printf("DEBUG: Handling SET command: key='%s', flags='%s', exptime='%s', bytes='%s'\n",
@@ -611,10 +605,14 @@ static void handle_request(void* args) {
     
     char cmd[32] = {0};
     char key[256] = {0};
-    char buffer[MEMKV_BUFFER_SIZE] = {0};
+    char flags_str[32] = {0};
+    char exptime_str[32] = {0};
+    char bytes_str[32] = {0};
+    char temp_buffer[MEMKV_BUFFER_SIZE] = {0};
     size_t received = 0;
     
-    infra_error_t err = infra_net_recv(conn->sock, buffer, sizeof(buffer)-1, &received);
+    // 接收新数据
+    infra_error_t err = infra_net_recv(conn->sock, temp_buffer, sizeof(temp_buffer)-1, &received);
     if (err != INFRA_OK || received == 0) {
         if (err == INFRA_ERROR_CLOSED || received == 0) {
             INFRA_LOG_INFO("Client disconnected");
@@ -624,26 +622,57 @@ static void handle_request(void* args) {
         conn->should_close = true;
         return;
     }
+
+    // 检查缓冲区是否有足够空间
+    if (conn->rx_len + received > MEMKV_BUFFER_SIZE) {
+        // 如果缓冲区已满但还没有找到完整命令，说明命令太长
+        if (conn->rx_pos == 0) {
+            INFRA_LOG_ERROR("Command too long");
+            conn->should_close = true;
+            return;
+        }
+        // 移动未处理的数据到缓冲区开始
+        memmove(conn->rx_buf, conn->rx_buf + conn->rx_pos, conn->rx_len - conn->rx_pos);
+        conn->rx_len -= conn->rx_pos;
+        conn->rx_pos = 0;
+    }
+
+    // 追加新数据到缓冲区
+    memcpy(conn->rx_buf + conn->rx_len, temp_buffer, received);
+    conn->rx_len += received;
+    conn->rx_buf[conn->rx_len] = '\0';
+
+    printf("DEBUG: Received data: [%.*s]\n", (int)received, temp_buffer);
+    printf("DEBUG: Current buffer: [%.*s]\n", (int)conn->rx_len, conn->rx_buf);
     
-    buffer[received] = '\0';
-    printf("DEBUG: Received command: [%.*s]\n", (int)received-2, buffer);
-    
-    char* line = buffer;
+    char* line = conn->rx_buf + conn->rx_pos;
     char* next_line;
     bool noreply = false;
     bool should_continue = true;
 
-    while (line && *line && should_continue) {
+    while (line < conn->rx_buf + conn->rx_len && should_continue) {
         // 找到当前行的结束位置
         next_line = strstr(line, "\r\n");
-        if (next_line) {
-            *next_line = '\0';
-            next_line += 2;
+        if (!next_line) {
+            // 没有找到完整的行，等待更多数据
+            printf("DEBUG: Incomplete command, waiting for more data\n");
+            // 将未完成的数据移到缓冲区开始
+            if (line > conn->rx_buf) {
+                size_t remaining = conn->rx_len - (line - conn->rx_buf);
+                memmove(conn->rx_buf, line, remaining);
+                conn->rx_len = remaining;
+                conn->rx_pos = 0;
+            }
+            break;
         }
+
+        printf("DEBUG: Found command line: [%.*s]\n", (int)(next_line - line), line);
+        *next_line = '\0';
 
         // 检查是否有 noreply 参数
         char* noreply_ptr = strstr(line, " noreply");
         if (noreply_ptr) {
+            printf("DEBUG: Found noreply parameter\n");
             *noreply_ptr = '\0';
             noreply = true;
         } else {
@@ -651,39 +680,135 @@ static void handle_request(void* args) {
         }
 
         // 解析命令
-        if (sscanf(line, "%31s %255s", cmd, key) >= 1) {
-            if (strcmp(cmd, "get") == 0) {
-                handle_get(conn, key);
-                if (conn->should_close) {
+        char* cmd_start = line;
+        while (*cmd_start == ' ') cmd_start++;  // 跳过前导空格
+        
+        char* cmd_end = cmd_start;
+        while (*cmd_end && *cmd_end != ' ' && *cmd_end != '\r' && *cmd_end != '\n') cmd_end++;  // 找到命令结束位置
+        
+        if (cmd_end > cmd_start) {
+            size_t cmd_len = cmd_end - cmd_start;
+            if (cmd_len >= sizeof(cmd)) cmd_len = sizeof(cmd) - 1;
+            memcpy(cmd, cmd_start, cmd_len);
+            cmd[cmd_len] = '\0';
+            
+            // 将命令转换为大写
+            for (char* p = cmd; *p; p++) {
+                *p = toupper(*p);
+            }
+            
+            printf("DEBUG: Parsed command: [%s]\n", cmd);
+            
+            // 更新下一行的位置
+            next_line += 2;  // 跳过 \r\n
+            
+            if (strcmp(cmd, "GET") == 0) {
+                // 处理多键 get 命令
+                char* key_start = cmd_end;
+                
+                // 跳过所有空格
+                while (key_start && *key_start == ' ') key_start++;
+                
+                while (key_start && *key_start && *key_start != '\r' && *key_start != '\n') {
+                    // 找到键的结束位置
+                    char* key_end = key_start;
+                    while (*key_end && *key_end != ' ' && *key_end != '\r' && *key_end != '\n') key_end++;
+                    
+                    // 提取键
+                    size_t key_len = key_end - key_start;
+                    if (key_len > 0 && key_len < sizeof(key)) {
+                        memcpy(key, key_start, key_len);
+                        key[key_len] = '\0';
+                        printf("DEBUG: Processing GET for key: [%s]\n", key);
+                        handle_get(conn, key);
+                        if (conn->should_close) {
+                            should_continue = false;
+                            break;
+                        }
+                    }
+                    
+                    // 移动到下一个键
+                    key_start = key_end;
+                    while (key_start && *key_start == ' ') key_start++;
+                }
+                
+                // 发送 END 标记
+                err = send_all(conn->sock, "END\r\n", 5);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send END marker: %d", err);
+                    conn->should_close = true;
                     should_continue = false;
                 }
             }
-            else if (strcmp(cmd, "set") == 0) {
-                char flags_str[32] = {0};
-                char exptime_str[32] = {0};
-                char bytes_str[32] = {0};
+            else if (strcmp(cmd, "SET") == 0) {
+                // 解析 SET 命令的参数
+                char* params_start = cmd_end;
+                while (*params_start == ' ') params_start++;  // 跳过空格
                 
-                if (sscanf(line, "%*s %*s %31s %31s %31s", 
-                    flags_str, exptime_str, bytes_str) == 3) {
+                if (sscanf(params_start, "%255s %31s %31s %31s", 
+                    key, flags_str, exptime_str, bytes_str) == 4) {
+                    size_t bytes = strtoul(bytes_str, NULL, 10);
+                    
                     // 移动到数据部分
-                    if (next_line) {
-                        line = next_line;
-                        next_line = strstr(line, "\r\n");
-                        if (next_line) {
-                            *next_line = '\0';
-                            next_line += 2;
-                        }
-                        handle_set(conn, key, flags_str, exptime_str, bytes_str, noreply, line);
-                        if (conn->should_close) {
-                            should_continue = false;
+                    line = next_line;
+                    
+                    // 检查是否有足够的数据
+                    if (line + bytes + 2 <= conn->rx_buf + conn->rx_len) {
+                        // 确保数据后面跟着 \r\n
+                        if (line[bytes] == '\r' && line[bytes + 1] == '\n') {
+                            // 暂存数据行的结尾字符
+                            char saved_chars[2] = {line[bytes], line[bytes + 1]};
+                            line[bytes] = '\0';
+                            
+                            handle_set(conn, key, flags_str, exptime_str, bytes_str, noreply, line);
+                            
+                            // 恢复数据行的结尾字符
+                            line[bytes] = saved_chars[0];
+                            line[bytes + 1] = saved_chars[1];
+                            
+                            // 移动到下一个命令
+                            line = line + bytes + 2;
+                            printf("DEBUG: SET command completed\n");
+                        } else {
+                            printf("DEBUG: Invalid SET data format\n");
+                            if (!noreply) {
+                                err = send_all(conn->sock, "CLIENT_ERROR bad data chunk\r\n", 28);
+                                if (err != INFRA_OK) {
+                                    should_continue = false;
+                                }
+                            }
+                            line = next_line;
                         }
                     } else {
-                        if (!noreply) {
-                            err = send_all(conn->sock, "ERROR\r\n", 7);
-                            if (err != INFRA_OK) {
-                                should_continue = false;
-                            }
+                        printf("DEBUG: Incomplete SET data\n");
+                        // 将未完成的数据移到缓冲区开始
+                        if (line > conn->rx_buf) {
+                            size_t remaining = conn->rx_len - (line - conn->rx_buf);
+                            memmove(conn->rx_buf, line, remaining);
+                            conn->rx_len = remaining;
+                            conn->rx_pos = 0;
                         }
+                        break;
+                    }
+                } else {
+                    if (!noreply) {
+                        err = send_all(conn->sock, "ERROR\r\n", 7);
+                        if (err != INFRA_OK) {
+                            should_continue = false;
+                        }
+                    }
+                    line = next_line;
+                }
+            }
+            else if (strcmp(cmd, "DELETE") == 0) {
+                // 解析 DELETE 命令的参数
+                char* params_start = cmd_end;
+                while (*params_start == ' ') params_start++;  // 跳过空格
+                
+                if (sscanf(params_start, "%255s", key) == 1) {
+                    handle_delete(conn, key, noreply);
+                    if (conn->should_close) {
+                        should_continue = false;
                     }
                 } else {
                     if (!noreply) {
@@ -694,22 +819,21 @@ static void handle_request(void* args) {
                     }
                 }
             }
-            else if (strcmp(cmd, "delete") == 0) {
-                handle_delete(conn, key, noreply);
-                if (conn->should_close) {
-                    should_continue = false;
-                }
-            }
-            else if (strcmp(cmd, "flush_all") == 0) {
+            else if (strcmp(cmd, "FLUSH_ALL") == 0) {
                 handle_flush(conn, noreply);
                 if (conn->should_close) {
                     should_continue = false;
                 }
+                line = next_line;
             }
-            else if (strcmp(cmd, "incr") == 0 || strcmp(cmd, "decr") == 0) {
+            else if (strcmp(cmd, "INCR") == 0 || strcmp(cmd, "DECR") == 0) {
+                // 解析 INCR/DECR 命令的参数
+                char* params_start = cmd_end;
+                while (*params_start == ' ') params_start++;  // 跳过空格
+                
                 char value_str[32] = {0};
-                if (sscanf(line, "%*s %*s %31s", value_str) == 1) {
-                    handle_incr_decr(conn, key, value_str, cmd[0] == 'i');
+                if (sscanf(params_start, "%255s %31s", key, value_str) == 2) {
+                    handle_incr_decr(conn, key, value_str, cmd[0] == 'I');
                     if (conn->should_close) {
                         should_continue = false;
                     }
@@ -733,10 +857,25 @@ static void handle_request(void* args) {
             }
         }
 
-        // 移动到下一行
+        // 更新处理位置
         if (should_continue) {
-            line = next_line;
+            conn->rx_pos = line - conn->rx_buf;
+            printf("DEBUG: Updated buffer position to %zu\n", conn->rx_pos);
         }
+    }
+
+    // 如果所有数据都已处理，重置缓冲区
+    if (conn->rx_pos >= conn->rx_len) {
+        conn->rx_pos = 0;
+        conn->rx_len = 0;
+        printf("DEBUG: Reset buffer\n");
+    } else if (conn->rx_pos > 0) {
+        // 移动未处理的数据到缓冲区开始
+        size_t remaining = conn->rx_len - conn->rx_pos;
+        memmove(conn->rx_buf, conn->rx_buf + conn->rx_pos, remaining);
+        conn->rx_len = remaining;
+        conn->rx_pos = 0;
+        printf("DEBUG: Moved remaining %zu bytes to buffer start\n", remaining);
     }
     
     // Only close if explicitly requested

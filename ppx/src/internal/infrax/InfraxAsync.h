@@ -66,6 +66,12 @@ struct InfraxAsync {
     size_t stack_size;       // 栈大小
     void* stack_top;         // 栈顶指针
     
+    // 引用计数和父子关系
+    int ref_count;           // 引用计数
+    InfraxAsync* parent;     // 父协程
+    InfraxAsync* first_child;// 第一个子协程
+    InfraxAsync* next_sibling;// 下一个兄弟协程
+    
     // 异步操作类型和参数
     InfraxAsyncType type;
     union {
@@ -101,6 +107,13 @@ InfraxAsync* InfraxAsync_CreateIO(int fd, int events);
 InfraxAsync* InfraxAsync_CreateEvent(void* event_source);
 InfraxAsync* InfraxAsync_CreateResource(void* resource);
 InfraxAsync* InfraxAsync_CreateBatch(void* items, size_t count);
+
+// 内部函数声明
+static InfraxError async_start(InfraxAsync* self);
+static InfraxError async_yield(InfraxAsync* self);
+static InfraxError async_resume(InfraxAsync* self);
+static bool async_is_done(const InfraxAsync* self);
+static int internal_poll(InfraxAsync* self);
 
 // 类实例
 extern const InfraxAsyncClass InfraxAsync_CLASS;

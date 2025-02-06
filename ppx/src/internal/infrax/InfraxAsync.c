@@ -3,25 +3,57 @@
 #include "InfraxLog.h"
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
+#include <poll.h>
 #include <time.h>
 
 // Error codes
 #define INFRAX_ERROR_INVALID_COROUTINE INFRAX_ERROR_INVALID_PARAM
 
-// Thread-local coroutine queue
-static __thread struct {
-    InfraxAsync* ready;    // Ready queue head
-    InfraxAsync* current;  // Currently running coroutine
-    jmp_buf env;          // Scheduler context
+// 全局队列
+static struct {
+    InfraxAsync* ready;      // 就绪队列
+    InfraxAsync* current;    // 当前运行的协程
+    jmp_buf env;            // 调度器环境
+    bool is_running;        // 调度器是否正在运行
+    InfraxAsync* cleanup;   // 待清理的协程队列
 } g_queue = {0};
 
-// Forward declarations
-static InfraxError async_start(InfraxAsync* self);
-static InfraxError async_yield(InfraxAsync* self);
-static InfraxError async_resume(InfraxAsync* self);
-static bool async_is_done(const InfraxAsync* self);
-static int internal_poll(InfraxAsync* self);
+// 增加引用计数
+static void ref_coroutine(InfraxAsync* co) {
+    if (co) {
+        co->ref_count++;
+    }
+}
+
+// 减少引用计数，如果计数为0则释放
+static void unref_coroutine(InfraxAsync* co) {
+    if (co && --co->ref_count == 0) {
+        // 先清理所有子协程
+        while (co->first_child) {
+            InfraxAsync* child = co->first_child;
+            co->first_child = child->next_sibling;
+            unref_coroutine(child);
+        }
+        
+        // 从父协程的子列表中移除
+        if (co->parent) {
+            if (co->parent->first_child == co) {
+                co->parent->first_child = co->next_sibling;
+            } else {
+                InfraxAsync* sibling = co->parent->first_child;
+                while (sibling && sibling->next_sibling != co) {
+                    sibling = sibling->next_sibling;
+                }
+                if (sibling) {
+                    sibling->next_sibling = co->next_sibling;
+                }
+            }
+        }
+        
+        // 释放协程本身
+        InfraxAsync_CLASS.free(co);
+    }
+}
 
 // 对齐栈指针
 static void* align_stack_ptr(void* ptr, size_t align) {
@@ -103,6 +135,9 @@ static InfraxAsync* async_new(const InfraxAsyncConfig* config) {
     // 初始化栈顶指针
     self->stack_top = (char*)self->stack + self->stack_size;
     
+    // 初始化引用计数
+    self->ref_count = 1;
+    
     log->debug(log, "Created coroutine %s successfully", config->name);
     return self;
 }
@@ -159,17 +194,20 @@ static InfraxError async_yield(InfraxAsync* self) {
     // 检查是否需要等待事件
     if (self->type != ASYNC_NONE) {
         int ret = internal_poll(self);
-        if (ret != 0) {
-            // 需要继续等待
-            self->state = COROUTINE_YIELDED;
-            // 保存协程上下文并切换到调度器
-            if (setjmp(self->env) == 0) {
-                longjmp(g_queue.env, 1);
-            }
-            // 恢复后继续执行
-            self->state = COROUTINE_RUNNING;
+        if (ret == 0) {
+            // 事件已就绪，无需让出
+            log->debug(log, "Event ready for coroutine %s", self->config.name);
             return INFRAX_ERROR_OK_STRUCT;
         }
+        // 需要继续等待
+        self->state = COROUTINE_YIELDED;
+        // 保存协程上下文并切换到调度器
+        if (setjmp(self->env) == 0) {
+            longjmp(g_queue.env, 1);
+        }
+        // 恢复后继续执行
+        self->state = COROUTINE_RUNNING;
+        return INFRAX_ERROR_OK_STRUCT;
     }
     
     // 保存协程上下文
@@ -204,10 +242,12 @@ static InfraxError async_resume(InfraxAsync* self) {
         }
     }
     
+    // 设置为就绪状态，等待调度器运行
+    self->state = COROUTINE_READY;
+    
     // 加入就绪队列
     self->next = g_queue.ready;
     g_queue.ready = self;
-    self->state = COROUTINE_RUNNING;  // 直接设置为运行状态
     log->debug(log, "Coroutine %s added to ready queue", self->config.name);
     
     return INFRAX_ERROR_OK_STRUCT;
@@ -215,59 +255,112 @@ static InfraxError async_resume(InfraxAsync* self) {
 
 // Check if coroutine is done
 static bool async_is_done(const InfraxAsync* self) {
-    return self && self->state == COROUTINE_DONE;
+    if (!self) return true;
+    return self->state == COROUTINE_DONE;
+}
+
+// 将协程加入待清理队列
+static void queue_for_cleanup(InfraxAsync* co) {
+    if (!co) return;
+    
+    // 从就绪队列中移除
+    if (g_queue.ready == co) {
+        g_queue.ready = co->next;
+    } else {
+        InfraxAsync* prev = g_queue.ready;
+        while (prev && prev->next != co) {
+            prev = prev->next;
+        }
+        if (prev) {
+            prev->next = co->next;
+        }
+    }
+    
+    // 加入清理队列
+    co->next = g_queue.cleanup;
+    g_queue.cleanup = co;
+}
+
+// 清理完成的协程
+static void cleanup_done_coroutines(void) {
+    while (g_queue.cleanup) {
+        InfraxAsync* co = g_queue.cleanup;
+        g_queue.cleanup = co->next;
+        unref_coroutine(co);
+    }
 }
 
 // Run coroutines
 void InfraxAsyncRun(void) {
     InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "InfraxAsyncRun: Starting");
     
-    // 如果没有就绪协程，返回
-    if (!g_queue.ready) {
-        log->debug(log, "No ready coroutines, returning");
+    // 防止重入
+    if (g_queue.is_running) {
+        log->warn(log, "InfraxAsyncRun: Already running, skipping");
         return;
     }
     
-    // 取出一个就绪协程
-    InfraxAsync* co = g_queue.ready;
-    g_queue.ready = co->next;
-    co->next = NULL;
+    log->debug(log, "InfraxAsyncRun: Starting");
+    g_queue.is_running = true;
     
-    log->debug(log, "Running coroutine: %s (state: %d)", co->config.name, co->state);
-    
-    // 保存调度器上下文并运行协程
-    InfraxAsync* prev_current = g_queue.current;
-    g_queue.current = co;
-    
-    if (setjmp(g_queue.env) == 0) {
+    // 处理所有就绪协程
+    while (g_queue.ready) {
+        // 取出一个就绪协程
+        InfraxAsync* co = g_queue.ready;
+        g_queue.ready = co->next;
+        co->next = NULL;
+        
+        log->debug(log, "Running coroutine: %s (state: %d)", co->config.name, co->state);
+        
+        // 保存调度器上下文并运行协程
+        InfraxAsync* prev_current = g_queue.current;
+        g_queue.current = co;
+        
         if (co->state == COROUTINE_READY) {
+            // 首次运行协程
             log->debug(log, "Starting coroutine function: %s", co->config.name);
             co->state = COROUTINE_RUNNING;
             co->config.fn(co->config.arg);
-            co->state = COROUTINE_DONE;
-            log->debug(log, "Coroutine completed: %s", co->config.name);
-            // 协程完成时恢复调度器上下文
-            g_queue.current = prev_current;
-            return;  // 直接返回，不需要longjmp
-        } else if (co->state == COROUTINE_RUNNING) {
-            log->debug(log, "Resuming coroutine: %s", co->config.name);
-            longjmp(co->env, 1);
+            // 如果协程没有yield，则标记为完成
+            if (co->state == COROUTINE_RUNNING) {
+                co->state = COROUTINE_DONE;
+                log->debug(log, "Coroutine completed: %s", co->config.name);
+                queue_for_cleanup(co);
+            }
+        } else if (co->state == COROUTINE_YIELDED) {
+            // 恢复之前让出的协程
+            if (setjmp(g_queue.env) == 0) {
+                log->debug(log, "Resuming coroutine: %s", co->config.name);
+                co->state = COROUTINE_RUNNING;
+                longjmp(co->env, 1);
+            }
+            
+            // 协程再次让出或完成
+            if (co->state == COROUTINE_RUNNING) {
+                // 协程没有显式让出，视为完成
+                co->state = COROUTINE_DONE;
+                log->debug(log, "Coroutine completed: %s", co->config.name);
+                queue_for_cleanup(co);
+            } else if (co->state == COROUTINE_YIELDED) {
+                log->debug(log, "Coroutine yielded: %s", co->config.name);
+                // 将让出的协程重新加入就绪队列末尾
+                InfraxAsync** tail = &g_queue.ready;
+                while (*tail) {
+                    tail = &(*tail)->next;
+                }
+                *tail = co;
+            }
         }
+        
+        // 恢复之前的当前协程
+        g_queue.current = prev_current;
     }
     
-    // 协程已让出或完成
-    if (co->state == COROUTINE_DONE) {
-        log->debug(log, "Coroutine done: %s", co->config.name);
-        g_queue.current = prev_current;
-        // 释放已完成的协程
-        InfraxAsync_CLASS.free(co);
-    } else if (co->state == COROUTINE_YIELDED) {
-        log->debug(log, "Coroutine yielded: %s", co->config.name);
-        // 将让出的协程重新加入就绪队列
-        co->next = g_queue.ready;
-        g_queue.ready = co;
-    }
+    // 清理完成的协程
+    cleanup_done_coroutines();
+    
+    g_queue.is_running = false;
+    log->debug(log, "InfraxAsyncRun: Finished");
 }
 
 // 获取当前时间戳(毫秒)
@@ -283,29 +376,27 @@ static int internal_poll(InfraxAsync* self) {
     
     switch (self->type) {
         case ASYNC_IO: {
-            fd_set readfds, writefds, errorfds;
-            FD_ZERO(&readfds);
-            FD_ZERO(&writefds);
-            FD_ZERO(&errorfds);
+            struct pollfd pfd = {0};
+            pfd.fd = self->params.io.fd;
             
-            // 根据事件类型设置fd
+            // 转换事件标志
             if (self->params.io.events & INFRAX_IO_READ)
-                FD_SET(self->params.io.fd, &readfds);
+                pfd.events |= POLLIN;
             if (self->params.io.events & INFRAX_IO_WRITE)
-                FD_SET(self->params.io.fd, &writefds);
+                pfd.events |= POLLOUT;
             if (self->params.io.events & INFRAX_IO_ERROR)
-                FD_SET(self->params.io.fd, &errorfds);
+                pfd.events |= POLLERR;
             
-            struct timeval tv = {0, 0};  // 非阻塞检查
-            int ret = select(self->params.io.fd + 1, &readfds, &writefds, &errorfds, &tv);
+            // 非阻塞检查
+            int ret = poll(&pfd, 1, 0);
             
             if (ret > 0) {
-                // 检查是否有我们关心的事件
-                if ((self->params.io.events & INFRAX_IO_READ) && FD_ISSET(self->params.io.fd, &readfds))
+                // 检查返回的事件
+                if ((self->params.io.events & INFRAX_IO_READ) && (pfd.revents & POLLIN))
                     return 0;
-                if ((self->params.io.events & INFRAX_IO_WRITE) && FD_ISSET(self->params.io.fd, &writefds))
+                if ((self->params.io.events & INFRAX_IO_WRITE) && (pfd.revents & POLLOUT))
                     return 0;
-                if ((self->params.io.events & INFRAX_IO_ERROR) && FD_ISSET(self->params.io.fd, &errorfds))
+                if ((self->params.io.events & INFRAX_IO_ERROR) && (pfd.revents & POLLERR))
                     return 0;
             }
             return 1;  // 继续等待
@@ -320,7 +411,6 @@ static int internal_poll(InfraxAsync* self) {
             
             uint64_t now = get_monotonic_ms();
             if (now - self->params.timer.start_time >= (uint64_t)self->params.timer.ms) {
-                self->params.timer.start_time = 0;  // 重置定时器
                 return 0;  // 定时器到期
             }
             return 1;  // 继续等待
@@ -331,29 +421,89 @@ static int internal_poll(InfraxAsync* self) {
     }
 }
 
+// 设置父子关系
+static void set_parent(InfraxAsync* child, InfraxAsync* parent) {
+    if (!child || !parent) return;
+    
+    // 如果已经有父协程，先解除关系
+    if (child->parent) {
+        if (child->parent->first_child == child) {
+            child->parent->first_child = child->next_sibling;
+        } else {
+            InfraxAsync* sibling = child->parent->first_child;
+            while (sibling && sibling->next_sibling != child) {
+                sibling = sibling->next_sibling;
+            }
+            if (sibling) {
+                sibling->next_sibling = child->next_sibling;
+            }
+        }
+        unref_coroutine(child);  // 减少旧父协程的引用
+    }
+    
+    // 设置新的父子关系
+    child->parent = parent;
+    child->next_sibling = parent->first_child;
+    parent->first_child = child;
+    ref_coroutine(child);  // 增加新父协程的引用
+}
+
 // 定时器协程函数
 static void timer_coroutine(void* arg) {
     InfraxAsync* self = (InfraxAsync*)arg;
-    // 等待指定时间
-    self->yield(self);
+    InfraxLog* log = get_global_infrax_log();
+    
+    log->debug(log, "Timer started: %d ms", self->params.timer.ms);
+    
+    // 初始化定时器
+    self->type = ASYNC_TIMER;
+    self->params.timer.start_time = 0;  // 将在第一次 poll 时设置
+    
+    // 等待直到时间到
+    while (1) {
+        InfraxError err = self->yield(self);
+        if (!INFRAX_ERROR_IS_OK(err)) {
+            log->error(log, "Timer yield failed");
+            break;
+        }
+        
+        // 如果 yield 返回成功且没有抛出，说明定时器已完成
+        log->debug(log, "Timer completed");
+        self->state = COROUTINE_DONE;  // 主动设置完成状态
+        break;
+    }
 }
 
-// 工厂函数实现
+// Create a timer coroutine
 InfraxAsync* InfraxAsync_CreateTimer(int ms) {
+    InfraxLog* log = get_global_infrax_log();
+    log->debug(log, "Creating timer coroutine for %d ms", ms);
+    
+    // 创建定时器协程
     InfraxAsyncConfig config = {
         .name = "timer",
-        .fn = timer_coroutine,  // 使用定时器协程函数
-        .arg = NULL,  // 在async_new中会设置为self
+        .fn = timer_coroutine,
+        .arg = NULL,
         .stack_size = DEFAULT_STACK_SIZE
     };
     
-    InfraxAsync* async = InfraxAsync_CLASS.new(&config);
-    if (async) {
-        async->type = ASYNC_TIMER;
-        async->params.timer.ms = ms;
-        async->config.arg = async;  // 设置协程参数为自身
+    InfraxAsync* timer = InfraxAsync_CLASS.new(&config);
+    if (!timer) {
+        log->error(log, "Failed to create timer coroutine");
+        return NULL;
     }
-    return async;
+    
+    // 设置定时器参数
+    timer->type = ASYNC_TIMER;
+    timer->params.timer.ms = ms;
+    timer->params.timer.start_time = 0;
+    
+    // 设置父子关系
+    if (g_queue.current) {
+        set_parent(timer, g_queue.current);
+    }
+    
+    return timer;
 }
 
 InfraxAsync* InfraxAsync_CreateIO(int fd, int events) {
