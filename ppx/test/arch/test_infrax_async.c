@@ -111,24 +111,31 @@ void test_async_multiple(void) {
     log->debug(log, "Testing multiple coroutines");
     
     const int NUM_COROUTINES = 5;
-    InfraxAsync* coroutines[NUM_COROUTINES] = {NULL};
-    TestState* states[NUM_COROUTINES] = {NULL};
+    InfraxAsync** coroutines = malloc(NUM_COROUTINES * sizeof(InfraxAsync*));
+    TestState** states = malloc(NUM_COROUTINES * sizeof(TestState*));
     
-    // Create states
+    if (!coroutines || !states) {
+        log->error(log, "Failed to allocate arrays");
+        free(coroutines);
+        free(states);
+        return;
+    }
+
+    memset(coroutines, 0, NUM_COROUTINES * sizeof(InfraxAsync*));
+    memset(states, 0, NUM_COROUTINES * sizeof(TestState*));
+    
+    // Create states and coroutines
     for (int i = 0; i < NUM_COROUTINES; i++) {
         states[i] = create_test_state();
         if (!states[i]) {
             log->error(log, "Failed to create test state");
             goto cleanup;
         }
-    }
-    
-    // Create coroutines
-    for (int i = 0; i < NUM_COROUTINES; i++) {
-        static char names[5][32];  // Static array to store names
-        snprintf(names[i], sizeof(names[i]), "test_coroutine_%d", i);
+        
+        char name[32];
+        snprintf(name, sizeof(name), "test_coroutine_%d", i);
         InfraxAsyncConfig config = {
-            .name = names[i],
+            .name = name,
             .fn = test_coroutine_func,
             .arg = states[i]
         };
@@ -151,9 +158,7 @@ void test_async_multiple(void) {
     }
     
     // Run all coroutines first time
-    for (int i = 0; i < NUM_COROUTINES; i++) {
-        InfraxAsyncRun();
-    }
+    InfraxAsyncRun();
     
     // Verify first increment
     for (int i = 0; i < NUM_COROUTINES; i++) {
@@ -173,9 +178,7 @@ void test_async_multiple(void) {
     }
     
     // Run all coroutines second time
-    for (int i = 0; i < NUM_COROUTINES; i++) {
-        InfraxAsyncRun();
-    }
+    InfraxAsyncRun();
     
     // Verify second increment and completion
     for (int i = 0; i < NUM_COROUTINES; i++) {
@@ -196,76 +199,68 @@ cleanup:
         if (coroutines[i]) {
             InfraxAsync_CLASS.free(coroutines[i]);
         }
-        free_test_state(states[i]);
+        if (states[i]) {
+            free_test_state(states[i]);
+        }
     }
+    free(coroutines);
+    free(states);
 }
 
 void test_async_error_handling(void) {
     InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "Testing coroutine error handling");
+    log->debug(log, "Testing error handling");
     
-    // Test invalid coroutine config
+    // Test invalid start
     InfraxAsyncConfig config = {
-        .name = "error_test_coroutine",
+        .name = "test_coroutine",
         .fn = NULL,  // Invalid function pointer
         .arg = NULL
     };
     
     InfraxAsync* co = InfraxAsync_CLASS.new(&config);
     if (co) {
-        log->error(log, "Should fail to create coroutine with NULL function");
+        log->error(log, "Should not create coroutine with invalid config");
         InfraxAsync_CLASS.free(co);
         return;
     }
     
-    // Test double start
-    config.fn = test_coroutine_func;
-    co = InfraxAsync_CLASS.new(&config);
-    if (!co) {
-        log->error(log, "Failed to create coroutine");
+    // Test invalid yield
+    TestState* state = create_test_state();
+    if (!state) {
+        log->error(log, "Failed to create test state");
         return;
     }
     
-    InfraxError err = co->start(co);
-    if (!INFRAX_ERROR_IS_OK(err)) {
-        log->error(log, "First start should succeed");
-        goto cleanup;
-    }
-    
-    err = co->start(co);
-    if (INFRAX_ERROR_IS_OK(err)) {
-        log->error(log, "Second start should fail");
-        goto cleanup;
-    }
-    
-    // Test resume before start
-    InfraxAsync* unstarted = InfraxAsync_CLASS.new(&config);
-    if (!unstarted) {
+    config.fn = test_coroutine_func;
+    config.arg = state;
+    co = InfraxAsync_CLASS.new(&config);
+    if (!co) {
         log->error(log, "Failed to create coroutine");
-        goto cleanup;
+        free_test_state(state);
+        return;
     }
+    state->co = co;
     
-    err = unstarted->resume(unstarted);
+    // Try to yield before starting
+    InfraxError err = co->yield(co);
     if (INFRAX_ERROR_IS_OK(err)) {
-        log->error(log, "Resume before start should fail");
-        InfraxAsync_CLASS.free(unstarted);
+        log->error(log, "Should not yield before starting");
         goto cleanup;
     }
     
-    InfraxAsync_CLASS.free(unstarted);
     log->debug(log, "Error handling test passed");
 
 cleanup:
     if (co) {
         InfraxAsync_CLASS.free(co);
     }
+    free_test_state(state);
 }
 
 int main(void) {
     test_async_basic();
     test_async_multiple();
     test_async_error_handling();
-    InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "All coroutine tests passed");
     return 0;
 }

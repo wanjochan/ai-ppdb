@@ -6,13 +6,8 @@
 #ifndef INFRAX_ASYNC_H
 #define INFRAX_ASYNC_H
 
-#include "InfraxCore.h"
 #include <setjmp.h>
-
-// Error codes
-#define INFRAX_ERROR_INVALID_COROUTINE -1
-#define INFRAX_ERROR_COROUTINE_CREATE_FAILED -2
-#define INFRAX_ERROR_COROUTINE_YIELD_FAILED -3
+#include "InfraxCore.h"
 
 // Forward declarations
 typedef struct InfraxAsync InfraxAsync;
@@ -23,39 +18,45 @@ typedef void (*InfraxAsyncFn)(void* arg);
 
 // Coroutine configuration
 typedef struct {
-    const char* name;          // Coroutine name
-    InfraxAsyncFn fn;         // Function to run
-    void* arg;                // Function argument
+    const char* name;  // Coroutine name
+    InfraxAsyncFn fn; // Function to run
+    void* arg;        // Function argument
 } InfraxAsyncConfig;
 
-// The "static" interface (like static methods in OOP)
-struct InfraxAsyncClass {
-    InfraxAsync* (*new)(const InfraxAsyncConfig* config);
-    void (*free)(InfraxAsync* self);
-};
+// Coroutine state
+typedef enum {
+    COROUTINE_INIT,    // Initial state
+    COROUTINE_READY,   // Ready to run
+    COROUTINE_RUNNING, // Currently running
+    COROUTINE_YIELDED, // Yielded, waiting to resume
+    COROUTINE_DONE     // Finished execution
+} CoroutineState;
 
-// The instance structure
+// Coroutine instance
 struct InfraxAsync {
-    const InfraxAsyncClass* klass;  // Points to the "class" method table
+    const InfraxAsyncClass* klass;  // Class pointer
+    InfraxAsyncConfig config;       // Configuration
+    CoroutineState state;           // Current state
+    jmp_buf env;                    // Context
+    InfraxAsync* next;              // Next in queue
     
-    // Coroutine data
-    InfraxAsyncConfig config;
-    jmp_buf env;              // Context for switching
-    InfraxAsync* next;        // Next in queue
-    bool started;             // Whether started
-    bool done;               // Whether completed
-
-    // Instance methods
+    // Methods
     InfraxError (*start)(InfraxAsync* self);
     InfraxError (*yield)(InfraxAsync* self);
     InfraxError (*resume)(InfraxAsync* self);
     bool (*is_done)(const InfraxAsync* self);
 };
 
-// The "static" interface instance
+// Coroutine class
+struct InfraxAsyncClass {
+    InfraxAsync* (*new)(const InfraxAsyncConfig* config);
+    void (*free)(InfraxAsync* self);
+};
+
+// Global class instance
 extern const InfraxAsyncClass InfraxAsync_CLASS;
 
 // Run coroutines
 void InfraxAsyncRun(void);
 
-#endif /* INFRAX_ASYNC_H */
+#endif // INFRAX_ASYNC_H
