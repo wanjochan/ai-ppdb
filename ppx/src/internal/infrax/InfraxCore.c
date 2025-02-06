@@ -89,11 +89,11 @@ static void infrax_core_sleep_ms(InfraxCore *self, uint32_t milliseconds) {
     nanosleep(&ts, NULL);
 }
 
-InfraxU32 infrax_core_random(InfraxCore *self) {
+static InfraxU32 infrax_core_random(InfraxCore *self) {
     return rand();  // 使用标准库的 rand 函数
 }
 
-void infra_random_seed(InfraxCore *self, uint32_t seed) {
+static void infrax_core_random_seed(InfraxCore *self, uint32_t seed) {
     srand(seed);  // 使用标准库的 srand 函数
 }
 
@@ -246,6 +246,342 @@ static char* infrax_core_strndup(InfraxCore *self, const char* s, size_t n) {
     return new_str;
 }
 
+//-----------------------------------------------------------------------------
+// Buffer Operations
+//-----------------------------------------------------------------------------
+
+static InfraxError infrax_core_buffer_init(InfraxCore *self, InfraxBuffer* buf, size_t initial_capacity) {
+    if (!buf || initial_capacity == 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid buffer parameters");
+    }
+    
+    buf->data = (uint8_t*)malloc(initial_capacity);
+    if (!buf->data) {
+        return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate buffer memory");
+    }
+    
+    buf->size = 0;
+    buf->capacity = initial_capacity;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static void infrax_core_buffer_destroy(InfraxCore *self, InfraxBuffer* buf) {
+    if (buf && buf->data) {
+        free(buf->data);
+        buf->data = NULL;
+        buf->size = 0;
+        buf->capacity = 0;
+    }
+}
+
+static InfraxError infrax_core_buffer_reserve(InfraxCore *self, InfraxBuffer* buf, size_t capacity) {
+    if (!buf || !buf->data) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid buffer");
+    }
+    
+    if (capacity <= buf->capacity) {
+        return INFRAX_ERROR_OK_STRUCT;
+    }
+    
+    uint8_t* new_data = (uint8_t*)realloc(buf->data, capacity);
+    if (!new_data) {
+        return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to reallocate buffer memory");
+    }
+    
+    buf->data = new_data;
+    buf->capacity = capacity;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_buffer_write(InfraxCore *self, InfraxBuffer* buf, const void* data, size_t size) {
+    if (!buf || !buf->data || !data || size == 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid buffer write parameters");
+    }
+    
+    if (buf->size + size > buf->capacity) {
+        InfraxError err = infrax_core_buffer_reserve(self, buf, (buf->size + size) * 2);
+        if (INFRAX_ERROR_IS_ERR(err)) {
+            return err;
+        }
+    }
+    
+    memcpy(buf->data + buf->size, data, size);
+    buf->size += size;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_buffer_read(InfraxCore *self, InfraxBuffer* buf, void* data, size_t size) {
+    if (!buf || !buf->data || !data || size == 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid buffer read parameters");
+    }
+    
+    if (size > buf->size) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Read size exceeds buffer size");
+    }
+    
+    memcpy(data, buf->data, size);
+    memmove(buf->data, buf->data + size, buf->size - size);
+    buf->size -= size;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static size_t infrax_core_buffer_readable(InfraxCore *self, const InfraxBuffer* buf) {
+    return buf ? buf->size : 0;
+}
+
+static size_t infrax_core_buffer_writable(InfraxCore *self, const InfraxBuffer* buf) {
+    return buf ? (buf->capacity - buf->size) : 0;
+}
+
+static void infrax_core_buffer_reset(InfraxCore *self, InfraxBuffer* buf) {
+    if (buf) {
+        buf->size = 0;
+    }
+}
+
+//-----------------------------------------------------------------------------
+// Ring Buffer Operations
+//-----------------------------------------------------------------------------
+
+static size_t infrax_core_ring_buffer_readable(InfraxCore *self, const InfraxRingBuffer* rb) {
+    if (!rb) return 0;
+    if (rb->full) return rb->size;
+    if (rb->write_pos >= rb->read_pos) {
+        return rb->write_pos - rb->read_pos;
+    }
+    return rb->size - (rb->read_pos - rb->write_pos);
+}
+
+static size_t infrax_core_ring_buffer_writable(InfraxCore *self, const InfraxRingBuffer* rb) {
+    if (!rb) return 0;
+    if (rb->full) return 0;
+    return rb->size - infrax_core_ring_buffer_readable(self, rb);
+}
+
+static InfraxError infrax_core_ring_buffer_init(InfraxCore *self, InfraxRingBuffer* rb, size_t size) {
+    if (!rb || size == 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid ring buffer parameters");
+    }
+    
+    rb->buffer = (uint8_t*)malloc(size);
+    if (!rb->buffer) {
+        return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate ring buffer memory");
+    }
+    
+    rb->size = size;
+    rb->read_pos = 0;
+    rb->write_pos = 0;
+    rb->full = false;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static void infrax_core_ring_buffer_destroy(InfraxCore *self, InfraxRingBuffer* rb) {
+    if (rb && rb->buffer) {
+        free(rb->buffer);
+        rb->buffer = NULL;
+        rb->size = 0;
+        rb->read_pos = 0;
+        rb->write_pos = 0;
+        rb->full = false;
+    }
+}
+
+static InfraxError infrax_core_ring_buffer_write(InfraxCore *self, InfraxRingBuffer* rb, const void* data, size_t size) {
+    if (!rb || !rb->buffer || !data || size == 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid ring buffer write parameters");
+    }
+    
+    if (size > rb->size) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Write size exceeds ring buffer size");
+    }
+    
+    size_t available = infrax_core_ring_buffer_writable(self, rb);
+    if (size > available) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Not enough space in ring buffer");
+    }
+    
+    const uint8_t* src = (const uint8_t*)data;
+    size_t first_chunk = rb->size - rb->write_pos;
+    if (size <= first_chunk) {
+        memcpy(rb->buffer + rb->write_pos, src, size);
+    } else {
+        memcpy(rb->buffer + rb->write_pos, src, first_chunk);
+        memcpy(rb->buffer, src + first_chunk, size - first_chunk);
+    }
+    
+    rb->write_pos = (rb->write_pos + size) % rb->size;
+    rb->full = (rb->write_pos == rb->read_pos);
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_ring_buffer_read(InfraxCore *self, InfraxRingBuffer* rb, void* data, size_t size) {
+    if (!rb || !rb->buffer || !data || size == 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid ring buffer read parameters");
+    }
+    
+    size_t available = infrax_core_ring_buffer_readable(self, rb);
+    if (size > available) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Not enough data in ring buffer");
+    }
+    
+    uint8_t* dst = (uint8_t*)data;
+    size_t first_chunk = rb->size - rb->read_pos;
+    if (size <= first_chunk) {
+        memcpy(dst, rb->buffer + rb->read_pos, size);
+    } else {
+        memcpy(dst, rb->buffer + rb->read_pos, first_chunk);
+        memcpy(dst + first_chunk, rb->buffer, size - first_chunk);
+    }
+    
+    rb->read_pos = (rb->read_pos + size) % rb->size;
+    rb->full = false;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static void infrax_core_ring_buffer_reset(InfraxCore *self, InfraxRingBuffer* rb) {
+    if (rb) {
+        rb->read_pos = 0;
+        rb->write_pos = 0;
+        rb->full = false;
+    }
+}
+
+//-----------------------------------------------------------------------------
+// File Operations
+//-----------------------------------------------------------------------------
+
+static InfraxError infrax_core_file_open(InfraxCore *self, const char* path, InfraxFlags flags, int mode, InfraxHandle* handle) {
+    if (!path || !handle) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid file parameters");
+    }
+    
+    int oflags = 0;
+    if (flags & INFRAX_FILE_CREATE) oflags |= O_CREAT;
+    if (flags & INFRAX_FILE_RDONLY) oflags |= O_RDONLY;
+    if (flags & INFRAX_FILE_WRONLY) oflags |= O_WRONLY;
+    if (flags & INFRAX_FILE_RDWR) oflags |= O_RDWR;
+    if (flags & INFRAX_FILE_APPEND) oflags |= O_APPEND;
+    if (flags & INFRAX_FILE_TRUNC) oflags |= O_TRUNC;
+    
+    // 确保文件目录存在
+    char dir[PATH_MAX];
+    strncpy(dir, path, sizeof(dir) - 1);
+    dir[sizeof(dir) - 1] = '\0';
+    char* last_slash = strrchr(dir, '/');
+    if (last_slash) {
+        *last_slash = '\0';
+        mkdir(dir, 0755);
+    }
+    
+    // 如果是只读模式，需要检查文件是否存在
+    if ((flags & INFRAX_FILE_RDONLY) && !(flags & INFRAX_FILE_CREATE)) {
+        int exists = access(path, F_OK);
+        if (exists != 0) {
+            char err_msg[256];
+            snprintf(err_msg, sizeof(err_msg), "File '%s' does not exist", path);
+            return make_error(INFRAX_ERROR_INVALID_PARAM, err_msg);
+        }
+    }
+    
+    // 打开文件
+    int fd = open(path, oflags, mode);
+    if (fd < 0) {
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Failed to open file '%s': %s", path, strerror(errno));
+        return make_error(INFRAX_ERROR_INVALID_PARAM, err_msg);
+    }
+    
+    *handle = (InfraxHandle)fd;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_file_close(InfraxCore *self, InfraxHandle handle) {
+    if (close((int)handle) < 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Failed to close file");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_file_read(InfraxCore *self, InfraxHandle handle, void* buffer, size_t size, size_t* bytes_read) {
+    if (!buffer || !bytes_read) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid read parameters");
+    }
+    
+    ssize_t result = read((int)handle, buffer, size);
+    if (result < 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Failed to read from file");
+    }
+    
+    *bytes_read = (size_t)result;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_file_write(InfraxCore *self, InfraxHandle handle, const void* buffer, size_t size, size_t* bytes_written) {
+    if (!buffer || !bytes_written) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid write parameters");
+    }
+    
+    ssize_t result = write((int)handle, buffer, size);
+    if (result < 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Failed to write to file");
+    }
+    
+    *bytes_written = (size_t)result;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_file_seek(InfraxCore *self, InfraxHandle handle, int64_t offset, int whence) {
+    if (lseek((int)handle, offset, whence) < 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Failed to seek in file");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_file_size(InfraxCore *self, InfraxHandle handle, size_t* size) {
+    if (!size) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid size parameter");
+    }
+    
+    struct stat st;
+    if (fstat((int)handle, &st) < 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Failed to get file size");
+    }
+    
+    *size = (size_t)st.st_size;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_file_remove(InfraxCore *self, const char* path) {
+    if (!path) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid path parameter");
+    }
+    
+    if (unlink(path) < 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Failed to remove file");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_file_rename(InfraxCore *self, const char* old_path, const char* new_path) {
+    if (!old_path || !new_path) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid path parameters");
+    }
+    
+    if (rename(old_path, new_path) < 0) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Failed to rename file");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_core_file_exists(InfraxCore *self, const char* path, bool* exists) {
+    if (!path || !exists) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
+    }
+    
+    struct stat st;
+    *exists = (stat(path, &st) == 0);
+    return INFRAX_ERROR_OK_STRUCT;
+}
 
 /* TODO
 //-----------------------------------------------------------------------------
@@ -442,13 +778,47 @@ InfraxCore g_infrax_core = {
     .yield = infrax_core_yield,
     .pid = infrax_core_pid,
     
+    // Random number operations
+    .random = infrax_core_random,
+    .random_seed = infrax_core_random_seed,
+    
     // Network byte order conversion
     .host_to_net16 = infrax_core_host_to_net16,
     .host_to_net32 = infrax_core_host_to_net32,
     .host_to_net64 = infrax_core_host_to_net64,
     .net_to_host16 = infrax_core_net_to_host16,
     .net_to_host32 = infrax_core_net_to_host32,
-    .net_to_host64 = infrax_core_net_to_host64
+    .net_to_host64 = infrax_core_net_to_host64,
+    
+    // Buffer operations
+    .buffer_init = infrax_core_buffer_init,
+    .buffer_destroy = infrax_core_buffer_destroy,
+    .buffer_reserve = infrax_core_buffer_reserve,
+    .buffer_write = infrax_core_buffer_write,
+    .buffer_read = infrax_core_buffer_read,
+    .buffer_readable = infrax_core_buffer_readable,
+    .buffer_writable = infrax_core_buffer_writable,
+    .buffer_reset = infrax_core_buffer_reset,
+    
+    // Ring buffer operations
+    .ring_buffer_readable = infrax_core_ring_buffer_readable,
+    .ring_buffer_writable = infrax_core_ring_buffer_writable,
+    .ring_buffer_init = infrax_core_ring_buffer_init,
+    .ring_buffer_destroy = infrax_core_ring_buffer_destroy,
+    .ring_buffer_write = infrax_core_ring_buffer_write,
+    .ring_buffer_read = infrax_core_ring_buffer_read,
+    .ring_buffer_reset = infrax_core_ring_buffer_reset,
+    
+    // File operations
+    .file_open = infrax_core_file_open,
+    .file_close = infrax_core_file_close,
+    .file_read = infrax_core_file_read,
+    .file_write = infrax_core_file_write,
+    .file_seek = infrax_core_file_seek,
+    .file_size = infrax_core_file_size,
+    .file_remove = infrax_core_file_remove,
+    .file_rename = infrax_core_file_rename,
+    .file_exists = infrax_core_file_exists
 };
 
 // Return global instance

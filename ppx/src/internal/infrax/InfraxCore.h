@@ -33,6 +33,33 @@ typedef uint64_t InfraxTime;//
 typedef uint32_t InfraxFlags;
 typedef uint64_t InfraxHandle;
 
+// Buffer Types
+typedef struct InfraxBuffer {
+    uint8_t* data;
+    size_t size;
+    size_t capacity;
+} InfraxBuffer;
+
+typedef struct InfraxRingBuffer {
+    uint8_t* buffer;
+    size_t size;
+    size_t read_pos;
+    size_t write_pos;
+    bool full;
+} InfraxRingBuffer;
+
+// File Operation Flags
+#define INFRAX_FILE_CREATE (1 << 0)
+#define INFRAX_FILE_RDONLY (1 << 1)
+#define INFRAX_FILE_WRONLY (1 << 2)
+#define INFRAX_FILE_RDWR   (1 << 3)
+#define INFRAX_FILE_APPEND (1 << 4)
+#define INFRAX_FILE_TRUNC  (1 << 5)
+
+#define INFRAX_SEEK_SET 0
+#define INFRAX_SEEK_CUR 1
+#define INFRAX_SEEK_END 2
+
 #define INFRAX_OK 0
 #define INFRAX_ERROR_OK 0
 #define INFRAX_ERROR_INVALID_PARAM -1
@@ -108,6 +135,10 @@ struct InfraxCore {
     //getpid
     int (*pid)(struct InfraxCore *self);
     
+    // Random number operations
+    InfraxU32 (*random)(struct InfraxCore *self);          // Generate random number
+    void (*random_seed)(struct InfraxCore *self, uint32_t seed);  // Set random seed
+    
     // Network byte order conversion
     uint16_t (*host_to_net16)(struct InfraxCore *self, uint16_t host16);  // Host to network (16-bit)
     uint32_t (*host_to_net32)(struct InfraxCore *self, uint32_t host32);  // Host to network (32-bit)
@@ -115,6 +146,36 @@ struct InfraxCore {
     uint16_t (*net_to_host16)(struct InfraxCore *self, uint16_t net16);   // Network to host (16-bit)
     uint32_t (*net_to_host32)(struct InfraxCore *self, uint32_t net32);   // Network to host (32-bit)
     uint64_t (*net_to_host64)(struct InfraxCore *self, uint64_t net64);   // Network to host (64-bit)
+
+    // Buffer operations
+    InfraxError (*buffer_init)(struct InfraxCore *self, InfraxBuffer* buf, size_t initial_capacity);
+    void (*buffer_destroy)(struct InfraxCore *self, InfraxBuffer* buf);
+    InfraxError (*buffer_reserve)(struct InfraxCore *self, InfraxBuffer* buf, size_t capacity);
+    InfraxError (*buffer_write)(struct InfraxCore *self, InfraxBuffer* buf, const void* data, size_t size);
+    InfraxError (*buffer_read)(struct InfraxCore *self, InfraxBuffer* buf, void* data, size_t size);
+    size_t (*buffer_readable)(struct InfraxCore *self, const InfraxBuffer* buf);
+    size_t (*buffer_writable)(struct InfraxCore *self, const InfraxBuffer* buf);
+    void (*buffer_reset)(struct InfraxCore *self, InfraxBuffer* buf);
+
+    // Ring buffer operations
+    InfraxError (*ring_buffer_init)(struct InfraxCore *self, InfraxRingBuffer* rb, size_t size);
+    void (*ring_buffer_destroy)(struct InfraxCore *self, InfraxRingBuffer* rb);
+    InfraxError (*ring_buffer_write)(struct InfraxCore *self, InfraxRingBuffer* rb, const void* data, size_t size);
+    InfraxError (*ring_buffer_read)(struct InfraxCore *self, InfraxRingBuffer* rb, void* data, size_t size);
+    size_t (*ring_buffer_readable)(struct InfraxCore *self, const InfraxRingBuffer* rb);
+    size_t (*ring_buffer_writable)(struct InfraxCore *self, const InfraxRingBuffer* rb);
+    void (*ring_buffer_reset)(struct InfraxCore *self, InfraxRingBuffer* rb);
+
+    // File operations
+    InfraxError (*file_open)(struct InfraxCore *self, const char* path, InfraxFlags flags, int mode, InfraxHandle* handle);
+    InfraxError (*file_close)(struct InfraxCore *self, InfraxHandle handle);
+    InfraxError (*file_read)(struct InfraxCore *self, InfraxHandle handle, void* buffer, size_t size, size_t* bytes_read);
+    InfraxError (*file_write)(struct InfraxCore *self, InfraxHandle handle, const void* buffer, size_t size, size_t* bytes_written);
+    InfraxError (*file_seek)(struct InfraxCore *self, InfraxHandle handle, int64_t offset, int whence);
+    InfraxError (*file_size)(struct InfraxCore *self, InfraxHandle handle, size_t* size);
+    InfraxError (*file_remove)(struct InfraxCore *self, const char* path);
+    InfraxError (*file_rename)(struct InfraxCore *self, const char* old_path, const char* new_path);
+    InfraxError (*file_exists)(struct InfraxCore *self, const char* path, bool* exists);
 };
 
 extern InfraxCore g_infrax_core;  // global infrax core for tricks

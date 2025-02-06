@@ -72,6 +72,7 @@ build_tests() {
 
     # Compile and link tests
     echo "Building and running tests..."
+    local tests=()
     for src in "${TEST_SOURCES[@]}"; do
         local test_name="$(basename "${src}" .c)"
         local test_bin="${test_dir}/${test_name}"
@@ -80,10 +81,20 @@ build_tests() {
         "${CC}" ${CFLAGS} "${src}" -L"${build_dir}" -larch -o "${test_bin}"
         
         if [ -x "${test_bin}" ]; then
-            echo "Running test: ${test_name}"
-            "${test_bin}"
+            tests+=("${test_name}")
         else
             echo "Error: Failed to build test ${test_name}"
+            exit 1
+        fi
+    done
+
+    # Run tests
+    for test in "${tests[@]}"; do
+        echo "Running test: ${test}"
+        test_bin="${BUILD_DIR}/arch/tests/${test}"
+        "${test_bin}"
+        if [ $? -ne 0 ]; then
+            echo "Test ${test} failed. Stopping all tests."
             exit 1
         fi
     done

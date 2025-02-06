@@ -123,11 +123,227 @@ static void test_string_operations(void) {
     printf("String operations tests passed!\n");
 }
 
+static void test_time_operations(void) {
+    InfraxCore* core = get_global_infrax_core();
+    
+    // Test time_now_ms
+    InfraxTime t1 = core->time_now_ms(core);
+    core->sleep_ms(core, 10);  // Sleep for 10ms
+    InfraxTime t2 = core->time_now_ms(core);
+    assert(t2 > t1);  // Time should increase
+    
+    // Test time_monotonic_ms
+    InfraxTime m1 = core->time_monotonic_ms(core);
+    core->sleep_ms(core, 10);  // Sleep for 10ms
+    InfraxTime m2 = core->time_monotonic_ms(core);
+    assert(m2 > m1);  // Monotonic time should increase
+    
+    // Test sleep_ms precision
+    InfraxTime start = core->time_monotonic_ms(core);
+    core->sleep_ms(core, 100);  // Sleep for 100ms
+    InfraxTime end = core->time_monotonic_ms(core);
+    InfraxTime elapsed = end - start;
+    // Allow for some scheduling variance, but should be roughly 100ms
+    assert(elapsed >= 90 && elapsed <= 110);
+    
+    printf("Time operations tests passed!\n");
+}
+
+static void test_random_operations(void) {
+    InfraxCore* core = get_global_infrax_core();
+    
+    // Test random seed and generation
+    core->random_seed(core, 12345);  // Set a fixed seed
+    InfraxU32 r1 = core->random(core);
+    InfraxU32 r2 = core->random(core);
+    assert(r1 != r2);  // Two consecutive numbers should be different
+    
+    // Test reproducibility
+    core->random_seed(core, 12345);  // Reset to same seed
+    InfraxU32 r3 = core->random(core);
+    assert(r1 == r3);  // First number should be same as before
+    
+    printf("Random operations tests passed!\n");
+}
+
+static void test_buffer_operations(void) {
+    InfraxCore* core = get_global_infrax_core();
+    InfraxBuffer buf;
+    
+    // Test buffer initialization
+    InfraxError err = core->buffer_init(core, &buf, 16);
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(buf.capacity == 16);
+    assert(buf.size == 0);
+    
+    // Test buffer write
+    const char* test_data = "Hello, World!";
+    err = core->buffer_write(core, &buf, test_data, strlen(test_data));
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(buf.size == strlen(test_data));
+    
+    // Test buffer read
+    char read_data[16];
+    err = core->buffer_read(core, &buf, read_data, strlen(test_data));
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(memcmp(read_data, test_data, strlen(test_data)) == 0);
+    assert(buf.size == 0);
+    
+    // Test buffer reset
+    err = core->buffer_write(core, &buf, test_data, strlen(test_data));
+    assert(INFRAX_ERROR_IS_OK(err));
+    core->buffer_reset(core, &buf);
+    assert(buf.size == 0);
+    
+    // Cleanup
+    core->buffer_destroy(core, &buf);
+    
+    printf("Buffer operations tests passed!\n");
+}
+
+static void test_ring_buffer_operations(void) {
+    InfraxCore* core = get_global_infrax_core();
+    InfraxRingBuffer rb;
+    
+    // Test ring buffer initialization
+    InfraxError err = core->ring_buffer_init(core, &rb, 16);
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(rb.size == 16);
+    assert(!rb.full);
+    
+    // Test ring buffer write
+    const char* test_data = "Hello";
+    err = core->ring_buffer_write(core, &rb, test_data, strlen(test_data));
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(core->ring_buffer_readable(core, &rb) == strlen(test_data));
+    
+    // Test ring buffer read
+    char read_data[16];
+    err = core->ring_buffer_read(core, &rb, read_data, strlen(test_data));
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(memcmp(read_data, test_data, strlen(test_data)) == 0);
+    assert(core->ring_buffer_readable(core, &rb) == 0);
+    
+    // Test ring buffer wrap-around
+    const char* test_data2 = "World";
+    err = core->ring_buffer_write(core, &rb, test_data2, strlen(test_data2));
+    assert(INFRAX_ERROR_IS_OK(err));
+    err = core->ring_buffer_read(core, &rb, read_data, strlen(test_data2));
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(memcmp(read_data, test_data2, strlen(test_data2)) == 0);
+    
+    // Test ring buffer reset
+    core->ring_buffer_reset(core, &rb);
+    assert(core->ring_buffer_readable(core, &rb) == 0);
+    assert(!rb.full);
+    
+    // Cleanup
+    core->ring_buffer_destroy(core, &rb);
+    
+    printf("Ring buffer operations tests passed!\n");
+}
+
+static void test_file_operations(void) {
+    InfraxCore* core = get_global_infrax_core();
+    InfraxHandle file;
+    const char* test_path = "./test.txt";
+    const char* test_data = "Hello, File I/O!";
+    const char* new_path = "./test_renamed.txt";
+    
+    // Test file creation and write
+    InfraxError err = core->file_open(core, test_path, INFRAX_FILE_CREATE | INFRAX_FILE_WRONLY | INFRAX_FILE_TRUNC, 0644, &file);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to open file: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    
+    size_t written;
+    err = core->file_write(core, file, test_data, strlen(test_data), &written);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to write file: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(written == strlen(test_data));
+    
+    err = core->file_close(core, file);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to close file: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    
+    // Test file read
+    err = core->file_open(core, test_path, INFRAX_FILE_RDONLY, 0, &file);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to open file for reading: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    
+    char read_data[64] = {0};
+    size_t bytes_read;
+    err = core->file_read(core, file, read_data, sizeof(read_data), &bytes_read);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to read file: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(bytes_read == strlen(test_data));
+    assert(memcmp(read_data, test_data, strlen(test_data)) == 0);
+    
+    err = core->file_close(core, file);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to close file: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    
+    // Test file rename
+    err = core->file_rename(core, test_path, new_path);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to rename file: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    
+    // Test file exists
+    bool exists;
+    err = core->file_exists(core, new_path, &exists);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to check file existence: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(exists);
+    
+    err = core->file_exists(core, test_path, &exists);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to check file existence: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(!exists);
+    
+    // Test file removal
+    err = core->file_remove(core, new_path);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to remove file: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    
+    err = core->file_exists(core, new_path, &exists);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        printf("Failed to check file existence: %s\n", err.message);
+    }
+    assert(INFRAX_ERROR_IS_OK(err));
+    assert(!exists);
+    
+    printf("File operations tests passed!\n");
+}
+
 int main(void) {
     printf("Starting architecture tests...\n");
     
     test_infrax_core();
     test_string_operations();
+    test_time_operations();
+    test_random_operations();
+    test_buffer_operations();
+    test_ring_buffer_operations();
+    test_file_operations();
     test_ppx_infra();
     
     printf("All tests passed!\n");
