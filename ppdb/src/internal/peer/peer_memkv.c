@@ -32,6 +32,7 @@ infra_error_t memkv_apply_config(const poly_service_config_t* config);
 static void handle_connection(poly_poll_handler_args_t* args);
 static void handle_connection_wrapper(void* args);
 static void handle_request_wrapper(void* args);
+static infra_error_t kv_delete(poly_db_t* db, const char* key);
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -161,37 +162,58 @@ static infra_error_t db_init(poly_db_t** db) {
     return err;
 }
 
-static infra_error_t kv_get(poly_db_t* db, const char* key, void** value, 
+static infra_error_t kv_get(poly_db_t* db, const char* key, void** value,
                            size_t* value_len, uint32_t* flags) {
     const char* sql = 
-        "SELECT value, flags FROM kv_store WHERE key = ? "
-        "AND (expiry = 0 OR expiry > strftime('%s', 'now'))";
+        "SELECT value, flags, expiry FROM kv_store WHERE key = ?";
     
     poly_db_stmt_t* stmt = NULL;
     infra_error_t err = poly_db_prepare(db, sql, &stmt);
     if (err != INFRA_OK) return err;
-
+    
     err = poly_db_bind_text(stmt, 1, key, strlen(key));
     if (err != INFRA_OK) {
         poly_db_stmt_finalize(stmt);
         return err;
     }
-
+    
     err = poly_db_stmt_step(stmt);
-    if (err != INFRA_OK) {
-        poly_db_stmt_finalize(stmt);
-        return err;
-    }
-
-    err = poly_db_column_blob(stmt, 0, value, value_len);
-    if (err == INFRA_OK && flags) {
+    if (err == INFRA_OK) {
+        // 检查是否找到记录
+        if (err != INFRA_OK) {
+            poly_db_stmt_finalize(stmt);
+            return INFRA_ERROR_NOT_FOUND;
+        }
+        
+        // 检查过期时间
+        char* expiry_str = NULL;
+        err = poly_db_column_text(stmt, 2, &expiry_str);
+        if (err == INFRA_OK && expiry_str) {
+            time_t expiry = strtol(expiry_str, NULL, 10);
+            free(expiry_str);
+            if (expiry > 0 && expiry <= time(NULL)) {
+                // 已过期，删除并返回未找到
+                kv_delete(db, key);
+                poly_db_stmt_finalize(stmt);
+                return INFRA_ERROR_NOT_FOUND;
+            }
+        }
+        
+        // 获取值和标志
+        err = poly_db_column_blob(stmt, 0, value, value_len);
+        if (err != INFRA_OK) {
+            poly_db_stmt_finalize(stmt);
+            return err;
+        }
+        
         char* flags_str = NULL;
-        if (poly_db_column_text(stmt, 1, &flags_str) == INFRA_OK && flags_str) {
-            *flags = (uint32_t)strtoul(flags_str, NULL, 10);
+        err = poly_db_column_text(stmt, 1, &flags_str);
+        if (err == INFRA_OK && flags_str) {
+            *flags = strtoul(flags_str, NULL, 10);
             free(flags_str);
         }
     }
-
+    
     poly_db_stmt_finalize(stmt);
     return err;
 }
@@ -297,45 +319,38 @@ static void handle_get(memkv_conn_t* conn, const char* key) {
     printf("DEBUG: GET result: err=%d, value=%p, value_len=%zu\n", err, value, value_len);
     
     if (err == INFRA_OK && value) {
+        // 准备完整响应
+        char* response = NULL;
+        size_t total_len = 0;
+        
+        // 计算所需总长度
         char header[128];
         int header_len = snprintf(header, sizeof(header), 
                                 "VALUE %s %u %zu\r\n", key, flags, value_len);
         
-        printf("DEBUG: Sending GET response header: [%.*s]\n", header_len-2, header);
+        total_len = header_len + value_len + 2 + 5; // header + value + \r\n + END\r\n
+        response = malloc(total_len);
         
-        // Send header
-        err = send_all(conn->sock, header, header_len);
-        if (err != INFRA_OK) {
-            printf("DEBUG: Failed to send header: err=%d\n", err);
+        if (!response) {
+            INFRA_LOG_ERROR("Failed to allocate response buffer");
             free(value);
             return;
         }
-        printf("DEBUG: Header sent successfully\n");
         
-        // Send value
-        err = send_all(conn->sock, value, value_len);
+        // 组装完整响应
+        memcpy(response, header, header_len);
+        memcpy(response + header_len, value, value_len);
+        memcpy(response + header_len + value_len, "\r\n", 2);
+        memcpy(response + header_len + value_len + 2, "END\r\n", 5);
+        
+        // 一次性发送
+        err = send_all(conn->sock, response, total_len);
         if (err != INFRA_OK) {
-            printf("DEBUG: Failed to send value: err=%d\n", err);
-            free(value);
-            return;
-        }
-        printf("DEBUG: Value sent successfully\n");
-        
-        // Send CRLF and END
-        err = send_all(conn->sock, "\r\n", 2);
-        if (err == INFRA_OK) {
-            printf("DEBUG: CRLF sent successfully\n");
-            err = send_all(conn->sock, "END\r\n", 5);
-            if (err == INFRA_OK) {
-                printf("DEBUG: END sent successfully\n");
-            }
-        }
-        
-        if (err != INFRA_OK) {
-            printf("DEBUG: Failed to complete GET response: err=%d\n", err);
+            INFRA_LOG_ERROR("Failed to send response: err=%d", err);
             conn->should_close = true;
         }
         
+        free(response);
         free(value);
     } else {
         printf("DEBUG: Key not found or error: %d\n", err);

@@ -11,7 +11,7 @@ PPDB采用分层架构设计，自下而上分为三层:
 客户端：${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_sqlite3_service.py
 
 测试 memkv
-服务端：sh ppdb/scripts/build_ppdb.sh && ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=3
+服务端：sh ppdb/scripts/build_ppdb.sh && ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5
 客户端：${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_memkv_protocol.py
 )
 

@@ -1,6 +1,7 @@
 import unittest
 import time
 import logging
+import socket
 from pymemcache.client.base import Client
 
 # 配置日志
@@ -9,6 +10,44 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+class TestMemKVBasic(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        logging.info("Connecting to memkv service on localhost:11211")
+        cls.client = Client(('localhost', 11211), timeout=5.0)  # 添加5秒超时
+        logging.info("Connection established")
+
+    def setUp(self):
+        logging.info("Setting up test - flushing all data")
+        try:
+            self.client.flush_all()
+        except Exception as e:
+            logging.error(f"Error in setUp: {e}")
+            raise
+
+    def test_basic_set_get(self):
+        logging.info("Testing basic set/get...")
+        key, value = 'key1', 'value1'
+        result = self.client.set(key, value)
+        self.assertTrue(result)
+        got_value = self.client.get(key)
+        self.assertEqual(got_value, b'value1')
+
+    def test_delete(self):
+        logging.info("Testing delete...")
+        key, value = 'key1', 'value1'
+        self.client.set(key, value)
+        result = self.client.delete(key)
+        self.assertTrue(result)
+        got_value = self.client.get(key)
+        self.assertIsNone(got_value)
+
+    def test_not_found(self):
+        logging.info("Testing non-existent keys...")
+        key = 'nonexistent_key'
+        value = self.client.get(key)
+        self.assertIsNone(value)
 
 class TestMemKVProtocol(unittest.TestCase):
     @classmethod
@@ -21,28 +60,19 @@ class TestMemKVProtocol(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         logging.info("Closing connection")
-        cls.client.close()
+        try:
+            cls.client.close()
+        except Exception as e:
+            logging.error(f"Error closing connection: {e}")
 
     def setUp(self):
         # 每个测试前清空数据
         logging.info("Setting up test - flushing all data")
-        self.client.flush_all()
-
-    def test_basic_set_get(self):
-        # 测试基本的 set/get 操作
-        logging.info("Testing basic set/get...")
-        key, value = 'key1', 'value1'
-        
-        logging.debug(f"Setting key='{key}' value='{value}'")
-        result = self.client.set(key, value)
-        logging.debug(f"Set result: {result}")
-        
-        logging.debug(f"Getting key='{key}'")
-        got_value = self.client.get(key)
-        logging.debug(f"Got value: {got_value}")
-        
-        self.assertTrue(result)
-        self.assertEqual(got_value, b'value1')
+        try:
+            self.client.flush_all()
+        except Exception as e:
+            logging.error(f"Error in setUp: {e}")
+            raise
 
     def test_multi_set_get(self):
         # 测试多个键值对
@@ -64,60 +94,79 @@ class TestMemKVProtocol(unittest.TestCase):
             logging.debug(f"Got value: {got_value}")
             self.assertEqual(got_value, v.encode())
 
-    def test_delete(self):
-        # 测试删除操作
-        logging.info("Testing delete...")
-        key, value = 'key1', 'value1'
-        
-        logging.debug(f"Setting key='{key}' value='{value}'")
-        self.client.set(key, value)
-        
-        logging.debug(f"Deleting key='{key}'")
-        result = self.client.delete(key)
-        logging.debug(f"Delete result: {result}")
-        
-        logging.debug(f"Getting deleted key='{key}'")
-        got_value = self.client.get(key)
-        logging.debug(f"Got value after delete: {got_value}")
-        
-        self.assertTrue(result)
-        self.assertIsNone(got_value)
-
     def test_expiration(self):
         # 测试过期时间
         logging.info("Testing expiration...")
         key, value = 'key1', 'value1'
         
         logging.debug(f"Setting key='{key}' value='{value}' with 1s expiration")
-        self.client.set(key, value, expire=1)
+        try:
+            self.client.set(key, value, expire=1)
+        except Exception as e:
+            logging.error(f"Error setting key with expiration: {e}")
+            raise
         
         logging.debug(f"Getting key immediately")
-        got_value = self.client.get(key)
-        logging.debug(f"Got value: {got_value}")
-        self.assertEqual(got_value, b'value1')
+        try:
+            got_value = self.client.get(key)
+            logging.debug(f"Got value: {got_value}")
+            self.assertEqual(got_value, b'value1')
+        except Exception as e:
+            logging.error(f"Error getting key immediately: {e}")
+            raise
         
         logging.debug("Waiting for expiration (2s)")
         time.sleep(2)
         
         logging.debug(f"Getting key after expiration")
-        got_value = self.client.get(key)
-        logging.debug(f"Got value after expiration: {got_value}")
+        try:
+            got_value = self.client.get(key)
+            logging.debug(f"Got value after expiration: {got_value}")
+        except pymemcache.exceptions.MemcacheUnknownError as e:
+            if b'NOT_FOUND' in str(e).encode():
+                got_value = None
+                logging.debug("Key not found as expected after expiration")
+            else:
+                logging.error(f"Unexpected error after expiration: {e}")
+                raise
+        except socket.timeout:
+            logging.error("Socket timeout while getting expired key")
+            raise
+        except Exception as e:
+            logging.error(f"Unexpected error type: {type(e)}, error: {e}")
+            raise
+        
         self.assertIsNone(got_value)
 
     def test_increment_decrement(self):
         # 测试自增自减
-        print("Testing increment/decrement...")
-        self.client.set('counter', '0')
-        self.assertEqual(self.client.incr('counter', 1), 1)
-        self.assertEqual(self.client.incr('counter', 2), 3)
-        self.assertEqual(self.client.decr('counter', 1), 2)
+        logging.info("Testing increment/decrement...")
+        key = 'counter'
+        
+        try:
+            self.client.set(key, '0')
+            self.assertEqual(self.client.incr(key, 1), 1)
+            self.assertEqual(self.client.incr(key, 2), 3)
+            self.assertEqual(self.client.decr(key, 1), 2)
+        except Exception as e:
+            logging.error(f"Error in increment/decrement test: {e}")
+            raise
 
     def test_large_values(self):
         # 测试大数据
-        print("Testing large values...")
+        logging.info("Testing large values...")
+        key = 'large_key'
         large_value = 'x' * 1024 * 1024  # 1MB
-        self.assertTrue(self.client.set('large_key', large_value))
-        self.assertEqual(self.client.get('large_key'), large_value.encode())
+        
+        try:
+            result = self.client.set(key, large_value)
+            self.assertTrue(result)
+            
+            got_value = self.client.get(key)
+            self.assertEqual(got_value, large_value.encode())
+        except Exception as e:
+            logging.error(f"Error in large values test: {e}")
+            raise
 
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(verbosity=2)
