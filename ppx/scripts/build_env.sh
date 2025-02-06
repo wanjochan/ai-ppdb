@@ -5,13 +5,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 echo "ROOT_DIR=${ROOT_DIR}"
 
-PPDB_DIR="${ROOT_DIR}/ppdb"
-BUILD_DIR="${PPDB_DIR}/build"
-BIN_DIR="${PPDB_DIR}/bin"
-SRC_DIR="${PPDB_DIR}/src"
-INCLUDE_DIR="${PPDB_DIR}/include"
-INTERNAL_DIR="${PPDB_DIR}/internal"
-TEST_DIR="${PPDB_DIR}/test"
+PPX_DIR="${ROOT_DIR}/ppx"
+BUILD_DIR="${PPX_DIR}/build"
+BIN_DIR="${PPX_DIR}/bin"
+SRC_DIR="${PPX_DIR}/src"
+INCLUDE_DIR="${PPX_DIR}/include"
+INTERNAL_DIR="${PPX_DIR}/internal"
+TEST_DIR="${PPX_DIR}/test"
 POLY_DIR="${BUILD_DIR}/poly"
 INFRA_DIR="${SRC_DIR}/internal/infra"
 # prebuilt software and mannually extract from curl -L -o cosmopolitan.zip https://justine.lol/cosmopolitan/cosmopolitan.zip
@@ -45,4 +45,4 @@ LDFLAGS="-static -Wl,--gc-sections -Wl,--build-id=none"
 mkdir -p "${BUILD_DIR}" "${BIN_DIR}" "${POLY_DIR}"
 
 # 导出环境变量
-export ROOT_DIR PPDB_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR POLY_DIR INFRA_DIR
+export ROOT_DIR PPX_DIR BUILD_DIR CROSS9 CC AR OBJCOPY COSMOCC COSMOPOLITAN COSMOS CFLAGS LDFLAGS TEST_DIR SRC_DIR POLY_DIR INFRA_DIR

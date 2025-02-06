@@ -23,9 +23,9 @@ build_and_run_test() {
     
     # Build and run main arch test
     "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}" \
+        -I"${PPX_DIR}/include" \
+        -I"${PPX_DIR}/src" \
+        -I"${PPX_DIR}" \
         test_arch.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_arch.exe"
@@ -40,9 +40,9 @@ build_and_run_test() {
 
     # Build and run infra log test
     "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}" \
+        -I"${PPX_DIR}/include" \
+        -I"${PPX_DIR}/src" \
+        -I"${PPX_DIR}" \
         test_infrax_log.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_infrax_log.exe"
@@ -57,9 +57,9 @@ build_and_run_test() {
 
     # Build and run memory management test
     "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}" \
+        -I"${PPX_DIR}/include" \
+        -I"${PPX_DIR}/src" \
+        -I"${PPX_DIR}" \
         test_infrax_memory.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_infrax_memory.exe"
@@ -74,11 +74,10 @@ build_and_run_test() {
 
     # Build and run error handling test
     "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}" \
-        -I"${PPDB_DIR}/test/white" \
-        "${PPDB_DIR}/test/white/framework/test_framework.c" \
+        -I"${PPX_DIR}/include" \
+        -I"${PPX_DIR}/src" \
+        -I"${PPX_DIR}" \
+        -I"${PPX_DIR}/test/white" \
         test_infrax_error.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_infrax_error.exe"
@@ -93,9 +92,9 @@ build_and_run_test() {
 
     # Build and run thread test
     "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}" \
+        -I"${PPX_DIR}/include" \
+        -I"${PPX_DIR}/src" \
+        -I"${PPX_DIR}" \
         test_infrax_thread.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_infrax_thread.exe"
@@ -110,9 +109,9 @@ build_and_run_test() {
 
     # Build and run sync test
     "${CC}" ${CFLAGS} \
-        -I"${PPDB_DIR}/include" \
-        -I"${PPDB_DIR}/src" \
-        -I"${PPDB_DIR}" \
+        -I"${PPX_DIR}/include" \
+        -I"${PPX_DIR}/src" \
+        -I"${PPX_DIR}" \
         test_infrax_sync.c \
         -L"${BUILD_DIR}/arch" -larch \
         -o "${BUILD_DIR}/arch/test_infrax_sync.exe"

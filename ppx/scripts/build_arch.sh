@@ -5,7 +5,7 @@ source "$(dirname "$0")/build_env.sh"
 source "$(dirname "$0")/build_common.sh"
 
 # Set compile flags with all necessary include paths
-CFLAGS="${CFLAGS} -I${PPDB_DIR}/src -I${PPDB_DIR}/include -I${SRC_DIR}"
+CFLAGS="${CFLAGS} -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR}"
 
 # Define source files for new architecture
 ARCH_SOURCES=(
@@ -80,7 +80,7 @@ build_tests() {
         local test_bin="${test_dir}/${test_name}"
         
         echo "Building test: ${test_name}"
-        "${CC}" ${CFLAGS} -I"${PPDB_DIR}/include" -I"${PPDB_DIR}/src" -I"${SRC_DIR}" \
+        "${CC}" ${CFLAGS} -I"${PPX_DIR}/include" -I"${PPX_DIR}/src" -I"${SRC_DIR}" \
             "${src}" -L"${build_dir}" -larch -o "${test_bin}"
         
         if [ -x "${test_bin}" ]; then
