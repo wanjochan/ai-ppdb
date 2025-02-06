@@ -640,8 +640,7 @@ static infra_error_t parse_memkv_config(const char* config_file, poly_config_t* 
     }
 
     // Initialize service config
-    config->service_count = 1;
-    config->services[0].type = POLY_SERVICE_MEMKV;
+    config->service_count = 0;
 
     // Read config file
     char line[1024];
@@ -651,27 +650,116 @@ static infra_error_t parse_memkv_config(const char* config_file, poly_config_t* 
             continue;
         }
 
-        // Parse key-value pairs
-        char key[64] = {0};
-        char value[256] = {0};
-        if (sscanf(line, "%63[^=]=%255s", key, value) == 2) {
-            // Trim whitespace
-            char* p = key + strlen(key) - 1;
-            while (p >= key && isspace(*p)) *p-- = '\0';
-            p = key;
-            while (*p && isspace(*p)) p++;
+        // Remove trailing newline and spaces
+        char* p = line + strlen(line) - 1;
+        while (p >= line && (isspace(*p) || *p == '\n')) {
+            *p-- = '\0';
+        }
 
-            // Set config values
-            if (strcmp(p, "port") == 0) {
-                config->services[0].listen_port = atoi(value);
+        // Skip empty lines after trim
+        if (line[0] == '\0') {
+            continue;
+        }
+
+        // Skip leading spaces and tabs
+        char* start = line;
+        while (*start && isspace(*start)) start++;
+        if (!*start) continue;  // Skip if line is all spaces
+
+        INFRA_LOG_DEBUG("Parsing config line: [%s]", start);
+
+        // Parse space-separated values
+        char host[64];
+        int port;
+        char type[32];
+        char backend[256];
+        char* saveptr = NULL;
+
+        // Parse host
+        char* token = strtok_r(start, " \t", &saveptr);
+        if (!token) {
+            INFRA_LOG_ERROR("Missing host in config line: [%s]", line);
+            continue;
+        }
+        strncpy(host, token, sizeof(host)-1);
+        host[sizeof(host)-1] = '\0';
+
+        // Parse port
+        token = strtok_r(NULL, " \t", &saveptr);
+        if (!token) {
+            INFRA_LOG_ERROR("Missing port in config line: [%s]", line);
+            continue;
+        }
+        port = atoi(token);
+        if (port <= 0 || port > 65535) {
+            INFRA_LOG_ERROR("Invalid port number: %d", port);
+            continue;
+        }
+
+        // Parse type
+        token = strtok_r(NULL, " \t", &saveptr);
+        if (!token) {
+            INFRA_LOG_ERROR("Missing service type in config line: [%s]", line);
+            continue;
+        }
+        strncpy(type, token, sizeof(type)-1);
+        type[sizeof(type)-1] = '\0';
+
+        // Parse backend (rest of the line)
+        token = strtok_r(NULL, "", &saveptr);  // Get rest of line
+        if (!token) {
+            INFRA_LOG_ERROR("Missing backend in config line: [%s]", line);
+            continue;
+        }
+        // Skip leading spaces in backend
+        while (*token && isspace(*token)) token++;
+        if (!*token) {
+            INFRA_LOG_ERROR("Empty backend in config line: [%s]", line);
+            continue;
+        }
+        strncpy(backend, token, sizeof(backend)-1);
+        backend[sizeof(backend)-1] = '\0';
+
+        // Remove trailing spaces from backend
+        p = backend + strlen(backend) - 1;
+        while (p >= backend && isspace(*p)) {
+            *p-- = '\0';
+        }
+
+        INFRA_LOG_DEBUG("Parsed values - host:[%s] port:[%d] type:[%s] backend:[%s]",
+            host, port, type, backend);
+
+        // Validate service type
+        if (strcmp(type, "memkv") == 0) {
+            if (config->service_count >= POLY_CMD_MAX_SERVICES) {
+                INFRA_LOG_ERROR("Too many services defined");
+                fclose(fp);
+                return INFRA_ERROR_NO_MEMORY;
             }
-            else if (strcmp(p, "engine") == 0) {
-                strncpy(config->services[0].backend, value, sizeof(config->services[0].backend) - 1);
-            }
+
+            // Add memkv service config
+            poly_service_config_t* svc = &config->services[config->service_count];
+            svc->type = POLY_SERVICE_MEMKV;
+            strncpy(svc->listen_host, host, POLY_CMD_MAX_NAME - 1);
+            svc->listen_host[POLY_CMD_MAX_NAME - 1] = '\0';
+            svc->listen_port = port;
+            strncpy(svc->backend, backend, POLY_CMD_MAX_VALUE - 1);
+            svc->backend[POLY_CMD_MAX_VALUE - 1] = '\0';
+            
+            INFRA_LOG_INFO("Added memkv service: %s:%d, backend: %s",
+                svc->listen_host, svc->listen_port, svc->backend);
+                
+            config->service_count++;
         }
     }
 
     fclose(fp);
+    
+    if (config->service_count == 0) {
+        INFRA_LOG_ERROR("No valid memkv service configuration found");
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
     return INFRA_OK;
 }
 
@@ -685,6 +773,13 @@ static infra_error_t handle_memkv_cmd(const poly_config_t* config, int argc, cha
     if (!service) {
         fprintf(stderr, "Failed to get memkv service\n");
         return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // Initialize service first
+    infra_error_t err = service->init();
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to initialize service: %d\n", err);
+        return err;
     }
 
     // Parse command line options
@@ -738,7 +833,7 @@ static infra_error_t handle_memkv_cmd(const poly_config_t* config, int argc, cha
     }
 
     // Apply configuration
-    infra_error_t err = service->apply_config(&service_config.services[0]);
+    err = service->apply_config(&service_config.services[0]);
     if (err != INFRA_OK) {
         fprintf(stderr, "Failed to apply configuration: %d\n", err);
         return err;
@@ -766,6 +861,60 @@ static infra_error_t handle_memkv_cmd(const poly_config_t* config, int argc, cha
     }
 
     printf("%s", response);
+    return INFRA_OK;
+}
+
+static infra_error_t handle_memkv_command(const poly_config_t* config) {
+    if (!config) return INFRA_ERROR_INVALID_PARAM;
+    
+    // Get service configuration
+    if (config->service_count == 0) {
+        INFRA_LOG_ERROR("No service configuration found");
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+    
+    // Find memkv service configuration
+    const poly_service_config_t* service_config = NULL;
+    for (int i = 0; i < config->service_count; i++) {
+        if (config->services[i].type == POLY_SERVICE_MEMKV) {
+            service_config = &config->services[i];
+            break;
+        }
+    }
+    
+    if (!service_config) {
+        INFRA_LOG_ERROR("No memkv service configuration found");
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+    
+    // Get memkv service
+    peer_service_t* service = peer_memkv_get_service();
+    if (!service) {
+        INFRA_LOG_ERROR("Failed to get memkv service");
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    // Apply configuration
+    infra_error_t err = service->apply_config(service_config);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to apply configuration: %d", err);
+        return err;
+    }
+    
+    // Start service
+    if (poly_cmdline_has_option(config, "--start")) {
+        err = service->start();
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to start service: %d", err);
+            return err;
+        }
+        
+        // Keep running
+        while (1) {
+            infra_sleep(1000);
+        }
+    }
+    
     return INFRA_OK;
 }
 

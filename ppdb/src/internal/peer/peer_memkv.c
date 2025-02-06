@@ -59,20 +59,30 @@ static const size_t memkv_option_count = sizeof(memkv_options) / sizeof(memkv_op
 //-----------------------------------------------------------------------------
 
 typedef struct {
-    infra_socket_t sock;
-    poly_db_t* store;
-    char* rx_buf;
-    size_t rx_len;
-    bool should_close;
+    infra_socket_t sock;              // Client socket
+    poly_db_t* store;                 // Database connection
+    char* rx_buf;                     // Receive buffer
+    size_t rx_len;                    // Current buffer length
+    bool should_close;                // Connection close flag
+    volatile bool is_closing;         // Connection is being destroyed
+    volatile bool is_initialized;     // Connection is fully initialized
+    uint64_t created_time;           // Connection creation timestamp
+    uint64_t last_active_time;       // Last activity timestamp
+    size_t total_commands;           // Total commands processed
+    size_t failed_commands;          // Failed commands count
+    char client_addr[64];            // Client address string
 } memkv_conn_t;
 
 typedef struct {
-    int port;
-    char* engine;
-    char* plugin;
-    bool running;
-    poly_poll_context_t* ctx;
-} memkv_config_t;
+    char db_path[256];               // Database path
+    char host[64];                   // Host to bind to
+    int port;                        // Port to bind to
+    char engine[32];                 // Storage engine
+    char plugin[256];                // Plugin path
+    volatile bool running;           // Service running flag
+    infra_mutex_t mutex;             // Service mutex
+    poly_poll_context_t* ctx;        // Poll context
+} memkv_state_t;
 
 //-----------------------------------------------------------------------------
 // Global Variables
@@ -93,14 +103,10 @@ peer_service_t g_memkv_service = {
     .apply_config = memkv_apply_config
 };
 
-// Global state
-static struct {
-    bool running;
-    int port;
-    char* engine;
-    char* plugin;
-    poly_poll_context_t* ctx;
-} g_memkv_state = {0};
+// 获取服务状态的辅助函数
+static inline memkv_state_t* get_state(void) {
+    return (memkv_state_t*)g_memkv_service.config.user_data;
+}
 
 //-----------------------------------------------------------------------------
 // Helper Functions
@@ -109,13 +115,19 @@ static struct {
 static infra_error_t db_init(poly_db_t** db) {
     if (!db) return INFRA_ERROR_INVALID_PARAM;
     
+    memkv_state_t* state = get_state();
+    if (!state) {
+        INFRA_LOG_ERROR("Service state not initialized");
+        return INFRA_ERROR_INVALID_STATE;
+    }
+    
     poly_db_config_t config = {
-        .type = strcmp(g_memkv_state.engine, "duckdb") == 0 ? 
+        .type = state->engine && strcmp(state->engine, "duckdb") == 0 ? 
                 POLY_DB_TYPE_DUCKDB : POLY_DB_TYPE_SQLITE,
-        .url = g_memkv_state.plugin ? g_memkv_state.plugin : ":memory:",
+        .url = state->plugin ? state->plugin : ":memory:",
         .max_memory = 0,
         .read_only = false,
-        .plugin_path = g_memkv_state.plugin,
+        .plugin_path = state->plugin,
         .allow_fallback = true
     };
 
@@ -763,17 +775,42 @@ static void handle_connection_wrapper(void* args) {
 //-----------------------------------------------------------------------------
 
 infra_error_t memkv_init(void) {
+    INFRA_LOG_INFO("Initializing MemKV service...");
+    
     if (g_memkv_service.state != PEER_SERVICE_STATE_INIT &&
         g_memkv_service.state != PEER_SERVICE_STATE_STOPPED) {
+        INFRA_LOG_ERROR("Invalid service state: %d", g_memkv_service.state);
         return INFRA_ERROR_INVALID_STATE;
     }
     
-    g_memkv_state.port = MEMKV_DEFAULT_PORT;
-    g_memkv_state.engine = strdup("sqlite");
-    g_memkv_state.running = false;
-    g_memkv_state.ctx = NULL;
-
+    // 分配并初始化状态结构
+    memkv_state_t* state = (memkv_state_t*)infra_malloc(sizeof(memkv_state_t));
+    if (!state) {
+        INFRA_LOG_ERROR("Failed to allocate service state");
+        return INFRA_ERROR_NO_MEMORY;
+    }
+    
+    // 初始化状态
+    memset(state, 0, sizeof(memkv_state_t));
+    state->port = MEMKV_DEFAULT_PORT;
+    strncpy(state->host, "127.0.0.1", sizeof(state->host) - 1);
+    strncpy(state->engine, "sqlite", sizeof(state->engine) - 1);
+    state->running = false;
+    state->ctx = NULL;
+    
+    // 初始化互斥锁
+    infra_error_t err = infra_mutex_create(&state->mutex);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to initialize mutex");
+        infra_free(state);
+        return err;
+    }
+    
+    // 保存状态
+    g_memkv_service.config.user_data = state;
     g_memkv_service.state = PEER_SERVICE_STATE_READY;
+    
+    INFRA_LOG_INFO("MemKV service initialized successfully");
     return INFRA_OK;
 }
 
@@ -782,20 +819,27 @@ infra_error_t memkv_cleanup(void) {
         return INFRA_ERROR_INVALID_STATE;
     }
 
-    if (g_memkv_state.running) {
+    memkv_state_t* state = get_state();
+    if (!state) {
+        return INFRA_OK;  // 已经清理
+    }
+
+    if (state->running) {
         memkv_stop();
     }
 
-    if (g_memkv_state.engine) {
-        free(g_memkv_state.engine);
-        g_memkv_state.engine = NULL;
-    }
-    if (g_memkv_state.plugin) {
-        free(g_memkv_state.plugin);
-        g_memkv_state.plugin = NULL;
-    }
+    // 清理资源 - 使用 memset 清空数组
+    memset(state->engine, 0, sizeof(state->engine));
+    memset(state->plugin, 0, sizeof(state->plugin));
 
+    // 销毁互斥锁
+    infra_mutex_destroy(&state->mutex);
+
+    // 释放状态结构
+    infra_free(state);
+    g_memkv_service.config.user_data = NULL;
     g_memkv_service.state = PEER_SERVICE_STATE_INIT;
+    
     return INFRA_OK;
 }
 
@@ -804,61 +848,88 @@ infra_error_t memkv_start(void) {
     
     if (g_memkv_service.state == PEER_SERVICE_STATE_INIT) {
         err = memkv_init();
-        if (err != INFRA_OK) return err;
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to initialize service: %d", err);
+            return err;
+        }
     }
 
     if (g_memkv_service.state != PEER_SERVICE_STATE_READY &&
         g_memkv_service.state != PEER_SERVICE_STATE_STOPPED) {
+        INFRA_LOG_ERROR("Invalid service state: %d", g_memkv_service.state);
         return INFRA_ERROR_INVALID_STATE;
     }
 
-    if (g_memkv_state.running) {
+    memkv_state_t* state = get_state();
+    if (!state) {
+        INFRA_LOG_ERROR("Service state not initialized");
+        return INFRA_ERROR_INVALID_STATE;
+    }
+
+    if (state->running) {
+        INFRA_LOG_ERROR("Service is already running");
         return INFRA_ERROR_ALREADY_EXISTS;
     }
 
     // Create poll context
-    g_memkv_state.ctx = (poly_poll_context_t*)infra_malloc(sizeof(poly_poll_context_t));
-    if (!g_memkv_state.ctx) {
+    state->ctx = (poly_poll_context_t*)infra_malloc(sizeof(poly_poll_context_t));
+    if (!state->ctx) {
+        INFRA_LOG_ERROR("Failed to allocate poll context");
         return INFRA_ERROR_NO_MEMORY;
     }
-    memset(g_memkv_state.ctx, 0, sizeof(poly_poll_context_t));
+    memset(state->ctx, 0, sizeof(poly_poll_context_t));
 
     // Initialize poll context
     poly_poll_config_t config = {
-        .min_threads = 1,
-        .max_threads = 4,
+        .min_threads = 2,
+        .max_threads = MEMKV_MAX_THREADS,
         .queue_size = 1000,
-        .max_listeners = 1
+        .max_listeners = 1,
+        .read_buffer_size = MEMKV_BUFFER_SIZE
     };
 
-    err = poly_poll_init(g_memkv_state.ctx, &config);
+    err = poly_poll_init(state->ctx, &config);
     if (err != INFRA_OK) {
-        infra_free(g_memkv_state.ctx);
-        g_memkv_state.ctx = NULL;
+        INFRA_LOG_ERROR("Failed to initialize poll context: %d", err);
+        infra_free(state->ctx);
+        state->ctx = NULL;
         return err;
     }
 
     // Set request handler
-    poly_poll_set_handler(g_memkv_state.ctx, handle_request);
+    poly_poll_set_handler(state->ctx, handle_request_wrapper);
 
     // Add listener
-    poly_poll_listener_t listener = {
-        .bind_port = g_memkv_state.port,
-        .bind_addr = "0.0.0.0"
-    };
+    poly_poll_listener_t listener = {0};
+    listener.bind_port = state->port;
+    strncpy(listener.bind_addr, state->host[0] ? state->host : "0.0.0.0", sizeof(listener.bind_addr) - 1);
+    listener.bind_addr[sizeof(listener.bind_addr) - 1] = '\0';
 
-    err = poly_poll_add_listener(g_memkv_state.ctx, &listener);
+    err = poly_poll_add_listener(state->ctx, &listener);
     if (err != INFRA_OK) {
-        poly_poll_cleanup(g_memkv_state.ctx);
-        infra_free(g_memkv_state.ctx);
-        g_memkv_state.ctx = NULL;
+        INFRA_LOG_ERROR("Failed to add listener: %d", err);
+        poly_poll_cleanup(state->ctx);
+        infra_free(state->ctx);
+        state->ctx = NULL;
         return err;
     }
 
-    g_memkv_state.running = true;
+    // Start polling
+    err = poly_poll_start(state->ctx);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to start polling: %d", err);
+        poly_poll_cleanup(state->ctx);
+        infra_free(state->ctx);
+        state->ctx = NULL;
+        return err;
+    }
+
+    state->running = true;
     g_memkv_service.state = PEER_SERVICE_STATE_RUNNING;
     
-    return poly_poll_start(g_memkv_state.ctx);
+    INFRA_LOG_INFO("MemKV service started successfully on %s:%d", 
+                   listener.bind_addr, listener.bind_port);
+    return INFRA_OK;
 }
 
 infra_error_t memkv_stop(void) {
@@ -866,17 +937,22 @@ infra_error_t memkv_stop(void) {
         return INFRA_ERROR_INVALID_STATE;
     }
 
-    if (!g_memkv_state.running) {
+    memkv_state_t* state = get_state();
+    if (!state) {
+        return INFRA_ERROR_INVALID_STATE;
+    }
+
+    if (!state->running) {
         return INFRA_OK;
     }
 
-    g_memkv_state.running = false;
+    state->running = false;
 
-    if (g_memkv_state.ctx) {
-        poly_poll_stop(g_memkv_state.ctx);
-        poly_poll_cleanup(g_memkv_state.ctx);
-        infra_free(g_memkv_state.ctx);
-        g_memkv_state.ctx = NULL;
+    if (state->ctx) {
+        poly_poll_stop(state->ctx);
+        poly_poll_cleanup(state->ctx);
+        infra_free(state->ctx);
+        state->ctx = NULL;
     }
 
     g_memkv_service.state = PEER_SERVICE_STATE_STOPPED;
@@ -905,6 +981,8 @@ infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
         return INFRA_ERROR_INVALID_PARAM;
     }
 
+    memkv_state_t* state = get_state();
+
     if (strcmp(argv[0], "status") == 0) {
         const char* state_str = "unknown";
         switch (g_memkv_service.state) {
@@ -919,9 +997,9 @@ infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
                 "Engine: %s\n"
                 "Plugin: %s\n",
                 state_str,
-                g_memkv_state.port,
-                g_memkv_state.engine ? g_memkv_state.engine : "none",
-                g_memkv_state.plugin ? g_memkv_state.plugin : "none");
+                state ? state->port : MEMKV_DEFAULT_PORT,
+                state && state->engine ? state->engine : "none",
+                state && state->plugin ? state->plugin : "none");
         return INFRA_OK;
     }
     else if (strcmp(argv[0], "start") == 0) {
@@ -942,19 +1020,37 @@ infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
 }
 
 infra_error_t memkv_apply_config(const poly_service_config_t* config) {
-    if (!config) return INFRA_ERROR_INVALID_PARAM;
-
-    g_memkv_state.port = config->listen_port > 0 ? 
-                         config->listen_port : MEMKV_DEFAULT_PORT;
+    INFRA_LOG_INFO("Applying configuration...");
     
-    if (config->backend && config->backend[0]) {
-        if (g_memkv_state.engine) free(g_memkv_state.engine);
-        g_memkv_state.engine = strdup(config->backend);
+    if (!config) {
+        INFRA_LOG_ERROR("Invalid configuration");
+        return INFRA_ERROR_INVALID_PARAM;
     }
 
-    INFRA_LOG_INFO("Applied configuration - port: %d, engine: %s",
-        g_memkv_state.port,
-        g_memkv_state.engine ? g_memkv_state.engine : "default");
+    memkv_state_t* state = get_state();
+    if (!state) {
+        INFRA_LOG_ERROR("Service state not initialized");
+        return INFRA_ERROR_INVALID_STATE;
+    }
+
+    if (g_memkv_service.state != PEER_SERVICE_STATE_READY) {
+        INFRA_LOG_ERROR("Service in invalid state: %d", g_memkv_service.state);
+        return INFRA_ERROR_INVALID_STATE;
+    }
+
+    // 从配置中获取服务配置
+    strncpy(state->host, config->listen_host, sizeof(state->host) - 1);
+    state->host[sizeof(state->host) - 1] = '\0';
+    state->port = config->listen_port > 0 ? config->listen_port : MEMKV_DEFAULT_PORT;
+    
+    // 如果提供了后端配置,使用它作为存储引擎
+    if (config->backend && config->backend[0]) {
+        strncpy(state->engine, config->backend, sizeof(state->engine) - 1);
+        state->engine[sizeof(state->engine) - 1] = '\0';
+    }
+
+    INFRA_LOG_INFO("Applied configuration - host: %s, port: %d, engine: %s",
+        state->host, state->port, state->engine);
 
     return INFRA_OK;
 }

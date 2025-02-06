@@ -4,7 +4,16 @@
 
 PPDB采用分层架构设计，自下而上分为三层:
 (注意，ppdb 已经基本完成 PoC，
-目前正在重构 PPX（INFRAX, POLYX, PEERX））)
+目前正在重构 PPX（INFRAX, POLYX, PEERX））
+
+测试 sqlite3 
+服务端：sh ppdb/scripts/build_ppdb.sh && ./ppdb/ppdb_latest.exe sqlite3 --start --config=ppdb/sqlite3.conf --log-level=5
+客户端：${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_sqlite3_service.py
+
+测试 memkv
+服务端：sh ppdb/scripts/build_ppdb.sh && ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=3
+客户端：${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_memkv_protocol.py
+)
 
 ### 1. Infra层 (基础设施层)
 - 基于cosmopolitan提供跨平台支持
