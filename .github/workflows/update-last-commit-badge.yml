@@ -1,0 +1,43 @@
+name: Update Last Commit Badge
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 * * * *'  # Run every hour
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  update-badge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Get last commit info
+        id: last_commit
+        run: |
+          commit_time=$(git log -1 --format='%ci')
+          echo "commit_time=$commit_time" >> $GITHUB_OUTPUT
+          
+      - name: Generate badge data
+        run: |
+          mkdir -p .github/badges
+          cat > .github/badges/last-commit.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "last commit",
+            "message": "$(date -d "${{ steps.last_commit.outputs.commit_time }}" '+%Y-%m-%d %H:%M %Z')",
+            "color": "green"
+          }
+          EOF
+          
+      - name: Commit and push if changed
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add .github/badges/last-commit.json
+          git commit -m "Update last commit badge" || exit 0
+          git push

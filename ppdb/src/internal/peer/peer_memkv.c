@@ -265,6 +265,11 @@ static infra_error_t send_all(infra_socket_t sock, const void* data, size_t len)
 }
 
 static void handle_get(memkv_conn_t* conn, const char* key) {
+    if (!conn || !conn->store || !key) {
+        INFRA_LOG_ERROR("Invalid parameters in handle_get");
+        return;
+    }
+
     printf("DEBUG: Handling GET command for key='%s'\n", key);
     
     void* value = NULL;
@@ -281,10 +286,7 @@ static void handle_get(memkv_conn_t* conn, const char* key) {
         
         printf("DEBUG: Sending GET response header: [%.*s]\n", header_len-2, header);
         
-        // 分块发送大数据
-        const size_t chunk_size = 8192; // 8KB chunks
-        
-        // 发送头部
+        // Send header
         err = send_all(conn->sock, header, header_len);
         if (err != INFRA_OK) {
             printf("DEBUG: Failed to send header: err=%d\n", err);
@@ -292,33 +294,22 @@ static void handle_get(memkv_conn_t* conn, const char* key) {
             return;
         }
         
-        // 分块发送数据
-        size_t sent = 0;
-        while (sent < value_len && err == INFRA_OK) {
-            size_t remaining = value_len - sent;
-            size_t to_send = remaining < chunk_size ? remaining : chunk_size;
-            
-            err = send_all(conn->sock, (char*)value + sent, to_send);
-            if (err != INFRA_OK) {
-                printf("DEBUG: Failed to send data chunk at offset %zu: err=%d\n", sent, err);
-                break;
-            }
-            sent += to_send;
+        // Send value
+        err = send_all(conn->sock, value, value_len);
+        if (err != INFRA_OK) {
+            printf("DEBUG: Failed to send value: err=%d\n", err);
+            free(value);
+            return;
         }
         
-        // 如果数据发送成功，发送结尾
+        // Send CRLF and END
+        err = send_all(conn->sock, "\r\n", 2);
         if (err == INFRA_OK) {
-            err = send_all(conn->sock, "\r\n", 2);
-            if (err == INFRA_OK) {
-                err = send_all(conn->sock, "END\r\n", 5);
-            }
+            err = send_all(conn->sock, "END\r\n", 5);
         }
         
         if (err != INFRA_OK) {
             printf("DEBUG: Failed to complete GET response: err=%d\n", err);
-            if (err == INFRA_ERROR_WOULD_BLOCK) {
-                printf("DEBUG: Send buffer full, connection might be slow\n");
-            }
             conn->should_close = true;
         }
         
@@ -627,26 +618,37 @@ static void handle_request_wrapper(void* args);
 
 static void handle_request(void* args) {
     poly_poll_handler_args_t* handler_args = (poly_poll_handler_args_t*)args;
-    if (!handler_args || !handler_args->user_data) return;
+    if (!handler_args || !handler_args->user_data) {
+        INFRA_LOG_ERROR("Invalid handler args");
+        return;
+    }
     
     memkv_conn_t* conn = (memkv_conn_t*)handler_args->user_data;
+    if (!conn->store) {
+        INFRA_LOG_ERROR("Invalid connection store");
+        return;
+    }
+
+    conn->sock = handler_args->client;  // Update socket handle
+    
     char cmd[32] = {0};
     char key[256] = {0};
-    
-    // Read command
+    char buffer[MEMKV_BUFFER_SIZE] = {0};
     size_t received = 0;
-    char buffer[MEMKV_BUFFER_SIZE];
     
-    infra_error_t err = infra_net_recv(handler_args->client, buffer, sizeof(buffer)-1, &received);
+    infra_error_t err = infra_net_recv(conn->sock, buffer, sizeof(buffer)-1, &received);
     if (err != INFRA_OK || received == 0) {
-        poly_db_close(conn->store);
-        if (conn->rx_buf) infra_free(conn->rx_buf);
-        infra_free(conn);
-        infra_net_close(handler_args->client);
+        if (err == INFRA_ERROR_CLOSED || received == 0) {
+            INFRA_LOG_INFO("Client disconnected");
+        } else {
+            INFRA_LOG_ERROR("Failed to receive data: %d", err);
+        }
+        conn->should_close = true;
         return;
     }
     
     buffer[received] = '\0';
+    printf("DEBUG: Received command: [%.*s]\n", (int)received-2, buffer);
     
     // Parse command
     if (sscanf(buffer, "%31s %255s", cmd, key) >= 1) {
@@ -660,8 +662,9 @@ static void handle_request(void* args) {
             
             if (sscanf(buffer, "%*s %*s %31s %31s %31s", 
                 flags_str, exptime_str, bytes_str) == 3) {
-                
                 handle_set(conn, key, flags_str, exptime_str, bytes_str, false);
+            } else {
+                send_all(conn->sock, "ERROR\r\n", 7);
             }
         }
         else if (strcmp(cmd, "delete") == 0) {
@@ -672,20 +675,24 @@ static void handle_request(void* args) {
         }
         else if (strcmp(cmd, "incr") == 0 || strcmp(cmd, "decr") == 0) {
             char value_str[32] = {0};
-            sscanf(buffer, "%*s %*s %31s", value_str);
-            handle_incr_decr(conn, key, value_str, cmd[0] == 'i');
+            if (sscanf(buffer, "%*s %*s %31s", value_str) == 1) {
+                handle_incr_decr(conn, key, value_str, cmd[0] == 'i');
+            } else {
+                send_all(conn->sock, "ERROR\r\n", 7);
+            }
         }
         else {
-            const char* error = "ERROR\r\n";
-            send_all(handler_args->client, error, strlen(error));
+            printf("DEBUG: Unknown command: %s\n", cmd);
+            send_all(conn->sock, "ERROR\r\n", 7);
         }
     }
     
-    // Check if connection should be closed
+    // Only close if explicitly requested
     if (conn->should_close) {
+        INFRA_LOG_INFO("Closing connection");
         poly_db_close(conn->store);
-        infra_free(conn->rx_buf);
-        infra_net_close(handler_args->client);
+        if (conn->rx_buf) infra_free(conn->rx_buf);
+        infra_net_close(conn->sock);
         infra_free(conn);
     }
 }

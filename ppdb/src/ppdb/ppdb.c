@@ -31,6 +31,7 @@ static ppdb_commands_t g_commands = {0};
 static const char* get_service_type_name(poly_service_type_t type);
 static infra_error_t handle_rinetd_cmd(const poly_config_t* config, int argc, char** argv);
 static infra_error_t handle_sqlite3_cmd(const poly_config_t* config, int argc, char** argv);
+static infra_error_t handle_memkv_cmd(const poly_config_t* config, int argc, char** argv);
 static infra_error_t handle_help_cmd(const poly_config_t* config, int argc, char** argv);
 
 // Global service registry
@@ -291,6 +292,13 @@ static void register_commands(void) {
             .options = service_options,
             .option_count = sizeof(service_options) / sizeof(service_options[0]),
             .handler = handle_sqlite3_cmd
+        },
+        {
+            .name = "memkv",
+            .desc = "Manage memkv service",
+            .options = service_options,
+            .option_count = sizeof(service_options) / sizeof(service_options[0]),
+            .handler = handle_memkv_cmd
         }
     };
 
@@ -619,6 +627,148 @@ static infra_error_t handle_sqlite3_cmd(const poly_config_t* config, int argc, c
     }
 }
 
+static infra_error_t parse_memkv_config(const char* config_file, poly_config_t* config) {
+    if (!config_file || !config) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // Open config file
+    FILE* fp = fopen(config_file, "r");
+    if (!fp) {
+        fprintf(stderr, "Failed to open config file: %s\n", config_file);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // Initialize service config
+    config->service_count = 1;
+    config->services[0].type = POLY_SERVICE_MEMKV;
+
+    // Read config file
+    char line[1024];
+    while (fgets(line, sizeof(line), fp)) {
+        // Skip comments and empty lines
+        if (line[0] == '#' || line[0] == '\n') {
+            continue;
+        }
+
+        // Parse key-value pairs
+        char key[64] = {0};
+        char value[256] = {0};
+        if (sscanf(line, "%63[^=]=%255s", key, value) == 2) {
+            // Trim whitespace
+            char* p = key + strlen(key) - 1;
+            while (p >= key && isspace(*p)) *p-- = '\0';
+            p = key;
+            while (*p && isspace(*p)) p++;
+
+            // Set config values
+            if (strcmp(p, "port") == 0) {
+                config->services[0].listen_port = atoi(value);
+            }
+            else if (strcmp(p, "engine") == 0) {
+                strncpy(config->services[0].backend, value, sizeof(config->services[0].backend) - 1);
+            }
+        }
+    }
+
+    fclose(fp);
+    return INFRA_OK;
+}
+
+static infra_error_t handle_memkv_cmd(const poly_config_t* config, int argc, char** argv) {
+    if (!config || argc < 3) {
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    // Get service instance
+    peer_service_t* service = peer_memkv_get_service();
+    if (!service) {
+        fprintf(stderr, "Failed to get memkv service\n");
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    // Parse command line options
+    bool start = false;
+    bool stop = false;
+    bool status = false;
+    const char* config_file = NULL;
+    const char* engine = NULL;
+    int port = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--start") == 0) {
+            start = true;
+        }
+        else if (strcmp(argv[i], "--stop") == 0) {
+            stop = true;
+        }
+        else if (strcmp(argv[i], "--status") == 0) {
+            status = true;
+        }
+        else if (strncmp(argv[i], "--config=", 9) == 0) {
+            config_file = argv[i] + 9;
+        }
+        else if (strncmp(argv[i], "--engine=", 9) == 0) {
+            engine = argv[i] + 9;
+        }
+        else if (strncmp(argv[i], "--port=", 7) == 0) {
+            port = atoi(argv[i] + 7);
+        }
+    }
+
+    // Parse config file if provided
+    poly_config_t service_config = {0};
+    service_config.service_count = 1;
+    service_config.services[0].type = POLY_SERVICE_MEMKV;
+
+    if (config_file) {
+        infra_error_t err = parse_memkv_config(config_file, &service_config);
+        if (err != INFRA_OK) {
+            fprintf(stderr, "Failed to parse config file: %s\n", config_file);
+            return err;
+        }
+    }
+
+    // Override config with command line options
+    if (port > 0) {
+        service_config.services[0].listen_port = port;
+    }
+    if (engine) {
+        strncpy(service_config.services[0].backend, engine, sizeof(service_config.services[0].backend) - 1);
+    }
+
+    // Apply configuration
+    infra_error_t err = service->apply_config(&service_config.services[0]);
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Failed to apply configuration: %d\n", err);
+        return err;
+    }
+
+    // Execute command
+    char response[MAX_CMD_RESPONSE] = {0};
+    if (start) {
+        err = service->cmd_handler("start", response, sizeof(response));
+    }
+    else if (stop) {
+        err = service->cmd_handler("stop", response, sizeof(response));
+    }
+    else if (status) {
+        err = service->cmd_handler("status", response, sizeof(response));
+    }
+    else {
+        fprintf(stderr, "No action specified (--start, --stop, or --status)\n");
+        return INFRA_ERROR_INVALID_PARAM;
+    }
+
+    if (err != INFRA_OK) {
+        fprintf(stderr, "Command failed: %s\n", response);
+        return err;
+    }
+
+    printf("%s", response);
+    return INFRA_OK;
+}
+
 // Main entry
 int main(int argc, char** argv) {
     // Initialize infrastructure with default log level
@@ -642,25 +792,20 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Register commands
-    register_commands();
-
     // Register services
 #ifdef DEV_RINETD
     peer_service_register(peer_rinetd_get_service());
 #endif
-#ifdef DEV_MEMKV
-    peer_service_register(peer_memkv_get_service());
-#endif
 #ifdef DEV_SQLITE3
     peer_service_register(peer_sqlite3_get_service());
 #endif
+#ifdef DEV_MEMKV
+    peer_service_register(peer_memkv_get_service());
+#endif
+
+    // Register commands
+    register_commands();
 
     // Execute command
-    err = ppdb_execute_command(argc, argv);
-    
-    // Cleanup
-    infra_cleanup();
-    
-    return err == INFRA_OK ? 0 : 1;
+    return ppdb_execute_command(argc, argv);
 }

@@ -1,7 +1,6 @@
 # ai-ppdb
 
-<!-- ![Build Status](https://github.com/wanjochan/ai-ppdb/actions/workflows/build.yml/badge.svg) -->
-![Last Update](https://img.shields.io/github/last-commit/wanjochan/ai-ppdb)
+[![Last Update](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/wanjochan/ai-ppdb/main/.github/badges/last-commit.json)](https://github.com/wanjochan/ai-ppdb/commits/main)
 
 [ppdb](ppdb/docs/ARCH.md)
 
