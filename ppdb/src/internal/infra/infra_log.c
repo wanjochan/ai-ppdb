@@ -11,7 +11,7 @@
 
 infra_logger_t g_logger = {
     .mutex = NULL,
-    .level = INFRA_LOG_LEVEL_INFO,
+    .level = INFRA_LOG_LEVEL_ERROR,
     .log_file = NULL,
     .callback = NULL
 };
@@ -29,11 +29,15 @@ infra_error_t infra_log_init(int level, const char* log_file) {
     }
 
     // 设置日志级别和文件
-    g_logger.level = level;
+    if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
+        g_logger.level = level;
+    } else {
+        g_logger.level = INFRA_LOG_LEVEL_ERROR;  // 默认使用 ERROR 级别
+    }
     g_logger.log_file = log_file;
     g_logger.callback = NULL;
 
-    INFRA_LOG_DEBUG("Log system initialized with level %d", level);
+    INFRA_LOG_DEBUG("Log system initialized with level %d", g_logger.level);
     return INFRA_OK;
 }
 
@@ -42,7 +46,7 @@ void infra_log_cleanup(void) {
         infra_mutex_destroy(g_logger.mutex);
         g_logger.mutex = NULL;
     }
-    g_logger.level = INFRA_LOG_LEVEL_INFO;
+    g_logger.level = INFRA_LOG_LEVEL_ERROR;
     g_logger.log_file = NULL;
     g_logger.callback = NULL;
 }

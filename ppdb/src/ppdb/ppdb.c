@@ -198,16 +198,6 @@ static infra_error_t ppdb_execute_command(int argc, char** argv) {
         return err;
     }
 
-    // 处理日志级别参数
-    char log_level_str[16] = {0};
-    err = poly_cmdline_get_option(&config, "--log-level", log_level_str, sizeof(log_level_str));
-    if (err == INFRA_OK && log_level_str[0]) {
-        int level = atoi(log_level_str);
-        if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
-            infra_log_set_level(level);
-        }
-    }
-
     // 查找命令名
     const char* cmd_name = NULL;
     for (int i = 1; i < argc; i++) {
@@ -638,8 +628,19 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Set initial log level to INFO
-    infra_log_set_level(INFRA_LOG_LEVEL_INFO);
+    // Parse command line arguments for log level
+    poly_config_t config = {0};
+    err = poly_cmdline_parse_args(argc, argv, &config);
+    if (err == INFRA_OK) {
+        char log_level_str[16] = {0};
+        err = poly_cmdline_get_option(&config, "--log-level", log_level_str, sizeof(log_level_str));
+        if (err == INFRA_OK && log_level_str[0]) {
+            int level = atoi(log_level_str);
+            if (level >= INFRA_LOG_LEVEL_NONE && level <= INFRA_LOG_LEVEL_TRACE) {
+                infra_log_set_level(level);
+            }
+        }
+    }
 
     // Register commands
     register_commands();
