@@ -178,40 +178,37 @@ static infra_error_t kv_get(poly_db_t* db, const char* key, void** value,
     }
     
     err = poly_db_stmt_step(stmt);
-    if (err == INFRA_OK) {
-        // 检查是否找到记录
-        if (err != INFRA_OK) {
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+        
+    // 检查过期时间
+    char* expiry_str = NULL;
+    err = poly_db_column_text(stmt, 2, &expiry_str);
+    if (err == INFRA_OK && expiry_str) {
+        time_t expiry = strtol(expiry_str, NULL, 10);
+        free(expiry_str);
+        if (expiry > 0 && expiry <= time(NULL)) {
+            // 已过期，删除并返回未找到
+            kv_delete(db, key);
             poly_db_stmt_finalize(stmt);
             return INFRA_ERROR_NOT_FOUND;
         }
+    }
         
-        // 检查过期时间
-        char* expiry_str = NULL;
-        err = poly_db_column_text(stmt, 2, &expiry_str);
-        if (err == INFRA_OK && expiry_str) {
-            time_t expiry = strtol(expiry_str, NULL, 10);
-            free(expiry_str);
-            if (expiry > 0 && expiry <= time(NULL)) {
-                // 已过期，删除并返回未找到
-                kv_delete(db, key);
-                poly_db_stmt_finalize(stmt);
-                return INFRA_ERROR_NOT_FOUND;
-            }
-        }
+    // 获取值和标志
+    err = poly_db_column_blob(stmt, 0, value, value_len);
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(stmt);
+        return err;
+    }
         
-        // 获取值和标志
-        err = poly_db_column_blob(stmt, 0, value, value_len);
-        if (err != INFRA_OK) {
-            poly_db_stmt_finalize(stmt);
-            return err;
-        }
-        
-        char* flags_str = NULL;
-        err = poly_db_column_text(stmt, 1, &flags_str);
-        if (err == INFRA_OK && flags_str) {
-            *flags = strtoul(flags_str, NULL, 10);
-            free(flags_str);
-        }
+    char* flags_str = NULL;
+    err = poly_db_column_text(stmt, 1, &flags_str);
+    if (err == INFRA_OK && flags_str) {
+        *flags = strtoul(flags_str, NULL, 10);
+        free(flags_str);
     }
     
     poly_db_stmt_finalize(stmt);
@@ -251,21 +248,64 @@ cleanup:
 }
 
 static infra_error_t kv_delete(poly_db_t* db, const char* key) {
-    const char* sql = "DELETE FROM kv_store WHERE key = ?";
-    poly_db_stmt_t* stmt = NULL;
+    infra_error_t err;
     
-    infra_error_t err = poly_db_prepare(db, sql, &stmt);
+    // 开始事务
+    err = poly_db_exec(db, "BEGIN TRANSACTION");
     if (err != INFRA_OK) return err;
     
-    err = poly_db_bind_text(stmt, 1, key, strlen(key));
+    // 先检查键是否存在
+    const char* check_sql = "SELECT 1 FROM kv_store WHERE key = ?";
+    poly_db_stmt_t* check_stmt = NULL;
+    err = poly_db_prepare(db, check_sql, &check_stmt);
     if (err != INFRA_OK) {
-        poly_db_stmt_finalize(stmt);
+        poly_db_exec(db, "ROLLBACK");
         return err;
     }
     
-    err = poly_db_stmt_step(stmt);
-    poly_db_stmt_finalize(stmt);
-    return err;
+    err = poly_db_bind_text(check_stmt, 1, key, strlen(key));
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(check_stmt);
+        poly_db_exec(db, "ROLLBACK");
+        return err;
+    }
+    
+    err = poly_db_stmt_step(check_stmt);
+    bool exists = (err == INFRA_OK);  // 如果找到记录，err 会是 INFRA_OK
+    poly_db_stmt_finalize(check_stmt);
+    
+    if (!exists) {
+        poly_db_exec(db, "ROLLBACK");
+        return INFRA_ERROR_NOT_FOUND;
+    }
+    
+    // 键存在，执行删除
+    const char* delete_sql = "DELETE FROM kv_store WHERE key = ?";
+    poly_db_stmt_t* delete_stmt = NULL;
+    
+    err = poly_db_prepare(db, delete_sql, &delete_stmt);
+    if (err != INFRA_OK) {
+        poly_db_exec(db, "ROLLBACK");
+        return err;
+    }
+    
+    err = poly_db_bind_text(delete_stmt, 1, key, strlen(key));
+    if (err != INFRA_OK) {
+        poly_db_stmt_finalize(delete_stmt);
+        poly_db_exec(db, "ROLLBACK");
+        return err;
+    }
+    
+    err = poly_db_stmt_step(delete_stmt);
+    poly_db_stmt_finalize(delete_stmt);
+    
+    if (err != INFRA_OK) {
+        poly_db_exec(db, "ROLLBACK");
+        return err;
+    }
+    
+    // 提交事务
+    return poly_db_exec(db, "COMMIT");
 }
 
 static infra_error_t kv_flush(poly_db_t* db) {
@@ -318,7 +358,7 @@ static void handle_get(memkv_conn_t* conn, const char* key) {
     infra_error_t err = kv_get(conn->store, key, &value, &value_len, &flags);
     printf("DEBUG: GET result: err=%d, value=%p, value_len=%zu\n", err, value, value_len);
     
-    if (err == INFRA_OK && value) {
+    if (err == INFRA_OK && value && value_len > 0) {
         // 准备完整响应
         char* response = NULL;
         size_t total_len = 0;
@@ -343,23 +383,24 @@ static void handle_get(memkv_conn_t* conn, const char* key) {
         memcpy(response + header_len + value_len, "\r\n", 2);
         memcpy(response + header_len + value_len + 2, "END\r\n", 5);
         
-        // 一次性发送
+        // 发送完整响应
         err = send_all(conn->sock, response, total_len);
         if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send response: err=%d", err);
-            conn->should_close = true;
+            INFRA_LOG_ERROR("Failed to send response: %d", err);
         }
         
+        // 清理资源
         free(response);
         free(value);
     } else {
-        printf("DEBUG: Key not found or error: %d\n", err);
-        err = send_all(conn->sock, "END\r\n", 5);
+        // 如果没有找到值，只发送 END
+        const char* not_found = "END\r\n";
+        err = send_all(conn->sock, not_found, strlen(not_found));
         if (err != INFRA_OK) {
-            printf("DEBUG: Failed to send END response: err=%d\n", err);
-            conn->should_close = true;
-        } else {
-            printf("DEBUG: END response sent successfully for not found key\n");
+            INFRA_LOG_ERROR("Failed to send END response: %d", err);
+        }
+        if (value) {
+            free(value);
         }
     }
 }
@@ -432,11 +473,16 @@ static void handle_set(memkv_conn_t* conn, const char* key, const char* flags_st
 static void handle_delete(memkv_conn_t* conn, const char* key, bool noreply) {
     printf("DEBUG: Handling DELETE command for key='%s'\n", key);
     
-    // 先检查 key 是否存在
-    void* value = NULL;
-    size_t value_len = 0;
-    infra_error_t err = kv_get(conn->store, key, &value, &value_len, NULL);
-    if (err != INFRA_OK) {
+    infra_error_t err = kv_delete(conn->store, key);
+    if (err == INFRA_OK) {
+        if (!noreply) {
+            err = send_all(conn->sock, "DELETED\r\n", 9);
+            if (err != INFRA_OK) {
+                printf("DEBUG: Failed to send DELETED response: err=%d\n", err);
+                conn->should_close = true;
+            }
+        }
+    } else if (err == INFRA_ERROR_NOT_FOUND) {
         if (!noreply) {
             err = send_all(conn->sock, "NOT_FOUND\r\n", 11);
             if (err != INFRA_OK) {
@@ -444,48 +490,13 @@ static void handle_delete(memkv_conn_t* conn, const char* key, bool noreply) {
                 conn->should_close = true;
             }
         }
-        if (value) free(value);
-        return;
-    }
-    if (value) free(value);
-    
-    // Key 存在，执行删除
-    const char* sql = "DELETE FROM kv_store WHERE key = ?";
-    poly_db_stmt_t* stmt = NULL;
-    
-    err = poly_db_prepare(conn->store, sql, &stmt);
-    if (err != INFRA_OK) {
+    } else {
         if (!noreply) {
-            err = send_all(conn->sock, "ERROR\r\n", 7);
+            err = send_all(conn->sock, "SERVER_ERROR\r\n", 14);
             if (err != INFRA_OK) {
-                printf("DEBUG: Failed to send error response: err=%d\n", err);
+                printf("DEBUG: Failed to send SERVER_ERROR response: err=%d\n", err);
                 conn->should_close = true;
             }
-        }
-        return;
-    }
-    
-    err = poly_db_bind_text(stmt, 1, key, strlen(key));
-    if (err != INFRA_OK) {
-        poly_db_stmt_finalize(stmt);
-        if (!noreply) {
-            err = send_all(conn->sock, "ERROR\r\n", 7);
-            if (err != INFRA_OK) {
-                printf("DEBUG: Failed to send error response: err=%d\n", err);
-                conn->should_close = true;
-            }
-        }
-        return;
-    }
-    
-    err = poly_db_stmt_step(stmt);
-    poly_db_stmt_finalize(stmt);
-    
-    if (!noreply) {
-        err = send_all(conn->sock, "DELETED\r\n", 9);
-        if (err != INFRA_OK) {
-            printf("DEBUG: Failed to send DELETED response: err=%d\n", err);
-            conn->should_close = true;
         }
     }
 }
