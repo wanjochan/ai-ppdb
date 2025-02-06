@@ -8,16 +8,6 @@
 // static void infrax_core_init(InfraxCore* self);
 // static void infrax_core_print(InfraxCore* self);
 
-// Helper function to create a new error value
-static InfraxError infrax_core_new_error(InfraxI32 code, const char* message) {
-    InfraxError error = {.code = code};
-    if (message) {
-        strncpy(error.message, message, sizeof(error.message) - 1);
-    }
-    error.message[sizeof(error.message) - 1] = '\0';  // Ensure null termination
-    return error;
-}
-
 // Printf forwarding implementation
 int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     va_list args;
@@ -106,14 +96,14 @@ void infra_random_seed(InfraxCore *self, uint32_t seed) {
 InfraxError infrax_get_cwd(InfraxCore *self, char* buffer, size_t size) {
     
     if (!buffer || size == 0) {
-        return self->new_error(1, "Invalid buffer or size");
+        return make_error(1, "Invalid buffer or size");
     }
 
     if (!getcwd(buffer, size)) {
-        return self->new_error(2, "Failed to get current working directory");
+        return make_error(2, "Failed to get current working directory");
     }
 
-    return self->new_error(0, NULL);
+    return make_error(0, NULL);
 }
 // String operations
 static size_t infrax_core_strlen(InfraxCore *self, const char* s) {
@@ -401,19 +391,14 @@ infra_error_t infra_file_exists(const char* path, bool* exists);
 
 // Global instance
 InfraxCore g_infrax_core = {
-    .new_error = infrax_core_new_error,
     .printf = infrax_core_printf,
     .forward_call = infrax_core_forward_call,
-    //
     .time_now_ms = infrax_core_time_now_ms,
     .time_monotonic_ms = infrax_core_time_monotonic_ms,
-    .sleep_ms = infrax_core_sleep_ms,
+    .sleep_ms = infrax_core_sleep_ms
 };
 
+// Return global instance
 InfraxCore* get_global_infrax_core(void) {
-    // if (!g_infrax_core) {
-    //     g_infrax_core = infrax_core_new();
-    // }
-    // return g_infrax_core;
     return &g_infrax_core;
 }

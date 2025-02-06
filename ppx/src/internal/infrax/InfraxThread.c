@@ -15,37 +15,37 @@ static InfraxError thread_start(InfraxThread* self) {
     InfraxCore* core = get_global_infrax_core();
     
     if (!self || self->is_running) {
-        return core->new_error(INFRAX_ERROR_INVALID_ARGUMENT, "Invalid thread or thread already running");
+        return make_error(INFRAX_ERROR_INVALID_ARGUMENT, "Invalid thread or thread already running");
     }
 
     int result = pthread_create(&self->native_handle, NULL, 
                               self->config.entry_point, 
                               self->config.arg);
     if (result != 0) {
-        return core->new_error(INFRAX_ERROR_THREAD_CREATE_FAILED, "Failed to create thread");
+        return make_error(INFRAX_ERROR_THREAD_CREATE_FAILED, "Failed to create thread");
     }
 
     self->is_running = true;
-    return core->new_error(0, "");
+    return make_error(0, "");
 }
 
 static InfraxError thread_join(InfraxThread* self, void** result) {
     InfraxCore* core = get_global_infrax_core();
     
     if (!self || !self->is_running) {
-        return core->new_error(INFRAX_ERROR_INVALID_ARGUMENT, "Invalid thread or thread not running");
+        return make_error(INFRAX_ERROR_INVALID_ARGUMENT, "Invalid thread or thread not running");
     }
 
     int ret = pthread_join(self->native_handle, result);
     if (ret != 0) {
-        return core->new_error(INFRAX_ERROR_THREAD_JOIN_FAILED, "Failed to join thread");
+        return make_error(INFRAX_ERROR_THREAD_JOIN_FAILED, "Failed to join thread");
     }
 
     self->is_running = false;
     if (result) {
         self->result = *result;
     }
-    return core->new_error(0, "");
+    return make_error(0, "");
 }
 
 static InfraxThreadId thread_tid(InfraxThread* self) {

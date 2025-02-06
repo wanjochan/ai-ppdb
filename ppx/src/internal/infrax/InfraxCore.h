@@ -37,6 +37,24 @@ typedef uint64_t InfraxHandle;
 #define INFRAX_ERROR_INVALID_PARAM -1
 #define INFRAX_ERROR_NO_MEMORY -2
 
+// Helper macro to create InfraxError
+static inline InfraxError make_error(InfraxI32 code, const char* msg) {
+    InfraxError err = {.code = code};
+    if (msg) {
+        strncpy(err.message, msg, sizeof(err.message) - 1);
+        err.message[sizeof(err.message) - 1] = '\0';
+    } else {
+        err.message[0] = '\0';
+    }
+    return err;
+}
+
+#define INFRAX_ERROR_OK_STRUCT (InfraxError){.code = INFRAX_ERROR_OK, .message = ""}
+
+// Helper macro to compare InfraxError
+#define INFRAX_ERROR_IS_OK(err) ((err).code == INFRAX_ERROR_OK)
+#define INFRAX_ERROR_IS_ERR(err) ((err).code != INFRAX_ERROR_OK)
+
 //-----------------------------------------------------------------------------
 // Thread Types
 //-----------------------------------------------------------------------------
@@ -54,17 +72,13 @@ typedef struct InfraxCore InfraxCore;
 // Core structure definition
 struct InfraxCore {
     // core 特别，不需要构建的，完全全局，用来放全局静态函数
-    // // Public methods
-    // struct InfraxCore* (*new)(void);     // constructor: infrax_core_new()
-    // void (*free)(struct InfraxCore *self);// destructor: infrax_core_free()
-    InfraxError (*new_error)(InfraxI32 code, const char* message); 
     // Printf forwarding
     int (*printf)(InfraxCore *self, const char* format, ...);
     
     // Parameter forwarding function
     void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);
 
-    // // Time management
+    // Time management
     InfraxTime (*time_now_ms)(InfraxCore *self);
     InfraxTime (*time_monotonic_ms)(struct InfraxCore *self);
     void (*sleep_ms)(struct InfraxCore *self, uint32_t milliseconds);

@@ -2,128 +2,95 @@
 
 # Import common functions and environment variables
 source "$(dirname "$0")/build_env.sh"
-source "$(dirname "$0")/build_common.sh"
 
-# Create test directories if not exist
-mkdir -p "${TEST_DIR}/arch"
-mkdir -p "${SRC_DIR}/internal/arch"
+# Set compile flags with all necessary include paths
+CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR}"
 
-# Build and run the test
-build_and_run_test() {
-    # First build the new architecture
-    "${SCRIPT_DIR}/build_arch.sh"
+# Define source files
+ARCH_SOURCES=(
+    "${SRC_DIR}/internal/infrax/InfraxCore.c"
+    "${SRC_DIR}/internal/infrax/InfraxLog.c"
+    "${SRC_DIR}/internal/arch/PpxInfra.c"
+    "${SRC_DIR}/internal/infrax/InfraxMemory.c"
+    "${SRC_DIR}/internal/infrax/InfraxThread.c"
+    "${SRC_DIR}/internal/infrax/InfraxSync.c"
+    "${SRC_DIR}/internal/infrax/InfraxNet.c"
+)
+
+# Define test sources
+TEST_SOURCES=(
+    "${TEST_DIR}/arch/test_arch.c"
+    "${TEST_DIR}/arch/test_infrax_memory.c"
+    "${TEST_DIR}/arch/test_infrax_error.c"
+    "${TEST_DIR}/arch/test_infrax_thread.c"
+    "${TEST_DIR}/arch/test_infrax_sync.c"
+    "${TEST_DIR}/arch/test_infrax_net.c"
+)
+
+# Build the new architecture library
+build_arch() {
+    local build_dir="${BUILD_DIR}/arch"
+    local lib_file="${build_dir}/libarch.a"
+    local arch_objects=()
+    local need_rebuild=0
+
+    # Create build directory
+    mkdir -p "${build_dir}"
+
+    # Compile all source files
+    echo "Building new architecture..."
+    for src in "${ARCH_SOURCES[@]}"; do
+        local obj="${build_dir}/$(basename "${src}" .c).o"
+        
+        echo "Compiling: ${src}"
+        "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
+        if [ $? -ne 0 ]; then
+            echo "Error: Failed to compile ${src}"
+            exit 1
+        fi
+        arch_objects+=("${obj}")
+    done
+
+    # Create static library
+    echo "Creating static library: ${lib_file}"
+    rm -f "${lib_file}"
+    cd "${build_dir}" || exit 1
+    "${AR}" rcs "${lib_file}" *.o
     if [ $? -ne 0 ]; then
-        echo "Error: Failed to build architecture library"
+        echo "Failed to create arch library"
         exit 1
     fi
+    ls -l "${lib_file}"
+}
 
-    # Then build and run tests
-    echo "Building and running tests..."
-    cd "${TEST_DIR}/arch" || exit 1
+# Build and run tests
+build_tests() {
+    local build_dir="${BUILD_DIR}/arch"
+    local test_dir="${build_dir}/tests"
     
-    # Build and run main arch test
-    "${CC}" ${CFLAGS} \
-        -I"${PPX_DIR}/include" \
-        -I"${PPX_DIR}/src" \
-        -I"${PPX_DIR}" \
-        test_arch.c \
-        -L"${BUILD_DIR}/arch" -larch \
-        -o "${BUILD_DIR}/arch/test_arch.exe"
+    mkdir -p "${test_dir}"
 
-    if [ $? -eq 0 ]; then
-        echo "Running main arch tests..."
-        "${BUILD_DIR}/arch/test_arch.exe"
-    else
-        echo "Error: Failed to build main arch tests"
-        exit 1
-    fi
-
-    # Build and run infra log test
-    "${CC}" ${CFLAGS} \
-        -I"${PPX_DIR}/include" \
-        -I"${PPX_DIR}/src" \
-        -I"${PPX_DIR}" \
-        test_infrax_log.c \
-        -L"${BUILD_DIR}/arch" -larch \
-        -o "${BUILD_DIR}/arch/test_infrax_log.exe"
-
-    if [ $? -eq 0 ]; then
-        echo "Running infra log tests..."
-        "${BUILD_DIR}/arch/test_infrax_log.exe"
-    else
-        echo "Error: Failed to build infra log tests"
-        exit 1
-    fi
-
-    # Build and run memory management test
-    "${CC}" ${CFLAGS} \
-        -I"${PPX_DIR}/include" \
-        -I"${PPX_DIR}/src" \
-        -I"${PPX_DIR}" \
-        test_infrax_memory.c \
-        -L"${BUILD_DIR}/arch" -larch \
-        -o "${BUILD_DIR}/arch/test_infrax_memory.exe"
-
-    if [ $? -eq 0 ]; then
-        echo "Running memory management tests..."
-        "${BUILD_DIR}/arch/test_infrax_memory.exe"
-    else
-        echo "Error: Failed to build memory management tests"
-        exit 1
-    fi
-
-    # Build and run error handling test
-    "${CC}" ${CFLAGS} \
-        -I"${PPX_DIR}/include" \
-        -I"${PPX_DIR}/src" \
-        -I"${PPX_DIR}" \
-        -I"${PPX_DIR}/test/white" \
-        test_infrax_error.c \
-        -L"${BUILD_DIR}/arch" -larch \
-        -o "${BUILD_DIR}/arch/test_infrax_error.exe"
-
-    if [ $? -eq 0 ]; then
-        echo "Running error handling tests..."
-        "${BUILD_DIR}/arch/test_infrax_error.exe"
-    else
-        echo "Error: Failed to build error handling tests"
-        exit 1
-    fi
-
-    # Build and run thread test
-    "${CC}" ${CFLAGS} \
-        -I"${PPX_DIR}/include" \
-        -I"${PPX_DIR}/src" \
-        -I"${PPX_DIR}" \
-        test_infrax_thread.c \
-        -L"${BUILD_DIR}/arch" -larch \
-        -o "${BUILD_DIR}/arch/test_infrax_thread.exe"
-
-    if [ $? -eq 0 ]; then
-        echo "Running thread tests..."
-        "${BUILD_DIR}/arch/test_infrax_thread.exe"
-    else
-        echo "Error: Failed to build thread tests"
-        exit 1
-    fi
-
-    # Build and run sync test
-    "${CC}" ${CFLAGS} \
-        -I"${PPX_DIR}/include" \
-        -I"${PPX_DIR}/src" \
-        -I"${PPX_DIR}" \
-        test_infrax_sync.c \
-        -L"${BUILD_DIR}/arch" -larch \
-        -o "${BUILD_DIR}/arch/test_infrax_sync.exe"
-
-    if [ $? -eq 0 ]; then
-        echo "Running sync tests..."
-        "${BUILD_DIR}/arch/test_infrax_sync.exe"
-    else
-        echo "Error: Failed to build sync tests"
-        exit 1
-    fi
+    # Compile and link tests
+    echo "Building and running tests..."
+    for src in "${TEST_SOURCES[@]}"; do
+        local test_name="$(basename "${src}" .c)"
+        local test_bin="${test_dir}/${test_name}"
+        
+        echo "Building test: ${test_name}"
+        "${CC}" ${CFLAGS} "${src}" -L"${build_dir}" -larch -o "${test_bin}"
+        
+        if [ -x "${test_bin}" ]; then
+            echo "Running test: ${test_name}"
+            "${test_bin}"
+        else
+            echo "Error: Failed to build test ${test_name}"
+            exit 1
+        fi
+    done
 }
 
 # Main execution
-build_and_run_test
+build_arch
+if [ $? -eq 0 ]; then
+    build_tests
+fi
