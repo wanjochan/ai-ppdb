@@ -26,22 +26,14 @@ jobs:
         echo "COMMIT_DATE=$(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
         echo "BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_ENV
     
-    - name: Update version file
-      run: |
-        mkdir -p ppdb/version
-        cat > ppdb/version/ver.txt << EOF
-        Version Information
-        ------------------
-        Commit: ${{ env.COMMIT_HASH }}
-        Date: ${{ env.COMMIT_DATE }}
-        Branch: ${{ env.BRANCH_NAME }}
-        Build Date: $(date +'%Y-%m-%d %H:%M:%S')
-        EOF
-    
-    - name: Commit version file
+    - name: Add git note with version info
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add ppdb/version/ver.txt
-        git commit -m "Update version information [skip ci]" || echo "No changes to commit"
-        git push || echo "No changes to push"
+        NOTE_CONTENT="Version Info:
+        Commit: ${{ env.COMMIT_HASH }}
+        Date: ${{ env.COMMIT_DATE }}
+        Branch: ${{ env.BRANCH_NAME }}
+        Build Date: $(date +'%Y-%m-%d %H:%M:%S')"
+        git notes add -m "$NOTE_CONTENT" HEAD
+        git push origin refs/notes/*
