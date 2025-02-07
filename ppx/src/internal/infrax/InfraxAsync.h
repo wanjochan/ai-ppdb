@@ -27,7 +27,7 @@ typedef struct InfraxAsync InfraxAsync;
 InfraxAsync* infrax_async_start(AsyncFn fn, void* arg);
 
 // 等待任务完成
-int infrax_async_wait(InfraxAsync* async);
+// int infrax_async_wait(InfraxAsync* async);
 
 // 让出控制权
 void infrax_async_yield(InfraxAsync* async);

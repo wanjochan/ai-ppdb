@@ -35,6 +35,9 @@ sh ./ppdb/scripts/build_ppdb.sh && (pkill -9 -f "ppdb_latest.exe memkv" || true)
 sh ./ppdb/scripts/build_ppdb.sh && (pkill -9 -f "ppdb_latest.exe memkv" || true) && sleep 1 && (timeout 15s ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5 2>&1 | tee >(head -n 4096) &) && sleep 2 && (timeout 15s ${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_memkv_protocol.py -k test_multi_set_get -v 2>&1 | tee >(head -n 4096) ) ; sleep 1 && pkill -9 -f "ppdb_latest.exe memkv"
 等它完全运行后，你要使用思维链，发现问题、分析推理问题、指定计划、解决问题，
 
+sh ./ppdb/scripts/build_ppdb.sh && (pkill -9 -f "ppdb_latest.exe memkv" || true) && sleep 1 && (timeout 15s ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5 2>&1 | tee >(head -n 4096) &) && sleep 2 && (timeout 15s ${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_memkv_protocol.py -v 2>&1 | tee >(head -n 4096) ) ; sleep 1 && pkill -9 -f "ppdb_latest.exe memkv"
+
+
 想加前缀（但失败了，有其它问题）
 sh ./ppdb/scripts/build_ppdb.sh && \
 (pkill -9 -f "ppdb_latest.exe memkv" || true) && \

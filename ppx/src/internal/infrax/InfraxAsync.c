@@ -14,7 +14,6 @@ struct InfraxAsync {
     jmp_buf env;           // 保存的执行环境
     AsyncFn fn;            // 异步函数
     void* arg;             // 函数参数
-    int pipe_fd[2];        // 用于通知完成
     int error;             // 错误代码
     int state;             // 当前状态
     struct InfraxAsync* next;    // 下一个任务
@@ -44,11 +43,11 @@ InfraxAsync* infrax_async_start(AsyncFn fn, void* arg) {
     async->next = NULL;
     async->parent = NULL;
     
-    // 创建通知管道
-    if (pipe(async->pipe_fd) != 0) {
-        free(async);
-        return NULL;
-    }
+    // // 创建通知管道
+    // if (pipe(async->pipe_fd) != 0) {
+    //     free(async);
+    //     return NULL;
+    // }
     
     // 设置父子关系
     async->parent = async;  // 指向自己表示这是根任务
@@ -68,11 +67,18 @@ InfraxAsync* infrax_async_start(AsyncFn fn, void* arg) {
         
         usleep(1000); // 避免过度消耗 CPU
     }
+    //     // 发送完成通知
+    // char done = 1;
+    // write(async->pipe_fd[1], &done, 1);
     
-    // 发送完成通知
-    char done = 1;
-    write(async->pipe_fd[1], &done, 1);
+    // // 保存错误码
+    // int error = async->error;
     
+    // 清理资源
+    free(async);
+    
+    // 返回错误码
+    // return error;
     return async;
 }
 
@@ -96,14 +102,6 @@ InfraxAsyncStatus infrax_async_status(InfraxAsync* async) {
 
 int infrax_async_wait(InfraxAsync* async) {
     if (!async) return -1;
-    
-    // 等待完成通知
-    char done;
-    read(async->pipe_fd[0], &done, 1);
-    
-    // 关闭管道
-    close(async->pipe_fd[0]);
-    close(async->pipe_fd[1]);
     
     // 清理
     int error = async->error;
