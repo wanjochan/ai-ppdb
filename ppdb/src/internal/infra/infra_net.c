@@ -47,10 +47,13 @@ infra_error_t infra_net_bind(infra_socket_t sock, const infra_net_addr_t* addr) 
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(addr->port);
     if (inet_pton(AF_INET, addr->ip, &server_addr.sin_addr) <= 0) {
+        INFRA_LOG_ERROR("Invalid IP address: %s", addr->ip);
         return INFRA_ERROR_INVALID_PARAM;
     }
 
     if (bind(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        INFRA_LOG_ERROR("Failed to bind socket to %s:%u: %s", 
+                       addr->ip, addr->port, strerror(errno));
         return INFRA_ERROR_IO;
     }
 
@@ -189,6 +192,9 @@ infra_error_t infra_net_set_option(infra_socket_t sock, int level, int option, c
     switch (level) {
         case INFRA_SOL_SOCKET:
             sys_level = SOL_SOCKET;
+            break;
+        case IPPROTO_TCP:
+            sys_level = IPPROTO_TCP;
             break;
         default:
             return INFRA_ERROR_INVALID_PARAM;

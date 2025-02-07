@@ -1,215 +1,137 @@
 #include "internal/infrax/InfraxAsync.h"
-#include "internal/infrax/InfraxLog.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <assert.h>
+#include <time.h>
+#include <errno.h>
 
-// Test state
+#define TEST_FILE "test_async.txt"
+#define TEST_CONTENT "Hello, Async World!"
+#define DELAY_SECONDS 3
+
+// Test context structure
 typedef struct {
-    int value;
-    InfraxAsync* co;
-} TestState;
+    int fd;             // File descriptor
+    char* buffer;       // Read buffer
+    size_t size;        // Buffer size
+    size_t bytes_read;  // Total bytes read
+    const char* filename;
+} ReadContext;
 
-// Test coroutine function with timer event
-static void test_timer_coroutine(void* arg) {
-    TestState* state = (TestState*)arg;
-    InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "Timer coroutine started");
+// Non-blocking async file read function
+static void async_read_file(void* arg) {
+    ReadContext* ctx = (ReadContext*)arg;
     
-    InfraxScheduler* scheduler = get_default_scheduler();
-    InfraxEventSource* timer = scheduler->create_timer_event(scheduler, 100);  // 100ms timeout
+    // First call: open file
+    ctx->fd = open(ctx->filename, O_RDONLY | O_NONBLOCK);
+    if (ctx->fd < 0) return;
     
-    // First increment
-    state->value++;
-    log->debug(log, "First increment done, value = %d", state->value);
-    
-    // Wait for timer
-    int wait_result = state->co->wait(state->co, timer);
-    if (wait_result < 0) {
-        log->error(log, "Timer wait failed");
-        timer->klass->free(timer);
-        return;
+    // Keep reading until complete
+    while (ctx->bytes_read < ctx->size) {
+        ssize_t n = read(ctx->fd, 
+                        ctx->buffer + ctx->bytes_read, 
+                        ctx->size - ctx->bytes_read);
+                     
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                infrax_async_yield(NULL);  // Would block, yield to caller
+                continue;
+            }
+            // Real error
+            break;
+        }
+        
+        if (n == 0) break;  // EOF
+        
+        ctx->bytes_read += n;
+        infrax_async_yield(NULL);  // Yield after each successful read
     }
     
-    // Run scheduler to process timer event
-    scheduler->run(scheduler);
-    
-    // Second increment after timer
-    state->value++;
-    log->debug(log, "Second increment done, value = %d", state->value);
-    log->debug(log, "Timer coroutine finished");
-    
-    timer->klass->free(timer);
+    // Done or error
+    close(ctx->fd);
+    ctx->fd = -1;
 }
 
-// Test coroutine function with custom event
-static int custom_ready(void* source) {
-    return *(int*)source > 0;
+// Test async file operations
+static void test_async_file_read(void) {
+    // Create a test file
+    FILE* f = fopen(TEST_FILE, "w");
+    assert(f != NULL);
+    fputs(TEST_CONTENT, f);
+    fclose(f);
+    
+    // Prepare read context
+    char buffer[128] = {0};
+    ReadContext ctx = {
+        .fd = -1,
+        .buffer = buffer,
+        .size = sizeof(buffer),
+        .bytes_read = 0,
+        .filename = TEST_FILE
+    };
+    
+    // Start async read
+    InfraxAsync* async = infrax_async_start(async_read_file, &ctx);
+    assert(async != NULL);
+    
+    // Wait for completion
+    int result = infrax_async_wait(async);
+    assert(result == 0);
+    
+    // Verify content
+    assert(strncmp(buffer, TEST_CONTENT, strlen(TEST_CONTENT)) == 0);
+    printf("Async read test passed: content matches\n");
+    
+    // Cleanup
+    unlink(TEST_FILE);
 }
 
-static int custom_wait(void* source) {
-    return 0;  // Non-blocking
-}
-
-static void custom_cleanup(void* source) {
-    free(source);
-}
-
-static void test_custom_coroutine(void* arg) {
-    TestState* state = (TestState*)arg;
-    InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "Custom coroutine started");
+// Async delay function
+static void async_delay(void* arg) {
+    struct timespec start, current;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    time_t elapsed = 0;
     
-    InfraxScheduler* scheduler = get_default_scheduler();
-    int* counter = malloc(sizeof(int));
-    *counter = 0;
-    
-    InfraxEventSource* event = scheduler->create_custom_event(
-        scheduler,
-        counter,
-        custom_ready,
-        custom_wait,
-        custom_cleanup
-    );
-    
-    // First increment
-    state->value++;
-    log->debug(log, "First increment done, value = %d", state->value);
-    
-    // Wait for custom event
-    *counter = 1;  // Make event ready
-    int wait_result = state->co->wait(state->co, event);
-    if (wait_result < 0) {
-        log->error(log, "Custom event wait failed");
-        event->klass->free(event);
-        return;
+    while (elapsed < DELAY_SECONDS) {
+        clock_gettime(CLOCK_MONOTONIC, &current);
+        elapsed = current.tv_sec - start.tv_sec;
+        infrax_async_yield(NULL);  // Yield on each iteration
+        usleep(100000);  // Sleep for 100ms to avoid tight loop
     }
-    
-    // Run scheduler to process custom event
-    scheduler->run(scheduler);
-    
-    // Second increment after event
-    state->value++;
-    log->debug(log, "Second increment done, value = %d", state->value);
-    log->debug(log, "Custom coroutine finished");
-    
-    event->klass->free(event);
 }
 
-// Basic timer test
-void test_async_timer(void) {
-    TestState state = {0};
-    InfraxAsyncConfig config = {
-        .fn = test_timer_coroutine,
-        .arg = &state
-    };
+// Test async delay
+static void test_async_delay(void) {
+    printf("Starting delay test (will wait for %d seconds)...\n", DELAY_SECONDS);
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
     
-    InfraxAsync* co = InfraxAsync_new(&config);
-    assert(co != NULL);
-    state.co = co;
+    // Start async delay
+    InfraxAsync* async = infrax_async_start(async_delay, NULL);
+    assert(async != NULL);
     
-    InfraxScheduler* scheduler = get_default_scheduler();
-    scheduler->run(scheduler);
+    // Wait for completion
+    int result = infrax_async_wait(async);
+    assert(result == 0);
     
-    assert(state.value == 2);
-    assert(co->is_done(co));
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    time_t elapsed = end.tv_sec - start.tv_sec;
     
-    co->klass->free(co);
-}
-
-// Custom event test
-void test_async_custom(void) {
-    TestState state = {0};
-    InfraxAsyncConfig config = {
-        .fn = test_custom_coroutine,
-        .arg = &state
-    };
-    
-    InfraxAsync* co = InfraxAsync_new(&config);
-    assert(co != NULL);
-    state.co = co;
-    
-    InfraxScheduler* scheduler = get_default_scheduler();
-    scheduler->run(scheduler);
-    
-    assert(state.value == 2);
-    assert(co->is_done(co));
-    
-    co->klass->free(co);
-}
-
-// Multiple coroutines test
-void test_async_multiple(void) {
-    // Timer coroutine state
-    TestState timer_state = {0};
-    InfraxAsyncConfig timer_config = {
-        .fn = test_timer_coroutine,
-        .arg = &timer_state
-    };
-    
-    // Custom coroutine state
-    TestState custom_state = {0};
-    InfraxAsyncConfig custom_config = {
-        .fn = test_custom_coroutine,
-        .arg = &custom_state
-    };
-    
-    // Create coroutines
-    InfraxAsync* timer_co = InfraxAsync_new(&timer_config);
-    assert(timer_co != NULL);
-    timer_state.co = timer_co;
-    
-    InfraxAsync* custom_co = InfraxAsync_new(&custom_config);
-    assert(custom_co != NULL);
-    custom_state.co = custom_co;
-    
-    // Run both coroutines
-    InfraxScheduler* scheduler = get_default_scheduler();
-    scheduler->run(scheduler);
-    
-    // Check results
-    assert(timer_state.value == 2);
-    assert(custom_state.value == 2);
-    assert(timer_co->is_done(timer_co));
-    assert(custom_co->is_done(custom_co));
-    
-    // Cleanup
-    timer_co->klass->free(timer_co);
-    custom_co->klass->free(custom_co);
-}
-
-// Error handling test
-void test_async_error_handling(void) {
-    TestState state = {0};
-    InfraxAsyncConfig config = {
-        .fn = test_timer_coroutine,
-        .arg = &state
-    };
-    
-    InfraxAsync* co = InfraxAsync_new(&config);
-    assert(co != NULL);
-    state.co = co;
-    
-    InfraxScheduler* scheduler = get_default_scheduler();
-    InfraxEventSource* event = scheduler->create_custom_event(
-        scheduler,
-        NULL,  // Invalid source
-        NULL,  // Invalid ready function
-        NULL,  // Invalid wait function
-        NULL   // Invalid cleanup function
-    );
-    
-    assert(event == NULL);  // Should fail to create event
-    
-    // Cleanup
-    co->klass->free(co);
+    // Verify that approximately DELAY_SECONDS has passed
+    assert(elapsed >= DELAY_SECONDS && elapsed <= DELAY_SECONDS + 1);
+    printf("Async delay test passed: waited for %ld seconds\n", elapsed);
 }
 
 int main(void) {
-    InfraxLog* log = get_global_infrax_log();
-    log->set_level(log, LOG_LEVEL_DEBUG);  // Set log level to DEBUG
-    test_async_timer();
-    test_async_custom();
-    test_async_multiple();
-    test_async_error_handling();
+    printf("Starting InfraxAsync tests...\n");
+    
+    test_async_file_read();
+    test_async_delay();
+    
+    printf("All tests passed!\n");
     return 0;
 }

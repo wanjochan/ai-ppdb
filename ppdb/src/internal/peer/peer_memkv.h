@@ -13,29 +13,36 @@
 
 // 服务状态
 typedef struct {
-    char host[64];                // 监听地址
-    int port;                     // 监听端口
-    char engine[32];              // 存储引擎
-    char plugin[256];             // 插件路径
-    bool running;                 // 运行状态
-    poly_poll_context_t* ctx;     // 轮询上下文
-    infra_mutex_t mutex;          // 互斥锁
+    char host[64];                    // Host to bind to
+    int port;                         // Port to bind to
+    char db_path[256];               // Database path
+    volatile bool running;            // Service running flag
+    infra_mutex_t mutex;              // Service mutex
+    poly_poll_context_t* ctx;         // Poll context
 } memkv_state_t;
 
 // 连接状态
 typedef struct {
-    infra_socket_t sock;          // 客户端 socket
-    poly_db_t* store;             // 数据库连接
-    char client_addr[64];         // 客户端地址
-    char* rx_buf;                 // 接收缓冲区
-    size_t rx_len;                // 缓冲区中的数据长度
-    size_t rx_pos;                // 当前处理位置
-    bool should_close;            // 是否应该关闭连接
-    bool is_closing;              // 是否正在关闭连接
-    bool is_initialized;          // 是否已初始化
-    time_t last_active_time;      // 最后活动时间
-    uint64_t total_commands;      // 总命令数
-    uint64_t failed_commands;     // 失败命令数
+    infra_socket_t sock;              // Client socket
+    poly_db_t* store;                 // Database connection
+    char* rx_buf;                     // Receive buffer
+    size_t rx_len;                    // Current buffer length
+    bool should_close;                // Connection close flag
+    volatile bool is_closing;         // Connection is being destroyed
+    volatile bool is_initialized;     // Connection is fully initialized
+    uint64_t created_time;           // Connection creation timestamp
+    uint64_t last_active_time;       // Last activity timestamp
+    size_t total_commands;           // Total commands processed
+    size_t failed_commands;          // Failed commands count
+    char client_addr[64];            // Client address string
+    
+    // SET command state
+    bool in_set_data;                // Whether processing SET data
+    char set_key[256];               // SET command key
+    uint32_t set_flags;              // SET command flags
+    time_t set_exptime;              // SET command expiration time
+    size_t set_bytes;                // SET command data length
+    bool set_noreply;                // SET command noreply flag
 } memkv_conn_t;
 
 // Service interface functions

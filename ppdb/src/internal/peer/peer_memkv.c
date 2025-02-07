@@ -30,7 +30,7 @@ infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size);
 infra_error_t memkv_apply_config(const poly_service_config_t* config);
 
 static void memkv_conn_destroy(memkv_conn_t* conn);
-static void handle_request(void* args);
+static void handle_request(memkv_conn_t* conn);
 static void handle_connection(poly_poll_handler_args_t* args);
 static int handle_get(memkv_conn_t* conn, const char* key);
 static void handle_delete(memkv_conn_t* conn, const char* key, bool noreply);
@@ -42,7 +42,6 @@ static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* va
 //-----------------------------------------------------------------------------
 
 #define MEMKV_VERSION "1.0.0"
-#define MEMKV_BUFFER_SIZE (64 * 1024)  // 64KB buffer
 #define MEMKV_MAX_DATA_SIZE (32 * 1024 * 1024)  // 32MB max value size
 #define MEMKV_DEFAULT_PORT 11211
 #define MEMKV_MAX_THREADS 32
@@ -100,19 +99,64 @@ static infra_error_t db_init(poly_db_t** db) {
         return INFRA_ERROR_INVALID_STATE;
     }
     
+    // Open database connection using poly_db with shared cache
     poly_db_config_t config = {
-        .type = state->engine && strcmp(state->engine, "duckdb") == 0 ? 
-                POLY_DB_TYPE_DUCKDB : POLY_DB_TYPE_SQLITE,
-        .url = state->plugin ? state->plugin : ":memory:",
-        .max_memory = 0,
+        .type = POLY_DB_TYPE_SQLITE,
+        .url = state->db_path,
+        .max_memory = 100 * 1024 * 1024,  // 100MB 内存限制
         .read_only = false,
-        .plugin_path = state->plugin,
-        .allow_fallback = true
+        .plugin_path = NULL,
+        .allow_fallback = false
     };
-
+    
+    INFRA_LOG_INFO("Opening database: %s", state->db_path);
+    
     infra_error_t err = poly_db_open(&config, db);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to open database: %d", err);
+        INFRA_LOG_ERROR("Failed to open database connection: %d", err);
+        return err;
+    }
+
+    // 启用 WAL 模式以提高并发性能
+    err = poly_db_exec(*db, "PRAGMA journal_mode=WAL;");
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to enable WAL mode");
+        poly_db_close(*db);
+        *db = NULL;
+        return err;
+    }
+
+    // 设置较短的超时和重试
+    err = poly_db_exec(*db, "PRAGMA busy_timeout=5000;");
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set busy timeout");
+        poly_db_close(*db);
+        *db = NULL;
+        return err;
+    }
+
+    // 设置共享缓存模式
+    err = poly_db_exec(*db, "PRAGMA cache_size=2000;");  // 2000 pages = ~8MB cache
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set cache size");
+        poly_db_close(*db);
+        *db = NULL;
+        return err;
+    }
+
+    err = poly_db_exec(*db, "PRAGMA synchronous=NORMAL;");  // 提高写入性能
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set synchronous mode");
+        poly_db_close(*db);
+        *db = NULL;
+        return err;
+    }
+
+    err = poly_db_exec(*db, "PRAGMA locking_mode=NORMAL;");  // 使用正常的锁定模式
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to set locking mode");
+        poly_db_close(*db);
+        *db = NULL;
         return err;
     }
 
@@ -131,8 +175,11 @@ static infra_error_t db_init(poly_db_t** db) {
         INFRA_LOG_ERROR("Failed to create tables: %d", err);
         poly_db_close(*db);
         *db = NULL;
+        return err;
     }
-    return err;
+    
+    INFRA_LOG_INFO("Database connection established");
+    return INFRA_OK;
 }
 
 static infra_error_t kv_get(poly_db_t* db, const char* key, void** value, 
@@ -162,17 +209,12 @@ static infra_error_t kv_get(poly_db_t* db, const char* key, void** value,
     }
     
     err = poly_db_stmt_step(stmt);
-    if (err == INFRA_ERROR_NOT_FOUND) {
-        printf("DEBUG: Key not found: [%s]\n", key);
+    if (err != INFRA_OK) {
+        printf("DEBUG: Key not found or error: [%s], err=%d\n", key, err);
         poly_db_stmt_finalize(stmt);
         return INFRA_ERROR_NOT_FOUND;
     }
-    if (err != INFRA_OK) {
-        printf("DEBUG: Failed to execute statement: %d\n", err);
-        poly_db_stmt_finalize(stmt);
-        return err;
-    }
-    
+
     // 获取 BLOB 数据
     void* blob_data = NULL;
     size_t blob_size = 0;
@@ -386,445 +428,145 @@ static int send_all(infra_socket_t sock, const void* data, size_t len) {
 }
 
 static int handle_get(memkv_conn_t* conn, const char* key) {
-    if (!conn || !key) {
-        INFRA_LOG_ERROR("Invalid parameters in handle_get");
+    if (!conn || !key || !conn->store) {
+        INFRA_LOG_ERROR("Invalid parameters");
         return -1;
     }
-    
-    INFRA_LOG_INFO("handle_get for key: [%s]", key);
-    
-    void* value = NULL;
+
+    // 获取键值对
     size_t value_len = 0;
     uint32_t flags = 0;
-    uint32_t exptime = 0;
-    
+    uint32_t exptime = 0;  // 添加过期时间参数
+    void* value = NULL;
     infra_error_t err = kv_get(conn->store, key, &value, &value_len, &flags, &exptime);
-    if (err == INFRA_ERROR_NOT_FOUND) {
-        INFRA_LOG_INFO("Key not found: [%s]", key);
-        err = send_all(conn->sock, "END\r\n", 5);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send END marker: %d", err);
-            return -1;
+    
+    if (err != INFRA_OK) {
+        if (err == INFRA_ERROR_NOT_FOUND) {
+            INFRA_LOG_DEBUG("Key not found: %s", key);
+            err = send_all(conn->sock, "END\r\n", 5);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send END response: %d", err);
+                conn->should_close = true;
+            }
+            return 0;  // 键不存在，但不是错误
         }
-        return 0;  // 键不存在，返回0表示处理完成但未找到键
-    }
-    if (err != INFRA_OK || !value) {
-        INFRA_LOG_ERROR("Failed to get key: [%s], err=%d", key, err);
+        INFRA_LOG_ERROR("Failed to get value for key %s: %d", key, err);
         return -1;
     }
-    
-    INFRA_LOG_INFO("Found key: [%s], value_len=%zu, flags=%u, exptime=%u", 
-                   key, value_len, flags, exptime);
-    
-    // 构造响应头
+
+    if (!value) {
+        INFRA_LOG_ERROR("Value is NULL for key %s", key);
+        return -1;
+    }
+
+    // 发送响应头
     char header[256];
     int header_len = snprintf(header, sizeof(header), "VALUE %s %u %zu\r\n", 
                             key, flags, value_len);
-    if (header_len < 0 || (size_t)header_len >= sizeof(header)) {
-        INFRA_LOG_ERROR("Response header buffer overflow");
+    if (header_len < 0 || header_len >= (int)sizeof(header)) {
+        INFRA_LOG_ERROR("Failed to format response header");
         free(value);
         return -1;
     }
-    
-    INFRA_LOG_INFO("Sending response header: [%.*s]", header_len, header);
-    
+
     // 发送响应头
     err = send_all(conn->sock, header, header_len);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to send response header: err=%d", err);
+        INFRA_LOG_ERROR("Failed to send response header: %d", err);
         free(value);
         return -1;
     }
-    
+
     // 发送值
-    INFRA_LOG_INFO("Sending value: [%.*s]", (int)value_len, (char*)value);
     err = send_all(conn->sock, value, value_len);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to send value: err=%d", err);
+        INFRA_LOG_ERROR("Failed to send value: %d", err);
         free(value);
         return -1;
     }
-    
-    // 发送值后的换行
+
+    // 发送值的结束标记
     err = send_all(conn->sock, "\r\n", 2);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to send value terminator: err=%d", err);
+        INFRA_LOG_ERROR("Failed to send value terminator: %d", err);
         free(value);
         return -1;
     }
-    
+
     // 发送 END 标记
     err = send_all(conn->sock, "END\r\n", 5);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to send END marker: err=%d", err);
+        INFRA_LOG_ERROR("Failed to send END marker: %d", err);
         free(value);
         return -1;
     }
-    
+
     INFRA_LOG_INFO("Successfully sent key-value pair: [%s]=[%.*s]", 
                    key, (int)value_len, (char*)value);
-    
+
     free(value);
     return 1;  // 返回1表示成功找到并发送了键值对
 }
 
-static void handle_set(memkv_conn_t* conn, const char* key, const char* flags_str,
-                      const char* exptime_str, const char* bytes_str, bool noreply,
-                      const char* data_ptr) {
-    if (!conn || !key || !flags_str || !exptime_str || !bytes_str || !data_ptr) {
-        INFRA_LOG_ERROR("Invalid parameters in handle_set");
-        if (!noreply && conn && conn->sock > 0) {
-            infra_error_t err = send_all(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send error response: %d", err);
-                conn->should_close = true;
-            }
-        }
+static void handle_request(memkv_conn_t* conn) {
+    if (!conn || !conn->rx_buf || conn->sock <= 0) {
+        INFRA_LOG_ERROR("Invalid parameters");
         return;
     }
 
-    INFRA_LOG_DEBUG("Handling SET command: key='%s', flags='%s', exptime='%s', bytes='%s'",
-                    key, flags_str, exptime_str, bytes_str);
-
-    // Parse parameters
-    char* endptr;
-    uint32_t flags = strtoul(flags_str, &endptr, 10);
-    if (*endptr != '\0') {
-        INFRA_LOG_ERROR("Invalid flags value: %s", flags_str);
-        if (!noreply) {
-            infra_error_t err = send_all(conn->sock, "CLIENT_ERROR invalid flags\r\n", 25);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send error response: %d", err);
-                conn->should_close = true;
-            }
-        }
-        return;
-    }
-
-    uint32_t exptime = strtoul(exptime_str, &endptr, 10);
-    if (*endptr != '\0') {
-        INFRA_LOG_ERROR("Invalid exptime value: %s", exptime_str);
-        if (!noreply) {
-            infra_error_t err = send_all(conn->sock, "CLIENT_ERROR invalid exptime\r\n", 27);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send error response: %d", err);
-                conn->should_close = true;
-            }
-        }
-        return;
-    }
-
-    size_t bytes = strtoul(bytes_str, &endptr, 10);
-    if (*endptr != '\0') {
-        INFRA_LOG_ERROR("Invalid bytes value: %s", bytes_str);
-        if (!noreply) {
-            infra_error_t err = send_all(conn->sock, "CLIENT_ERROR invalid bytes\r\n", 25);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send error response: %d", err);
-                conn->should_close = true;
-            }
-        }
-        return;
-    }
-
-    INFRA_LOG_DEBUG("Parsed SET params: flags=%u, exptime=%u, bytes=%zu",
-                    flags, exptime, bytes);
-
-    // 检查数据长度
-    size_t data_len = strlen(data_ptr);
-    if (data_len != bytes) {
-        INFRA_LOG_ERROR("Data length mismatch: expected %zu, got %zu", bytes, data_len);
-        if (!noreply) {
-            infra_error_t err = send_all(conn->sock, "CLIENT_ERROR length mismatch\r\n", 29);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send error response: %d", err);
-                conn->should_close = true;
-            }
-        }
-        return;
-    }
-
-    // 存储数据
-    infra_error_t err = kv_set(conn->store, key, data_ptr, bytes, flags, exptime);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to store data: %d", err);
-        if (!noreply) {
-            err = send_all(conn->sock, "SERVER_ERROR\r\n", 14);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send error response: %d", err);
-                conn->should_close = true;
-            }
-        }
-        return;
-    }
-
-    // 发送响应
-    if (!noreply) {
-        err = send_all(conn->sock, "STORED\r\n", 8);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send STORED response: %d", err);
-            conn->should_close = true;
-        }
-    }
-}
-
-static void handle_delete(memkv_conn_t* conn, const char* key, bool noreply) {
-    printf("DEBUG: Handling DELETE command for key='%s'\n", key);
-    
-    infra_error_t err = kv_delete(conn->store, key);
-    if (err == INFRA_OK) {
-        if (!noreply) {
-            err = send_all(conn->sock, "DELETED\r\n", 9);
-            if (err != INFRA_OK) {
-                printf("DEBUG: Failed to send DELETED response: err=%d\n", err);
-                conn->should_close = true;
-            }
-        }
-    } else if (err == INFRA_ERROR_NOT_FOUND) {
-        if (!noreply) {
-            err = send_all(conn->sock, "NOT_FOUND\r\n", 11);
-            if (err != INFRA_OK) {
-                printf("DEBUG: Failed to send NOT_FOUND response: err=%d\n", err);
-                conn->should_close = true;
-            }
-        }
-    } else {
-        if (!noreply) {
-            err = send_all(conn->sock, "SERVER_ERROR\r\n", 14);
-            if (err != INFRA_OK) {
-                printf("DEBUG: Failed to send SERVER_ERROR response: err=%d\n", err);
-                conn->should_close = true;
-            }
-        }
-    }
-}
-
-static void handle_flush(memkv_conn_t* conn, bool noreply) {
-    infra_error_t err = poly_db_exec(conn->store, "DELETE FROM kv_store");
-    if (!noreply) {
-        if (err == INFRA_OK) {
-            infra_net_send(conn->sock, "OK\r\n", 4, NULL);
-        } else {
-            infra_net_send(conn->sock, "ERROR\r\n", 7, NULL);
-        }
-    }
-}
-
-static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* value_str, bool is_incr) {
-    printf("DEBUG: Handling %s command for key='%s', value='%s'\n", 
-           is_incr ? "INCR" : "DECR", key, value_str);
-           
-    uint64_t delta = strtoull(value_str, NULL, 10);
-    void* old_value = NULL;
-    size_t old_value_len = 0;
-    uint32_t flags = 0;
-    uint32_t exptime = 0;
-    
-    infra_error_t err = kv_get(conn->store, key, &old_value, &old_value_len, &flags, &exptime);
-    if (err != INFRA_OK || !old_value) {
-        if (is_incr) {
-            // 对于INCR，如果key不存在，初始化为0
-            char zero_str[] = "0";
-            err = kv_set(conn->store, key, zero_str, strlen(zero_str), 0, 0);
-            if (err == INFRA_OK) {
-                err = send_all(conn->sock, "0\r\n", 3);
-                if (err == INFRA_ERROR_CLOSED) {
-                    conn->should_close = true;
-                }
-            } else {
-                err = send_all(conn->sock, "ERROR\r\n", 7);
-                if (err == INFRA_ERROR_CLOSED) {
-                    conn->should_close = true;
-                }
-            }
-        } else {
-            err = send_all(conn->sock, "NOT_FOUND\r\n", 11);
-            if (err == INFRA_ERROR_CLOSED) {
-                conn->should_close = true;
-            }
-        }
-        if (old_value) free(old_value);
-        return;
-    }
-    
-    // 确保old_value是以null结尾的字符串
-    char* null_term_value = malloc(old_value_len + 1);
-    if (!null_term_value) {
-        free(old_value);
-        err = send_all(conn->sock, "SERVER_ERROR out of memory\r\n", 26);
-        if (err == INFRA_ERROR_CLOSED) {
-            conn->should_close = true;
-        }
-        return;
-    }
-    memcpy(null_term_value, old_value, old_value_len);
-    null_term_value[old_value_len] = '\0';
-    
-    uint64_t current = strtoull(null_term_value, NULL, 10);
-    free(old_value);
-    free(null_term_value);
-    
-    if (is_incr) {
-        current += delta;
-    } else {
-        if (current < delta) {
-            current = 0;
-        } else {
-            current -= delta;
-        }
-    }
-    
-    char new_value[32];
-    int new_value_len = snprintf(new_value, sizeof(new_value), "%lu", current);
-    
-    err = kv_set(conn->store, key, new_value, new_value_len, flags, 0);
-    if (err == INFRA_OK) {
-        char response[32];
-        int response_len = snprintf(response, sizeof(response), "%lu\r\n", current);
-        err = send_all(conn->sock, response, response_len);
-        if (err == INFRA_ERROR_CLOSED) {
-            conn->should_close = true;
-        }
-    } else {
-        err = send_all(conn->sock, "ERROR\r\n", 7);
-        if (err == INFRA_ERROR_CLOSED) {
-            conn->should_close = true;
-        }
-    }
-}
-
-static void memkv_conn_destroy(memkv_conn_t* conn) {
-    if (!conn) {
-        INFRA_LOG_ERROR("Attempting to destroy NULL connection");
-        return;
-    }
-
-    if (conn->is_closing) {
-        INFRA_LOG_DEBUG("Connection already being destroyed");
-        return;
-    }
-    conn->is_closing = true;
-
-    INFRA_LOG_INFO("Destroying connection from %s (commands: total=%zu, failed=%zu)", 
-                   conn->client_addr, conn->total_commands, conn->failed_commands);
-
-    // Close database connection
-    if (conn->store) {
-        INFRA_LOG_DEBUG("Closing database connection");
-        poly_db_exec(conn->store, "PRAGMA optimize;");  // 优化数据库
-        poly_db_close(conn->store);
-        conn->store = NULL;
-    }
-
-    // Free receive buffer
-    if (conn->rx_buf) {
-        INFRA_LOG_DEBUG("Freeing receive buffer");
-        infra_free(conn->rx_buf);
-        conn->rx_buf = NULL;
-    }
-
-    // Close socket
-    if (conn->sock > 0) {
-        INFRA_LOG_DEBUG("Closing socket");
-        infra_net_close(conn->sock);
-        conn->sock = -1;
-    }
-
-    // Free connection state
-    infra_free(conn);
-}
-
-static void handle_request(void* args) {
-    if (!args) {
-        INFRA_LOG_ERROR("NULL handler args");
-        return;
-    }
-    
-    poly_poll_handler_args_t* handler_args = (poly_poll_handler_args_t*)args;
-    if (!handler_args->client || handler_args->client < 0) {
-        INFRA_LOG_ERROR("Invalid client socket: %d", handler_args->client);
-        return;
-    }
-    
-    memkv_conn_t* conn = (memkv_conn_t*)handler_args->user_data;
-    if (!conn) {
-        // 首次调用,创建新连接
-        handle_connection(handler_args);
-        if (!handler_args->user_data) {
-            INFRA_LOG_ERROR("Failed to create connection context");
-            return;
-        }
-        conn = (memkv_conn_t*)handler_args->user_data;
-        conn->is_initialized = true;
-        INFRA_LOG_DEBUG("New connection created and initialized");
-        return;  // 返回等待下一次调用
-    }
-    
-    if (!conn->is_initialized || conn->is_closing) {
-        INFRA_LOG_ERROR("Invalid connection state");
-        if (conn) {
-            memkv_conn_destroy(conn);
-            handler_args->user_data = NULL;
-        }
-        return;
-    }
-
-    // 确保接收缓冲区有效
-    if (!conn->rx_buf) {
-        INFRA_LOG_ERROR("Invalid receive buffer for %s", conn->client_addr);
-        goto cleanup;
-    }
-    
-    // 确保socket有效
-    if (conn->sock <= 0) {
-        INFRA_LOG_ERROR("Invalid socket for %s", conn->client_addr);
-        goto cleanup;
-    }
-    
     // 接收数据
     size_t received = 0;
-    memset(conn->rx_buf, 0, MEMKV_BUFFER_SIZE);
+    infra_error_t err = infra_net_recv(conn->sock, 
+        conn->rx_buf + conn->rx_len, 
+        MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1, 
+        &received);
     
-    infra_error_t err = infra_net_recv(conn->sock, conn->rx_buf, MEMKV_BUFFER_SIZE - 1, &received);
     if (err != INFRA_OK) {
         if (err == INFRA_ERROR_WOULD_BLOCK) {
-            return;  // 非阻塞模式下没有数据可读,等待下次调用
+            return;  // 非阻塞模式下没有数据可读
         }
         if (err == INFRA_ERROR_TIMEOUT) {
-            return;  // 读取超时,等待下次调用
+            return;  // 读取超时
         }
         INFRA_LOG_ERROR("Failed to receive data from %s: %d", conn->client_addr, err);
-        goto cleanup;
+        conn->should_close = true;
+        return;
     }
     
     if (received == 0) {
         INFRA_LOG_INFO("Client %s disconnected", conn->client_addr);
-        goto cleanup;
+        conn->should_close = true;
+        return;
     }
 
-    conn->rx_buf[received] = '\0';  // Ensure null termination
+    conn->rx_len += received;
+    conn->rx_buf[conn->rx_len] = '\0';  // 确保字符串以 null 结尾
     conn->last_active_time = time(NULL);
 
     INFRA_LOG_INFO("Received data from %s: [%s]", conn->client_addr, conn->rx_buf);
 
-    // 处理每一行命令
+    // 处理接收到的命令
     char* line = conn->rx_buf;
     char* next_line;
-    bool in_set_data = false;
-    char* set_key = NULL;
-    char* set_flags = NULL;
-    char* set_exptime = NULL;
-    char* set_bytes = NULL;
-    bool set_noreply = false;
-    char* set_data = NULL;
-
+    char* data_line = NULL;
+    size_t data_len = 0;
+    bool in_data = false;
+    
     while (line && *line) {
-        // 找到下一行
+        // 查找下一行
         next_line = strstr(line, "\r\n");
-        if (next_line) {
-            *next_line = '\0';
-            next_line += 2;
+        if (!next_line) {
+            // 命令不完整，等待更多数据
+            if (line != conn->rx_buf) {
+                // 移动未完成的命令到缓冲区开始
+                size_t remaining = conn->rx_len - (line - conn->rx_buf);
+                memmove(conn->rx_buf, line, remaining);
+                conn->rx_len = remaining;
+            }
+            return;
         }
+        *next_line = '\0';  // 将 \r\n 替换为字符串结束符
+        next_line += 2;     // 跳过 \r\n
 
         // 跳过空行
         if (*line == '\0') {
@@ -833,30 +575,57 @@ static void handle_request(void* args) {
         }
 
         // 如果正在处理 SET 命令的数据部分
-        if (in_set_data) {
-            // 处理 SET 命令
-            handle_set(conn, set_key, set_flags, set_exptime, set_bytes, set_noreply, line);
+        if (in_data) {
+            data_line = line;
+            data_len = next_line - line - 2;  // 减去 \r\n
+            in_data = false;
             
-            // 清除 SET 命令状态
-            free(set_key);
-            free(set_flags);
-            free(set_exptime);
-            free(set_bytes);
-            set_key = NULL;
-            set_flags = NULL;
-            set_exptime = NULL;
-            set_bytes = NULL;
-            set_noreply = false;
-            in_set_data = false;
+            // 验证数据长度
+            if (data_len != conn->set_bytes) {
+                INFRA_LOG_ERROR("Data length mismatch: expected %zu, got %zu", 
+                               conn->set_bytes, data_len);
+                if (!conn->set_noreply) {
+                    err = send_all(conn->sock, "CLIENT_ERROR bad data chunk\r\n", 26);
+                    if (err != INFRA_OK) {
+                        INFRA_LOG_ERROR("Failed to send error response: %d", err);
+                        conn->should_close = true;
+                    }
+                }
+                line = next_line;
+                continue;
+            }
+
+            // 保存数据
+            err = kv_set(conn->store, conn->set_key, data_line, data_len, 
+                        conn->set_flags, conn->set_exptime);
+            
+            if (err == INFRA_OK) {
+                if (!conn->set_noreply) {
+                    err = send_all(conn->sock, "STORED\r\n", 8);
+                    if (err != INFRA_OK) {
+                        INFRA_LOG_ERROR("Failed to send response: %d", err);
+                        conn->should_close = true;
+                    }
+                }
+            } else {
+                INFRA_LOG_ERROR("Failed to set key-value pair: %d", err);
+                if (!conn->set_noreply) {
+                    err = send_all(conn->sock, "SERVER_ERROR\r\n", 14);
+                    if (err != INFRA_OK) {
+                        INFRA_LOG_ERROR("Failed to send error response: %d", err);
+                        conn->should_close = true;
+                    }
+                }
+            }
+
             line = next_line;
             continue;
         }
-        
-        // Parse command
+
+        // 解析命令
         char cmd[32] = {0};
         char key[256] = {0};
         
-        // 检查命令格式
         if (sscanf(line, "%31s %255s", cmd, key) < 1) {
             INFRA_LOG_ERROR("Failed to parse command from %s: [%s]", conn->client_addr, line);
             conn->failed_commands++;
@@ -871,37 +640,72 @@ static void handle_request(void* args) {
             continue;
         }
 
-        INFRA_LOG_INFO("Processing command from %s: %s, key: %s", conn->client_addr, cmd, key);
+        INFRA_LOG_DEBUG("Processing command from %s: %s, key: %s", conn->client_addr, cmd, key);
         conn->total_commands++;
-        
+
         // 处理命令
-        if (strcasecmp(cmd, "get") == 0) {
-            handle_get(conn, key);
-            err = send_all(conn->sock, "END\r\n", 5);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send END marker: %d", err);
-                conn->should_close = true;
+        if (strcmp(cmd, "get") == 0) {
+            // 检查是否有更多的参数
+            char* next_key = key;
+            bool found = false;
+            while (next_key && *next_key) {
+                // 处理当前 key
+                int result = handle_get(conn, next_key);
+                if (result > 0) found = true;
+                
+                // 查找下一个 key
+                char* space = strchr(next_key, ' ');
+                if (space) {
+                    *space = '\0';
+                    next_key = space + 1;
+                    while (*next_key == ' ') next_key++;  // 跳过多余的空格
+                } else {
+                    next_key = NULL;
+                }
             }
+            
+            // 如果没有找到任何键，发送 END 标记
+            if (!found) {
+                err = send_all(conn->sock, "END\r\n", 5);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send END marker: %d", err);
+                    conn->should_close = true;
+                }
+            }
+            line = next_line;
         }
-        else if (strcasecmp(cmd, "set") == 0) {
+        else if (strcmp(cmd, "set") == 0) {
             char flags_str[32] = {0};
             char exptime_str[32] = {0};
             char bytes_str[32] = {0};
             char noreply_str[32] = {0};
-            
             int matched = sscanf(line, "%*s %*s %31s %31s %31s %31s", 
-                flags_str, exptime_str, bytes_str, noreply_str);
+                               flags_str, exptime_str, bytes_str, noreply_str);
+            
             if (matched >= 3) {
-                // 保存 SET 命令参数
-                set_key = strdup(key);
-                set_flags = strdup(flags_str);
-                set_exptime = strdup(exptime_str);
-                set_bytes = strdup(bytes_str);
-                set_noreply = (matched == 4 && strcmp(noreply_str, "noreply") == 0);
-                in_set_data = true;  // 标记下一行为数据
+                conn->set_flags = (uint32_t)strtoul(flags_str, NULL, 10);
+                conn->set_exptime = (uint32_t)strtoul(exptime_str, NULL, 10);
+                conn->set_bytes = (size_t)strtoul(bytes_str, NULL, 10);
+                
+                if (conn->set_bytes > MEMKV_MAX_DATA_SIZE) {
+                    INFRA_LOG_ERROR("Value too large from %s: %zu", conn->client_addr, conn->set_bytes);
+                    if (conn->sock > 0) {
+                        err = send_all(conn->sock, "SERVER_ERROR value too large\r\n", 28);
+                        if (err != INFRA_OK) {
+                            INFRA_LOG_ERROR("Failed to send error response: %d", err);
+                            conn->should_close = true;
+                        }
+                    }
+                    line = next_line;
+                    continue;
+                }
+
+                conn->set_noreply = (matched == 4 && strcmp(noreply_str, "noreply") == 0);
+                strncpy(conn->set_key, key, sizeof(conn->set_key) - 1);
+                in_data = true;
+                line = next_line;
             } else {
                 INFRA_LOG_ERROR("Invalid SET command format from %s: [%s]", conn->client_addr, line);
-                conn->failed_commands++;
                 if (conn->sock > 0) {
                     err = send_all(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37);
                     if (err != INFRA_OK) {
@@ -909,27 +713,29 @@ static void handle_request(void* args) {
                         conn->should_close = true;
                     }
                 }
+                line = next_line;
             }
         }
-        else if (strcasecmp(cmd, "delete") == 0) {
+        else if (strcmp(cmd, "delete") == 0) {
             char noreply_str[32] = {0};
             bool noreply = (sscanf(line, "%*s %*s %31s", noreply_str) == 1 && 
-                          strcmp(noreply_str, "noreply") == 0);
+                           strcmp(noreply_str, "noreply") == 0);
             handle_delete(conn, key, noreply);
+            line = next_line;
         }
-        else if (strcasecmp(cmd, "flush_all") == 0) {
+        else if (strcmp(cmd, "flush_all") == 0) {
             char noreply_str[32] = {0};
             bool noreply = (sscanf(line, "%*s %*s %31s", noreply_str) == 1 && 
-                          strcmp(noreply_str, "noreply") == 0);
+                           strcmp(noreply_str, "noreply") == 0);
             handle_flush(conn, noreply);
+            line = next_line;
         }
-        else if (strcasecmp(cmd, "incr") == 0 || strcasecmp(cmd, "decr") == 0) {
+        else if (strcmp(cmd, "incr") == 0 || strcmp(cmd, "decr") == 0) {
             char value_str[32] = {0};
             if (sscanf(line, "%*s %*s %31s", value_str) == 1) {
                 handle_incr_decr(conn, key, value_str, cmd[0] == 'i');
             } else {
-                INFRA_LOG_ERROR("Invalid INCR/DECR command format from %s: [%s]", 
-                               conn->client_addr, line);
+                INFRA_LOG_ERROR("Invalid INCR/DECR command format from %s: [%s]", conn->client_addr, line);
                 conn->failed_commands++;
                 if (conn->sock > 0) {
                     err = send_all(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37);
@@ -939,50 +745,37 @@ static void handle_request(void* args) {
                     }
                 }
             }
+            line = next_line;
         }
         else {
-            // 如果不是已知命令，且不是 SET 数据，则报错
-            if (!in_set_data) {
-                INFRA_LOG_ERROR("Unknown command: [%s]", cmd);
-                if (conn->sock > 0) {
-                    err = send_all(conn->sock, "ERROR\r\n", 7);
-                    if (err != INFRA_OK) {
-                        INFRA_LOG_ERROR("Failed to send error response: %d", err);
-                        conn->should_close = true;
-                    }
+            INFRA_LOG_ERROR("Unknown command from %s: [%s]", conn->client_addr, cmd);
+            if (conn->sock > 0) {
+                err = send_all(conn->sock, "ERROR\r\n", 7);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send error response: %d", err);
+                    conn->should_close = true;
                 }
             }
+            line = next_line;
         }
-        
-        line = next_line;
     }
 
-    // 如果还在等待 SET 数据但没收到，报错
-    if (in_set_data) {
-        INFRA_LOG_ERROR("Missing data for SET command");
-        conn->failed_commands++;
-        if (!set_noreply && conn->sock > 0) {
-            err = send_all(conn->sock, "CLIENT_ERROR missing data block\r\n", 31);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send error response: %d", err);
-                conn->should_close = true;
-            }
+    // 更新缓冲区
+    if (line != conn->rx_buf) {
+        size_t processed = line - conn->rx_buf;
+        if (processed < conn->rx_len) {
+            size_t remaining = conn->rx_len - processed;
+            memmove(conn->rx_buf, line, remaining);
+            conn->rx_len = remaining;
+        } else {
+            conn->rx_len = 0;
         }
-        free(set_key);
-        free(set_flags);
-        free(set_exptime);
-        free(set_bytes);
     }
-
-    return;
-
-cleanup:
-    INFRA_LOG_INFO("Closing connection from %s", conn->client_addr);
-    if (conn) {
-        memkv_conn_destroy(conn);
-        handler_args->user_data = NULL;
+    
+    // 如果缓冲区已经处理完毕，重置它
+    if (conn->rx_len == 0) {
+        conn->rx_buf[0] = '\0';
     }
-    INFRA_LOG_DEBUG("Connection cleanup completed for %s", conn->client_addr);
 }
 
 static void handle_connection(poly_poll_handler_args_t* args) {
@@ -1010,8 +803,7 @@ static void handle_connection(poly_poll_handler_args_t* args) {
     conn->rx_buf = (char*)infra_malloc(MEMKV_CONN_BUFFER_SIZE);
     if (!conn->rx_buf) {
         INFRA_LOG_ERROR("Failed to allocate receive buffer");
-        infra_free(conn);
-        infra_net_close(client);
+        memkv_conn_destroy(conn);
         return;
     }
 
@@ -1035,9 +827,7 @@ static void handle_connection(poly_poll_handler_args_t* args) {
     infra_error_t err = infra_net_set_nonblock(client, true);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to set non-blocking mode");
-        infra_free(conn->rx_buf);
-        infra_free(conn);
-        infra_net_close(client);
+        memkv_conn_destroy(conn);
         return;
     }
 
@@ -1045,9 +835,7 @@ static void handle_connection(poly_poll_handler_args_t* args) {
     flag = 1;
     if (setsockopt(client, SOL_SOCKET, SO_KEEPALIVE, &flag, sizeof(flag)) < 0) {
         INFRA_LOG_ERROR("Failed to set SO_KEEPALIVE");
-        infra_free(conn->rx_buf);
-        infra_free(conn);
-        infra_net_close(client);
+        memkv_conn_destroy(conn);
         return;
     }
 
@@ -1077,9 +865,7 @@ static void handle_connection(poly_poll_handler_args_t* args) {
     err = db_init(&conn->store);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to initialize database connection");
-        infra_free(conn->rx_buf);
-        infra_free(conn);
-        infra_net_close(client);
+        memkv_conn_destroy(conn);
         return;
     }
 
@@ -1099,7 +885,7 @@ static void handle_connection(poly_poll_handler_args_t* args) {
     args->user_data = conn;
 }
 
-static void handle_request_wrapper(void* args) {
+static void handle_connection_wrapper(void* args) {
     poly_poll_handler_args_t* handler_args = (poly_poll_handler_args_t*)args;
     if (!handler_args) {
         INFRA_LOG_ERROR("NULL handler args");
@@ -1121,23 +907,17 @@ static void handle_request_wrapper(void* args) {
     if (!conn->store) {
         INFRA_LOG_ERROR("Invalid database connection");
         conn->should_close = true;
-        return;
     }
 
-    handle_request(args);
+    if (!conn->should_close) {
+        // 处理接收到的数据
+        handle_request(conn);
+    }
 
     // 如果连接需要关闭，清理资源
     if (conn->should_close) {
         INFRA_LOG_INFO("Closing connection from %s", conn->client_addr);
-        if (conn->store) {
-            poly_db_close(conn->store);
-            conn->store = NULL;
-        }
-        if (conn->rx_buf) {
-            infra_free(conn->rx_buf);
-            conn->rx_buf = NULL;
-        }
-        infra_free(conn);
+        memkv_conn_destroy(conn);
         handler_args->user_data = NULL;
     }
 }
@@ -1166,7 +946,7 @@ infra_error_t memkv_init(void) {
     memset(state, 0, sizeof(memkv_state_t));
     state->port = MEMKV_DEFAULT_PORT;
     strncpy(state->host, "127.0.0.1", sizeof(state->host) - 1);
-    strncpy(state->engine, "sqlite", sizeof(state->engine) - 1);
+    strncpy(state->db_path, ":memory:", sizeof(state->db_path) - 1);
     state->running = false;
     state->ctx = NULL;
     
@@ -1201,8 +981,7 @@ infra_error_t memkv_cleanup(void) {
     }
 
     // 清理资源 - 使用 memset 清空数组
-    memset(state->engine, 0, sizeof(state->engine));
-    memset(state->plugin, 0, sizeof(state->plugin));
+    memset(state->db_path, 0, sizeof(state->db_path));
 
     // 销毁互斥锁
     infra_mutex_destroy(&state->mutex);
@@ -1257,7 +1036,7 @@ infra_error_t memkv_start(void) {
         .max_threads = MEMKV_MAX_THREADS,
         .queue_size = 1000,
         .max_listeners = 1,
-        .read_buffer_size = MEMKV_BUFFER_SIZE
+        .read_buffer_size = MEMKV_CONN_BUFFER_SIZE
     };
 
     err = poly_poll_init(state->ctx, &config);
@@ -1269,13 +1048,16 @@ infra_error_t memkv_start(void) {
     }
 
     // Set request handler
-    poly_poll_set_handler(state->ctx, handle_request_wrapper);
+    poly_poll_set_handler(state->ctx, handle_connection_wrapper);
 
     // Add listener
     poly_poll_listener_t listener = {0};
+    if (!state->host[0]) {
+        strncpy(state->host, "127.0.0.1", sizeof(state->host) - 1);
+    }
+    strncpy(listener.bind_addr, state->host, sizeof(listener.bind_addr) - 1);
     listener.bind_port = state->port;
-    strncpy(listener.bind_addr, state->host[0] ? state->host : "0.0.0.0", sizeof(listener.bind_addr) - 1);
-    listener.bind_addr[sizeof(listener.bind_addr) - 1] = '\0';
+    listener.user_data = NULL;
 
     err = poly_poll_add_listener(state->ctx, &listener);
     if (err != INFRA_OK) {
@@ -1298,9 +1080,9 @@ infra_error_t memkv_start(void) {
 
     state->running = true;
     g_memkv_service.state = PEER_SERVICE_STATE_RUNNING;
-    
+
     INFRA_LOG_INFO("MemKV service started successfully on %s:%d", 
-                   listener.bind_addr, listener.bind_port);
+                   state->host, state->port);
     return INFRA_OK;
 }
 
@@ -1366,12 +1148,10 @@ infra_error_t memkv_cmd_handler(const char* cmd, char* response, size_t size) {
         snprintf(response, size, "MemKV Service Status:\n"
                 "State: %s\n"
                 "Port: %d\n"
-                "Engine: %s\n"
-                "Plugin: %s\n",
+                "DB Path: %s\n",
                 state_str,
                 state ? state->port : MEMKV_DEFAULT_PORT,
-                state && state->engine ? state->engine : "none",
-                state && state->plugin ? state->plugin : "none");
+                state && state->db_path ? state->db_path : "none");
         return INFRA_OK;
     }
     else if (strcmp(argv[0], "start") == 0) {
@@ -1415,19 +1195,246 @@ infra_error_t memkv_apply_config(const poly_service_config_t* config) {
     state->host[sizeof(state->host) - 1] = '\0';
     state->port = config->listen_port > 0 ? config->listen_port : MEMKV_DEFAULT_PORT;
     
-    // 如果提供了后端配置,使用它作为存储引擎
+    // 如果提供了后端配置,使用它作为数据库路径
     if (config->backend && config->backend[0]) {
-        strncpy(state->engine, config->backend, sizeof(state->engine) - 1);
-        state->engine[sizeof(state->engine) - 1] = '\0';
+        strncpy(state->db_path, config->backend, sizeof(state->db_path) - 1);
+        state->db_path[sizeof(state->db_path) - 1] = '\0';
     }
 
-    INFRA_LOG_INFO("Applied configuration - host: %s, port: %d, engine: %s",
-        state->host, state->port, state->engine);
+    INFRA_LOG_INFO("Applied configuration - host: %s, port: %d, db_path: %s",
+        state->host, state->port, state->db_path);
 
     return INFRA_OK;
 }
 
 peer_service_t* peer_memkv_get_service(void) {
     return &g_memkv_service;
+}
+
+static void handle_delete(memkv_conn_t* conn, const char* key, bool noreply) {
+    if (!conn || !conn->store || !key || conn->sock <= 0) {
+        INFRA_LOG_ERROR("Invalid parameters in handle_delete");
+        if (!noreply && conn && conn->sock > 0) {
+            infra_net_send(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL);
+        }
+        return;
+    }
+
+    // 检查 key 的长度
+    size_t key_len = strlen(key);
+    if (key_len == 0 || key_len > 250) {  // 250 是一个合理的限制
+        INFRA_LOG_ERROR("Invalid key length: %zu", key_len);
+        if (!noreply && conn->sock > 0) {
+            infra_net_send(conn->sock, "CLIENT_ERROR invalid key length\r\n", 31, NULL);
+        }
+        return;
+    }
+
+    infra_error_t err = kv_delete(conn->store, key);
+    if (err == INFRA_OK) {
+        if (!noreply) {
+            err = send_all(conn->sock, "DELETED\r\n", 9);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send DELETED response: %d", err);
+                conn->should_close = true;
+            }
+        }
+    } else if (err == INFRA_ERROR_NOT_FOUND) {
+        if (!noreply) {
+            err = send_all(conn->sock, "NOT_FOUND\r\n", 11);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send NOT_FOUND response: %d", err);
+                conn->should_close = true;
+            }
+        }
+    } else {
+        if (!noreply) {
+            err = send_all(conn->sock, "SERVER_ERROR\r\n", 14);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send SERVER_ERROR response: %d", err);
+                conn->should_close = true;
+            }
+        }
+    }
+}
+
+static void handle_flush(memkv_conn_t* conn, bool noreply) {
+    if (!conn || !conn->store || conn->sock <= 0) {
+        INFRA_LOG_ERROR("Invalid parameters in handle_flush");
+        if (!noreply && conn && conn->sock > 0) {
+            infra_net_send(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL);
+        }
+        return;
+    }
+
+    infra_error_t err = kv_flush(conn->store);
+    if (!noreply) {
+        if (err == INFRA_OK) {
+            err = send_all(conn->sock, "OK\r\n", 4);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send OK response: %d", err);
+                conn->should_close = true;
+            }
+        } else {
+            err = send_all(conn->sock, "SERVER_ERROR\r\n", 14);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send SERVER_ERROR response: %d", err);
+                conn->should_close = true;
+            }
+        }
+    }
+}
+
+static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* value_str, bool is_incr) {
+    if (!conn || !conn->store || !key || !value_str || conn->sock <= 0) {
+        INFRA_LOG_ERROR("Invalid parameters in handle_incr_decr");
+        infra_net_send(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37, NULL);
+        return;
+    }
+
+    INFRA_LOG_DEBUG("Handling %s command for key='%s', value='%s'", 
+                    is_incr ? "INCR" : "DECR", key, value_str);
+           
+    uint64_t delta = strtoull(value_str, NULL, 10);
+    void* old_value = NULL;
+    size_t old_value_len = 0;
+    uint32_t flags = 0;
+    uint32_t exptime = 0;
+    
+    infra_error_t err = kv_get(conn->store, key, &old_value, &old_value_len, &flags, &exptime);
+    if (err != INFRA_OK || !old_value) {
+        if (is_incr) {
+            // 对于INCR，如果key不存在，初始化为0
+            char zero_str[] = "0";
+            err = kv_set(conn->store, key, zero_str, strlen(zero_str), 0, 0);
+            if (err == INFRA_OK) {
+                err = send_all(conn->sock, "0\r\n", 3);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send initial value response: %d", err);
+                    conn->should_close = true;
+                }
+            } else {
+                INFRA_LOG_ERROR("Failed to set initial value: %d", err);
+                err = send_all(conn->sock, "ERROR\r\n", 7);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send ERROR response: %d", err);
+                    conn->should_close = true;
+                }
+            }
+        } else {
+            err = send_all(conn->sock, "NOT_FOUND\r\n", 11);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send NOT_FOUND response: %d", err);
+                conn->should_close = true;
+            }
+        }
+        if (old_value) free(old_value);
+        return;
+    }
+
+    // 确保old_value是以null结尾的字符串
+    char* null_term_value = malloc(old_value_len + 1);
+    if (!null_term_value) {
+        free(old_value);
+        err = send_all(conn->sock, "SERVER_ERROR out of memory\r\n", 26);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send error response: %d", err);
+            conn->should_close = true;
+        }
+        return;
+    }
+    memcpy(null_term_value, old_value, old_value_len);
+    null_term_value[old_value_len] = '\0';
+    
+    uint64_t current = strtoull(null_term_value, NULL, 10);
+    free(old_value);
+    free(null_term_value);
+    
+    if (is_incr) {
+        current += delta;
+    } else {
+        if (current < delta) {
+            current = 0;
+        } else {
+            current -= delta;
+        }
+    }
+    
+    char new_value[32];
+    int new_value_len = snprintf(new_value, sizeof(new_value), "%lu", current);
+    if (new_value_len < 0 || (size_t)new_value_len >= sizeof(new_value)) {
+        INFRA_LOG_ERROR("Failed to format new value");
+        err = send_all(conn->sock, "SERVER_ERROR value too large\r\n", 28);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send error response: %d", err);
+            conn->should_close = true;
+        }
+        return;
+    }
+    
+    err = kv_set(conn->store, key, new_value, new_value_len, flags, 0);
+    if (err == INFRA_OK) {
+        char response[32];
+        int response_len = snprintf(response, sizeof(response), "%lu\r\n", current);
+        if (response_len < 0 || (size_t)response_len >= sizeof(response)) {
+            INFRA_LOG_ERROR("Failed to format response");
+            err = send_all(conn->sock, "SERVER_ERROR response too large\r\n", 30);
+            if (err != INFRA_OK) {
+                INFRA_LOG_ERROR("Failed to send error response: %d", err);
+                conn->should_close = true;
+            }
+            return;
+        }
+        err = send_all(conn->sock, response, response_len);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send response: %d", err);
+            conn->should_close = true;
+        }
+    } else {
+        err = send_all(conn->sock, "ERROR\r\n", 7);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send ERROR response: %d", err);
+            conn->should_close = true;
+        }
+    }
+}
+
+static void memkv_conn_destroy(memkv_conn_t* conn) {
+    if (!conn) {
+        return;
+    }
+
+    // 关闭数据库连接
+    if (conn->store) {
+        poly_db_close(conn->store);
+        conn->store = NULL;
+    }
+
+    // 关闭套接字
+    if (conn->sock > 0) {
+        infra_net_close(conn->sock);
+        conn->sock = 0;
+    }
+
+    // 释放接收缓冲区
+    if (conn->rx_buf) {
+        infra_free(conn->rx_buf);
+        conn->rx_buf = NULL;
+    }
+
+    // 清空客户端地址
+    memset(conn->client_addr, 0, sizeof(conn->client_addr));
+
+    // 重置其他字段
+    conn->rx_len = 0;
+    conn->should_close = false;
+    conn->is_closing = false;
+    conn->is_initialized = false;
+    conn->total_commands = 0;
+    conn->failed_commands = 0;
+    conn->last_active_time = 0;
+
+    // 最后释放连接结构体
+    infra_free(conn);
 }
 
