@@ -3,6 +3,19 @@
 # Import common functions and environment variables
 source "$(dirname "$0")/build_env.sh"
 
+# Clean old build files
+clean_build() {
+    echo "Cleaning old build files..."
+    rm -rf "${BUILD_DIR}/arch"
+    rm -f "${TEST_DIR}/arch/test_arch"
+    rm -f "${TEST_DIR}/arch/test_infrax_memory"
+    rm -f "${TEST_DIR}/arch/test_infrax_error"
+    rm -f "${TEST_DIR}/arch/test_infrax_thread"
+    rm -f "${TEST_DIR}/arch/test_infrax_sync"
+    rm -f "${TEST_DIR}/arch/test_infrax_net"
+    rm -f "${TEST_DIR}/arch/test_infrax_async"
+}
+
 # Set compile flags with all necessary include paths
 CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR}"
 
@@ -103,6 +116,7 @@ build_tests() {
 }
 
 # Main execution
+clean_build
 build_arch
 if [ $? -eq 0 ]; then
     build_tests

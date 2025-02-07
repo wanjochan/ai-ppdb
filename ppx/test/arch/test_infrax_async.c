@@ -1,8 +1,7 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxLog.h"
 #include <string.h>
-
-#define MAX_COROUTINES 5
+#include <assert.h>
 
 // Test state
 typedef struct {
@@ -10,266 +9,206 @@ typedef struct {
     InfraxAsync* co;
 } TestState;
 
-static void test_coroutine_func(void* arg) {
+// Test coroutine function with timer event
+static void test_timer_coroutine(void* arg) {
     TestState* state = (TestState*)arg;
     InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "Coroutine function started");
+    log->debug(log, "Timer coroutine started");
     
-    if (state) {
-        state->value++;
-        log->debug(log, "First increment done, yielding");
-        
-        // 创建一个定时器，等待1毫秒
-        InfraxAsync* timer = InfraxAsync_CreateTimer(1);
-        if (timer) {
-            // 启动定时器并等待它完成
-            InfraxError err = timer->start(timer);
-            if (INFRAX_ERROR_IS_OK(err)) {
-                // 运行定时器直到完成
-                while (!timer->is_done(timer)) {
-                    InfraxAsyncRun();  // 运行调度器
-                }
-            }
-            // 确保定时器完成后再释放
-            while (!timer->is_done(timer)) {
-                InfraxAsyncRun();
-            }
-            InfraxAsync_CLASS.free(timer);
-        }
-        
-        log->debug(log, "Resumed after yield");
-        state->value++;
-        log->debug(log, "Second increment done");
-    }
-    log->debug(log, "Coroutine function finished");
-}
-
-void test_async_basic(void) {
-    InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "Testing basic coroutine operations");
+    InfraxScheduler* scheduler = get_default_scheduler();
+    InfraxEventSource* timer = scheduler->create_timer_event(scheduler, 100);  // 100ms timeout
     
-    // 分配测试状态
-    TestState* state = malloc(sizeof(TestState));
-    if (!state) {
-        log->error(log, "Failed to allocate test state");
+    // First increment
+    state->value++;
+    log->debug(log, "First increment done, value = %d", state->value);
+    
+    // Wait for timer
+    int wait_result = state->co->wait(state->co, timer);
+    if (wait_result < 0) {
+        log->error(log, "Timer wait failed");
+        timer->klass->free(timer);
         return;
     }
-    memset(state, 0, sizeof(TestState));
     
-    InfraxAsyncConfig config = {
-        .name = "test_coroutine",
-        .fn = test_coroutine_func,
-        .arg = state,
-        .stack_size = DEFAULT_STACK_SIZE  // 使用默认栈大小
-    };
+    // Run scheduler to process timer event
+    scheduler->run(scheduler);
     
-    // Create coroutine
-    InfraxAsync* co = InfraxAsync_CLASS.new(&config);
-    if (!co) {
-        log->error(log, "Failed to create coroutine");
-        goto cleanup;
-    }
-    state->co = co;
-
-    // Verify initial state
-    if (co->is_done(co)) {
-        log->error(log, "Coroutine should not be done initially");
-        goto cleanup;
-    }
+    // Second increment after timer
+    state->value++;
+    log->debug(log, "Second increment done, value = %d", state->value);
+    log->debug(log, "Timer coroutine finished");
     
-    // Start coroutine
-    InfraxError err = co->start(co);
-    if (!INFRAX_ERROR_IS_OK(err)) {
-        log->error(log, "Failed to start coroutine");
-        goto cleanup;
-    }
-    
-    log->debug(log, "Running coroutine first time");
-    InfraxAsyncRun();
-    
-    if (state->value != 1) {
-        log->error(log, "First increment failed, value = %d", state->value);
-        goto cleanup;
-    }
-    
-    // Resume coroutine
-    log->debug(log, "Resuming coroutine");
-    err = co->resume(co);
-    if (!INFRAX_ERROR_IS_OK(err)) {
-        log->error(log, "Failed to resume coroutine");
-        goto cleanup;
-    }
-    
-    log->debug(log, "Running coroutine second time");
-    InfraxAsyncRun();
-    
-    if (state->value != 2) {
-        log->error(log, "Second increment failed, value = %d", state->value);
-        goto cleanup;
-    }
-    
-    if (!co->is_done(co)) {
-        log->error(log, "Coroutine should be done");
-        goto cleanup;
-    }
-    
-    log->debug(log, "Basic coroutine test passed");
-
-cleanup:
-    if (co) {
-        InfraxAsync_CLASS.free(co);
-    }
-    free(state);
+    timer->klass->free(timer);
 }
 
-void test_async_multiple(void) {
+// Test coroutine function with custom event
+static int custom_ready(void* source) {
+    return *(int*)source > 0;
+}
+
+static int custom_wait(void* source) {
+    return 0;  // Non-blocking
+}
+
+static void custom_cleanup(void* source) {
+    free(source);
+}
+
+static void test_custom_coroutine(void* arg) {
+    TestState* state = (TestState*)arg;
     InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "Testing multiple coroutines");
+    log->debug(log, "Custom coroutine started");
     
-    TestState* states[MAX_COROUTINES] = {0};
-    InfraxAsync* coroutines[MAX_COROUTINES] = {0};
+    InfraxScheduler* scheduler = get_default_scheduler();
+    int* counter = malloc(sizeof(int));
+    *counter = 0;
+    
+    InfraxEventSource* event = scheduler->create_custom_event(
+        scheduler,
+        counter,
+        custom_ready,
+        custom_wait,
+        custom_cleanup
+    );
+    
+    // First increment
+    state->value++;
+    log->debug(log, "First increment done, value = %d", state->value);
+    
+    // Wait for custom event
+    *counter = 1;  // Make event ready
+    int wait_result = state->co->wait(state->co, event);
+    if (wait_result < 0) {
+        log->error(log, "Custom event wait failed");
+        event->klass->free(event);
+        return;
+    }
+    
+    // Run scheduler to process custom event
+    scheduler->run(scheduler);
+    
+    // Second increment after event
+    state->value++;
+    log->debug(log, "Second increment done, value = %d", state->value);
+    log->debug(log, "Custom coroutine finished");
+    
+    event->klass->free(event);
+}
+
+// Basic timer test
+void test_async_timer(void) {
+    TestState state = {0};
+    InfraxAsyncConfig config = {
+        .fn = test_timer_coroutine,
+        .arg = &state
+    };
+    
+    InfraxAsync* co = InfraxAsync_new(&config);
+    assert(co != NULL);
+    state.co = co;
+    
+    InfraxScheduler* scheduler = get_default_scheduler();
+    scheduler->run(scheduler);
+    
+    assert(state.value == 2);
+    assert(co->is_done(co));
+    
+    co->klass->free(co);
+}
+
+// Custom event test
+void test_async_custom(void) {
+    TestState state = {0};
+    InfraxAsyncConfig config = {
+        .fn = test_custom_coroutine,
+        .arg = &state
+    };
+    
+    InfraxAsync* co = InfraxAsync_new(&config);
+    assert(co != NULL);
+    state.co = co;
+    
+    InfraxScheduler* scheduler = get_default_scheduler();
+    scheduler->run(scheduler);
+    
+    assert(state.value == 2);
+    assert(co->is_done(co));
+    
+    co->klass->free(co);
+}
+
+// Multiple coroutines test
+void test_async_multiple(void) {
+    // Timer coroutine state
+    TestState timer_state = {0};
+    InfraxAsyncConfig timer_config = {
+        .fn = test_timer_coroutine,
+        .arg = &timer_state
+    };
+    
+    // Custom coroutine state
+    TestState custom_state = {0};
+    InfraxAsyncConfig custom_config = {
+        .fn = test_custom_coroutine,
+        .arg = &custom_state
+    };
     
     // Create coroutines
-    for (int i = 0; i < MAX_COROUTINES; i++) {
-        // 分配测试状态
-        states[i] = malloc(sizeof(TestState));
-        if (!states[i]) {
-            log->error(log, "Failed to allocate test state %d", i);
-            goto cleanup;
-        }
-        memset(states[i], 0, sizeof(TestState));
-        
-        char name[32];
-        snprintf(name, sizeof(name), "test_coroutine_%d", i);
-        InfraxAsyncConfig config = {
-            .name = name,
-            .fn = test_coroutine_func,
-            .arg = states[i]
-        };
-        
-        coroutines[i] = InfraxAsync_CLASS.new(&config);
-        if (!coroutines[i]) {
-            log->error(log, "Failed to create coroutine %d", i);
-            goto cleanup;
-        }
-        states[i]->co = coroutines[i];
-    }
+    InfraxAsync* timer_co = InfraxAsync_new(&timer_config);
+    assert(timer_co != NULL);
+    timer_state.co = timer_co;
     
-    // Start all coroutines
-    for (int i = 0; i < MAX_COROUTINES; i++) {
-        InfraxError err = coroutines[i]->start(coroutines[i]);
-        if (!INFRAX_ERROR_IS_OK(err)) {
-            log->error(log, "Failed to start coroutine %d", i);
-            goto cleanup;
-        }
-    }
+    InfraxAsync* custom_co = InfraxAsync_new(&custom_config);
+    assert(custom_co != NULL);
+    custom_state.co = custom_co;
     
-    // Run all coroutines first time
-    log->debug(log, "Running all coroutines first time");
-    InfraxAsyncRun();
+    // Run both coroutines
+    InfraxScheduler* scheduler = get_default_scheduler();
+    scheduler->run(scheduler);
     
-    // Verify first increment
-    for (int i = 0; i < MAX_COROUTINES; i++) {
-        if (states[i]->value != 1) {
-            log->error(log, "First increment failed for coroutine %d", i);
-            goto cleanup;
-        }
-    }
+    // Check results
+    assert(timer_state.value == 2);
+    assert(custom_state.value == 2);
+    assert(timer_co->is_done(timer_co));
+    assert(custom_co->is_done(custom_co));
     
-    // Resume all coroutines
-    log->debug(log, "Resuming all coroutines");
-    for (int i = 0; i < MAX_COROUTINES; i++) {
-        InfraxError err = coroutines[i]->resume(coroutines[i]);
-        if (!INFRAX_ERROR_IS_OK(err)) {
-            log->error(log, "Failed to resume coroutine %d", i);
-            goto cleanup;
-        }
-    }
-    
-    // Run all coroutines second time
-    log->debug(log, "Running all coroutines second time");
-    InfraxAsyncRun();
-    
-    // Verify second increment and completion
-    for (int i = 0; i < MAX_COROUTINES; i++) {
-        if (states[i]->value != 2) {
-            log->error(log, "Second increment failed for coroutine %d", i);
-            goto cleanup;
-        }
-        if (!coroutines[i]->is_done(coroutines[i])) {
-            log->error(log, "Coroutine %d should be done", i);
-            goto cleanup;
-        }
-    }
-    
-    log->debug(log, "Multiple coroutines test passed");
-
-cleanup:
-    for (int i = 0; i < MAX_COROUTINES; i++) {
-        if (coroutines[i]) {
-            InfraxAsync_CLASS.free(coroutines[i]);
-        }
-        if (states[i]) {
-            free(states[i]);
-        }
-    }
+    // Cleanup
+    timer_co->klass->free(timer_co);
+    custom_co->klass->free(custom_co);
 }
 
+// Error handling test
 void test_async_error_handling(void) {
-    InfraxLog* log = get_global_infrax_log();
-    log->debug(log, "Testing error handling");
-    
-    // 分配测试状态
-    TestState* state = malloc(sizeof(TestState));
-    if (!state) {
-        log->error(log, "Failed to allocate test state");
-        return;
-    }
-    memset(state, 0, sizeof(TestState));
-    
-    // Test invalid config
+    TestState state = {0};
     InfraxAsyncConfig config = {
-        .name = "test_coroutine",
-        .fn = NULL,  // Invalid function pointer
-        .arg = state
+        .fn = test_timer_coroutine,
+        .arg = &state
     };
     
-    InfraxAsync* co = InfraxAsync_CLASS.new(&config);
-    if (co) {
-        log->error(log, "Should not create coroutine with invalid config");
-        InfraxAsync_CLASS.free(co);
-        goto cleanup;
-    }
+    InfraxAsync* co = InfraxAsync_new(&config);
+    assert(co != NULL);
+    state.co = co;
     
-    // Test valid config but invalid operations
-    config.fn = test_coroutine_func;
-    co = InfraxAsync_CLASS.new(&config);
-    if (!co) {
-        log->error(log, "Failed to create coroutine");
-        goto cleanup;
-    }
-    state->co = co;
+    InfraxScheduler* scheduler = get_default_scheduler();
+    InfraxEventSource* event = scheduler->create_custom_event(
+        scheduler,
+        NULL,  // Invalid source
+        NULL,  // Invalid ready function
+        NULL,  // Invalid wait function
+        NULL   // Invalid cleanup function
+    );
     
-    // Try to yield before starting
-    InfraxError err = co->yield(co);
-    if (INFRAX_ERROR_IS_OK(err)) {
-        log->error(log, "Should not yield before starting");
-        goto cleanup;
-    }
+    assert(event == NULL);  // Should fail to create event
     
-    log->debug(log, "Error handling test passed");
-
-cleanup:
-    if (co) {
-        InfraxAsync_CLASS.free(co);
-    }
-    if (state) {
-        free(state);
-    }
+    // Cleanup
+    co->klass->free(co);
 }
 
 int main(void) {
-    test_async_basic();
+    InfraxLog* log = get_global_infrax_log();
+    log->set_level(log, LOG_LEVEL_DEBUG);  // Set log level to DEBUG
+    test_async_timer();
+    test_async_custom();
     test_async_multiple();
     test_async_error_handling();
     return 0;

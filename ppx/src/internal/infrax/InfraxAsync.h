@@ -1,121 +1,116 @@
-/**
- * @file InfraxAsync.h
- * @brief Async coroutine functionality for the infrax subsystem
- */
-
 #ifndef INFRAX_ASYNC_H
 #define INFRAX_ASYNC_H
 
-#include "InfraxCore.h"
-#include <setjmp.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-// IO事件类型
-#define INFRAX_IO_READ  (1 << 0)
-#define INFRAX_IO_WRITE (1 << 1)
-#define INFRAX_IO_ERROR (1 << 2)
-
-// 栈布局相关宏
-#define INFRAX_STACK_ALIGN     16
-#define INFRAX_STACK_REDZONE   128
-#define INFRAX_MIN_STACK_SIZE  1024
-#define DEFAULT_STACK_SIZE     (8 * 1024)  // 默认栈大小为8KB
-
-// 协程状态
-typedef enum {
-    COROUTINE_INIT = 0,      // 初始状态
-    COROUTINE_READY = 1,     // 就绪状态
-    COROUTINE_RUNNING = 2,   // 运行状态
-    COROUTINE_YIELDED = 3,   // 已让出状态
-    COROUTINE_DONE = 4       // 完成状态
-} InfraxAsyncState;
-
-// 异步操作类型
-typedef enum {
-    ASYNC_NONE = 0,
-    ASYNC_TIMER,      // 定时器
-    ASYNC_IO,         // IO操作
-    ASYNC_EVENT,      // 事件等待
-    ASYNC_RESOURCE,   // 资源等待
-    ASYNC_BATCH       // 批处理
-} InfraxAsyncType;
-
-// 前向声明
+// Forward declarations
+typedef struct InfraxScheduler InfraxScheduler;
+typedef struct InfraxEventSource InfraxEventSource;
 typedef struct InfraxAsync InfraxAsync;
-typedef struct InfraxAsyncClass InfraxAsyncClass;
+typedef struct InfraxAsyncConfig InfraxAsyncConfig;
 
-// 协程配置
-typedef struct {
-    const char* name;         // 协程名称
-    void (*fn)(void*);       // 协程函数
-    void* arg;               // 函数参数
-    size_t stack_size;       // 栈大小
-} InfraxAsyncConfig;
+// Event types
+typedef enum {
+    EVENT_IO,
+    EVENT_TIMER,
+    EVENT_CUSTOM
+} EventType;
 
-// 协程实例方法
-struct InfraxAsync {
-    const InfraxAsyncClass* klass;
-    InfraxAsyncConfig config;
-    InfraxAsyncState state;
-    InfraxAsync* next;
-    jmp_buf env;
-    
-    // 协程栈
-    void* stack;             // 栈空间
-    void* raw_stack;         // 原始栈指针(用于释放)
-    size_t stack_size;       // 栈大小
-    void* stack_top;         // 栈顶指针
-    
-    // 引用计数和父子关系
-    int ref_count;           // 引用计数
-    InfraxAsync* parent;     // 父协程
-    InfraxAsync* first_child;// 第一个子协程
-    InfraxAsync* next_sibling;// 下一个兄弟协程
-    
-    // 异步操作类型和参数
-    InfraxAsyncType type;
-    union {
-        struct {
-            int fd;
-            int events;
-        } io;
-        struct {
-            int ms;
-            uint64_t start_time;  // 定时器开始时间
-        } timer;
-    } params;
-    
-    // 实例方法
-    InfraxError (*start)(InfraxAsync* self);
-    InfraxError (*yield)(InfraxAsync* self);
-    InfraxError (*resume)(InfraxAsync* self);
-    bool (*is_done)(const InfraxAsync* self);
+// Coroutine configuration
+struct InfraxAsyncConfig {
+    const char* name;
+    void (*fn)(void* arg);
+    void* arg;
+    InfraxScheduler* scheduler;
 };
 
-// 类方法
-struct InfraxAsyncClass {
+// Scheduler class
+typedef struct {
+    InfraxScheduler* (*new)(void);
+    void (*free)(InfraxScheduler* self);
+    void (*init)(InfraxScheduler* self);
+    void (*destroy)(InfraxScheduler* self);
+} InfraxSchedulerClass;
+
+// Event source class
+typedef struct {
+    InfraxEventSource* (*new)(InfraxScheduler* scheduler);
+    void (*free)(InfraxEventSource* self);
+} InfraxEventSourceClass;
+
+// Coroutine class
+typedef struct {
     InfraxAsync* (*new)(const InfraxAsyncConfig* config);
     void (*free)(InfraxAsync* self);
+} InfraxAsyncClass;
+
+// Get the default scheduler for current thread
+InfraxScheduler* get_default_scheduler(void);
+
+// Scheduler instance
+struct InfraxScheduler {
+    const InfraxSchedulerClass* klass;
+    bool is_running;
+    InfraxAsync* ready;
+    InfraxAsync* waiting;
+    InfraxAsync* current;
+    
+    // Instance methods
+    void (*run)(InfraxScheduler* self);
+    InfraxEventSource* (*create_io_event)(InfraxScheduler* self, int fd, int events);
+    InfraxEventSource* (*create_timer_event)(InfraxScheduler* self, int ms);
+    InfraxEventSource* (*create_custom_event)(
+        InfraxScheduler* self,
+        void* source,
+        int (*ready)(void* source),
+        int (*wait)(void* source),
+        void (*cleanup)(void* source)
+    );
 };
 
-// 全局函数
-void InfraxAsyncRun(void);
+// Event source instance
+struct InfraxEventSource {
+    const InfraxEventSourceClass* klass;
+    InfraxScheduler* scheduler;
+    EventType type;
+    void* source;
+    
+    // Event source callbacks
+    int (*ready)(void* source);
+    int (*wait)(void* source);
+    void (*cleanup)(void* source);
+    
+    // Instance methods
+    int (*is_ready)(InfraxEventSource* self);
+    int (*wait_for)(InfraxEventSource* self);
+};
 
-// 工厂函数
-InfraxAsync* InfraxAsync_CreateTimer(int ms);
-InfraxAsync* InfraxAsync_CreateIO(int fd, int events);
-InfraxAsync* InfraxAsync_CreateEvent(void* event_source);
-InfraxAsync* InfraxAsync_CreateResource(void* resource);
-InfraxAsync* InfraxAsync_CreateBatch(void* items, size_t count);
+// Coroutine instance
+struct InfraxAsync {
+    const InfraxAsyncClass* klass;
+    const char* name;
+    void (*fn)(void* arg);
+    void* arg;
+    int state;
+    InfraxScheduler* scheduler;
+    InfraxEventSource* event;
+    InfraxAsync* next;
+    
+    // Instance methods
+    int (*wait)(InfraxAsync* self, InfraxEventSource* event);
+    void (*resume)(InfraxAsync* self);
+    bool (*is_done)(InfraxAsync* self);
+};
 
-// 内部函数声明
-static InfraxError async_start(InfraxAsync* self);
-static InfraxError async_yield(InfraxAsync* self);
-static InfraxError async_resume(InfraxAsync* self);
-static bool async_is_done(const InfraxAsync* self);
-static int internal_poll(InfraxAsync* self);
+// Global class instances
+const InfraxSchedulerClass* InfraxSchedulerClass_instance(void);
+const InfraxEventSourceClass* InfraxEventSourceClass_instance(void);
+const InfraxAsyncClass* InfraxAsyncClass_instance(void);
 
-// 类实例
-extern const InfraxAsyncClass InfraxAsync_CLASS;
+// Constructor functions
+#define InfraxScheduler_new() (InfraxSchedulerClass_instance()->new())
+#define InfraxEventSource_new(scheduler) (InfraxEventSourceClass_instance()->new(scheduler))
+#define InfraxAsync_new(config) (InfraxAsyncClass_instance()->new(config))
 
 #endif // INFRAX_ASYNC_H
