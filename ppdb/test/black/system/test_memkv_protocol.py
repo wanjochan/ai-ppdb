@@ -2,6 +2,7 @@ import unittest
 import time
 import logging
 import socket
+import pymemcache
 from pymemcache.client.base import Client
 
 # 配置日志

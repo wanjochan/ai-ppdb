@@ -775,14 +775,7 @@ static infra_error_t handle_memkv_cmd(const poly_config_t* config, int argc, cha
         return INFRA_ERROR_NOT_FOUND;
     }
 
-    // Initialize service first
-    infra_error_t err = service->init();
-    if (err != INFRA_OK) {
-        fprintf(stderr, "Failed to initialize service: %d\n", err);
-        return err;
-    }
-
-    // Parse command line options
+    // Parse command line options first
     bool start = false;
     bool stop = false;
     bool status = false;
@@ -808,6 +801,16 @@ static infra_error_t handle_memkv_cmd(const poly_config_t* config, int argc, cha
         }
         else if (strncmp(argv[i], "--port=", 7) == 0) {
             port = atoi(argv[i] + 7);
+        }
+    }
+
+    // Initialize service only if starting
+    infra_error_t err = INFRA_OK;
+    if (start) {
+        err = service->init();
+        if (err != INFRA_OK) {
+            fprintf(stderr, "Failed to initialize service: %d\n", err);
+            return err;
         }
     }
 
