@@ -11,68 +11,16 @@ PPDB采用分层架构设计，自下而上分为三层:
 服务端：sh ppdb/scripts/build_ppdb.sh && ./ppdb/ppdb_latest.exe sqlite3 --start --config=ppdb/sqlite3.conf --log-level=5
 客户端：${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_sqlite3_service.py
 
-测试 memkv
+# memkv - 单个测试和整体测试：
+sh ppdb/scripts/test_memkv.sh -k test_basic_set_get
+sh ppdb/scripts/test_memkv.sh -k test_delete
+sh ppdb/scripts/test_memkv.sh -k test_not_found
+sh ppdb/scripts/test_memkv.sh -k test_multi_set_get
+sh ppdb/scripts/test_memkv.sh -k test_expiration
+sh ppdb/scripts/test_memkv.sh -k test_increment_decrement
+sh ppdb/scripts/test_memkv.sh -k test_large_value
+sh ppdb/scripts/test_memkv.sh
 
-ppdb/test/black/system/test_memkv_protocol.py
-TestMemKVBasic 类（基础测试）
-test_basic_set_get() - 测试基本的设置和获取键值对
-test_delete() - 测试删除键值对
-test_not_found() - 测试获取不存在的键
-
-TestMemKVProtocol 类（协议测试）
-test_multi_set_get() - 测试多个键值对的设置和获取
-test_expiration() - 测试键值对的过期时间功能
-test_increment_decrement() - 测试计数器的自增和自减功能
-test_large_values() - 测试大数据值（1MB）的存储和获取
-
-test_memkv_one(test_multi_set_get):
-sh ./ppdb/scripts/build_ppdb.sh && (pkill -9 -f "ppdb_latest.exe memkv" || true) && sleep 1 && (timeout 10s ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5 2>&1 | tee >(head -n 4096) &) && sleep 2 && (timeout 10s ${HOME}/miniconda3/bin/python3 -m unittest ppdb/test/black/system/test_memkv_protocol.py -k test_multi_set_get -v 2>&1 | tee >(head -n 4096) ) ; sleep 1 && pkill -9 -f "ppdb_latest.exe memkv"
-
-
-
-独立终端（backend）启动服务端：sh ./ppdb/scripts/build_ppdb.sh && (pkill -9 -f "ppdb_latest.exe memkv" || true) && ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5
-
-其中多键值测试（未成功）：${HOME}/miniconda3/bin/python3 -m unittest ppdb/test/black/system/test_memkv_protocol.py -k test_multi_set_get -v
-
-如果是全部的客户端测试：${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_memkv_protocol.py
-
-别急于运行，先分析相关代码，理解代码逻辑。
-
-
-
-
-前后端开发测试的方法论：
-1）单独编译查看有没有代码错误，有就先修复
-2）如果没有编译问题，就启动服务端并且 2>&1 & | head -n 4096
-3）稍等几秒等第 2 步的服务器已经启动
-4）执行客户端测试并且 2>&1 & | head -n 4096
-5) 执行 pkill，让第 2 步的服务器能杀掉退出不影响下次测试而且让你可以获得完整日志
-
-运行（前后端一起运行测试流程）：
-sh ./ppdb/scripts/build_ppdb.sh && (pkill -9 -f "ppdb_latest.exe memkv" || true) && sleep 1 && (timeout 10s ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5 2>&1 | tee >(head -n 4096) &) && sleep 2 && (timeout 10s ${HOME}/miniconda3/bin/python3 -m unittest ppdb/test/black/system/test_memkv_protocol.py -k test_multi_set_get -v 2>&1 | tee >(head -n 4096) ) ; sleep 1 && pkill -9 -f "ppdb_latest.exe memkv"
-等它完全运行后，根据输出分析问题解决问题
-
-运行（前后端一起运行测试流程）：
-sh ./ppdb/scripts/build_ppdb.sh && (pkill -9 -f "ppdb_latest.exe memkv" || true) && sleep 1 && (timeout 15s ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5 2>&1 | tee >(head -n 4096) &) && sleep 2 && (timeout 15s ${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_memkv_protocol.py -k test_multi_set_get -v 2>&1 | tee >(head -n 4096) ) ; sleep 1 && pkill -9 -f "ppdb_latest.exe memkv"
-等它完全运行后，你要使用思维链，发现问题、分析推理问题、指定计划、解决问题，
-
-完全测试的用例
-sh ./ppdb/scripts/build_ppdb.sh && (pkill -9 -f "ppdb_latest.exe memkv" || true) && sleep 1 && (timeout 15s ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5 2>&1 | tee >(head -n 4096) &) && sleep 2 && (timeout 15s ${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_memkv_protocol.py -v 2>&1 | tee >(head -n 4096) ) ; sleep 1 && pkill -9 -f "ppdb_latest.exe memkv"
-
-
-想加前缀（但失败了，有其它问题）
-sh ./ppdb/scripts/build_ppdb.sh && \
-(pkill -9 -f "ppdb_latest.exe memkv" || true) && \
-sleep 1 && \
-(timeout 30s ./ppdb/ppdb_latest.exe memkv --start --config=ppdb/memkv.conf --log-level=5 2>&1 | sed 's/^/S> /' | tee >(head -n 4096) &) && \
-sleep 2 && \
-(timeout 20s ${HOME}/miniconda3/bin/python3 -m unittest ppdb/test/black/system/test_memkv_protocol.py -k test_multi_set_get -v 2>&1 | sed 's/^/C> /' | tee >(head -n 4096)) ; \
-sleep 1 && \
-pkill -9 -f "ppdb_latest.exe memkv"
-
-perl -e 'alarm 20; exec @ARGV' "cd /Users/wjc/ai-ppdb/ppx && ./scripts/build_test_arch.sh"
-
-timeout 20s cd /Users/wjc/ai-ppdb/ppx && ./scripts/build_test_arch.sh
 
 】】】
 

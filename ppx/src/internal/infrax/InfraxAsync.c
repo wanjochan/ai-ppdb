@@ -7,16 +7,16 @@
 #include <stdbool.h>
 
 // Forward declarations of internal functions
-static InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
-static void infrax_async_free(InfraxAsync* self);
-static InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg);
-static void infrax_async_yield(InfraxAsync* self);
-static InfraxAsyncStatus infrax_async_status(InfraxAsync* self);
-static InfraxAsyncResult* infrax_async_wait(InfraxAsync* self, int timeout_ms);
-static bool infrax_async_poll(InfraxAsync* self, InfraxAsyncResult* result);
+InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
+void infrax_async_free(InfraxAsync* self);
+InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg);
+void infrax_async_yield(InfraxAsync* self);
+InfraxAsyncStatus infrax_async_status(InfraxAsync* self);
+InfraxAsyncResult* infrax_async_wait(InfraxAsync* self, int timeout_ms);
+bool infrax_async_poll(InfraxAsync* self, InfraxAsyncResult* result);
 
 // Internal helper function for state change notification
-static void notify_state_change(InfraxAsync* self) {
+void notify_state_change(InfraxAsync* self) {
     if (!self || !self->result) return;
     InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
     
