@@ -1,14 +1,6 @@
 #include "internal/infrax/InfraxAsync.h"
 #include <stdlib.h>
-#include <setjmp.h>
 #include <unistd.h>
-
-// Internal structure extension
-typedef struct {
-    jmp_buf env;           // Saved execution context
-    int yield_count;       // Number of yields
-    int is_running;        // Task execution state
-} InfraxAsyncContext;
 
 // Forward declarations of internal functions
 static InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
@@ -25,46 +17,52 @@ void infrax_async_yield(InfraxAsync* self) {
     
     ctx->yield_count++;
     self->state = INFRAX_ASYNC_YIELD;
-    longjmp(ctx->env, 1);
+    longjmp(ctx->env, 1);  // Return to saved context
 }
 
 InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg) {
     if (!self || !fn) return NULL;
     
-    // Initialize task
-    self->fn = fn;
-    self->arg = arg;
-    self->error = 0;
-    self->state = INFRAX_ASYNC_INIT;
-    self->next = NULL;
-    self->parent = self;  // Root task points to itself
+    // Initialize task if not already initialized
+    if (self->state == INFRAX_ASYNC_INIT) {
+        self->fn = fn;
+        self->arg = arg;
+        self->error = 0;
+        
+        // Create execution context
+        InfraxAsyncContext* ctx = malloc(sizeof(InfraxAsyncContext));
+        if (!ctx) {
+            self->state = INFRAX_ASYNC_ERROR;
+            self->error = 1;  // Memory allocation error
+            return self;
+        }
+        ctx->yield_count = 0;
+        ctx->user_data = NULL;
+        self->result = ctx;
+    }
     
-    // Create execution context
-    InfraxAsyncContext* ctx = malloc(sizeof(InfraxAsyncContext));
+    // Execute or resume task
+    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
     if (!ctx) {
         self->state = INFRAX_ASYNC_ERROR;
-        self->error = 1;  // Memory allocation error
         return self;
     }
-    ctx->yield_count = 0;
-    ctx->is_running = 0;
-    self->result = ctx;
     
-    // Execute task
     if (setjmp(ctx->env) == 0) {
-        // First entry
-        ctx->is_running = 1;
+        // First entry or resume from yield
         self->state = INFRAX_ASYNC_RUNNING;
-        self->fn(self, self->arg);  // Pass self to async function
+        self->fn(self, self->arg);
+        
+        // If we get here, the function completed without yielding
         self->state = INFRAX_ASYNC_DONE;
-    } else if (ctx->is_running) {
-        // Resume from yield
-        self->state = INFRAX_ASYNC_RUNNING;
-        usleep(1000);  // Small delay to prevent CPU overload
-    }
-    
-    // Cleanup if done
-    if (self->state == INFRAX_ASYNC_DONE) {
+        
+        // Clean up user data if present
+        if (ctx->user_data) {
+            free(ctx->user_data);
+            ctx->user_data = NULL;
+        }
+        
+        // Clean up context
         free(ctx);
         self->result = NULL;
     }
@@ -89,8 +87,6 @@ InfraxAsync* infrax_async_new(AsyncFn fn, void* arg) {
     self->state = INFRAX_ASYNC_INIT;
     self->error = 0;
     self->result = NULL;
-    self->next = NULL;
-    self->parent = NULL;
     
     // Set instance methods
     self->start = infrax_async_start;
