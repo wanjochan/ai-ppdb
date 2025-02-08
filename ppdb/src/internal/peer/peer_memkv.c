@@ -136,63 +136,68 @@ static infra_error_t db_init(poly_db_t** db, const char* path) {
 }
 
 static infra_error_t kv_get(poly_db_t* db, const char* key, void** value, 
-                           size_t* value_len, uint32_t* flags, uint32_t* exptime) {
+                                     size_t* value_len, uint32_t* flags, time_t* exptime) {
     if (!db || !key || !value || !value_len || !flags || !exptime) {
-        printf("DEBUG: Invalid parameters in kv_get\n");
+        INFRA_LOG_DEBUG("kv_get for key: [%s]", key ? key : "NULL");
+        INFRA_LOG_ERROR("Invalid parameters");
         return INFRA_ERROR_INVALID_PARAM;
     }
-    
-    printf("DEBUG: kv_get for key: [%s]\n", key);
-    
-    const char* sql = 
-        "SELECT value, flags, expiry FROM kv_store WHERE key = ?";
-    
+
+    INFRA_LOG_DEBUG("kv_get for key: [%s]", key);
+
+    // 准备 SQL 语句
     poly_db_stmt_t* stmt = NULL;
-    infra_error_t err = poly_db_prepare(db, sql, &stmt);
+    infra_error_t err = poly_db_prepare(db, 
+        "SELECT value, flags, expiry FROM kv_store WHERE key = ?", &stmt);
     if (err != INFRA_OK) {
-        printf("DEBUG: Failed to prepare statement: %d\n", err);
+        INFRA_LOG_ERROR("Failed to prepare statement: %d", err);
         return err;
     }
-    
-    err = poly_db_bind_text(stmt, 1, key, strlen(key));
+
+    // 绑定参数
+    err = poly_db_bind_text(stmt, 1, key, -1);
     if (err != INFRA_OK) {
-        printf("DEBUG: Failed to bind key: %d\n", err);
+        INFRA_LOG_ERROR("Failed to bind key: %d", err);
         poly_db_stmt_finalize(stmt);
         return err;
     }
-    
+
+    // 执行查询
     err = poly_db_stmt_step(stmt);
-    if (err != INFRA_OK) {
-        printf("DEBUG: Key not found or error: [%s], err=%d\n", key, err);
+    if (err == INFRA_ERROR_NOT_FOUND) {
+        INFRA_LOG_DEBUG("Failed to get blob data: err=%d, data=0, size=0", err);
         poly_db_stmt_finalize(stmt);
-        return INFRA_ERROR_NOT_FOUND;
+        return err;
+    }
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to execute statement: %d", err);
+        poly_db_stmt_finalize(stmt);
+        return err;
     }
 
     // 获取 BLOB 数据
     void* blob_data = NULL;
     size_t blob_size = 0;
     err = poly_db_column_blob(stmt, 0, &blob_data, &blob_size);
-    if (err != INFRA_OK || !blob_data || blob_size == 0) {
-        printf("DEBUG: Failed to get blob data: err=%d, data=%p, size=%zu\n", 
-               err, blob_data, blob_size);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to get blob data: %d", err);
         poly_db_stmt_finalize(stmt);
-        return INFRA_ERROR_NOT_FOUND;
+        return err;
     }
-    
-    printf("DEBUG: Got blob data: size=%zu\n", blob_size);
-    
+
+    INFRA_LOG_DEBUG("Got blob data: size=%zu", blob_size);
+
     // 分配内存并复制数据
     void* data = malloc(blob_size);
     if (!data) {
-        printf("DEBUG: Failed to allocate memory for blob data\n");
+        INFRA_LOG_ERROR("Failed to allocate memory for value");
         poly_db_stmt_finalize(stmt);
         return INFRA_ERROR_NO_MEMORY;
     }
-    
     memcpy(data, blob_data, blob_size);
     *value = data;
     *value_len = blob_size;
-    
+
     // 获取 flags
     char* flags_str = NULL;
     err = poly_db_column_text(stmt, 1, &flags_str);
@@ -200,32 +205,81 @@ static infra_error_t kv_get(poly_db_t* db, const char* key, void** value,
         *flags = (uint32_t)strtoul(flags_str, NULL, 10);
         free(flags_str);
     } else {
-        printf("DEBUG: Failed to get flags: err=%d\n", err);
-        *flags = 0;
+        INFRA_LOG_ERROR("Failed to get flags: %d", err);
+        free(data);
+        *value = NULL;
+        poly_db_stmt_finalize(stmt);
+        return err;
     }
-    
-    // 获取 exptime
+
+    // 获取过期时间
     char* exptime_str = NULL;
     err = poly_db_column_text(stmt, 2, &exptime_str);
     if (err == INFRA_OK && exptime_str) {
-        *exptime = (uint32_t)strtoul(exptime_str, NULL, 10);
+        *exptime = strtoll(exptime_str, NULL, 10);
         free(exptime_str);
     } else {
-        printf("DEBUG: Failed to get exptime: err=%d\n", err);
-        *exptime = 0;
+        INFRA_LOG_ERROR("Failed to get expiry: %d", err);
+        free(data);
+        *value = NULL;
+        poly_db_stmt_finalize(stmt);
+        return err;
     }
-    
-    printf("DEBUG: Successfully got key-value pair: [%s]=[%.*s], flags=%u, exptime=%u\n",
-           key, (int)blob_size, (char*)data, *flags, *exptime);
-    
+
+    // 检查 key 是否已过期
+    time_t now = time(NULL);
+    if (*exptime > 0 && *exptime <= now) {
+        INFRA_LOG_DEBUG("Key [%s] has expired at %ld (now=%ld)", key, *exptime, now);
+        free(data);
+        *value = NULL;
+        *value_len = 0;
+        *flags = 0;
+        *exptime = 0;
+
+        // 删除过期的 key
+        poly_db_stmt_t* del_stmt = NULL;
+        err = poly_db_prepare(db, "DELETE FROM kv_store WHERE key = ? AND expiry <= ?", &del_stmt);
+        if (err == INFRA_OK) {
+            err = poly_db_bind_text(del_stmt, 1, key, -1);
+            if (err == INFRA_OK) {
+                char now_str[32];
+                snprintf(now_str, sizeof(now_str), "%ld", now);
+                err = poly_db_bind_text(del_stmt, 2, now_str, -1);
+                if (err == INFRA_OK) {
+                    err = poly_db_stmt_step(del_stmt);
+                }
+            }
+            poly_db_stmt_finalize(del_stmt);
+        }
+
+        poly_db_stmt_finalize(stmt);
+        return INFRA_ERROR_NOT_FOUND;
+    }
+
+    INFRA_LOG_DEBUG("Successfully got key-value pair: [%s]=[%.*s], flags=%u, exptime=%ld",
+                    key, (int)*value_len, (char*)*value, *flags, *exptime);
+
     poly_db_stmt_finalize(stmt);
     return INFRA_OK;
 }
 
 static infra_error_t kv_set(poly_db_t* db, const char* key, const void* value, 
-                           size_t value_len, uint32_t flags, uint32_t exptime) {
+                           size_t value_len, uint32_t flags, time_t exptime) {
     if (!db || !key || !value || value_len == 0) {
         return INFRA_ERROR_INVALID_PARAM;
+    }
+    
+    // 计算实际的过期时间戳
+    time_t real_exptime = 0;
+    if (exptime > 0) {
+        time_t now = time(NULL);
+        if (exptime > 60*60*24*30) {  // 大于30天的值被视为时间戳
+            real_exptime = exptime;
+        } else {
+            real_exptime = now + exptime;  // 否则被视为相对时间（秒）
+        }
+        printf("DEBUG: Setting expiration time: exptime=%ld, now=%ld, real_exptime=%ld\n",
+               (long)exptime, (long)now, (long)real_exptime);
     }
     
     const char* sql = 
@@ -251,7 +305,7 @@ static infra_error_t kv_set(poly_db_t* db, const char* key, const void* value,
     if (err != INFRA_OK) goto cleanup;
     
     char exptime_str[32];
-    snprintf(exptime_str, sizeof(exptime_str), "%u", exptime);
+    snprintf(exptime_str, sizeof(exptime_str), "%ld", (long)real_exptime);
     err = poly_db_bind_text(stmt, 4, exptime_str, strlen(exptime_str));
     if (err != INFRA_OK) goto cleanup;
     
@@ -389,27 +443,22 @@ static int handle_get(memkv_conn_t* conn, const char* key) {
     // 获取键值对
     size_t value_len = 0;
     uint32_t flags = 0;
-    uint32_t exptime = 0;  // 添加过期时间参数
+    time_t exptime = 0;  // 添加过期时间参数
     void* value = NULL;
     infra_error_t err = kv_get(conn->store, key, &value, &value_len, &flags, &exptime);
     
     if (err != INFRA_OK) {
         if (err == INFRA_ERROR_NOT_FOUND) {
             INFRA_LOG_DEBUG("Key not found: %s", key);
-            err = send_all(conn->sock, "END\r\n", 5);
-            if (err != INFRA_OK) {
-                INFRA_LOG_ERROR("Failed to send END response: %d", err);
-                conn->should_close = true;
-            }
             return 0;  // 键不存在，但不是错误
         }
         INFRA_LOG_ERROR("Failed to get value for key %s: %d", key, err);
         return -1;
     }
 
-    if (!value) {
-        INFRA_LOG_ERROR("Value is NULL for key %s", key);
-        return -1;
+    if (!value || value_len == 0) {
+        INFRA_LOG_DEBUG("Value is NULL or empty for key %s", key);
+        return 0;
     }
 
     // 发送响应头
@@ -476,7 +525,11 @@ static void handle_request(memkv_conn_t* conn) {
         if (err == INFRA_ERROR_TIMEOUT) {
             return;  // 读取超时
         }
-        INFRA_LOG_ERROR("Failed to receive data from %s: %d", conn->client_addr, err);
+        if (err == INFRA_ERROR_CLOSED) {
+            INFRA_LOG_INFO("Client %s disconnected gracefully", conn->client_addr);
+        } else {
+            INFRA_LOG_ERROR("Failed to receive data from %s: %d", conn->client_addr, err);
+        }
         conn->should_close = true;
         return;
     }
@@ -798,7 +851,17 @@ static void handle_connection(void* args) {
     }
 
     // 等待一小段时间，确保所有数据都发送完成
-    usleep(10000);  // 10ms
+    usleep(100000);  // 100ms
+
+    // 关闭连接前发送 END 标记
+    if (conn->sock > 0) {
+        infra_error_t err = send_all(conn->sock, "END\r\n", 5);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send final END marker: %d", err);
+        }
+        // 再等待一小段时间，确保 END 标记发送完成
+        usleep(10000);  // 10ms
+    }
 
     // 关闭连接
     memkv_conn_destroy(conn);
@@ -1148,7 +1211,7 @@ static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* va
     void* old_value = NULL;
     size_t old_value_len = 0;
     uint32_t flags = 0;
-    uint32_t exptime = 0;
+    time_t exptime = 0;
     
     infra_error_t err = kv_get(conn->store, key, &old_value, &old_value_len, &flags, &exptime);
     if (err != INFRA_OK || !old_value) {
@@ -1373,4 +1436,3 @@ static void handle_accept(void* args) {
     // 处理连接
     handle_connection(args);
 }
-
