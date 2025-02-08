@@ -2,6 +2,7 @@
 #define INFRAX_ASYNC_H
 
 #include <setjmp.h>
+#include <stdbool.h>
 
 // Forward declaration
 typedef struct InfraxAsync InfraxAsync;
@@ -19,11 +20,19 @@ typedef enum {
     INFRAX_ASYNC_ERROR        // Error occurred
 } InfraxAsyncStatus;
 
+// Result structure for async operations
+typedef struct {
+    InfraxAsyncStatus status;  // Current status
+    int error_code;           // Error code if any
+    int yield_count;          // Number of yields
+} InfraxAsyncResult;
+
 // Internal context structure
 struct InfraxAsyncContext {
     jmp_buf env;           // Saved execution context
     int yield_count;       // Number of yields
     void* user_data;       // User data for async operation
+    int pipe_fd[2];        // Status notification pipe
 };
 
 // Class interface for InfraxAsync
@@ -48,6 +57,8 @@ struct InfraxAsync {
     InfraxAsync* (*start)(InfraxAsync* self, AsyncFn fn, void* arg);
     void (*yield)(InfraxAsync* self);
     InfraxAsyncStatus (*status)(InfraxAsync* self);
+    InfraxAsyncResult* (*wait)(InfraxAsync* self, int timeout_ms);
+    bool (*poll)(InfraxAsync* self, InfraxAsyncResult* result);
 };
 
 // Global class instance
