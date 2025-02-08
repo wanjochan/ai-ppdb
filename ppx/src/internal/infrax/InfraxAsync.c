@@ -195,30 +195,30 @@ InfraxAsyncResult* infrax_async_wait(InfraxAsync* self, int timeout_ms) {
     return result;
 }
 
-bool infrax_async_poll(InfraxAsync* self, InfraxAsyncResult* result) {
-    if (!self || !self->result || !result) return false;
+// bool infrax_async_poll(InfraxAsync* self, InfraxAsyncResult* result) {
+//     if (!self || !self->result || !result) return false;
     
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
+//     InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
     
-    struct pollfd pfd = {
-        .fd = ctx->pipe_fd[0],
-        .events = POLLIN,
-        .revents = 0
-    };
+//     struct pollfd pfd = {
+//         .fd = ctx->pipe_fd[0],
+//         .events = POLLIN,
+//         .revents = 0
+//     };
     
-    int ret = poll(&pfd, 1, 0);  // Non-blocking
-    if (ret > 0 && (pfd.revents & POLLIN)) {
-        char buffer[sizeof(InfraxAsyncStatus)];
-        read(ctx->pipe_fd[0], buffer, sizeof(buffer));
+//     int ret = poll(&pfd, 1, 0);  // Non-blocking
+//     if (ret > 0 && (pfd.revents & POLLIN)) {
+//         char buffer[sizeof(InfraxAsyncStatus)];
+//         read(ctx->pipe_fd[0], buffer, sizeof(buffer));
         
-        result->status = self->state;
-        result->error_code = self->error;
-        result->yield_count = ctx->yield_count;
-        return true;
-    }
+//         result->status = self->state;
+//         result->error_code = self->error;
+//         result->yield_count = ctx->yield_count;
+//         return true;
+//     }
     
-    return false;
-}
+//     return false;
+// }
 
 // Implementation of class methods
 InfraxAsync* infrax_async_new(AsyncFn fn, void* arg) {
@@ -236,19 +236,19 @@ InfraxAsync* infrax_async_new(AsyncFn fn, void* arg) {
     
     // Set instance methods
     static const InfraxAsync instance_methods = {
-        .start = infrax_async_start,
-        .resume = infrax_async_resume,
+        // .resume = infrax_async_resume,
         .yield = infrax_async_yield,
         .status = infrax_async_status,
-        .wait = infrax_async_wait,
-        .poll = infrax_async_poll
+        // .wait = infrax_async_wait,
+        // .poll = infrax_async_poll
+        .start = infrax_async_start
     };
     self->start = instance_methods.start;
-    self->resume = instance_methods.resume;
+    // self->resume = instance_methods.resume;
     self->yield = instance_methods.yield;
     self->status = instance_methods.status;
-    self->wait = instance_methods.wait;
-    self->poll = instance_methods.poll;
+    // self->wait = instance_methods.wait;
+    // self->poll = instance_methods.poll;
     
     return self;
 }
