@@ -8,8 +8,8 @@
 #include "internal/poly/poly_db.h"
 #include "internal/poly/poly_poll.h"
 
-// 增加缓冲区大小到 1MB
-#define MEMKV_CONN_BUFFER_SIZE (1024 * 1024)
+// 增加缓冲区大小到 2MB
+#define MEMKV_CONN_BUFFER_SIZE (2 * 1024 * 1024)
 
 // 连接状态结构
 typedef struct memkv_conn {

@@ -383,7 +383,7 @@ static infra_error_t kv_flush(poly_db_t* db) {
 
 static int send_all(infra_socket_t sock, const void* data, size_t len) {
     if (sock <= 0 || !data || len == 0) {
-        printf("DEBUG: Invalid parameters in send_all: sock=%d, data=%p, len=%zu\n", 
+        INFRA_LOG_ERROR("Invalid parameters in send_all: sock=%d, data=%p, len=%zu", 
                sock, data, len);
         return INFRA_ERROR_INVALID_PARAM;
     }
@@ -391,46 +391,69 @@ static int send_all(infra_socket_t sock, const void* data, size_t len) {
     const char* buf = (const char*)data;
     size_t sent = 0;
     int retry_count = 0;
-    const int max_retries = 3;
+    const int max_retries = 5;  // 增加最大重试次数
+    const int retry_delay_ms = 20;  // 增加重试延迟
+    const int max_consecutive_zero = 3;  // 最大连续零字节发送次数
+    int consecutive_zero = 0;  // 连续零字节发送计数
 
-    printf("DEBUG: Starting to send %zu bytes\n", len);
+    INFRA_LOG_DEBUG("Starting to send %zu bytes", len);
 
     while (sent < len) {
         size_t bytes_sent = 0;
-        infra_error_t err = infra_net_send(sock, (const char*)data + sent, len - sent, &bytes_sent);
+        infra_error_t err = infra_net_send(sock, buf + sent, len - sent, &bytes_sent);
         
-        printf("DEBUG: Send attempt %d: tried to send %zu bytes, sent %zu bytes, err=%d\n",
+        INFRA_LOG_DEBUG("Send attempt %d: tried to send %zu bytes, sent %zu bytes, err=%d",
                retry_count + 1, len - sent, bytes_sent, err);
         
         if (err == INFRA_ERROR_WOULD_BLOCK) {
             if (retry_count < max_retries) {
-                printf("DEBUG: Would block, retrying after 10ms (retry %d/%d)\n",
-                       retry_count + 1, max_retries);
-                usleep(10000); // 10ms
+                INFRA_LOG_DEBUG("Would block, retrying after %dms (retry %d/%d)",
+                       retry_delay_ms, retry_count + 1, max_retries);
+                usleep(retry_delay_ms * 1000);  // 增加重试延迟
                 retry_count++;
                 continue;
             }
-            printf("DEBUG: Send would block after %d retries\n", max_retries);
+            INFRA_LOG_ERROR("Send would block after %d retries", max_retries);
             return err;
         }
         
         if (err != INFRA_OK) {
-            printf("DEBUG: Failed to send data: err=%d\n", err);
+            if (retry_count < max_retries) {
+                INFRA_LOG_DEBUG("Send error %d, retrying after %dms (retry %d/%d)",
+                       err, retry_delay_ms, retry_count + 1, max_retries);
+                usleep(retry_delay_ms * 1000);
+                retry_count++;
+                continue;
+            }
+            INFRA_LOG_ERROR("Failed to send data: err=%d", err);
             return err;
         }
         
         if (bytes_sent == 0) {
-            printf("DEBUG: Connection closed by peer\n");
-            return INFRA_ERROR_CLOSED;
+            consecutive_zero++;
+            if (consecutive_zero >= max_consecutive_zero) {
+                if (retry_count < max_retries) {
+                    INFRA_LOG_DEBUG("Zero bytes sent %d times, retrying after %dms (retry %d/%d)",
+                           consecutive_zero, retry_delay_ms, retry_count + 1, max_retries);
+                    usleep(retry_delay_ms * 1000);
+                    retry_count++;
+                    consecutive_zero = 0;  // 重置连续零字节计数
+                    continue;
+                }
+                INFRA_LOG_ERROR("Connection closed by peer after %d retries", max_retries);
+                return INFRA_ERROR_CLOSED;
+            }
+            continue;
         }
         
         sent += bytes_sent;
-        retry_count = 0; // 重置重试计数
+        retry_count = 0;  // 重置重试计数
+        consecutive_zero = 0;  // 重置连续零字节计数
         
-        printf("DEBUG: Successfully sent %zu/%zu bytes\n", sent, len);
+        INFRA_LOG_DEBUG("Successfully sent %zu/%zu bytes", sent, len);
     }
 
-    printf("DEBUG: Successfully sent all %zu bytes\n", len);
+    INFRA_LOG_DEBUG("Successfully sent all %zu bytes", len);
     return INFRA_OK;
 }
 
@@ -511,40 +534,100 @@ static void handle_request(memkv_conn_t* conn) {
         return;
     }
 
+    // 计算剩余缓冲区空间
+    size_t remaining_space = MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1;
+    if (remaining_space < 1024) {  // 如果剩余空间小于1KB
+        if (conn->set_bytes > 0) {  // 如果正在处理SET命令的数据部分
+            // 继续接收数据
+            remaining_space = MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1;
+            if (remaining_space == 0) {
+                INFRA_LOG_ERROR("Buffer full while receiving SET data");
+                conn->should_close = true;
+                return;
+            }
+        } else {
+            // 移动未完成的命令到缓冲区开始
+            size_t last_line_pos = 0;
+            for (size_t i = 0; i < conn->rx_len; i++) {
+                if (conn->rx_buf[i] == '\n') {
+                    last_line_pos = i + 1;
+                }
+            }
+            if (last_line_pos > 0) {
+                size_t remaining = conn->rx_len - last_line_pos;
+                memmove(conn->rx_buf, conn->rx_buf + last_line_pos, remaining);
+                conn->rx_len = remaining;
+                remaining_space = MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1;
+            } else if (conn->rx_len >= MEMKV_CONN_BUFFER_SIZE - 1) {
+                // 命令行太长，可能是攻击
+                INFRA_LOG_ERROR("Command line too long from %s", conn->client_addr);
+                conn->should_close = true;
+                return;
+            }
+        }
+    }
+
     // 接收数据
     size_t received = 0;
-    infra_error_t err = infra_net_recv(conn->sock, 
-        conn->rx_buf + conn->rx_len, 
-        MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1, 
-        &received);
-    
-    if (err != INFRA_OK) {
+    int retry_count = 0;
+    const int max_retries = 5;
+    const int retry_delay_ms = 20;
+
+    while (retry_count < max_retries) {
+        infra_error_t err = infra_net_recv(conn->sock, 
+            conn->rx_buf + conn->rx_len, 
+            remaining_space,
+            &received);
+        
+        if (err == INFRA_OK && received > 0) {
+            conn->rx_len += received;
+            conn->rx_buf[conn->rx_len] = '\0';  // 确保字符串以 null 结尾
+            conn->last_active_time = time(NULL);
+
+            INFRA_LOG_DEBUG("Received %zu bytes from %s, total buffer size: %zu", 
+                        received, conn->client_addr, conn->rx_len);
+            break;
+        }
+        
         if (err == INFRA_ERROR_WOULD_BLOCK) {
-            return;  // 非阻塞模式下没有数据可读
+            INFRA_LOG_DEBUG("Would block, retrying after %dms (retry %d/%d)",
+                        retry_delay_ms, retry_count + 1, max_retries);
+            usleep(retry_delay_ms * 1000);
+            retry_count++;
+            continue;
         }
+        
         if (err == INFRA_ERROR_TIMEOUT) {
-            return;  // 读取超时
+            INFRA_LOG_DEBUG("Timeout, retrying after %dms (retry %d/%d)",
+                        retry_delay_ms, retry_count + 1, max_retries);
+            usleep(retry_delay_ms * 1000);
+            retry_count++;
+            continue;
         }
+        
         if (err == INFRA_ERROR_CLOSED) {
+            if (retry_count < max_retries - 1) {
+                INFRA_LOG_DEBUG("Connection closed, retrying after %dms (retry %d/%d)",
+                            retry_delay_ms, retry_count + 1, max_retries);
+                usleep(retry_delay_ms * 1000);
+                retry_count++;
+                continue;
+            }
             INFRA_LOG_INFO("Client %s disconnected gracefully", conn->client_addr);
-        } else {
-            INFRA_LOG_ERROR("Failed to receive data from %s: %d", conn->client_addr, err);
+            conn->should_close = true;
+            return;
         }
-        conn->should_close = true;
-        return;
-    }
-    
-    if (received == 0) {
-        INFRA_LOG_INFO("Client %s disconnected", conn->client_addr);
+        
+        INFRA_LOG_ERROR("Failed to receive data from %s: %d", conn->client_addr, err);
         conn->should_close = true;
         return;
     }
 
-    conn->rx_len += received;
-    conn->rx_buf[conn->rx_len] = '\0';  // 确保字符串以 null 结尾
-    conn->last_active_time = time(NULL);
-
-    INFRA_LOG_INFO("Received data from %s: [%s]", conn->client_addr, conn->rx_buf);
+    if (retry_count >= max_retries) {
+        INFRA_LOG_ERROR("Max retries reached while receiving data from %s", conn->client_addr);
+        conn->should_close = true;
+        return;
+    }
 
     // 处理接收到的命令
     char* line = conn->rx_buf;
@@ -586,7 +669,7 @@ static void handle_request(memkv_conn_t* conn) {
                 INFRA_LOG_ERROR("Data length mismatch: expected %zu, got %zu", 
                                conn->set_bytes, data_len);
                 if (!conn->set_noreply) {
-                    err = send_all(conn->sock, "CLIENT_ERROR bad data chunk\r\n", 26);
+                    infra_error_t err = send_all(conn->sock, "CLIENT_ERROR bad data chunk\r\n", 26);
                     if (err != INFRA_OK) {
                         INFRA_LOG_ERROR("Failed to send error response: %d", err);
                         conn->should_close = true;
@@ -598,7 +681,7 @@ static void handle_request(memkv_conn_t* conn) {
             }
 
             // 保存数据
-            err = kv_set(conn->store, conn->set_key, data_line, data_len, 
+            infra_error_t err = kv_set(conn->store, conn->set_key, data_line, data_len, 
                         conn->set_flags, conn->set_exptime);
             
             if (err == INFRA_OK) {
@@ -634,7 +717,7 @@ static void handle_request(memkv_conn_t* conn) {
             INFRA_LOG_ERROR("Failed to parse command from %s: [%s]", conn->client_addr, line);
             conn->failed_commands++;
             if (conn->sock > 0) {
-                err = send_all(conn->sock, "ERROR\r\n", 7);
+                infra_error_t err = send_all(conn->sock, "ERROR\r\n", 7);
                 if (err != INFRA_OK) {
                     INFRA_LOG_ERROR("Failed to send error response: %d", err);
                     conn->should_close = true;
@@ -678,7 +761,7 @@ static void handle_request(memkv_conn_t* conn) {
             
             // 如果没有发生错误，发送 END 标记
             if (!error_occurred && !conn->should_close) {
-                err = send_all(conn->sock, "END\r\n", 5);
+                infra_error_t err = send_all(conn->sock, "END\r\n", 5);
                 if (err != INFRA_OK) {
                     INFRA_LOG_ERROR("Failed to send END marker: %d", err);
                     conn->should_close = true;
@@ -703,7 +786,7 @@ static void handle_request(memkv_conn_t* conn) {
                 if (conn->set_bytes > MEMKV_MAX_DATA_SIZE) {
                     INFRA_LOG_ERROR("Value too large from %s: %zu", conn->client_addr, conn->set_bytes);
                     if (conn->sock > 0) {
-                        err = send_all(conn->sock, "SERVER_ERROR value too large\r\n", 28);
+                        infra_error_t err = send_all(conn->sock, "SERVER_ERROR value too large\r\n", 28);
                         if (err != INFRA_OK) {
                             INFRA_LOG_ERROR("Failed to send error response: %d", err);
                             conn->should_close = true;
@@ -721,7 +804,7 @@ static void handle_request(memkv_conn_t* conn) {
             } else {
                 INFRA_LOG_ERROR("Invalid SET command format from %s: [%s]", conn->client_addr, line);
                 if (conn->sock > 0) {
-                    err = send_all(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37);
+                    infra_error_t err = send_all(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37);
                     if (err != INFRA_OK) {
                         INFRA_LOG_ERROR("Failed to send error response: %d", err);
                         conn->should_close = true;
@@ -756,7 +839,7 @@ static void handle_request(memkv_conn_t* conn) {
                 INFRA_LOG_ERROR("Invalid INCR/DECR command format from %s: [%s]", conn->client_addr, line);
                 conn->failed_commands++;
                 if (conn->sock > 0) {
-                    err = send_all(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37);
+                    infra_error_t err = send_all(conn->sock, "CLIENT_ERROR bad command line format\r\n", 37);
                     if (err != INFRA_OK) {
                         INFRA_LOG_ERROR("Failed to send error response: %d", err);
                         conn->should_close = true;
@@ -769,7 +852,7 @@ static void handle_request(memkv_conn_t* conn) {
         else {
             INFRA_LOG_ERROR("Unknown command from %s: [%s]", conn->client_addr, cmd);
             if (conn->sock > 0) {
-                err = send_all(conn->sock, "ERROR\r\n", 7);
+                infra_error_t err = send_all(conn->sock, "ERROR\r\n", 7);
                 if (err != INFRA_OK) {
                     INFRA_LOG_ERROR("Failed to send error response: %d", err);
                     conn->should_close = true;
