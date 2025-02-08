@@ -55,6 +55,7 @@ struct InfraxAsync {
 
     // Instance methods
     InfraxAsync* (*start)(InfraxAsync* self, AsyncFn fn, void* arg);
+    InfraxAsync* (*resume)(InfraxAsync* self);  // Added resume method
     void (*yield)(InfraxAsync* self);
     InfraxAsyncStatus (*status)(InfraxAsync* self);
     InfraxAsyncResult* (*wait)(InfraxAsync* self, int timeout_ms);

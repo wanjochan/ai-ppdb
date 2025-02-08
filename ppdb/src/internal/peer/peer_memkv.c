@@ -799,14 +799,26 @@ static void handle_connection(void* args) {
 
     memkv_conn_t* conn = (memkv_conn_t*)handler_args->user_data;
     
-    // 设置 TCP keepalive
+    // 设置 TCP keepalive 参数
     if (setsockopt(conn->sock, SOL_SOCKET, SO_KEEPALIVE, &(int){1}, sizeof(int)) < 0) {
         INFRA_LOG_WARN("Failed to set SO_KEEPALIVE");
     }
 
     #ifdef TCP_KEEPIDLE
-    if (setsockopt(conn->sock, IPPROTO_TCP, TCP_KEEPIDLE, &(int){60}, sizeof(int)) < 0) {
+    if (setsockopt(conn->sock, IPPROTO_TCP, TCP_KEEPIDLE, &(int){120}, sizeof(int)) < 0) {
         INFRA_LOG_WARN("Failed to set TCP_KEEPIDLE");
+    }
+    #endif
+
+    #ifdef TCP_KEEPINTVL
+    if (setsockopt(conn->sock, IPPROTO_TCP, TCP_KEEPINTVL, &(int){30}, sizeof(int)) < 0) {
+        INFRA_LOG_WARN("Failed to set TCP_KEEPINTVL");
+    }
+    #endif
+
+    #ifdef TCP_KEEPCNT
+    if (setsockopt(conn->sock, IPPROTO_TCP, TCP_KEEPCNT, &(int){3}, sizeof(int)) < 0) {
+        INFRA_LOG_WARN("Failed to set TCP_KEEPCNT");
     }
     #endif
 
@@ -834,26 +846,27 @@ static void handle_connection(void* args) {
             break;
         }
         
-        // 如果没有更多数据要处理，就等待新的数据
+        // 检查连接是否超时
+        time_t now = time(NULL);
+        if (now - conn->last_active_time > 300) { // 5分钟超时
+            INFRA_LOG_INFO("Connection timeout for %s", conn->client_addr);
+            break;
+        }
+        
+        // 如果没有更多数据要处理，就短暂等待
         if (conn->rx_len == 0) {
-            // 等待一小段时间，让数据发送完成
             usleep(1000);  // 1ms
             continue;
         }
     }
 
-    // 等待一小段时间，确保所有数据都发送完成
-    usleep(100000);  // 100ms
-
-    // 关闭连接前发送 END 标记
-    if (conn->sock > 0) {
-        infra_error_t err = send_all(conn->sock, "END\r\n", 5);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send final END marker: %d", err);
-        }
-        // 再等待一小段时间，确保 END 标记发送完成
-        usleep(10000);  // 10ms
+    // 在关闭连接前确保数据已经持久化
+    if (conn->store) {
+        poly_db_exec(conn->store, "PRAGMA wal_checkpoint;");
     }
+
+    // 等待一小段时间，确保所有数据都发送完成
+    usleep(10000);  // 10ms
 
     // 关闭连接
     memkv_conn_destroy(conn);

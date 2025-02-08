@@ -33,8 +33,17 @@ echo test_case: ${test_case}
 # 创建临时日志目录
 LOG_DIR="${PPDB_DIR}/logs"
 mkdir -p "${LOG_DIR}"
-SERVER_LOG="${LOG_DIR}/memkv_server.log"
-CLIENT_LOG="${LOG_DIR}/memkv_client.log"
+# 从test_case中提取测试用例名称
+if [[ $test_case =~ -k[[:space:]]*([^[:space:]]+) ]]; then
+    test_case_name="${BASH_REMATCH[1]}"
+    echo "Extracted test case name: ${test_case_name}"
+else
+    test_case_name=""
+    echo "No specific test case specified, will run all tests"
+fi
+
+SERVER_LOG="${LOG_DIR}/memkv_server_${test_case_name}.log"
+CLIENT_LOG="${LOG_DIR}/memkv_client_${test_case_name}.log"
 
 # 确保在正确的目录中
 cd "${PPDB_DIR}"
@@ -81,8 +90,7 @@ pkill -9 -f "ppdb_latest.exe memkv" || true
 
 # 显示测试结果
 echo "Test completed. Logs available at:"
-#echo "Server log: ${SERVER_LOG}"
-#echo "Client log: ${CLIENT_LOG}"
+
 echo =============server log: ${SERVER_LOG} start=============
 cat ${SERVER_LOG}
 echo =============server log: ${SERVER_LOG} end=============
