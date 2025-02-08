@@ -27,6 +27,8 @@ SERVER_PORT=11211 # 服务器端口
 
 # 可选的测试用例参数
 #test_case="-k test_multi_set_get"
+test_case=$* # 测试用例名称
+echo test_case: ${test_case}
 
 # 创建临时日志目录
 LOG_DIR="${PPDB_DIR}/logs"
@@ -69,7 +71,7 @@ done
 
 # 运行测试
 echo "Running tests..."
-if ! (timeout ${TIMEOUT_CLIENT}s ${HOME}/miniconda3/bin/python3 -m unittest "${PPDB_DIR}/test/black/system/test_memkv_protocol.py" ${test_case} -v 2>&1 | tee "${CLIENT_LOG}"); then
+if ! (timeout ${TIMEOUT_CLIENT}s ${HOME}/miniconda3/bin/python3 "${PPDB_DIR}/test/black/system/test_memkv_protocol.py" ${test_case} 2>&1 | tee "${CLIENT_LOG}"); then
     echo "Warning: Tests failed or timed out"
 fi
 
