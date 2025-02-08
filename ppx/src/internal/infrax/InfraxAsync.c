@@ -10,11 +10,11 @@
 InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
 void infrax_async_free(InfraxAsync* self);
 InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg);
-InfraxAsync* infrax_async_resume(InfraxAsync* self);
+// InfraxAsync* infrax_async_resume(InfraxAsync* self);
 void infrax_async_yield(InfraxAsync* self);
 InfraxAsyncStatus infrax_async_status(InfraxAsync* self);
-InfraxAsyncResult* infrax_async_wait(InfraxAsync* self, int timeout_ms);
-bool infrax_async_poll(InfraxAsync* self, InfraxAsyncResult* result);
+// InfraxAsyncResult* infrax_async_wait(InfraxAsync* self, int timeout_ms);
+// bool infrax_async_poll(InfraxAsync* self, InfraxAsyncResult* result);
 
 // Internal helper function for state change notification
 void notify_state_change(InfraxAsync* self) {
@@ -23,7 +23,7 @@ void notify_state_change(InfraxAsync* self) {
     
     char buffer[sizeof(InfraxAsyncStatus)];
     memcpy(buffer, &self->state, sizeof(buffer));
-    write(ctx->pipe_fd[1], buffer, sizeof(buffer));
+    // write(ctx->pipe_fd[1], buffer, sizeof(buffer));
 }
 
 // Implementation of instance methods
@@ -59,13 +59,13 @@ InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg) {
             return self;
         }
         
-        // Initialize pipe
-        if (pipe(ctx->pipe_fd) == -1) {
-            free(ctx);
-            self->state = INFRAX_ASYNC_ERROR;
-            self->error = errno;
-            return self;
-        }
+        // // Initialize pipe
+        // if (pipe(ctx->pipe_fd) == -1) {
+        //     free(ctx);
+        //     self->state = INFRAX_ASYNC_ERROR;
+        //     self->error = errno;
+        //     return self;
+        // }
         
         ctx->yield_count = 0;
         ctx->user_data = NULL;
@@ -98,9 +98,9 @@ InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg) {
             ctx->user_data = NULL;
         }
         
-        // Close pipe and clean up context
-        close(ctx->pipe_fd[0]);
-        close(ctx->pipe_fd[1]);
+        // // Close pipe and clean up context
+        // close(ctx->pipe_fd[0]);
+        // close(ctx->pipe_fd[1]);
         free(ctx);
         self->result = NULL;
     }
@@ -108,92 +108,92 @@ InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg) {
     return self;
 }
 
-InfraxAsync* infrax_async_resume(InfraxAsync* self) {
-    if (!self || !self->result || self->state != INFRAX_ASYNC_YIELD) {
-        return self;
-    }
+// InfraxAsync* infrax_async_resume(InfraxAsync* self) {
+//     if (!self || !self->result || self->state != INFRAX_ASYNC_YIELD) {
+//         return self;
+//     }
     
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
+//     InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
     
-    if (setjmp(ctx->env) == 0) {
-        self->state = INFRAX_ASYNC_RUNNING;
-        notify_state_change(self);
+//     if (setjmp(ctx->env) == 0) {
+//         self->state = INFRAX_ASYNC_RUNNING;
+//         notify_state_change(self);
         
-        self->fn(self, self->arg);
+//         self->fn(self, self->arg);
         
-        // If we get here, the function completed
-        self->state = INFRAX_ASYNC_DONE;
-        notify_state_change(self);
+//         // If we get here, the function completed
+//         self->state = INFRAX_ASYNC_DONE;
+//         notify_state_change(self);
         
-        if (ctx->user_data) {
-            free(ctx->user_data);
-            ctx->user_data = NULL;
-        }
+//         if (ctx->user_data) {
+//             free(ctx->user_data);
+//             ctx->user_data = NULL;
+//         }
         
-        close(ctx->pipe_fd[0]);
-        close(ctx->pipe_fd[1]);
-        free(ctx);
-        self->result = NULL;
-    }
+//         close(ctx->pipe_fd[0]);
+//         close(ctx->pipe_fd[1]);
+//         free(ctx);
+//         self->result = NULL;
+//     }
     
-    return self;
-}
+//     return self;
+// }
 
 InfraxAsyncStatus infrax_async_status(InfraxAsync* self) {
     return self ? self->state : INFRAX_ASYNC_ERROR;
 }
 
-InfraxAsyncResult* infrax_async_wait(InfraxAsync* self, int timeout_ms) {
-    if (!self || !self->result) return NULL;
+// InfraxAsyncResult* infrax_async_wait(InfraxAsync* self, int timeout_ms) {
+//     if (!self || !self->result) return NULL;
     
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
-    InfraxAsyncResult* result = malloc(sizeof(InfraxAsyncResult));
-    if (!result) return NULL;
+//     InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
+//     InfraxAsyncResult* result = malloc(sizeof(InfraxAsyncResult));
+//     if (!result) return NULL;
     
-    struct pollfd pfd = {
-        .fd = ctx->pipe_fd[0],
-        .events = POLLIN,
-        .revents = 0
-    };
+//     struct pollfd pfd = {
+//         .fd = ctx->pipe_fd[0],
+//         .events = POLLIN,
+//         .revents = 0
+//     };
     
-    while (timeout_ms != 0) {
-        int ret = poll(&pfd, 1, timeout_ms > 0 ? 1 : -1);
+//     while (timeout_ms != 0) {
+//         int ret = poll(&pfd, 1, timeout_ms > 0 ? 1 : -1);
         
-        if (ret > 0 && (pfd.revents & POLLIN)) {
-            char buffer[sizeof(InfraxAsyncStatus)];
-            read(ctx->pipe_fd[0], buffer, sizeof(buffer));
+//         if (ret > 0 && (pfd.revents & POLLIN)) {
+//             char buffer[sizeof(InfraxAsyncStatus)];
+//             read(ctx->pipe_fd[0], buffer, sizeof(buffer));
             
-            result->status = self->state;
-            result->error_code = self->error;
-            result->yield_count = ctx->yield_count;
+//             result->status = self->state;
+//             result->error_code = self->error;
+//             result->yield_count = ctx->yield_count;
             
-            if (result->status == INFRAX_ASYNC_YIELD) {
-                sched_yield();//may work for thread pool
-            } else {
-                break;
-            }
-        } else if (ret < 0) {
-            result->status = self->state;
-            result->error_code = errno;
-            result->yield_count = ctx->yield_count;
-            break;
-        }
+//             if (result->status == INFRAX_ASYNC_YIELD) {
+//                 sched_yield();//may work for thread pool
+//             } else {
+//                 break;
+//             }
+//         } else if (ret < 0) {
+//             result->status = self->state;
+//             result->error_code = errno;
+//             result->yield_count = ctx->yield_count;
+//             break;
+//         }
         
-        if (timeout_ms > 0) {
-            timeout_ms--;
-            if (timeout_ms == 0) {
-                result->status = self->state;
-                result->error_code = 0;
-                result->yield_count = ctx->yield_count;
-                break;
-            }
-        }
+//         if (timeout_ms > 0) {
+//             timeout_ms--;
+//             if (timeout_ms == 0) {
+//                 result->status = self->state;
+//                 result->error_code = 0;
+//                 result->yield_count = ctx->yield_count;
+//                 break;
+//             }
+//         }
         
-        sched_yield();
-    }
+//         sched_yield();
+//     }
     
-    return result;
-}
+//     return result;
+// }
 
 // bool infrax_async_poll(InfraxAsync* self, InfraxAsyncResult* result) {
 //     if (!self || !self->result || !result) return false;
@@ -270,6 +270,38 @@ void infrax_async_free(InfraxAsync* self) {
 
 // Global class instance
 const InfraxAsyncClass InfraxAsync_CLASS = {
+    
     .new = infrax_async_new,
     .free = infrax_async_free
 };
+/**
+    // IO 工具
+    AsyncFn (*make_file_reader)(const char* path);
+    AsyncFn (*make_file_writer)(const char* path);
+    AsyncFn (*make_socket_reader)(int fd);
+    
+    // 网络工具
+    AsyncFn (*make_tcp_server)(const char* host, int port);
+    AsyncFn (*make_tcp_client)(const char* host, int port);
+    
+    // 定时器
+    AsyncFn (*make_timer)(int ms);
+    AsyncFn (*make_interval)(int ms);
+    
+    // 迭代器
+    AsyncFn (*make_iterator)(void* array, size_t size);
+    AsyncFn (*make_range)(int start, int end, int step);
+    
+    // 生产者消费者
+    AsyncFn (*make_producer)(void* queue);
+    AsyncFn (*make_consumer)(void* queue);
+    
+    // 状态机
+    AsyncFn (*make_state_machine)(void* states[], int count);
+    
+    // CPU 密集型
+    AsyncFn (*make_compute_task)(void* (*fn)(void*));
+    
+    // 线程池适配器
+    AsyncFn (*make_thread_task)(void* (*fn)(void*));
+     */
