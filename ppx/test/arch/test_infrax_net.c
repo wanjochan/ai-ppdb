@@ -3,13 +3,14 @@
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxSync.h"
 // #include <assert.h> use assert from our core
-#include <string.h> 
+#include <string.h> //todo use string func from our core
 #include <time.h> //todo use time func from our core
 
 static InfraxCore* core = NULL;
 static InfraxSync* test_mutex = NULL;
 static InfraxSync* test_cond = NULL;
-static bool server_ready = false;
+static bool tcp_server_ready = false;
+static bool udp_server_ready = false;
 
 static void test_config() {
     if (!core) core = InfraxCoreClass.singleton();
@@ -25,7 +26,7 @@ static void test_config() {
     
     socket = InfraxSocketClass.new(&config);
     if (!socket) {
-        core->printf(core, "Failed to create TCP socket\n");
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "socket != NULL", "Failed to create TCP socket");
         return;
     }
     InfraxSocketClass.free(socket);
@@ -34,7 +35,7 @@ static void test_config() {
     config.is_udp = true;
     socket = InfraxSocketClass.new(&config);
     if (!socket) {
-        core->printf(core, "Failed to create UDP socket\n");
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "socket != NULL", "Failed to create UDP socket");
         return;
     }
     InfraxSocketClass.free(socket);
@@ -43,7 +44,7 @@ static void test_config() {
     config.is_nonblocking = true;
     socket = InfraxSocketClass.new(&config);
     if (!socket) {
-        core->printf(core, "Failed to create non-blocking UDP socket\n");
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "socket != NULL", "Failed to create non-blocking UDP socket");
         return;
     }
     InfraxSocketClass.free(socket);
@@ -92,7 +93,7 @@ static void* tcp_server_thread(void* arg) {
         goto cleanup;
     }
     
-    server_ready = true;
+    tcp_server_ready = true;
     err = test_cond->cond_signal(test_cond);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to signal condition in TCP server: %s\n", err.message);
@@ -173,7 +174,7 @@ static void* udp_server_thread(void* arg) {
         goto cleanup;
     }
     
-    server_ready = true;
+    udp_server_ready = true;
     err = test_cond->cond_signal(test_cond);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to signal condition in UDP server: %s\n", err.message);
@@ -242,7 +243,7 @@ static void test_tcp() {
     struct timespec timeout;
     core->time_now_ms(core); // 获取当前时间
     
-    while (!server_ready) {
+    while (!tcp_server_ready) {
         err = test_cond->cond_timedwait(test_cond, test_mutex, 5000); // 5 seconds timeout
         if (err.code == INFRAX_ERROR_SYNC_TIMEOUT) {
             core->printf(core, "Timeout waiting for TCP server to be ready\n");
@@ -260,7 +261,7 @@ static void test_tcp() {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
         goto cleanup;
     }
-    server_ready = false;
+    tcp_server_ready = false;
     
     // Create client socket
     InfraxSocket* client = NULL;
@@ -379,7 +380,7 @@ static void test_udp() {
     struct timespec timeout;
     core->time_now_ms(core); // 获取当前时间
     
-    while (!server_ready) {
+    while (!udp_server_ready) {
         err = test_cond->cond_timedwait(test_cond, test_mutex, 5000); // 5 seconds timeout
         if (err.code == INFRAX_ERROR_SYNC_TIMEOUT) {
             core->printf(core, "Timeout waiting for UDP server to be ready\n");
@@ -397,7 +398,7 @@ static void test_udp() {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
         goto cleanup;
     }
-    server_ready = false;
+    udp_server_ready = false;
     
     // Create client socket
     InfraxSocket* client = NULL;
@@ -481,26 +482,26 @@ cleanup:
 }
 
 int main() {
-    core->printf(core, "===================\nStarting InfraxNet tests...\n");
-    
-    // Initialize core and synchronization objects
+    // Initialize core first
     core = InfraxCoreClass.singleton();
     if (!core) {
         printf("Failed to initialize InfraxCore\n");
         return 1;
     }
     
+    core->printf(core, "===================\nStarting InfraxNet tests...\n");
+    
     // Initialize test mutex
     test_mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
     if (test_mutex == NULL) {
-        printf("Failed to create test mutex\n");
+        core->printf(core, "Failed to create test mutex\n");
         return 1;
     }
 
     // Initialize test condition variable
     test_cond = InfraxSyncClass.new(INFRAX_SYNC_TYPE_CONDITION);
     if (test_cond == NULL) {
-        printf("Failed to create test condition variable\n");
+        core->printf(core, "Failed to create test condition variable\n");
         InfraxSyncClass.free(test_mutex);
         return 1;
     }

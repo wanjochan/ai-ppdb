@@ -1,4 +1,6 @@
-#include <assert.h>
+// #include <assert.h> use assert from our core
+#include "internal/infrax/InfraxCore.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -79,11 +81,12 @@ static void async_read_file(InfraxAsync* self, void* arg) {
 
 // Test async file operations
 static void test_async_file_read(void) {
+    InfraxCore* core = InfraxCoreClass.singleton();
     printf("[DEBUG] test_async_file_read: starting\n");
     
     // Create a test file
     FILE* f = fopen("test_async.txt", "w");
-    assert(f != NULL);
+    INFRAX_ASSERT(core, f != NULL);
     fputs("Hello, Async World!", f);
     fclose(f);
     printf("[DEBUG] test_async_file_read: created test file\n");
@@ -101,7 +104,7 @@ static void test_async_file_read(void) {
     
     // Create and start async task
     InfraxAsync* async = InfraxAsyncClass.new(async_read_file, &ctx);
-    assert(async != NULL);
+    INFRAX_ASSERT(core, async != NULL);
     printf("[DEBUG] test_async_file_read: created async task\n");
     
     // Start the task
@@ -118,9 +121,9 @@ static void test_async_file_read(void) {
     }
     
     // Verify content
-    assert(strncmp(buffer, "Hello, Async World!", strlen("Hello, Async World!")) == 0);
+    INFRAX_ASSERT(core, strncmp(buffer, "Hello, Async World!", strlen("Hello, Async World!")) == 0);
     // Verify that yield was called at least once
-    assert(ctx.yield_count > 0);
+    INFRAX_ASSERT(core, ctx.yield_count > 0);
     printf("[DEBUG] test_async_file_read: content matches, yielded %d times\n", ctx.yield_count);
     
     // Cleanup
@@ -171,13 +174,14 @@ static void async_delay(InfraxAsync* self, void* arg) {
 
 // Test async delay
 static void test_async_delay(void) {
+    InfraxCore* core = InfraxCoreClass.singleton();
     printf("Starting delay test (will wait for %.3f seconds)...\n", DELAY_SECONDS);
     struct timespec start, current;
     clock_gettime(CLOCK_MONOTONIC, &start);
     
     // Create and start async delay task
     InfraxAsync* async = InfraxAsyncClass.new(async_delay, NULL);
-    assert(async != NULL);
+    INFRAX_ASSERT(core, async != NULL);
     
     // Start the task
     async->start(async, async_delay, NULL);
@@ -195,7 +199,7 @@ static void test_async_delay(void) {
     if (async->state == INFRAX_ASYNC_REJECTED) {
         printf("Async delay test failed: task returned error\n");
         InfraxAsyncClass.free(async);
-        assert(0);  // Force test failure
+        INFRAX_ASSERT(core, 0);  // Force test failure
     }
     
     clock_gettime(CLOCK_MONOTONIC, &current);
@@ -203,8 +207,8 @@ static void test_async_delay(void) {
                     (current.tv_nsec - start.tv_nsec) / 1e9;
     
     // Verify that approximately DELAY_SECONDS has passed
-    assert(elapsed >= DELAY_SECONDS);
-    assert(elapsed <= DELAY_SECONDS + 0.1);  // Allow 100ms margin
+    INFRAX_ASSERT(core, elapsed >= DELAY_SECONDS);
+    INFRAX_ASSERT(core, elapsed <= DELAY_SECONDS + 0.1);  // Allow 100ms margin
     printf("Async delay test passed: waited for %.3f seconds\n", elapsed);
     
     // Cleanup
@@ -213,6 +217,7 @@ static void test_async_delay(void) {
 
 // Test concurrent async operations
 static void test_async_concurrent(void) {
+    InfraxCore* core = InfraxCoreClass.singleton();
     printf("[DEBUG] test_async_concurrent: starting\n");
     
     // Prepare read context
@@ -228,7 +233,7 @@ static void test_async_concurrent(void) {
     
     // Create test file
     FILE* f = fopen("test_async.txt", "w");
-    assert(f != NULL);
+    INFRAX_ASSERT(core, f != NULL);
     fputs("Hello, Async World!", f);
     fclose(f);
     printf("[DEBUG] test_async_concurrent: created test file\n");
@@ -240,7 +245,7 @@ static void test_async_concurrent(void) {
     // Create async tasks
     InfraxAsync* read_task = InfraxAsyncClass.new(async_read_file, &ctx);
     InfraxAsync* delay_task = InfraxAsyncClass.new(async_delay, NULL);
-    assert(read_task != NULL && delay_task != NULL);
+    INFRAX_ASSERT(core, read_task != NULL && delay_task != NULL);
     printf("[DEBUG] test_async_concurrent: tasks created\n");
     
     // Start both tasks
@@ -275,8 +280,8 @@ static void test_async_concurrent(void) {
     printf("[DEBUG] test_async_concurrent: tasks completed\n");
     
     // Verify results
-    assert(strncmp(buffer, "Hello, Async World!", strlen("Hello, Async World!")) == 0);
-    assert(end_time - start_time >= DELAY_SECONDS);
+    INFRAX_ASSERT(core, strncmp(buffer, "Hello, Async World!", strlen("Hello, Async World!")) == 0);
+    INFRAX_ASSERT(core, end_time - start_time >= DELAY_SECONDS);
     
     printf("[DEBUG] test_async_concurrent: verification passed\n");
     printf("Concurrent test completed! Total time: %ld seconds\n", end_time - start_time);
@@ -288,13 +293,78 @@ static void test_async_concurrent(void) {
     printf("[DEBUG] test_async_concurrent: cleanup complete\n");
 }
 
+void test_async_io() {
+    InfraxCore* core = InfraxCoreClass.singleton();
+    printf("Testing async I/O...\n");
+    
+    // Create a pipe for testing
+    int pipefd[2];
+    int ret = pipe(pipefd);
+    INFRAX_ASSERT(core, ret == 0);
+    
+    // Set non-blocking mode
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
+    
+    // Write some data
+    const char* test_data = "Hello, Async!";
+    ssize_t written = write(pipefd[1], test_data, strlen(test_data));
+    INFRAX_ASSERT(core, written == strlen(test_data));
+    
+    // Read the data
+    char buffer[128];
+    ssize_t nread = read(pipefd[0], buffer, sizeof(buffer));
+    INFRAX_ASSERT(core, nread == strlen(test_data));
+    buffer[nread] = '\0';
+    INFRAX_ASSERT(core, strcmp(buffer, test_data) == 0);
+    
+    // Clean up
+    close(pipefd[0]);
+    close(pipefd[1]);
+    
+    printf("Async I/O test passed\n");
+}
+
+void test_async_events() {
+    InfraxCore* core = InfraxCoreClass.singleton();
+    printf("Testing async events...\n");
+    
+    // Create event sources
+    int event_pipe[2];
+    int ret = pipe(event_pipe);
+    INFRAX_ASSERT(core, ret == 0);
+    
+    // Set non-blocking mode
+    fcntl(event_pipe[0], F_SETFL, O_NONBLOCK);
+    fcntl(event_pipe[1], F_SETFL, O_NONBLOCK);
+    
+    // Trigger an event
+    const char event_data = 1;
+    ssize_t written = write(event_pipe[1], &event_data, 1);
+    INFRAX_ASSERT(core, written == 1);
+    
+    // Read the event
+    char buffer;
+    ssize_t nread = read(event_pipe[0], &buffer, 1);
+    INFRAX_ASSERT(core, nread == 1);
+    INFRAX_ASSERT(core, buffer == event_data);
+    
+    // Clean up
+    close(event_pipe[0]);
+    close(event_pipe[1]);
+    
+    printf("Async events test passed\n");
+}
+
 int main(void) {
-    printf("Starting InfraxAsync tests...\n");
+    printf("===================\nStarting InfraxAsync tests...\n");
     
     test_async_file_read();
     test_async_delay();
     test_async_concurrent();
+    test_async_io();
+    test_async_events();
     
-    printf("All tests passed!\n");
+    printf("All tests passed!\n===================\n");
     return 0;
 }

@@ -10,7 +10,7 @@
 
 #include <stdbool.h>
 #include "internal/infrax/InfraxCore.h"
-#include "cosmopolitan.h"
+// #include "cosmopolitan.h"
 
 // Forward declarations
 typedef struct InfraxSocket InfraxSocket;

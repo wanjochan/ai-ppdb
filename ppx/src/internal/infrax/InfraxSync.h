@@ -4,9 +4,9 @@
 //sync primitive
 //design pattern: factory (by type)
 
-#include "libc/thread/thread.h"
-#include "libc/thread/semaphore.h"
-#include "libc/atomic.h"
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdbool.h>
 #include "InfraxCore.h"
 
 // Error codes

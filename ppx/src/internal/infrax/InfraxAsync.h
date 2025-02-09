@@ -1,7 +1,8 @@
 #ifndef INFRAX_ASYNC_H
 #define INFRAX_ASYNC_H
 
-//async with setjmp/longjmp
+//design pattern: factory
+//with setjmp/longjmp
 
 #include <setjmp.h>
 // #include <stdbool.h>

@@ -2,7 +2,6 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/polyx/PolyxAsync.h"
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>

@@ -1,5 +1,6 @@
 #include "InfraxNet.h"
 #include "InfraxCore.h"
+#include "InfraxMemory.h"
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -15,6 +16,24 @@ static InfraxError get_socket_option(intptr_t handle, int level, int option, voi
 static InfraxError set_socket_nonblocking(intptr_t handle, bool nonblock);
 static InfraxSocket* socket_new(const InfraxSocketConfig* config);
 static void socket_free(InfraxSocket* self);
+
+// Forward declarations
+static InfraxMemory* get_memory_manager(void);
+
+// Memory manager instance
+static InfraxMemory* get_memory_manager(void) {
+    static InfraxMemory* memory = NULL;
+    if (!memory) {
+        InfraxMemoryConfig config = {
+            .initial_size = 1024 * 1024,  // 1MB
+            .use_gc = false,
+            .use_pool = true,
+            .gc_threshold = 0
+        };
+        memory = InfraxMemoryClass.new(&config);
+    }
+    return memory;
+}
 
 // Instance methods implementations
 static InfraxError socket_bind(InfraxSocket* self, const InfraxNetAddr* addr) {
@@ -259,8 +278,12 @@ static InfraxError socket_get_peer_addr(InfraxSocket* self, InfraxNetAddr* addr)
 static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     if (!config) return NULL;
 
+    // Get memory manager
+    InfraxMemory* memory = get_memory_manager();
+    if (!memory) return NULL;
+
     // Allocate socket instance
-    InfraxSocket* sock_instance = (InfraxSocket*)malloc(sizeof(InfraxSocket));
+    InfraxSocket* sock_instance = (InfraxSocket*)memory->alloc(memory, sizeof(InfraxSocket));
     if (!sock_instance) return NULL;
 
     // Initialize socket data
@@ -272,7 +295,7 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     // Create native socket
     sock_instance->native_handle = socket(AF_INET, config->is_udp ? SOCK_DGRAM : SOCK_STREAM, 0);
     if (sock_instance->native_handle < 0) {
-        free(sock_instance);
+        memory->dealloc(memory, sock_instance);
         return NULL;
     }
 
@@ -280,7 +303,7 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     if (config->is_nonblocking) {
         if (INFRAX_ERROR_IS_ERR(set_socket_nonblocking(sock_instance->native_handle, true))) {
             close(sock_instance->native_handle);
-            free(sock_instance);
+            memory->dealloc(memory, sock_instance);
             return NULL;
         }
     }
@@ -298,7 +321,7 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     if (INFRAX_ERROR_IS_ERR(set_socket_option(sock_instance->native_handle, SOL_SOCKET, SO_SNDTIMEO, &send_tv, sizeof(send_tv))) ||
         INFRAX_ERROR_IS_ERR(set_socket_option(sock_instance->native_handle, SOL_SOCKET, SO_RCVTIMEO, &recv_tv, sizeof(recv_tv)))) {
         close(sock_instance->native_handle);
-        free(sock_instance);
+        memory->dealloc(memory, sock_instance);
         return NULL;
     }
 
@@ -324,7 +347,13 @@ static void socket_free(InfraxSocket* self) {
     if (self->native_handle >= 0) {
         close(self->native_handle);
     }
-    free(self);
+    // Get memory manager
+    InfraxMemory* memory = get_memory_manager();
+    if (memory) {
+        memory->dealloc(memory, self);
+    } else {
+        free(self);
+    }
 }
 
 // Socket class instance
