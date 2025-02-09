@@ -7,6 +7,9 @@
 // 高级异步操作封装，提供更友好的异步接口
 // 基于 InfraxAsync 构建，添加更多高级特性
 
+// 清理函数类型定义
+typedef void (*PolyxAsyncCleanupFn)(void* private_data);
+
 // 异步操作的状态
 typedef enum {
     POLYX_ASYNC_PENDING,
@@ -31,6 +34,7 @@ typedef struct PolyxAsync {
     PolyxAsyncResult* result;  // 异步操作结果
     void* private_data;  // 任务特定数据
     PolyxAsyncCallback callback;  // 完成回调
+    PolyxAsyncCleanupFn cleanup_fn;  // 清理函数
     
     // Instance methods
     struct PolyxAsync* (*start)(struct PolyxAsync* self);

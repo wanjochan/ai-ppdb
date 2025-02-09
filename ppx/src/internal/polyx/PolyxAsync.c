@@ -3,6 +3,7 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxNet.h"
 #include "internal/infrax/InfraxCore.h"
+#include <errno.h>
 
 // 全局内存管理器
 static InfraxMemory* g_memory = NULL;
@@ -77,6 +78,70 @@ typedef struct {
     int current;
 } ParallelSequenceData;
 
+// 清理函数定义
+static void file_read_task_cleanup(void* private_data) {
+    FileReadTask* task = (FileReadTask*)private_data;
+    if (!task) return;
+    if (task->path) {
+        g_memory->dealloc(g_memory, task->path);
+    }
+    g_memory->dealloc(g_memory, task);
+}
+
+static void file_write_task_cleanup(void* private_data) {
+    FileWriteTask* task = (FileWriteTask*)private_data;
+    if (!task) return;
+    if (task->path) {
+        g_memory->dealloc(g_memory, task->path);
+    }
+    if (task->data) {
+        g_memory->dealloc(g_memory, task->data);
+    }
+    g_memory->dealloc(g_memory, task);
+}
+
+static void http_get_task_cleanup(void* private_data) {
+    HttpGetTask* task = (HttpGetTask*)private_data;
+    if (!task) return;
+    if (task->url) {
+        g_memory->dealloc(g_memory, task->url);
+    }
+    g_memory->dealloc(g_memory, task);
+}
+
+static void http_post_task_cleanup(void* private_data) {
+    HttpPostTask* task = (HttpPostTask*)private_data;
+    if (!task) return;
+    if (task->url) {
+        g_memory->dealloc(g_memory, task->url);
+    }
+    if (task->data) {
+        g_memory->dealloc(g_memory, task->data);
+    }
+    g_memory->dealloc(g_memory, task);
+}
+
+static void delay_task_cleanup(void* private_data) {
+    DelayTask* task = (DelayTask*)private_data;
+    if (!task) return;
+    g_memory->dealloc(g_memory, task);
+}
+
+static void interval_task_cleanup(void* private_data) {
+    IntervalTask* task = (IntervalTask*)private_data;
+    if (!task) return;
+    g_memory->dealloc(g_memory, task);
+}
+
+static void parallel_sequence_task_cleanup(void* private_data) {
+    ParallelSequenceData* data = (ParallelSequenceData*)private_data;
+    if (!data) return;
+    if (data->tasks) {
+        g_memory->dealloc(g_memory, data->tasks);
+    }
+    g_memory->dealloc(g_memory, data);
+}
+
 // 异步操作结构体
 bool init_memory() {
     if (g_memory) return true;
@@ -131,6 +196,11 @@ PolyxAsync* polyx_async_new(void) {
 void polyx_async_free(PolyxAsync* self) {
     if (!self) return;
     
+    // 先清理私有数据
+    if (self->private_data && self->cleanup_fn) {
+        self->cleanup_fn(self->private_data);
+    }
+    
     if (self->infra) {
         infrax_async_free(self->infra);
     }
@@ -140,10 +210,6 @@ void polyx_async_free(PolyxAsync* self) {
             g_memory->dealloc(g_memory, self->result->data);
         }
         g_memory->dealloc(g_memory, self->result);
-    }
-    
-    if (self->private_data) {
-        g_memory->dealloc(g_memory, self->private_data);
     }
     
     g_memory->dealloc(g_memory, self);
@@ -200,14 +266,12 @@ PolyxAsync* polyx_async_read_file(const char* path) {
     PolyxAsync* self = polyx_async_new();
     if (!self) return NULL;
     
-    // 创建文件读取任务
     FileReadTask* task = g_memory->alloc(g_memory, sizeof(FileReadTask));
     if (!task) {
         polyx_async_free(self);
         return NULL;
     }
     
-    // 复制文件路径
     size_t path_len = strlen(path) + 1;
     task->path = g_memory->alloc(g_memory, path_len);
     if (!task->path) {
@@ -217,14 +281,15 @@ PolyxAsync* polyx_async_read_file(const char* path) {
     }
     memcpy(task->path, path, path_len);
     
-    // 创建底层异步任务
     self->infra = infrax_async_new(async_read_file_fn, task);
     if (!self->infra) {
-        g_memory->dealloc(g_memory, task->path);
-        g_memory->dealloc(g_memory, task);
+        file_read_task_cleanup(task);
         polyx_async_free(self);
         return NULL;
     }
+    
+    self->private_data = task;
+    self->cleanup_fn = file_read_task_cleanup;
     
     return self;
 }
@@ -236,14 +301,12 @@ PolyxAsync* polyx_async_write_file(const char* path, const void* data, size_t si
     PolyxAsync* self = polyx_async_new();
     if (!self) return NULL;
     
-    // 创建文件写入任务
     FileWriteTask* task = g_memory->alloc(g_memory, sizeof(FileWriteTask));
     if (!task) {
         polyx_async_free(self);
         return NULL;
     }
     
-    // 复制文件路径
     size_t path_len = strlen(path) + 1;
     task->path = g_memory->alloc(g_memory, path_len);
     if (!task->path) {
@@ -253,26 +316,24 @@ PolyxAsync* polyx_async_write_file(const char* path, const void* data, size_t si
     }
     memcpy(task->path, path, path_len);
     
-    // 复制数据
     task->data = g_memory->alloc(g_memory, size);
     if (!task->data) {
-        g_memory->dealloc(g_memory, task->path);
-        g_memory->dealloc(g_memory, task);
+        file_write_task_cleanup(task);
         polyx_async_free(self);
         return NULL;
     }
     memcpy(task->data, data, size);
     task->size = size;
     
-    // 创建底层异步任务
     self->infra = infrax_async_new(async_write_file_fn, task);
     if (!self->infra) {
-        g_memory->dealloc(g_memory, task->data);
-        g_memory->dealloc(g_memory, task->path);
-        g_memory->dealloc(g_memory, task);
+        file_write_task_cleanup(task);
         polyx_async_free(self);
         return NULL;
     }
+    
+    self->private_data = task;
+    self->cleanup_fn = file_write_task_cleanup;
     
     return self;
 }
@@ -284,19 +345,22 @@ PolyxAsync* polyx_async_delay(int ms) {
     PolyxAsync* self = polyx_async_new();
     if (!self) return NULL;
     
-    int* delay_ms = (int*)g_memory->alloc(g_memory, sizeof(int));
-    if (!delay_ms) {
+    DelayTask* task = g_memory->alloc(g_memory, sizeof(DelayTask));
+    if (!task) {
         polyx_async_free(self);
         return NULL;
     }
     
-    *delay_ms = ms;
-    self->infra = infrax_async_new(async_delay_fn, delay_ms);
+    task->ms = ms;
+    self->infra = infrax_async_new(async_delay_fn, task);
     if (!self->infra) {
-        g_memory->dealloc(g_memory, delay_ms);
+        g_memory->dealloc(g_memory, task);
         polyx_async_free(self);
         return NULL;
     }
+    
+    self->private_data = task;
+    self->cleanup_fn = delay_task_cleanup;
     
     return self;
 }
@@ -306,31 +370,15 @@ PolyxAsync* polyx_async_parallel(PolyxAsync** tasks, int count) {
     PolyxAsync* self = polyx_async_new();
     if (!self) return NULL;
     
-    // Initialize result
-    self->result = g_memory->alloc(g_memory, sizeof(PolyxAsyncResult));
-    if (!self->result) {
+    ParallelSequenceData* parallel_data = g_memory->alloc(g_memory, sizeof(ParallelSequenceData));
+    if (!parallel_data) {
         polyx_async_free(self);
         return NULL;
     }
-    self->result->data = NULL;
-    self->result->size = 0;
-    self->result->error_code = 0;
-    
-    // Store tasks for later use
-    self->private_data = g_memory->alloc(g_memory, sizeof(ParallelSequenceData));
-    
-    if (!self->private_data) {
-        g_memory->dealloc(g_memory, self->result);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    ParallelSequenceData* parallel_data = self->private_data;
     
     parallel_data->tasks = g_memory->alloc(g_memory, sizeof(PolyxAsync*) * count);
     if (!parallel_data->tasks) {
-        g_memory->dealloc(g_memory, self->private_data);
-        g_memory->dealloc(g_memory, self->result);
+        g_memory->dealloc(g_memory, parallel_data);
         polyx_async_free(self);
         return NULL;
     }
@@ -342,11 +390,8 @@ PolyxAsync* polyx_async_parallel(PolyxAsync** tasks, int count) {
     parallel_data->completed = 0;
     parallel_data->current = 0;
     
-    // Set up instance methods
-    self->start = polyx_async_parallel_start;
-    self->cancel = polyx_async_parallel_cancel;
-    self->is_done = polyx_async_parallel_is_done;
-    self->get_result = polyx_async_parallel_get_result;
+    self->private_data = parallel_data;
+    self->cleanup_fn = parallel_sequence_task_cleanup;
     
     return self;
 }
@@ -434,6 +479,9 @@ PolyxAsync* polyx_async_http_get(const char* url) {
         return NULL;
     }
     
+    self->private_data = task;
+    self->cleanup_fn = http_get_task_cleanup;
+    
     return self;
 }
 
@@ -482,305 +530,10 @@ PolyxAsync* polyx_async_http_post(const char* url, const void* data, size_t size
         return NULL;
     }
     
+    self->private_data = task;
+    self->cleanup_fn = http_post_task_cleanup;
+    
     return self;
-}
-
-// 异步文件读取回调
-void async_read_file_fn(InfraxAsync* async, void* arg) {
-    FileReadTask* task = (FileReadTask*)arg;
-    if (!task || !task->path) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = EINVAL;
-        return;
-    }
-
-    FILE* file = fopen(task->path, "rb");
-    if (!file) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    // 获取文件大小
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    // 分配内存
-    void* buffer = g_memory->alloc(g_memory, file_size);
-    if (!buffer) {
-        fclose(file);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = ENOMEM;
-        return;
-    }
-
-    // 读取文件内容
-    size_t bytes_read = fread(buffer, 1, file_size, file);
-    if (bytes_read != (size_t)file_size) {
-        fclose(file);
-        g_memory->dealloc(g_memory, buffer);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = ferror(file) ? errno : EIO;
-        return;
-    }
-
-    fclose(file);
-    async->result = buffer;
-    async->state = INFRAX_ASYNC_FULFILLED;
-}
-
-// 异步文件写入回调
-void async_write_file_fn(InfraxAsync* async, void* arg) {
-    FileWriteTask* task = (FileWriteTask*)arg;
-    if (!task || !task->path || !task->data) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = EINVAL;
-        return;
-    }
-
-    FILE* file = fopen(task->path, "wb");
-    if (!file) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    // 写入文件内容
-    size_t bytes_written = fwrite(task->data, 1, task->size, file);
-    if (bytes_written != task->size) {
-        fclose(file);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = ferror(file) ? errno : EIO;
-        return;
-    }
-
-    fclose(file);
-    async->state = INFRAX_ASYNC_FULFILLED;
-}
-
-// 异步延时回调
-void async_delay_fn(InfraxAsync* async, void* arg) {
-    if (!async || !arg) return;
-    
-    DelayTask* task = (DelayTask*)arg;
-    
-    // 使用 Core 的 sleep_ms 函数
-    g_core->sleep_ms(g_core, task->ms);
-    
-    async->state = INFRAX_ASYNC_FULFILLED;
-}
-
-// 异步并行执行回调
-void async_parallel_fn(InfraxAsync* async, void* arg) {
-    ParallelSequenceData* data = (ParallelSequenceData*)arg;
-    if (!data || !data->tasks || data->count <= 0) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = EINVAL;
-        return;
-    }
-
-    // 启动所有任务
-    for (int i = 0; i < data->count; i++) {
-        if (data->tasks[i]) {
-            data->tasks[i]->start(data->tasks[i]);
-        }
-    }
-
-    // 检查所有任务的完成状态
-    while (true) {
-        bool all_done = true;
-        bool any_error = false;
-
-        for (int i = 0; i < data->count; i++) {
-            if (!data->tasks[i]) continue;
-
-            if (!data->tasks[i]->is_done(data->tasks[i])) {
-                all_done = false;
-                async->yield(async);
-                break;
-            }
-
-            PolyxAsyncResult* result = data->tasks[i]->get_result(data->tasks[i]);
-            if (result && result->error_code != 0) {
-                any_error = true;
-                async->error = result->error_code;
-                break;
-            }
-        }
-
-        if (any_error) {
-            async->state = INFRAX_ASYNC_REJECTED;
-            return;
-        }
-
-        if (all_done) {
-            async->state = INFRAX_ASYNC_FULFILLED;
-            return;
-        }
-    }
-}
-
-// 异步序列执行回调
-void async_sequence_fn(InfraxAsync* async, void* arg) {
-    ParallelSequenceData* data = (ParallelSequenceData*)arg;
-    if (!data || !data->tasks || data->count <= 0) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = EINVAL;
-        return;
-    }
-
-    // 按顺序执行任务
-    for (int i = 0; i < data->count; i++) {
-        if (!data->tasks[i]) continue;
-
-        // 启动当前任务
-        data->tasks[i]->start(data->tasks[i]);
-
-        // 等待任务完成
-        while (!data->tasks[i]->is_done(data->tasks[i])) {
-            async->yield(async);
-        }
-
-        // 检查任务结果
-        PolyxAsyncResult* result = data->tasks[i]->get_result(data->tasks[i]);
-        if (result && result->error_code != 0) {
-            async->state = INFRAX_ASYNC_REJECTED;
-            async->error = result->error_code;
-            return;
-        }
-    }
-
-    async->state = INFRAX_ASYNC_FULFILLED;
-}
-
-// 异步HTTP GET回调
-void async_http_get_fn(InfraxAsync* async, void* arg) {
-    HttpGetTask* task = (HttpGetTask*)arg;
-    if (!task || !task->url) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = EINVAL;
-        return;
-    }
-
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(80);
-    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
-
-    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    char request[1024];
-    snprintf(request, sizeof(request), "GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n", task->url);
-
-    if (send(sock, request, strlen(request), 0) < 0) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    char response[1024];
-    int bytes_received = recv(sock, response, sizeof(response), 0);
-    if (bytes_received < 0) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    async->result = g_memory->alloc(g_memory, bytes_received);
-    if (!async->result) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = ENOMEM;
-        return;
-    }
-
-    memcpy(async->result, response, bytes_received);
-    close(sock);
-    async->state = INFRAX_ASYNC_FULFILLED;
-}
-
-// 异步HTTP POST回调
-void async_http_post_fn(InfraxAsync* async, void* arg) {
-    HttpPostTask* task = (HttpPostTask*)arg;
-    if (!task || !task->url || !task->data) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = EINVAL;
-        return;
-    }
-
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(80);
-    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
-
-    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    char request[1024];
-    snprintf(request, sizeof(request), "POST %s HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: %zu\r\n\r\n", task->url, task->size);
-
-    if (send(sock, request, strlen(request), 0) < 0) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    if (send(sock, task->data, task->size, 0) < 0) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    char response[1024];
-    int bytes_received = recv(sock, response, sizeof(response), 0);
-    if (bytes_received < 0) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
-    async->result = g_memory->alloc(g_memory, bytes_received);
-    if (!async->result) {
-        close(sock);
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = ENOMEM;
-        return;
-    }
-
-    memcpy(async->result, response, bytes_received);
-    close(sock);
-    async->state = INFRAX_ASYNC_FULFILLED;
 }
 
 // 间隔执行操作
