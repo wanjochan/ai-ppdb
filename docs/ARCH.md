@@ -11,8 +11,13 @@ PPDB采用分层架构设计，自下而上分为三层:
 服务端：sh ppdb/scripts/build_ppdb.sh && ./ppdb/ppdb_latest.exe sqlite3 --start --config=ppdb/sqlite3.conf --log-level=5
 客户端：${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_sqlite3_service.py
 
-# memkv - 单个测试（目前全通过）：
+# 严格按以下顺序进行 memkv 测试
+  - 如果测试出现问题，不要着急改，要深度分析，分析出问题的原因，再根据原因进行修改 peer_memkv.c 文件
+  - 如果改动了 peer_memkv.c 哪怕一点点也必须要严格按这个顺序重新来测试!
+  - 如果编译不通过就恢复 peer_memkv.c 文件，重新再来!
+  - 如果修复了任何一个测试，也要重头再来按顺序测试（因为有一定的依赖关系）
 ```
+## 先是分步测试
 sh ppdb/scripts/test_memkv.sh -k test_basic_set_get
 sh ppdb/scripts/test_memkv.sh -k test_delete
 sh ppdb/scripts/test_memkv.sh -k test_not_found
@@ -20,10 +25,7 @@ sh ppdb/scripts/test_memkv.sh -k test_multi_set_get
 sh ppdb/scripts/test_memkv.sh -k test_expiration
 sh ppdb/scripts/test_memkv.sh -k test_increment_decrement
 sh ppdb/scripts/test_memkv.sh -k test_large_value
-```
-
-# memkv - 整体测试（目前未通过，要解决）：
-```
+## 最后整体测试（目前未通过，要小心分析）：
 sh ppdb/scripts/test_memkv.sh
 ```
 

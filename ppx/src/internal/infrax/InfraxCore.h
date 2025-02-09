@@ -2,6 +2,10 @@
 #define PPDB_INFRAX_CORE_H
 
 #include "cosmopolitan.h"
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <string.h>
 // #include "internal/infrax/InfraxError.h"
 
 //-----------------------------------------------------------------------------
@@ -180,5 +184,22 @@ struct InfraxCore {
 
 extern InfraxCore g_infrax_core;  // global infrax core for tricks
 InfraxCore* get_global_infrax_core(void);
+
+// TODO:重构，类似 InfraxAsync， static InfraxCoreClass 放这些静态方法就可以了
+// infrax_core_new( )
+// infrax_core_new
+// InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
+// void infrax_async_free(InfraxAsync* self);
+
+// // Factory for InfraxAsync instances
+// static struct {
+//     InfraxAsync* (*new)(AsyncFn fn, void* arg);
+//     void (*free)(InfraxAsync* self);
+// } InfraxAsyncClass = {
+//     .new = infrax_async_new,
+//     .free = infrax_async_free
+// };
+
+InfraxCore* singleton();
 
 #endif // PPDB_INFRAX_CORE_H

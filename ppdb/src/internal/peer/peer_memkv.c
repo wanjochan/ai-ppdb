@@ -18,6 +18,14 @@
 #include <fcntl.h>
 #include <ctype.h>  // 添加 ctype.h 头文件
 
+// 键值对结构体定义
+struct kv_pair {
+    void* value;
+    size_t value_len;
+    uint32_t flags;
+    time_t exptime;
+};
+
 //-----------------------------------------------------------------------------
 // Forward Declarations
 //-----------------------------------------------------------------------------
@@ -135,9 +143,8 @@ static infra_error_t db_init(poly_db_t** db, const char* path) {
     return INFRA_OK;
 }
 
-static infra_error_t kv_get(poly_db_t* db, const char* key, void** value, 
-                                     size_t* value_len, uint32_t* flags, time_t* exptime) {
-    if (!db || !key || !value || !value_len || !flags || !exptime) {
+static infra_error_t kv_get(poly_db_t* db, const char* key, struct kv_pair* pair) {
+    if (!db || !key || !pair) {
         INFRA_LOG_DEBUG("kv_get for key: [%s]", key ? key : "NULL");
         INFRA_LOG_ERROR("Invalid parameters");
         return INFRA_ERROR_INVALID_PARAM;
@@ -165,7 +172,7 @@ static infra_error_t kv_get(poly_db_t* db, const char* key, void** value,
     // 执行查询
     err = poly_db_stmt_step(stmt);
     if (err == INFRA_ERROR_NOT_FOUND) {
-        INFRA_LOG_DEBUG("Failed to get blob data: err=%d, data=0, size=0", err);
+        INFRA_LOG_DEBUG("Key not found: [%s]", key);
         poly_db_stmt_finalize(stmt);
         return err;
     }
@@ -187,6 +194,43 @@ static infra_error_t kv_get(poly_db_t* db, const char* key, void** value,
 
     INFRA_LOG_DEBUG("Got blob data: size=%zu", blob_size);
 
+    // 获取 expiry
+    char* expiry_str = NULL;
+    err = poly_db_column_text(stmt, 2, &expiry_str);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to get expiry: %d", err);
+        poly_db_stmt_finalize(stmt);
+        return err;
+    }
+
+    // 检查过期时间
+    if (expiry_str) {
+        time_t expiry = strtol(expiry_str, NULL, 10);
+        free(expiry_str);
+        
+        if (expiry > 0) {
+            time_t now = time(NULL);
+            if (now >= expiry) {
+                INFRA_LOG_DEBUG("Key expired: [%s], expiry=%ld, now=%ld", key, expiry, now);
+                poly_db_stmt_finalize(stmt);
+                
+                // 删除过期的键
+                const char* delete_sql = "DELETE FROM kv_store WHERE key = ?";
+                poly_db_stmt_t* delete_stmt = NULL;
+                err = poly_db_prepare(db, delete_sql, &delete_stmt);
+                if (err == INFRA_OK) {
+                    err = poly_db_bind_text(delete_stmt, 1, key, -1);
+                    if (err == INFRA_OK) {
+                        poly_db_stmt_step(delete_stmt);
+                    }
+                    poly_db_stmt_finalize(delete_stmt);
+                }
+                
+                return INFRA_ERROR_NOT_FOUND;
+            }
+        }
+    }
+
     // 分配内存并复制数据
     void* data = malloc(blob_size);
     if (!data) {
@@ -195,71 +239,29 @@ static infra_error_t kv_get(poly_db_t* db, const char* key, void** value,
         return INFRA_ERROR_NO_MEMORY;
     }
     memcpy(data, blob_data, blob_size);
-    *value = data;
-    *value_len = blob_size;
+    pair->value = data;
+    pair->value_len = blob_size;
 
     // 获取 flags
     char* flags_str = NULL;
     err = poly_db_column_text(stmt, 1, &flags_str);
     if (err == INFRA_OK && flags_str) {
-        *flags = (uint32_t)strtoul(flags_str, NULL, 10);
+        pair->flags = (uint32_t)strtoul(flags_str, NULL, 10);
         free(flags_str);
     } else {
-        INFRA_LOG_ERROR("Failed to get flags: %d", err);
-        free(data);
-        *value = NULL;
-        poly_db_stmt_finalize(stmt);
-        return err;
+        pair->flags = 0;
     }
 
-    // 获取过期时间
-    char* exptime_str = NULL;
-    err = poly_db_column_text(stmt, 2, &exptime_str);
-    if (err == INFRA_OK && exptime_str) {
-        *exptime = strtoll(exptime_str, NULL, 10);
-        free(exptime_str);
+    // 设置过期时间
+    if (expiry_str) {
+        pair->exptime = strtol(expiry_str, NULL, 10);
     } else {
-        INFRA_LOG_ERROR("Failed to get expiry: %d", err);
-        free(data);
-        *value = NULL;
-        poly_db_stmt_finalize(stmt);
-        return err;
+        pair->exptime = 0;
     }
-
-    // 检查 key 是否已过期
-    time_t now = time(NULL);
-    if (*exptime > 0 && *exptime <= now) {
-        INFRA_LOG_DEBUG("Key [%s] has expired at %ld (now=%ld)", key, *exptime, now);
-        free(data);
-        *value = NULL;
-        *value_len = 0;
-        *flags = 0;
-        *exptime = 0;
-
-        // 删除过期的 key
-        poly_db_stmt_t* del_stmt = NULL;
-        err = poly_db_prepare(db, "DELETE FROM kv_store WHERE key = ? AND expiry <= ?", &del_stmt);
-        if (err == INFRA_OK) {
-            err = poly_db_bind_text(del_stmt, 1, key, -1);
-            if (err == INFRA_OK) {
-                char now_str[32];
-                snprintf(now_str, sizeof(now_str), "%ld", now);
-                err = poly_db_bind_text(del_stmt, 2, now_str, -1);
-                if (err == INFRA_OK) {
-                    err = poly_db_stmt_step(del_stmt);
-                }
-            }
-            poly_db_stmt_finalize(del_stmt);
-        }
-
-        poly_db_stmt_finalize(stmt);
-        return INFRA_ERROR_NOT_FOUND;
-    }
-
-    INFRA_LOG_DEBUG("Successfully got key-value pair: [%s]=[%.*s], flags=%u, exptime=%ld",
-                    key, (int)*value_len, (char*)*value, *flags, *exptime);
 
     poly_db_stmt_finalize(stmt);
+    INFRA_LOG_DEBUG("Successfully got key-value pair: [%s]=[%.*s], flags=%u, exptime=%ld",
+                    key, (int)pair->value_len, (char*)pair->value, pair->flags, pair->exptime);
     return INFRA_OK;
 }
 
@@ -464,33 +466,48 @@ static int handle_get(memkv_conn_t* conn, const char* key) {
     }
 
     // 获取键值对
-    size_t value_len = 0;
-    uint32_t flags = 0;
-    time_t exptime = 0;  // 添加过期时间参数
-    void* value = NULL;
-    infra_error_t err = kv_get(conn->store, key, &value, &value_len, &flags, &exptime);
+    struct kv_pair pair;
+    infra_error_t err = kv_get(conn->store, key, &pair);
     
-    if (err != INFRA_OK) {
-        if (err == INFRA_ERROR_NOT_FOUND) {
-            INFRA_LOG_DEBUG("Key not found: %s", key);
-            return 0;  // 键不存在，但不是错误
+    if (err == INFRA_ERROR_NOT_FOUND) {
+        // 发送 NOT_FOUND 响应
+        err = send_all(conn->sock, "NOT_FOUND\r\n", 11);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send NOT_FOUND response: %d", err);
+            conn->should_close = true;
+            return -1;
         }
-        INFRA_LOG_ERROR("Failed to get value for key %s: %d", key, err);
+        err = send_all(conn->sock, "END\r\n", 5);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send END response: %d", err);
+            conn->should_close = true;
+            return -1;
+        }
+        return 0;
+    } else if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to get key %s: %d", key, err);
+        conn->should_close = true;
         return -1;
     }
 
-    if (!value || value_len == 0) {
+    if (!pair.value || pair.value_len == 0) {
         INFRA_LOG_DEBUG("Value is NULL or empty for key %s", key);
+        err = send_all(conn->sock, "END\r\n", 5);
+        if (err != INFRA_OK) {
+            INFRA_LOG_ERROR("Failed to send END response: %d", err);
+            conn->should_close = true;
+            return -1;
+        }
         return 0;
     }
 
     // 发送响应头
     char response[32];
     int header_len = snprintf(response, sizeof(response), "VALUE %s %u %zu\r\n", 
-                            key, flags, value_len);
+                            key, pair.flags, pair.value_len);
     if (header_len < 0 || header_len >= (int)sizeof(response)) {
         INFRA_LOG_ERROR("Response header too long for key %s", key);
-        free(value);
+        free(pair.value);
         return -1;
     }
 
@@ -498,16 +515,16 @@ static int handle_get(memkv_conn_t* conn, const char* key) {
     err = send_all(conn->sock, response, header_len);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to send response header: %d", err);
-        free(value);
+        free(pair.value);
         conn->should_close = true;
         return -1;
     }
 
     // 发送值
-    err = send_all(conn->sock, value, value_len);
+    err = send_all(conn->sock, pair.value, pair.value_len);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to send value: %d", err);
-        free(value);
+        free(pair.value);
         conn->should_close = true;
         return -1;
     }
@@ -516,16 +533,24 @@ static int handle_get(memkv_conn_t* conn, const char* key) {
     err = send_all(conn->sock, "\r\n", 2);
     if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to send value terminator: %d", err);
-        free(value);
+        free(pair.value);
         conn->should_close = true;
         return -1;
     }
 
+    free(pair.value);
     INFRA_LOG_INFO("Successfully sent key-value pair: [%s]=[%.*s]", 
-                   key, (int)value_len, (char*)value);
+                   key, (int)pair.value_len, (char*)pair.value);
 
-    free(value);
-    return 1;  // 返回1表示成功找到并发送了键值对
+    // 发送 END 标记
+    err = send_all(conn->sock, "END\r\n", 5);
+    if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to send END response: %d", err);
+        conn->should_close = true;
+        return -1;
+    }
+
+    return 1;
 }
 
 static void handle_request(memkv_conn_t* conn) {
@@ -701,7 +726,11 @@ static void handle_request(memkv_conn_t* conn) {
             
             // 如果没有发生错误，发送 END 标记
             if (!error_occurred && !conn->should_close) {
-                send_all(conn->sock, "END\r\n", 5);
+                err = send_all(conn->sock, "END\r\n", 5);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to send END response: %d", err);
+                    conn->should_close = true;
+                }
             }
             line = next_line;
         }
@@ -1213,13 +1242,9 @@ static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* va
                     is_incr ? "INCR" : "DECR", key, value_str);
            
     uint64_t delta = strtoull(value_str, NULL, 10);
-    void* old_value = NULL;
-    size_t old_value_len = 0;
-    uint32_t flags = 0;
-    time_t exptime = 0;
-    
-    infra_error_t err = kv_get(conn->store, key, &old_value, &old_value_len, &flags, &exptime);
-    if (err != INFRA_OK || !old_value) {
+    struct kv_pair pair;
+    infra_error_t err = kv_get(conn->store, key, &pair);
+    if (err != INFRA_OK || !pair.value) {
         if (is_incr) {
             // 对于INCR，如果key不存在，初始化为0
             char zero_str[] = "0";
@@ -1245,14 +1270,13 @@ static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* va
                 conn->should_close = true;
             }
         }
-        if (old_value) free(old_value);
         return;
     }
 
     // 确保old_value是以null结尾的字符串
-    char* null_term_value = malloc(old_value_len + 1);
+    char* null_term_value = malloc(pair.value_len + 1);
     if (!null_term_value) {
-        free(old_value);
+        free(pair.value);
         err = send_all(conn->sock, "SERVER_ERROR out of memory\r\n", 26);
         if (err != INFRA_OK) {
             INFRA_LOG_ERROR("Failed to send error response: %d", err);
@@ -1260,11 +1284,11 @@ static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* va
         }
         return;
     }
-    memcpy(null_term_value, old_value, old_value_len);
-    null_term_value[old_value_len] = '\0';
+    memcpy(null_term_value, pair.value, pair.value_len);
+    null_term_value[pair.value_len] = '\0';
     
     uint64_t current = strtoull(null_term_value, NULL, 10);
-    free(old_value);
+    free(pair.value);
     free(null_term_value);
     
     if (is_incr) {
@@ -1289,7 +1313,7 @@ static void handle_incr_decr(memkv_conn_t* conn, const char* key, const char* va
         return;
     }
     
-    err = kv_set(conn->store, key, new_value, new_value_len, flags, 0);
+    err = kv_set(conn->store, key, new_value, new_value_len, pair.flags, 0);
     if (err == INFRA_OK) {
         char response[32];
         int response_len = snprintf(response, sizeof(response), "%lu\r\n", current);

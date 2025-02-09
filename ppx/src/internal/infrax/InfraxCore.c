@@ -715,42 +715,6 @@ infra_error_t infra_file_exists(const char* path, bool* exists);
 //     return INFRAX_OK;
 // }
 
-// // Constructor implementation
-// InfraxCore* infrax_core_new(void) {
-//     struct InfraxCoreImpl* impl = calloc(1, sizeof(struct InfraxCoreImpl));
-//     if (!impl) {
-//         return NULL;
-//     }
-    
-//     // Initialize interface
-//     impl->interface.new = infrax_core_new;
-//     impl->interface.free = infrax_core_free;
-//     impl->interface.time_now = infrax_core_time_now;
-//     impl->interface.time_monotonic = infrax_core_time_monotonic;
-//     impl->interface.sleep = infrax_core_sleep;
-//     impl->interface.thread_create = infrax_core_thread_create;
-//     impl->interface.thread_join = infrax_core_thread_join;
-//     impl->interface.mutex_create = infrax_core_mutex_create;
-//     impl->interface.mutex_destroy = infrax_core_mutex_destroy;
-//     impl->interface.mutex_lock = infrax_core_mutex_lock;
-//     impl->interface.mutex_unlock = infrax_core_mutex_unlock;
-//     impl->interface.cond_init = infrax_core_cond_init;
-//     impl->interface.cond_destroy = infrax_core_cond_destroy;
-//     impl->interface.cond_wait = infrax_core_cond_wait;
-//     impl->interface.cond_timedwait = infrax_core_cond_timedwait;
-//     impl->interface.cond_signal = infrax_core_cond_signal;
-//     impl->interface.cond_broadcast = infrax_core_cond_broadcast;
-    
-//     return &impl->interface;
-// }
-
-// // Destructor implementation
-// void infrax_core_free(InfraxCore *self) {
-//     if (self) {
-//         struct InfraxCoreImpl* impl = (struct InfraxCoreImpl*)self;
-//         free(impl);
-//     }
-// }
 
 // Global instance
 InfraxCore g_infrax_core = {
@@ -819,6 +783,8 @@ InfraxCore g_infrax_core = {
     .file_remove = infrax_core_file_remove,
     .file_rename = infrax_core_file_rename,
     .file_exists = infrax_core_file_exists
+
+    //TODO mutex, cond...
 };
 
 // Return global instance

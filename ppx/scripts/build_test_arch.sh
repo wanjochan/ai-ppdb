@@ -30,6 +30,7 @@ ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxSync.c"
     "${SRC_DIR}/internal/infrax/InfraxNet.c"
     "${SRC_DIR}/internal/infrax/InfraxAsync.c"
+    "${SRC_DIR}/internal/polyx/PolyxAsync.c"
 )
 
 # Define test sources
@@ -41,6 +42,7 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_infrax_sync.c"
     "${TEST_DIR}/arch/test_infrax_net.c"
     "${TEST_DIR}/arch/test_infrax_async.c"
+    "${TEST_DIR}/arch/test_polyx_async.c"
 )
 
 # Build the new architecture library

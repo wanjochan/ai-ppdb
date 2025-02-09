@@ -1,13 +1,14 @@
 #ifndef POLYX_ASYNC_H
 #define POLYX_ASYNC_H
 
+#include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxAsync.h"
 
 // 高级异步操作封装，提供更友好的异步接口
 // 基于 InfraxAsync 构建，添加更多高级特性
 
 typedef struct PolyxAsync PolyxAsync;
-typedef struct PolyxAsyncClass PolyxAsyncClass;
+// typedef struct PolyxAsyncClass PolyxAsyncClass;
 
 // 异步操作的结果
 typedef struct {
@@ -34,8 +35,19 @@ struct PolyxAsync {
     PolyxAsyncResult* (*get_result)(PolyxAsync* self);
 };
 
+PolyxAsync* polyx_async_new(void);
+void polyx_async_free(PolyxAsync* self);
+PolyxAsync* polyx_async_read_file(const char* path);
+PolyxAsync* polyx_async_write_file(const char* path, const void* data, size_t size);
+PolyxAsync* polyx_async_http_get(const char* url);
+PolyxAsync* polyx_async_http_post(const char* url, const void* data, size_t size);
+PolyxAsync* polyx_async_delay(int ms);
+PolyxAsync* polyx_async_interval(int ms, int count);
+PolyxAsync* polyx_async_parallel(PolyxAsync** tasks, int count);
+PolyxAsync* polyx_async_sequence(PolyxAsync** tasks, int count);
+
 // 类结构
-struct PolyxAsyncClass {
+typedef struct {
     // 构造和析构
     PolyxAsync* (*new)(void);
     void (*free)(PolyxAsync* self);
@@ -55,9 +67,20 @@ struct PolyxAsyncClass {
     // 工厂方法 - 并发
     PolyxAsync* (*parallel)(PolyxAsync** tasks, int count);
     PolyxAsync* (*sequence)(PolyxAsync** tasks, int count);
-};
+} PolyxAsyncClassType;
 
-// 全局类实例
-extern const PolyxAsyncClass PolyxAsync_CLASS;
+// 全局静态类实例
+static PolyxAsyncClassType PolyxAsyncClass = {
+    .new = polyx_async_new,
+    .free = polyx_async_free,
+    .read_file = polyx_async_read_file,
+    .write_file = polyx_async_write_file,
+    .http_get = polyx_async_http_get,
+    .http_post = polyx_async_http_post,
+    .delay = polyx_async_delay,
+    .interval = polyx_async_interval,
+    .parallel = polyx_async_parallel,
+    .sequence = polyx_async_sequence
+};
 
 #endif // POLYX_ASYNC_H

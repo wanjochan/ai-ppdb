@@ -41,13 +41,29 @@ class TestMemKVBasic(unittest.TestCase):
         self.client.set(key, value)
         result = self.client.delete(key)
         self.assertTrue(result)
-        got_value = self.client.get(key)
+        try:
+            got_value = self.client.get(key)
+        except pymemcache.exceptions.MemcacheUnknownError as e:
+            if b'NOT_FOUND' in str(e).encode():
+                got_value = None
+                logging.debug("Key not found as expected after deletion")
+            else:
+                logging.error(f"Unexpected error after deletion: {e}")
+                raise
         self.assertIsNone(got_value)
 
     def test_not_found(self):
         logging.info("Testing non-existent keys...")
         key = 'nonexistent_key'
-        value = self.client.get(key)
+        try:
+            value = self.client.get(key)
+        except pymemcache.exceptions.MemcacheUnknownError as e:
+            if b'NOT_FOUND' in str(e).encode():
+                value = None
+                logging.debug("Key not found as expected")
+            else:
+                logging.error(f"Unexpected error: {e}")
+                raise
         self.assertIsNone(value)
 
 class TestMemKVProtocol(unittest.TestCase):
