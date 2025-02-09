@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <sched.h>
-#include <stdbool.h>
+// #include <stdbool.h>
 
 InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
 void infrax_async_free(InfraxAsync* self);

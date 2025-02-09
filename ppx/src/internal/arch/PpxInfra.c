@@ -9,9 +9,8 @@ static bool g_infra_initialized = false;
 const PpxInfra* ppx_infra(void) {
     if (!g_infra_initialized) {
         // Initialize core components
-        //g_infra.core = infrax_core_singleton();
         g_infra.core = InfraxCoreClass.singleton();
-        g_infra.logger = get_global_infrax_log();
+        g_infra.logger = InfraxLogClass.singleton();
         g_infra_initialized = true;
     }
     return &g_infra;

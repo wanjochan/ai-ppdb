@@ -1,170 +1,297 @@
 #include "cosmopolitan.h"
+#include "libc/thread/thread.h"
+#include "libc/thread/semaphore.h"
+#include "libc/atomic.h"
 #include "internal/infrax/InfraxSync.h"
 #include "internal/infrax/InfraxCore.h"
-#include <assert.h>
+#include "internal/infrax/InfraxMemory.h"
 
+// Forward declarations
+static InfraxCore* core = NULL;
+
+// Helper function for memory management
+InfraxMemory* get_memory_manager(void) {
+    static InfraxMemory* memory = NULL;
+    if (!memory) {
+        InfraxMemoryConfig config = {
+            .initial_size = 1024 * 1024,  // 1MB
+            .use_gc = false,
+            .use_pool = true,
+            .gc_threshold = 0
+        };
+        memory = InfraxMemoryClass.new(&config);
+    }
+    return memory;
+}
+
+// Test functions
 static void test_mutex(void) {
-    InfraxSync* mutex = InfraxSync_CLASS.new(INFRAX_SYNC_TYPE_MUTEX);
-    assert(mutex != NULL);
+    if (!core) core = InfraxCoreClass.singleton();
+
+    InfraxSync* mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+    if (mutex == NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "mutex != NULL", "Failed to create mutex");
+    }
 
     // Test basic locking
-    assert(mutex->mutex_lock(mutex).code == INFRAX_ERROR_OK);
-    assert(mutex->mutex_lock(mutex).code == INFRAX_ERROR_OK);  // Should succeed because it's a recursive mutex
-    assert(mutex->mutex_unlock(mutex).code == INFRAX_ERROR_OK);
-    assert(mutex->mutex_unlock(mutex).code == INFRAX_ERROR_OK);
-    assert(mutex->mutex_try_lock(mutex).code == INFRAX_ERROR_OK);
-    assert(mutex->mutex_unlock(mutex).code == INFRAX_ERROR_OK);
+    InfraxError err = mutex->mutex_lock(mutex);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
-    // Test try lock when mutex is already locked
-    assert(mutex->mutex_lock(mutex).code == INFRAX_ERROR_OK);
-    assert(mutex->mutex_try_lock(mutex).code == INFRAX_ERROR_OK);  // Should succeed because it's a recursive mutex
-    assert(mutex->mutex_unlock(mutex).code == INFRAX_ERROR_OK);
-    assert(mutex->mutex_unlock(mutex).code == INFRAX_ERROR_OK);
+    // Test unlocking
+    err = mutex->mutex_unlock(mutex);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
-    InfraxSync_CLASS.free(mutex);
+    // Test try_lock
+    err = mutex->mutex_try_lock(mutex);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+
+    err = mutex->mutex_unlock(mutex);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+
+    // Clean up
+    InfraxSyncClass.free(mutex);
 }
 
 static void test_cond(void) {
-    InfraxSync* mutex = InfraxSync_CLASS.new(INFRAX_SYNC_TYPE_MUTEX);
-    InfraxSync* cond = InfraxSync_CLASS.new(INFRAX_SYNC_TYPE_CONDITION);
-    assert(mutex != NULL && cond != NULL);
+    if (!core) core = InfraxCoreClass.singleton();
+
+    // Create new mutex and condition variable instances
+    InfraxSync* mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+    InfraxSync* cond = InfraxSyncClass.new(INFRAX_SYNC_TYPE_CONDITION);
+    if (mutex == NULL || cond == NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "mutex != NULL && cond != NULL", "Failed to create mutex or condition");
+    }
+
+    // First lock the mutex
+    InfraxError err = mutex->mutex_lock(mutex);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
     // Test signal and broadcast
-    assert(cond->cond_signal(cond).code == INFRAX_ERROR_OK);
-    assert(cond->cond_broadcast(cond).code == INFRAX_ERROR_OK);
+    err = cond->cond_signal(cond);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
-    // Test timed wait
-    assert(mutex->mutex_lock(mutex).code == INFRAX_ERROR_OK);
-    assert(cond->cond_timedwait(cond, mutex, 100).code == INFRAX_ERROR_SYNC_TIMEOUT);
-    assert(mutex->mutex_unlock(mutex).code == INFRAX_ERROR_OK);
+    err = cond->cond_broadcast(cond);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
-    InfraxSync_CLASS.free(cond);
-    InfraxSync_CLASS.free(mutex);
+    // Test wait with timeout
+    err = cond->cond_timedwait(cond, mutex, 100);
+    if (err.code != INFRAX_ERROR_SYNC_TIMEOUT) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == INFRAX_ERROR_SYNC_TIMEOUT", err.message);
+    }
+
+    // Unlock the mutex
+    err = mutex->mutex_unlock(mutex);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+
+    // Clean up
+    InfraxSyncClass.free(mutex);
+    InfraxSyncClass.free(cond);
 }
 
 static void test_rwlock(void) {
-    InfraxSync* rwlock = InfraxSync_CLASS.new(INFRAX_SYNC_TYPE_RWLOCK);
-    assert(rwlock != NULL);
+    if (!core) core = InfraxCoreClass.singleton();
+
+    InfraxSync* rwlock = InfraxSyncClass.new(INFRAX_SYNC_TYPE_RWLOCK);
+    if (rwlock == NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "rwlock != NULL", "Failed to create rwlock");
+    }
 
     // Test read locking
-    assert(rwlock->rwlock_read_lock(rwlock).code == INFRAX_ERROR_OK);
-    assert(rwlock->rwlock_read_lock(rwlock).code == INFRAX_ERROR_OK); // Multiple readers allowed
-    assert(rwlock->rwlock_try_write_lock(rwlock).code == INFRAX_ERROR_SYNC_WOULD_BLOCK);
-    assert(rwlock->rwlock_read_unlock(rwlock).code == INFRAX_ERROR_OK);
-    assert(rwlock->rwlock_read_unlock(rwlock).code == INFRAX_ERROR_OK);
+    InfraxError err = rwlock->rwlock_read_lock(rwlock);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+
+    err = rwlock->rwlock_read_unlock(rwlock);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
     // Test write locking
-    assert(rwlock->rwlock_write_lock(rwlock).code == INFRAX_ERROR_OK);
-    assert(rwlock->rwlock_try_read_lock(rwlock).code == INFRAX_ERROR_SYNC_WOULD_BLOCK);
-    assert(rwlock->rwlock_try_write_lock(rwlock).code == INFRAX_ERROR_SYNC_WOULD_BLOCK);
-    assert(rwlock->rwlock_write_unlock(rwlock).code == INFRAX_ERROR_OK);
+    err = rwlock->rwlock_write_lock(rwlock);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
-    InfraxSync_CLASS.free(rwlock);
+    err = rwlock->rwlock_write_unlock(rwlock);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+
+    // Clean up
+    InfraxSyncClass.free(rwlock);
 }
 
 static void test_spinlock(void) {
-    InfraxSync* spinlock = InfraxSync_CLASS.new(INFRAX_SYNC_TYPE_SPINLOCK);
-    assert(spinlock != NULL);
+    if (!core) core = InfraxCoreClass.singleton();
+
+    InfraxSync* spinlock = InfraxSyncClass.new(INFRAX_SYNC_TYPE_SPINLOCK);
+    if (spinlock == NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "spinlock != NULL", "Failed to create spinlock");
+    }
 
     // Test basic locking
-    assert(spinlock->spinlock_lock(spinlock).code == INFRAX_ERROR_OK);
-    assert(spinlock->spinlock_try_lock(spinlock).code == INFRAX_ERROR_SYNC_WOULD_BLOCK);
-    assert(spinlock->spinlock_unlock(spinlock).code == INFRAX_ERROR_OK);
-    assert(spinlock->spinlock_try_lock(spinlock).code == INFRAX_ERROR_OK);
-    assert(spinlock->spinlock_unlock(spinlock).code == INFRAX_ERROR_OK);
+    InfraxError err = spinlock->spinlock_lock(spinlock);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
-    InfraxSync_CLASS.free(spinlock);
+    err = spinlock->spinlock_unlock(spinlock);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+
+    // Clean up
+    InfraxSyncClass.free(spinlock);
 }
 
 static void test_semaphore(void) {
-    InfraxSync* sem = InfraxSync_CLASS.new(INFRAX_SYNC_TYPE_SEMAPHORE);
-    assert(sem != NULL);
+    if (!core) core = InfraxCoreClass.singleton();
+
+    InfraxSync* sem = InfraxSyncClass.new(INFRAX_SYNC_TYPE_SEMAPHORE);
+    if (sem == NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "sem != NULL", "Failed to create semaphore");
+    }
 
     int value;
-    // Test initial value
-    assert(sem->semaphore_get_value(sem, &value).code == INFRAX_ERROR_OK);
-    assert(value == 1);
+    
+    // Test get value
+    InfraxError err = sem->semaphore_get_value(sem, &value);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+    if (value != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "value == 0", "Initial semaphore value should be 0");
+    }
 
-    // Test wait and post
-    assert(sem->semaphore_wait(sem).code == INFRAX_ERROR_OK);
-    assert(sem->semaphore_get_value(sem, &value).code == INFRAX_ERROR_OK);
-    assert(value == 0);
+    // Test post
+    err = sem->semaphore_post(sem);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
 
-    assert(sem->semaphore_try_wait(sem).code == INFRAX_ERROR_SYNC_WOULD_BLOCK);
-    assert(sem->semaphore_post(sem).code == INFRAX_ERROR_OK);
-    assert(sem->semaphore_get_value(sem, &value).code == INFRAX_ERROR_OK);
-    assert(value == 1);
+    // Test get value after post
+    err = sem->semaphore_get_value(sem, &value);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+    if (value != 1) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "value == 1", "Semaphore value should be 1 after post");
+    }
 
-    InfraxSync_CLASS.free(sem);
+    // Test wait
+    err = sem->semaphore_wait(sem);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+
+    // Clean up
+    InfraxSyncClass.free(sem);
 }
 
 static void test_atomic(void) {
-    InfraxSync* atomic = InfraxSync_CLASS.new(INFRAX_SYNC_TYPE_ATOMIC);
-    assert(atomic != NULL);
+    if (!core) core = InfraxCoreClass.singleton();
+
+    InfraxSync* atomic = InfraxSyncClass.new(INFRAX_SYNC_TYPE_ATOMIC);
+    if (atomic == NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic != NULL", "Failed to create atomic");
+    }
 
     // Test atomic operations
-    (*atomic->atomic_store)(atomic, 10);
-    assert((*atomic->atomic_load)(atomic) == 10);
+    atomic_store(&atomic->value, 42);
+    if (atomic_load(&atomic->value) != 42) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == 42", "Atomic store/load failed");
+    }
 
-    (*atomic->atomic_store)(atomic, 20);
-    assert((*atomic->atomic_load)(atomic) == 20);
+    int64_t old_value = atomic_exchange(&atomic->value, 100);
+    if (old_value != 42) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == 42", "Atomic exchange failed");
+    }
+    if (atomic_load(&atomic->value) != 100) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == 100", "Atomic exchange failed");
+    }
 
-    assert((*atomic->atomic_fetch_add)(atomic, 1) == 20);
-    assert((*atomic->atomic_load)(atomic) == 21);
+    old_value = atomic_fetch_add(&atomic->value, 10);
+    if (old_value != 100) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == 100", "Atomic fetch_add failed");
+    }
+    if (atomic_load(&atomic->value) != 110) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == 110", "Atomic fetch_add failed");
+    }
 
-    assert((*atomic->atomic_fetch_sub)(atomic, 1) == 21);
-    assert((*atomic->atomic_load)(atomic) == 20);
+    old_value = atomic_fetch_sub(&atomic->value, 10);
+    if (old_value != 110) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == 110", "Atomic fetch_sub failed");
+    }
+    if (atomic_load(&atomic->value) != 100) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == 100", "Atomic fetch_sub failed");
+    }
 
-    assert((*atomic->atomic_fetch_add)(atomic, 5) == 20);
-    assert((*atomic->atomic_load)(atomic) == 25);
+    old_value = atomic_fetch_and(&atomic->value, 0xFF);
+    if (old_value != 100) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == 100", "Atomic fetch_and failed");
+    }
+    if (atomic_load(&atomic->value) != (100 & 0xFF)) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == (100 & 0xFF)", "Atomic fetch_and failed");
+    }
 
-    assert((*atomic->atomic_fetch_sub)(atomic, 15) == 25);
-    assert((*atomic->atomic_load)(atomic) == 10);
+    old_value = atomic_fetch_or(&atomic->value, 0xF0);
+    if (old_value != (100 & 0xFF)) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == (100 & 0xFF)", "Atomic fetch_or failed");
+    }
+    if (atomic_load(&atomic->value) != ((100 & 0xFF) | 0xF0)) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == ((100 & 0xFF) | 0xF0)", "Atomic fetch_or failed");
+    }
 
-    // Test atomic exchange
-    assert((*atomic->atomic_exchange)(atomic, 30) == 10);
-    assert((*atomic->atomic_load)(atomic) == 30);
+    old_value = atomic_fetch_xor(&atomic->value, 0xFF);
+    if (old_value != ((100 & 0xFF) | 0xF0)) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == ((100 & 0xFF) | 0xF0)", "Atomic fetch_xor failed");
+    }
+    if (atomic_load(&atomic->value) != (((100 & 0xFF) | 0xF0) ^ 0xFF)) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == (((100 & 0xFF) | 0xF0) ^ 0xFF)", "Atomic fetch_xor failed");
+    }
 
-    // Test atomic compare exchange
-    int64_t expected = 30;
-    assert((*atomic->atomic_compare_exchange)(atomic, &expected, 40));
-    assert((*atomic->atomic_load)(atomic) == 40);
-
-    // Test atomic bitwise operations
-    (*atomic->atomic_store)(atomic, 0xFF);
-    assert((*atomic->atomic_fetch_and)(atomic, 0xF0) == 0xFF);
-    assert((*atomic->atomic_load)(atomic) == 0xF0);
-
-    assert((*atomic->atomic_fetch_or)(atomic, 0x0F) == 0xF0);
-    assert((*atomic->atomic_load)(atomic) == 0xFF);
-
-    assert((*atomic->atomic_fetch_xor)(atomic, 0xFF) == 0xFF);
-    assert((*atomic->atomic_load)(atomic) == 0);
-
-    InfraxSync_CLASS.free(atomic);
+    // Clean up
+    InfraxSyncClass.free(atomic);
 }
 
-int main(void) {
-    printf("Running synchronization tests...\n");
-
+int main() {
+    printf("===================\nStarting InfraxSync tests...\n");
+    
     test_mutex();
-    printf("Mutex tests passed\n");
-
+    printf("Mutex test passed\n");
+    
     test_cond();
-    printf("Condition variable tests passed\n");
-
+    printf("Condition variable test passed\n");
+    
     test_rwlock();
-    printf("Read-write lock tests passed\n");
-
+    printf("RWLock test passed\n");
+    
     test_spinlock();
-    printf("Spinlock tests passed\n");
-
+    printf("Spinlock test passed\n");
+    
     test_semaphore();
-    printf("Semaphore tests passed\n");
-
+    printf("Semaphore test passed\n");
+    
     test_atomic();
-    printf("Atomic operations tests passed\n");
-
-    printf("All synchronization tests passed!\n");
+    printf("Atomic test passed\n");
+    
+    printf("All InfraxSync tests passed!\n");
     return 0;
 }

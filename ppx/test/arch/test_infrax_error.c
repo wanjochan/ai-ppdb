@@ -127,7 +127,7 @@ void test_error_handling(void) {
 }
 
 int main(void) {
-    printf("Starting InfraxError tests...\n");
+    printf("===================\nStarting InfraxError tests...\n");
     
     test_error_operations();
     test_new_error();

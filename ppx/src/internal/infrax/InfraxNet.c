@@ -14,6 +14,7 @@ static InfraxError set_socket_option(intptr_t handle, int level, int option, con
 static InfraxError get_socket_option(intptr_t handle, int level, int option, void* value, size_t* len);
 static InfraxError set_socket_nonblocking(intptr_t handle, bool nonblock);
 static InfraxSocket* socket_new(const InfraxSocketConfig* config);
+static void socket_free(InfraxSocket* self);
 
 // Instance methods implementations
 static InfraxError socket_bind(InfraxSocket* self, const InfraxNetAddr* addr) {
@@ -258,88 +259,76 @@ static InfraxError socket_get_peer_addr(InfraxSocket* self, InfraxNetAddr* addr)
 static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     if (!config) return NULL;
 
-    // Allocate memory for the socket instance
-    InfraxSocket* self = (InfraxSocket*)malloc(sizeof(InfraxSocket));
-    if (!self) return NULL;
+    // Allocate socket instance
+    InfraxSocket* sock_instance = (InfraxSocket*)malloc(sizeof(InfraxSocket));
+    if (!sock_instance) return NULL;
 
-    // Initialize the socket
-    memset(self, 0, sizeof(InfraxSocket));
-    self->klass = &InfraxSocket_CLASS;
-    self->config = *config;
+    // Initialize socket data
+    sock_instance->config = *config;
+    sock_instance->is_connected = false;
+    memset(&sock_instance->local_addr, 0, sizeof(sock_instance->local_addr));
+    memset(&sock_instance->peer_addr, 0, sizeof(sock_instance->peer_addr));
 
-    // Create the native socket
-    int type = config->is_udp ? SOCK_DGRAM : SOCK_STREAM;
-    int sock = socket(AF_INET, type, 0);
-    if (sock < 0) {
-        free(self);
+    // Create native socket
+    sock_instance->native_handle = socket(AF_INET, config->is_udp ? SOCK_DGRAM : SOCK_STREAM, 0);
+    if (sock_instance->native_handle < 0) {
+        free(sock_instance);
         return NULL;
     }
-    self->native_handle = sock;
 
-    // Set initial socket options
+    // Set socket options
     if (config->is_nonblocking) {
-        InfraxError err = set_socket_nonblocking(sock, true);
-        if (!INFRAX_ERROR_IS_OK(err)) {
-            close(sock);
-            free(self);
+        if (INFRAX_ERROR_IS_ERR(set_socket_nonblocking(sock_instance->native_handle, true))) {
+            close(sock_instance->native_handle);
+            free(sock_instance);
             return NULL;
         }
     }
 
-    if (config->send_timeout_ms > 0 || config->recv_timeout_ms > 0) {
-        InfraxError err = socket_set_timeout(self, config->send_timeout_ms, config->recv_timeout_ms);
-        if (!INFRAX_ERROR_IS_OK(err)) {
-            close(sock);
-            free(self);
-            return NULL;
-        }
-    }
+    struct timeval send_tv = {
+        .tv_sec = config->send_timeout_ms / 1000,
+        .tv_usec = (config->send_timeout_ms % 1000) * 1000
+    };
 
-    // Set SO_REUSEADDR option
-    int reuse = 1;
-    InfraxError err = set_socket_option(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-    if (!INFRAX_ERROR_IS_OK(err)) {
-        close(sock);
-        free(self);
-        return NULL;
-    }
+    struct timeval recv_tv = {
+        .tv_sec = config->recv_timeout_ms / 1000,
+        .tv_usec = (config->recv_timeout_ms % 1000) * 1000
+    };
 
-    // Set SO_REUSEPORT option
-    err = set_socket_option(sock, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
-    if (!INFRAX_ERROR_IS_OK(err)) {
-        close(sock);
-        free(self);
+    if (INFRAX_ERROR_IS_ERR(set_socket_option(sock_instance->native_handle, SOL_SOCKET, SO_SNDTIMEO, &send_tv, sizeof(send_tv))) ||
+        INFRAX_ERROR_IS_ERR(set_socket_option(sock_instance->native_handle, SOL_SOCKET, SO_RCVTIMEO, &recv_tv, sizeof(recv_tv)))) {
+        close(sock_instance->native_handle);
+        free(sock_instance);
         return NULL;
     }
 
     // Initialize instance methods
-    self->bind = socket_bind;
-    self->listen = socket_listen;
-    self->accept = socket_accept;
-    self->connect = socket_connect;
-    self->send = socket_send;
-    self->recv = socket_recv;
-    self->set_option = socket_set_option;
-    self->get_option = socket_get_option;
-    self->set_nonblock = socket_set_nonblock;
-    self->set_timeout = socket_set_timeout;
-    self->get_local_addr = socket_get_local_addr;
-    self->get_peer_addr = socket_get_peer_addr;
+    sock_instance->bind = socket_bind;
+    sock_instance->listen = socket_listen;
+    sock_instance->accept = socket_accept;
+    sock_instance->connect = socket_connect;
+    sock_instance->send = socket_send;
+    sock_instance->recv = socket_recv;
+    sock_instance->set_option = socket_set_option;
+    sock_instance->get_option = socket_get_option;
+    sock_instance->set_nonblock = socket_set_nonblock;
+    sock_instance->set_timeout = socket_set_timeout;
+    sock_instance->get_local_addr = socket_get_local_addr;
+    sock_instance->get_peer_addr = socket_get_peer_addr;
 
-    return self;
+    return sock_instance;
 }
 
 static void socket_free(InfraxSocket* self) {
-    if (self) {
-        if (self->native_handle >= 0) {
-            close(self->native_handle);
-        }
-        free(self);
+    if (!self) return;
+    if (self->native_handle >= 0) {
+        close(self->native_handle);
     }
+    free(self);
 }
 
-// The "static" interface instance
-const InfraxSocketClass InfraxSocket_CLASS = {
+// Socket class instance
+const InfraxSocketClassType InfraxSocketClass = {
     .new = socket_new,
     .free = socket_free
 };

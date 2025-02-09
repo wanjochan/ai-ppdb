@@ -4,7 +4,7 @@
 //async with setjmp/longjmp
 
 #include <setjmp.h>
-#include <stdbool.h>
+// #include <stdbool.h>
 
 // Forward declaration
 typedef struct InfraxAsync InfraxAsync;

@@ -1,6 +1,8 @@
 #ifndef PPDB_INFRAX_LOG_H
 #define PPDB_INFRAX_LOG_H
 
+//design pattern: singleton
+
 typedef enum {
     LOG_LEVEL_DEBUG,
     LOG_LEVEL_INFO,
@@ -10,18 +12,15 @@ typedef enum {
 
 // Forward declarations
 typedef struct InfraxLog InfraxLog;
-typedef struct InfraxLogClass InfraxLogClass;
+typedef struct InfraxLogClassType InfraxLogClassType;
 
 // The "static" interface (like static methods in OOP)
-struct InfraxLogClass {
-    InfraxLog* (*new)(void);
-    void (*free)(InfraxLog* self);
+struct InfraxLogClassType {
+    InfraxLog* (*singleton)(void);
 };
 
 // The instance structure
 struct InfraxLog {
-    const InfraxLogClass* klass;  // 指向"类"方法表
-    
     // Properties
     LogLevel min_log_level;  // Minimum log level to output
     
@@ -34,9 +33,6 @@ struct InfraxLog {
 };
 
 // The "static" interface instance (like Java's Class object)
-extern const InfraxLogClass InfraxLog_CLASS;
-
-// Global instance
-InfraxLog* get_global_infrax_log(void);
+extern const InfraxLogClassType InfraxLogClass;
 
 #endif // PPDB_INFRAX_LOG_H

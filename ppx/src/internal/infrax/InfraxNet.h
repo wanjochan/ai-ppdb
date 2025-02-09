@@ -3,6 +3,8 @@
  * @brief Network operations functionality for the infrax subsystem
  */
 
+//design pattern: factory
+
 #ifndef PPDB_INFRAX_NET_H
 #define PPDB_INFRAX_NET_H
 
@@ -12,7 +14,7 @@
 
 // Forward declarations
 typedef struct InfraxSocket InfraxSocket;
-typedef struct InfraxSocketClass InfraxSocketClass;
+typedef struct InfraxSocketClassType InfraxSocketClassType;
 
 // Network address structure
 typedef struct {
@@ -29,14 +31,13 @@ typedef struct {
 } InfraxSocketConfig;
 
 // The "static" interface (like static methods in OOP)
-struct InfraxSocketClass {
+struct InfraxSocketClassType {
     InfraxSocket* (*new)(const InfraxSocketConfig* config);
     void (*free)(InfraxSocket* self);
 };
 
 // The instance structure
 struct InfraxSocket {
-    const InfraxSocketClass* klass;  // Points to the "class" method table
     
     // Socket data
     InfraxSocketConfig config;
@@ -61,7 +62,7 @@ struct InfraxSocket {
 };
 
 // The "static" interface instance
-extern const InfraxSocketClass InfraxSocket_CLASS;
+extern const InfraxSocketClassType InfraxSocketClass;
 
 // Socket level options (compatible with system socket options)
 #define INFRAX_SOL_SOCKET      1

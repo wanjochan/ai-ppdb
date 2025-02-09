@@ -1,6 +1,8 @@
 #ifndef PPDB_INFRAX_CORE_H
 #define PPDB_INFRAX_CORE_H
 
+//design pattern: singleton
+
 #include "cosmopolitan.h"
 #include <stdint.h>
 #include <stddef.h>

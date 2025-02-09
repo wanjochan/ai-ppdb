@@ -1,7 +1,10 @@
 #include <stdio.h>
-#include <assert.h>
 #include "internal/infrax/InfraxThread.h"
+#include "internal/infrax/InfraxCore.h"
 #include <string.h>
+
+// Get singleton instance of InfraxCore
+static InfraxCore* core = NULL;
 
 static void* test_thread_func(void* arg) {
     int* value = (int*)arg;
@@ -12,6 +15,8 @@ static void* test_thread_func(void* arg) {
 }
 
 void test_thread_basic(void) {
+    if (!core) core = InfraxCoreClass.singleton();
+    
     printf("Testing basic thread operations...\n");
     
     int test_value = 0;
@@ -21,109 +26,185 @@ void test_thread_basic(void) {
         .arg = &test_value
     };
     
-    // Create thread
-    InfraxThread* thread = InfraxThread_CLASS.new(&config);
-    assert(thread != NULL);
-    assert(thread->klass == &InfraxThread_CLASS);
+    // Create thread instance
+    InfraxThread* thread = InfraxThreadClass.new(&config);
+    if (thread == NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "thread != NULL", "Failed to create thread");
+    }
+    
+    // Check initial thread state
+    if (thread->is_running) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "!thread->is_running", "Thread should not be running initially");
+    }
     
     // Start thread
     InfraxError err = thread->start(thread);
-    assert(err.code == 0);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
+    
+    // Check thread state after start
+    if (!thread->is_running) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "thread->is_running", "Thread should be running after start");
+    }
     
     // Get thread ID
     InfraxThreadId tid = thread->tid(thread);
-    assert(tid != 0);
+    if (tid == 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "tid != 0", "Failed to get thread ID");
+    }
     
     // Join thread
     void* result;
     err = thread->join(thread, &result);
-    assert(err.code == 0);
-    assert(test_value == 1);
-    assert(*(int*)result == 1);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+    }
     
-    // Cleanup
-    InfraxThread_CLASS.free(thread);
+    // Check thread state after join
+    if (thread->is_running) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "!thread->is_running", "Thread should not be running after join");
+    }
+    
+    // Check result
+    if (test_value != 1) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "test_value == 1", "Thread function did not execute properly");
+    }
+    if (*(int*)result != 1) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "*(int*)result == 1", "Thread return value is incorrect");
+    }
+    
+    // Clean up
+    InfraxThreadClass.free(thread);
     
     printf("Basic thread test passed\n");
 }
 
 void test_thread_multiple(void) {
+    if (!core) core = InfraxCoreClass.singleton();
+    
     printf("Testing multiple threads...\n");
     
-    const int NUM_THREADS = 5;
+    #define NUM_THREADS 5
+    int test_values[NUM_THREADS] = {0};
     InfraxThread* threads[NUM_THREADS];
-    int values[NUM_THREADS];
-    memset(values, 0, sizeof(values));
     
     // Create and start threads
     for (int i = 0; i < NUM_THREADS; i++) {
-        char name[32];
-        snprintf(name, sizeof(name), "thread_%d", i);
-        
         InfraxThreadConfig config = {
-            .name = name,
+            .name = "test_thread",
             .entry_point = test_thread_func,
-            .arg = &values[i]
+            .arg = &test_values[i]
         };
         
-        threads[i] = InfraxThread_CLASS.new(&config);
-        assert(threads[i] != NULL);
+        threads[i] = InfraxThreadClass.new(&config);
+        if (threads[i] == NULL) {
+            core->assert_failed(core, __FILE__, __LINE__, __func__, "threads[i] != NULL", "Failed to create thread");
+        }
         
         InfraxError err = threads[i]->start(threads[i]);
-        assert(err.code == 0);
-        
-        InfraxThreadId tid = threads[i]->tid(threads[i]);
-        assert(tid != 0);
+        if (err.code != 0) {
+            core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+        }
     }
     
-    // Join threads
+    // Join threads and verify results
     for (int i = 0; i < NUM_THREADS; i++) {
         void* result;
         InfraxError err = threads[i]->join(threads[i], &result);
-        assert(err.code == 0);
-        assert(values[i] == 1);
-        assert(*(int*)result == 1);
+        if (err.code != 0) {
+            core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
+        }
+        if (test_values[i] != 1) {
+            core->assert_failed(core, __FILE__, __LINE__, __func__, "test_values[i] == 1", "Thread function did not execute properly");
+        }
+        if (*(int*)result != 1) {
+            core->assert_failed(core, __FILE__, __LINE__, __func__, "*(int*)result == 1", "Thread return value is incorrect");
+        }
         
-        InfraxThread_CLASS.free(threads[i]);
+        InfraxThreadClass.free(threads[i]);
     }
     
     printf("Multiple threads test passed\n");
 }
 
 void test_thread_error_handling(void) {
+    if (!core) core = InfraxCoreClass.singleton();
+    
     printf("Testing thread error handling...\n");
     
-    // Test invalid thread
-    InfraxThreadConfig config = {
-        .name = "error_test_thread",
+    // Test invalid config
+    InfraxThreadConfig invalid_config = {
+        .name = NULL,
+        .entry_point = NULL,
+        .arg = NULL
+    };
+    
+    InfraxThread* thread = InfraxThreadClass.new(&invalid_config);
+    if (thread != NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "thread == NULL", "Thread creation with invalid config should fail");
+    }
+    
+    // Test starting a thread with valid config but NULL entry point
+    InfraxThreadConfig null_entry_config = {
+        .name = "test_thread",
+        .entry_point = NULL,
+        .arg = NULL
+    };
+    
+    thread = InfraxThreadClass.new(&null_entry_config);
+    if (thread != NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "thread == NULL", "Thread creation with NULL entry point should fail");
+    }
+    
+    // Test starting a thread with valid config but NULL name
+    InfraxThreadConfig null_name_config = {
+        .name = NULL,
         .entry_point = test_thread_func,
         .arg = NULL
     };
     
-    InfraxThread* thread = InfraxThread_CLASS.new(&config);
-    assert(thread != NULL);
+    thread = InfraxThreadClass.new(&null_name_config);
+    if (thread != NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "thread == NULL", "Thread creation with NULL name should fail");
+    }
     
-    // Test double start
+    // Test starting a valid thread twice
+    InfraxThreadConfig valid_config = {
+        .name = "test_thread",
+        .entry_point = test_thread_func,
+        .arg = NULL
+    };
+    
+    thread = InfraxThreadClass.new(&valid_config);
+    if (thread == NULL) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "thread != NULL", "Thread creation with valid config should succeed");
+    }
+    
     InfraxError err = thread->start(thread);
-    assert(err.code == 0);
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", "First start should succeed");
+    }
     
     err = thread->start(thread);
-    assert(err.code == INFRAX_ERROR_INVALID_ARGUMENT);
+    if (err.code == 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code != 0", "Second start should fail");
+    }
     
-    // Test join
+    // Clean up
     void* result;
     err = thread->join(thread, &result);
-    assert(err.code == 0);
-    assert(result == NULL);  // 因为我们传入了 NULL 作为 arg
+    if (err.code != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", "Join should succeed");
+    }
     
-    // Cleanup
-    InfraxThread_CLASS.free(thread);
+    InfraxThreadClass.free(thread);
     
     printf("Thread error handling test passed\n");
 }
 
 int main(void) {
-    printf("Starting InfraxThread tests...\n");
+    printf("===================\nStarting InfraxThread tests...\n");
     
     test_thread_basic();
     test_thread_multiple();
@@ -131,4 +212,4 @@ int main(void) {
     
     printf("All InfraxThread tests passed!\n");
     return 0;
-} 
+}

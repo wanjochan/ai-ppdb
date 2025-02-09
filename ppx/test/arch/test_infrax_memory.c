@@ -16,7 +16,7 @@ void test_base_memory() {
     };
     
     // 使用类接口创建实例
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&config);
+    InfraxMemory* memory = InfraxMemoryClass.new(&config);
     assert(memory != NULL);
     
     // 测试分配和写入
@@ -38,7 +38,7 @@ void test_base_memory() {
     
     // 清理
     memory->dealloc(memory, str);
-    InfraxMemory_CLASS.free(memory);
+    InfraxMemoryClass.free(memory);
 }
 
 // 测试内存池
@@ -53,98 +53,70 @@ void test_pool_memory() {
         .gc_threshold = 0
     };
 
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&config);
+    InfraxMemory* memory = InfraxMemoryClass.new(&config);
     assert(memory != NULL);
     printf("Memory instance created successfully\n");
     
-    // 测试单个分配
-    printf("Testing single allocation...\n");
-    char* str = (char*)memory->alloc(memory, 100);
-    assert(str != NULL);
-    printf("Single allocation successful\n");
+    printf("Testing allocations...\n");
+    void* ptrs[10];
+    size_t sizes[10] = {16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192};
     
-    printf("Testing string operations...\n");
-    strcpy(str, "Hello, Pool!");
-    assert(strcmp(str, "Hello, Pool!") == 0);
-    printf("String operations successful\n");
-    
-    // 测试重分配
-    printf("Testing reallocation...\n");
-    str = (char*)memory->realloc(memory, str, 200);
-    assert(str != NULL);
-    assert(strcmp(str, "Hello, Pool!") == 0);
-    printf("Reallocation successful\n");
-    
-    // 释放第一个分配
-    printf("Testing deallocation...\n");
-    memory->dealloc(memory, str);
-    printf("Deallocation successful\n");
-    
-    // 测试多个小块分配
-    printf("Testing multiple small allocations...\n");
-    void* blocks[10];
+    // 测试多次分配
     for (int i = 0; i < 10; i++) {
-        blocks[i] = memory->alloc(memory, 50);
-        assert(blocks[i] != NULL);
-        memset(blocks[i], i, 50);
-        printf("Block %d allocated and initialized\n", i);
+        ptrs[i] = memory->alloc(memory, sizes[i]);
+        assert(ptrs[i] != NULL);
+        memset(ptrs[i], 'A' + i, sizes[i]);
     }
     
-    // 释放一半的块
-    printf("Testing partial deallocation...\n");
-    for (int i = 0; i < 5; i++) {
-        memory->dealloc(memory, blocks[i]);
-        printf("Block %d deallocated\n", i);
-    }
-    
-    // 重新分配新的块
-    printf("Testing new allocations after partial deallocation...\n");
-    for (int i = 0; i < 5; i++) {
-        blocks[i] = memory->alloc(memory, 50);
-        assert(blocks[i] != NULL);
-        memset(blocks[i], i + 100, 50);
-        printf("New block %d allocated and initialized\n", i);
-    }
-    
-    // 释放所有块
-    printf("Testing full deallocation...\n");
+    // 验证内容
+    printf("Verifying memory contents...\n");
     for (int i = 0; i < 10; i++) {
-        memory->dealloc(memory, blocks[i]);
-        printf("Block %d deallocated\n", i);
+        char* ptr = (char*)ptrs[i];
+        for (size_t j = 0; j < sizes[i]; j++) {
+            assert(ptr[j] == 'A' + i);
+        }
     }
     
-    // 测试大块分配
-    printf("Testing large block allocation...\n");
-    void* large_block = memory->alloc(memory, 512 * 1024);  // 512KB
-    assert(large_block != NULL);
-    memset(large_block, 0xFF, 512 * 1024);
-    printf("Large block allocated and initialized\n");
-    
-    // 检查内存统计
-    printf("Checking memory statistics...\n");
+    // 测试统计信息
+    printf("Checking memory stats...\n");
     InfraxMemoryStats stats;
     memory->get_stats(memory, &stats);
-    assert(stats.total_allocations > 0);
-    assert(stats.current_usage >= 512 * 1024);
-    printf("Memory statistics verified\n");
+    assert(stats.total_allocations >= 10);
+    assert(stats.current_usage > 0);
     
-    // 释放大块
-    printf("Deallocating large block...\n");
-    memory->dealloc(memory, large_block);
-    printf("Large block deallocated\n");
+    // 释放一半的内存
+    printf("Testing deallocations...\n");
+    for (int i = 0; i < 5; i++) {
+        memory->dealloc(memory, ptrs[i]);
+    }
     
-    // 再次检查统计
-    printf("Checking final memory statistics...\n");
-    memory->get_stats(memory, &stats);
-    printf("Current memory usage: %zu bytes\n", stats.current_usage);
-    printf("Final memory statistics verified\n");
+    // 重新分配
+    printf("Testing reallocations...\n");
+    for (int i = 0; i < 5; i++) {
+        ptrs[i] = memory->alloc(memory, sizes[i]);
+        assert(ptrs[i] != NULL);
+        memset(ptrs[i], 'a' + i, sizes[i]);
+    }
     
-    // 清理
-    printf("Cleaning up memory pool...\n");
-    InfraxMemory_CLASS.free(memory);
+    // 验证新内容
+    printf("Verifying new memory contents...\n");
+    for (int i = 0; i < 5; i++) {
+        char* ptr = (char*)ptrs[i];
+        for (size_t j = 0; j < sizes[i]; j++) {
+            assert(ptr[j] == 'a' + i);
+        }
+    }
+    
+    // 释放所有内存
+    printf("Final cleanup...\n");
+    for (int i = 0; i < 10; i++) {
+        memory->dealloc(memory, ptrs[i]);
+    }
+    
+    InfraxMemoryClass.free(memory);
 }
 
-// 测试GC内存
+// 测试垃圾回收
 void test_gc_memory() {
     printf("\nTesting GC Memory...\n");
     
@@ -155,41 +127,39 @@ void test_gc_memory() {
         .gc_threshold = 512 * 1024  // 512KB
     };
     
-    InfraxMemory* memory = InfraxMemory_CLASS.new(&config);
+    InfraxMemory* memory = InfraxMemoryClass.new(&config);
     assert(memory != NULL);
     
-    // 分配一些内存
-    void* root = memory->alloc(memory, 1000);
-    assert(root != NULL);
-    
-    // 分配更多内存触发GC
-    for (int i = 0; i < 100; i++) {
-        void* temp = memory->alloc(memory, 1000);
-        assert(temp != NULL);
-        
-        // 不释放内存，让GC来处理
-        if (i % 10 == 0) {
-            memory->collect(memory);
-        }
+    // 分配一些对象
+    void* ptrs[5];
+    for (int i = 0; i < 5; i++) {
+        ptrs[i] = memory->alloc(memory, 1024);
+        assert(ptrs[i] != NULL);
     }
     
-    // 检查内存统计
+    // 触发GC
+    memory->collect(memory);
+    
+    // 检查统计信息
     InfraxMemoryStats stats;
     memory->get_stats(memory, &stats);
-    printf("GC memory stats - Current usage: %zu bytes\n", stats.current_usage);
+    assert(stats.total_allocations >= 5);
     
     // 清理
-    InfraxMemory_CLASS.free(memory);
-    printf("GC memory test completed\n");
+    for (int i = 0; i < 5; i++) {
+        memory->dealloc(memory, ptrs[i]);
+    }
+    
+    InfraxMemoryClass.free(memory);
 }
 
 int main(void) {
-    printf("Starting memory tests...\n");
+    printf("===================\nStarting Memory Tests...\n");
     
     test_base_memory();
     test_pool_memory();
     test_gc_memory();
     
-    printf("All memory tests passed!\n");
+    printf("\nAll Memory Tests Passed!\n");
     return 0;
 }

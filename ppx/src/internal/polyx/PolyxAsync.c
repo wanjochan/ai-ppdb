@@ -6,8 +6,8 @@
 #include <errno.h>
 
 // 全局内存管理器
-InfraxMemory* g_memory = NULL;
-extern const InfraxMemoryClass InfraxMemory_CLASS;
+static InfraxMemory* g_memory = NULL;
+extern const InfraxMemoryClassType InfraxMemoryClass;
 
 // 内部函数声明
 void async_read_file_fn(InfraxAsync* async, void* arg);
@@ -80,13 +80,13 @@ bool init_memory() {
     if (g_memory) return true;
     
     InfraxMemoryConfig config = {
-        .initial_size = 1024 * 1024,  // 1MB initial size
-        .use_gc = true,
+        .initial_size = 1024 * 1024,  // 1MB
+        .use_gc = false,
         .use_pool = true,
-        .gc_threshold = 512 * 1024    // 512KB GC threshold
+        .gc_threshold = 0
     };
     
-    g_memory = InfraxMemory_CLASS.new(&config);
+    g_memory = InfraxMemoryClass.new(&config);
     return g_memory != NULL;
 }
 

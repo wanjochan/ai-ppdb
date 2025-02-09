@@ -3,16 +3,14 @@
 #include <assert.h>
 
 int main() {
+    printf("===================\nStarting InfraxLog tests...\n");
     // Create a new logger instance
-    InfraxLog* logger = InfraxLog_CLASS.new();
+    InfraxLog* logger = InfraxLogClass.new();
     if (!logger) {
         fprintf(stderr, "Failed to create logger\n");
         return 1;
     }
     
-    // Verify class pointer
-    assert(logger->klass == &InfraxLog_CLASS);
-
     // Test different log levels
     logger->debug(logger, "This is a debug message");
     logger->info(logger, "This is an info message");
@@ -33,10 +31,9 @@ int main() {
     // Test global instance
     InfraxLog* global_logger = get_global_infrax_log();
     assert(global_logger != NULL);
-    assert(global_logger->klass == &InfraxLog_CLASS);
 
     // Clean up
-    InfraxLog_CLASS.free(logger);
+    InfraxLogClass.free(logger);
     printf("All tests completed successfully\n");
     return 0;
 }

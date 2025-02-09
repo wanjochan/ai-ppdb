@@ -6,6 +6,8 @@
 #ifndef INFRAX_THREAD_H
 #define INFRAX_THREAD_H
 
+//design pattern: factory
+
 #include <stdbool.h>
 #include <pthread.h>
 #include "InfraxCore.h"
@@ -20,7 +22,7 @@ typedef unsigned long InfraxThreadId;
 
 // Forward declarations
 typedef struct InfraxThread InfraxThread;
-typedef struct InfraxThreadClass InfraxThreadClass;
+typedef struct InfraxThreadClassType InfraxThreadClassType;
 
 // Thread configuration
 typedef struct {
@@ -30,15 +32,13 @@ typedef struct {
 } InfraxThreadConfig;
 
 // The "static" interface (like static methods in OOP)
-struct InfraxThreadClass {
+struct InfraxThreadClassType {
     InfraxThread* (*new)(const InfraxThreadConfig* config);
     void (*free)(InfraxThread* self);
 };
 
 // The instance structure
 struct InfraxThread {
-    const InfraxThreadClass* klass;  // Points to the "class" method table
-    
     // Thread data
     InfraxThreadConfig config;
     pthread_t native_handle;
@@ -51,7 +51,7 @@ struct InfraxThread {
     InfraxThreadId (*tid)(InfraxThread* self);
 };
 
-// The "static" interface instance
-extern const InfraxThreadClass InfraxThread_CLASS;
+// The "static" interface instance (like Java's Class object)
+extern const InfraxThreadClassType InfraxThreadClass;
 
 #endif /* INFRAX_THREAD_H */
