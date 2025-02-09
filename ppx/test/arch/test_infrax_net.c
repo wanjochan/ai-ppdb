@@ -14,8 +14,30 @@ static bool udp_server_ready = false;
 static InfraxNetAddr tcp_server_addr;
 static InfraxNetAddr udp_server_addr;
 
+// 添加线程安全的初始化标志
+static bool core_initialized = false;
+static InfraxSync* core_mutex = NULL;
+
+static void ensure_core_initialized() {
+    if (!core_mutex) {
+        core_mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+        if (!core_mutex) return;
+    }
+    
+    InfraxError err = core_mutex->mutex_lock(core_mutex);
+    if (INFRAX_ERROR_IS_ERR(err)) return;
+    
+    if (!core_initialized) {
+        core = InfraxCoreClass.singleton();
+        if (core) core_initialized = true;
+    }
+    
+    core_mutex->mutex_unlock(core_mutex);
+}
+
 static void test_config() {
-    if (!core) core = InfraxCoreClass.singleton();
+    ensure_core_initialized();
+    if (!core) return;
     core->printf(core, "Testing socket configuration...\n");
     
     InfraxSocket* socket = NULL;
@@ -55,7 +77,10 @@ static void test_config() {
 }
 
 static void* tcp_server_thread(void* arg) {
-    if (!core) core = InfraxCoreClass.singleton();
+    ensure_core_initialized();
+    if (!core) {
+        return (void*)-1;  // Return error status
+    }
     (void)arg;
     InfraxSocket* server = NULL;
     InfraxSocket* client = NULL;
@@ -64,18 +89,18 @@ static void* tcp_server_thread(void* arg) {
         .is_nonblocking = false,
         .send_timeout_ms = 5000,  // 5 seconds timeout
         .recv_timeout_ms = 5000,  // 5 seconds timeout
-        .reuse_addr = true       // 添加 SO_REUSEADDR 选项
+        .reuse_addr = true       // Add SO_REUSEADDR option
     };
     
     server = InfraxSocketClass.new(&config);
     if (!server) {
         core->printf(core, "Failed to create TCP server socket\n");
-        return NULL;
+        return (void*)-1;
     }
     
     InfraxNetAddr addr;
     core->strcpy(core, addr.ip, "127.0.0.1");
-    addr.port = 0;  // 使用动态端口
+    addr.port = 0;  // Use dynamic port
     
     InfraxError err = server->bind(server, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
@@ -83,20 +108,16 @@ static void* tcp_server_thread(void* arg) {
         goto cleanup;
     }
     
-    // 获取实际分配的端口
-    InfraxNetAddr bound_addr;
-    err = server->get_local_addr(server, &bound_addr);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "Failed to get local address: %s\n", err.message);
-        goto cleanup;
-    }
-    
-    // Store server address in shared variable
-    tcp_server_addr = bound_addr;
-    
     err = server->listen(server, 5);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to listen on TCP server socket: %s\n", err.message);
+        goto cleanup;
+    }
+    
+    // Get server's bound address before signaling
+    err = server->get_local_addr(server, &tcp_server_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Failed to get local address: %s\n", err.message);
         goto cleanup;
     }
     
@@ -104,14 +125,6 @@ static void* tcp_server_thread(void* arg) {
     err = test_mutex->mutex_lock(test_mutex);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to lock mutex in TCP server: %s\n", err.message);
-        goto cleanup;
-    }
-    
-    // Get server's bound address before signaling
-    err = server->get_local_addr(server, &bound_addr);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "Failed to get local address: %s\n", err.message);
-        test_mutex->mutex_unlock(test_mutex);
         goto cleanup;
     }
     
@@ -163,7 +176,10 @@ cleanup:
 }
 
 static void* udp_server_thread(void* arg) {
-    if (!core) core = InfraxCoreClass.singleton();
+    ensure_core_initialized();
+    if (!core) {
+        return (void*)-1;  // Return error status
+    }
     (void)arg;
     InfraxSocket* server = NULL;
     InfraxSocketConfig config = {
@@ -171,7 +187,7 @@ static void* udp_server_thread(void* arg) {
         .is_nonblocking = false,
         .send_timeout_ms = 5000,  // 5 seconds timeout
         .recv_timeout_ms = 5000,  // 5 seconds timeout
-        .reuse_addr = true        // 添加 SO_REUSEADDR 选项
+        .reuse_addr = true        // Add SO_REUSEADDR option
     };
     
     server = InfraxSocketClass.new(&config);
@@ -182,7 +198,7 @@ static void* udp_server_thread(void* arg) {
     
     InfraxNetAddr addr;
     core->strcpy(core, addr.ip, "127.0.0.1");
-    addr.port = 0;  // 使用动态端口
+    addr.port = 0;  // Use dynamic port
     
     InfraxError err = server->bind(server, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
@@ -190,16 +206,12 @@ static void* udp_server_thread(void* arg) {
         goto cleanup;
     }
     
-    // 获取实际分配的端口
-    InfraxNetAddr bound_addr;
-    err = server->get_local_addr(server, &bound_addr);
+    // Get server's bound address before signaling
+    err = server->get_local_addr(server, &udp_server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to get local address: %s\n", err.message);
         goto cleanup;
     }
-    
-    // Store server address in shared variable
-    udp_server_addr = bound_addr;
     
     udp_server_ready = true;
     err = test_cond->cond_signal(test_cond);
@@ -240,12 +252,13 @@ cleanup:
 
 static void test_tcp() {
     InfraxError err = {.code = INFRAX_ERROR_OK, .message = ""};
+    tcp_server_ready = false;  // Initialize state
     
     // Start server thread
     InfraxThread* server_thread = NULL;
     InfraxThreadConfig thread_config = {
         .name = "tcp_server",
-        .entry_point = tcp_server_thread,
+        .func = tcp_server_thread,
         .arg = NULL
     };
     server_thread = InfraxThreadClass.new(&thread_config);
@@ -254,7 +267,7 @@ static void test_tcp() {
         goto cleanup;
     }
     
-    err = server_thread->start(server_thread);
+    err = server_thread->start(server_thread, tcp_server_thread, NULL);  // Fixed: pass the thread function
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to start server thread: %s\n", err.message);
         goto cleanup;
@@ -299,7 +312,7 @@ static void test_tcp() {
     
     InfraxNetAddr addr;
     core->strcpy(core, addr.ip, "127.0.0.1");
-    addr.port = tcp_server_addr.port;  // 使用共享变量中的服务器端口
+    addr.port = tcp_server_addr.port;  // Use shared variable containing server port
     
     err = client->connect(client, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
@@ -346,12 +359,13 @@ cleanup:
 
 static void test_udp() {
     InfraxError err = {.code = INFRAX_ERROR_OK, .message = ""};
+    udp_server_ready = false;  // Initialize state
     
     // Start server thread
     InfraxThread* server_thread = NULL;
     InfraxThreadConfig thread_config = {
         .name = "udp_server",
-        .entry_point = udp_server_thread,
+        .func = udp_server_thread,
         .arg = NULL
     };
     server_thread = InfraxThreadClass.new(&thread_config);
@@ -360,7 +374,7 @@ static void test_udp() {
         goto cleanup;
     }
     
-    err = server_thread->start(server_thread);
+    err = server_thread->start(server_thread, udp_server_thread, NULL);  // Fixed: pass the thread function
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to start server thread: %s\n", err.message);
         goto cleanup;
@@ -406,7 +420,7 @@ static void test_udp() {
     // Set server address
     InfraxNetAddr addr;
     core->strcpy(core, addr.ip, "127.0.0.1");
-    addr.port = udp_server_addr.port;  // 使用共享变量中的服务器端口
+    addr.port = udp_server_addr.port;  // Use shared variable containing server port
     client->peer_addr = addr;  // Set the peer address for sending
     
     // Send data
@@ -448,7 +462,7 @@ cleanup:
 
 int main() {
     // Initialize core first
-    core = InfraxCoreClass.singleton();
+    ensure_core_initialized();
     if (!core) {
         printf("Failed to initialize InfraxCore\n");
         return 1;
@@ -476,11 +490,10 @@ int main() {
     test_udp();
     
     // Clean up
-    InfraxSyncClass.free(test_mutex);
-    InfraxSyncClass.free(test_cond);
+    if (test_mutex) InfraxSyncClass.free(test_mutex);
+    if (test_cond) InfraxSyncClass.free(test_cond);
+    if (core_mutex) InfraxSyncClass.free(core_mutex);
     
-    core->printf(core, "All InfraxNet tests passed!\n");
+    if (core) core->printf(core, "All InfraxNet tests passed!\n");
     return 0;
 }
-
-

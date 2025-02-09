@@ -6,52 +6,87 @@
 #ifndef INFRAX_THREAD_H
 #define INFRAX_THREAD_H
 
-//design pattern: factory
+#include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxSync.h"
+#include "internal/infrax/InfraxMemory.h"
 
-#include <stdbool.h>
-#include <pthread.h>
-#include "InfraxCore.h"
+// 错误码定义
+#define INFRAX_ERROR_THREAD_OK                INFRAX_ERROR_OK
+#define INFRAX_ERROR_THREAD_INVALID_ARGUMENT  -201
+#define INFRAX_ERROR_THREAD_CREATE_FAILED     -202
+#define INFRAX_ERROR_THREAD_JOIN_FAILED       -203
+#define INFRAX_ERROR_THREAD_ALREADY_RUNNING   -204
+#define INFRAX_ERROR_THREAD_NOT_RUNNING       -205
 
-// Thread ID type
-typedef unsigned long InfraxThreadId;
-
-// Error codes
-#define INFRAX_ERROR_INVALID_ARGUMENT -1
-#define INFRAX_ERROR_THREAD_CREATE_FAILED -2
-#define INFRAX_ERROR_THREAD_JOIN_FAILED -3
-
-// Forward declarations
-typedef struct InfraxThread InfraxThread;
-typedef struct InfraxThreadClassType InfraxThreadClassType;
-
-// Thread configuration
+// 线程池配置
 typedef struct {
-    const char* name;
-    void* (*entry_point)(void*);
-    void* arg;
+    int min_threads;     // 最小线程数
+    int max_threads;     // 最大线程数
+    int queue_size;      // 任务队列大小
+    int idle_timeout;    // 空闲线程超时时间(ms)
+} InfraxThreadPoolConfig;
+
+// 线程池统计信息
+typedef struct {
+    int active_threads;  // 当前活动线程数
+    int idle_threads;    // 当前空闲线程数
+    int pending_tasks;   // 等待执行的任务数
+    int completed_tasks; // 已完成的任务数
+} InfraxThreadPoolStats;
+
+// 线程函数类型
+typedef void* (*InfraxThreadFunc)(void*);
+
+// 线程ID类型
+typedef uint64_t InfraxThreadId;
+
+// 线程配置
+typedef struct {
+    const char* name;           // 线程名称
+    InfraxThreadFunc func;      // 线程函数
+    void* arg;                  // 线程参数
+    size_t stack_size;         // 栈大小(可选)
+    int priority;              // 优先级(可选)
 } InfraxThreadConfig;
 
-// The "static" interface (like static methods in OOP)
-struct InfraxThreadClassType {
-    InfraxThread* (*new)(const InfraxThreadConfig* config);
+// 线程结构体
+typedef struct InfraxThread {
+    void* native_handle;       // 底层线程句柄
+    void* private_data;        // 私有数据
+    InfraxThreadConfig config; // 线程配置
+    bool is_running;          // 运行状态
+    void* result;             // 线程返回值
+    InfraxSync* mutex;        // 状态保护
+    
+    // 实例方法
+    InfraxError (*start)(struct InfraxThread* self, InfraxThreadFunc func, void* arg);
+    InfraxError (*join)(struct InfraxThread* self, void** result);
+    InfraxThreadId (*tid)(struct InfraxThread* self);
+} InfraxThread;
+
+// 线程类型
+typedef struct {
+    InfraxThread* (*new)(InfraxThreadConfig* config);
     void (*free)(InfraxThread* self);
-};
-
-// The instance structure
-struct InfraxThread {
-    // Thread data
-    InfraxThreadConfig config;
-    pthread_t native_handle;
-    bool is_running;
-    void* result;
-
-    // Instance methods
-    InfraxError (*start)(InfraxThread* self);
+    InfraxError (*start)(InfraxThread* self, InfraxThreadFunc func, void* arg);
     InfraxError (*join)(InfraxThread* self, void** result);
     InfraxThreadId (*tid)(InfraxThread* self);
-};
+    InfraxError (*pool_create)(InfraxThread* self, InfraxThreadPoolConfig* config);
+    InfraxError (*pool_destroy)(InfraxThread* self);
+    InfraxError (*pool_submit)(InfraxThread* self, InfraxThreadFunc func, void* arg);
+    InfraxError (*pool_get_stats)(InfraxThread* self, InfraxThreadPoolStats* stats);
+} InfraxThreadClassType;
 
 // The "static" interface instance (like Java's Class object)
 extern const InfraxThreadClassType InfraxThreadClass;
+
+// Memory manager function
+InfraxMemory* get_memory_manager(void);
+
+// // 线程池相关函数声明
+// InfraxError infrax_thread_pool_create(InfraxThread* self, InfraxThreadPoolConfig* config);
+// InfraxError infrax_thread_pool_destroy(InfraxThread* self);
+// InfraxError infrax_thread_pool_submit(InfraxThread* self, InfraxThreadFunc func, void* arg);
+// InfraxError infrax_thread_pool_get_stats(InfraxThread* self, InfraxThreadPoolStats* stats);
 
 #endif /* INFRAX_THREAD_H */

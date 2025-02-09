@@ -27,9 +27,9 @@ ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxLog.c"
     "${SRC_DIR}/internal/arch/PpxInfra.c"
     "${SRC_DIR}/internal/infrax/InfraxMemory.c"
-    "${SRC_DIR}/internal/infrax/InfraxThread.c"
     "${SRC_DIR}/internal/infrax/InfraxSync.c"
     "${SRC_DIR}/internal/infrax/InfraxNet.c"
+    "${SRC_DIR}/internal/infrax/InfraxThread.c"
     "${SRC_DIR}/internal/infrax/InfraxAsync.c"
     "${SRC_DIR}/internal/polyx/PolyxAsync.c"
 )
@@ -39,9 +39,9 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_arch.c"
     "${TEST_DIR}/arch/test_infrax_memory.c"
     "${TEST_DIR}/arch/test_infrax_error.c"
-    "${TEST_DIR}/arch/test_infrax_thread.c"
     "${TEST_DIR}/arch/test_infrax_sync.c"
     "${TEST_DIR}/arch/test_infrax_net.c"
+    "${TEST_DIR}/arch/test_infrax_thread.c"
     "${TEST_DIR}/arch/test_infrax_async.c"
     "${TEST_DIR}/arch/test_polyx_async.c"
 )
