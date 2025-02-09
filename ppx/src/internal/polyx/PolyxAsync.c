@@ -2,12 +2,14 @@
 #include "internal/infrax/InfraxMemory.h"
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxNet.h"
-#include <time.h>
-#include <errno.h>
+#include "internal/infrax/InfraxCore.h"
 
 // 全局内存管理器
 static InfraxMemory* g_memory = NULL;
 extern const InfraxMemoryClassType InfraxMemoryClass;
+
+// 全局 Core 实例
+static InfraxCore* g_core = NULL;
 
 // 内部函数声明
 void async_read_file_fn(InfraxAsync* async, void* arg);
@@ -87,7 +89,8 @@ bool init_memory() {
     };
     
     g_memory = InfraxMemoryClass.new(&config);
-    return g_memory != NULL;
+    g_core = InfraxCoreClass.singleton();
+    return g_memory != NULL && g_core != NULL;
 }
 
 // 构造函数
@@ -558,24 +561,13 @@ void async_write_file_fn(InfraxAsync* async, void* arg) {
 
 // 异步延时回调
 void async_delay_fn(InfraxAsync* async, void* arg) {
-    int* ms = (int*)arg;
-    if (!ms) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = EINVAL;
-        return;
-    }
-
-    struct timespec ts = {
-        .tv_sec = *ms / 1000,
-        .tv_nsec = (*ms % 1000) * 1000000
-    };
+    if (!async || !arg) return;
     
-    if (nanosleep(&ts, NULL) != 0) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = errno;
-        return;
-    }
-
+    DelayTask* task = (DelayTask*)arg;
+    
+    // 使用 Core 的 sleep_ms 函数
+    g_core->sleep_ms(g_core, task->ms);
+    
     async->state = INFRAX_ASYNC_FULFILLED;
 }
 
@@ -822,29 +814,20 @@ PolyxAsync* polyx_async_interval(int ms, int count) {
 
 // 异步间隔执行回调
 void async_interval_fn(InfraxAsync* async, void* arg) {
+    if (!async || !arg) return;
+    
     IntervalTask* task = (IntervalTask*)arg;
-    if (!task) {
-        async->state = INFRAX_ASYNC_REJECTED;
-        async->error = EINVAL;
-        return;
-    }
-
-    while (task->current < task->count) {
-        struct timespec ts = {
-            .tv_sec = task->ms / 1000,
-            .tv_nsec = (task->ms % 1000) * 1000000
-        };
+    
+    while (task->current < task->count && async->state != INFRAX_ASYNC_REJECTED) {
+        // 使用 Core 的 sleep_ms 函数
+        g_core->sleep_ms(g_core, task->ms);
         
-        if (nanosleep(&ts, NULL) != 0) {
-            async->state = INFRAX_ASYNC_REJECTED;
-            async->error = errno;
-            return;
-        }
-
         task->current++;
-        async->yield(async);
+        
+        // 每次间隔后让出 CPU
+        g_core->yield(g_core);
     }
-
+    
     async->state = INFRAX_ASYNC_FULFILLED;
 }
 
