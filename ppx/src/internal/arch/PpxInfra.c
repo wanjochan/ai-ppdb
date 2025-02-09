@@ -4,13 +4,15 @@
 #include "internal/infrax/InfraxLog.h"
 
 static PpxInfra g_infra = {0};
-static bool g_initialized = false;
+static bool g_infra_initialized = false;
 
 const PpxInfra* ppx_infra(void) {
-    if (!g_initialized) {
-        g_infra.core = get_global_infrax_core();
+    if (!g_infra_initialized) {
+        // Initialize core components
+        //g_infra.core = infrax_core_singleton();
+        g_infra.core = InfraxCoreClass.singleton();
         g_infra.logger = get_global_infrax_log();
-        g_initialized = true;
+        g_infra_initialized = true;
     }
     return &g_infra;
 }

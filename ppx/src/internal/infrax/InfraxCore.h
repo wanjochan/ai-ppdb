@@ -64,10 +64,14 @@ typedef struct InfraxRingBuffer {
 #define INFRAX_SEEK_CUR 1
 #define INFRAX_SEEK_END 2
 
-#define INFRAX_OK 0
+// Error codes
 #define INFRAX_ERROR_OK 0
-#define INFRAX_ERROR_INVALID_PARAM -1
+#define INFRAX_ERROR_UNKNOWN -1
 #define INFRAX_ERROR_NO_MEMORY -2
+#define INFRAX_ERROR_INVALID_PARAM -3
+#define INFRAX_ERROR_FILE_NOT_FOUND -4
+#define INFRAX_ERROR_FILE_ACCESS -5
+#define INFRAX_ERROR_FILE_READ -6
 
 // Helper macro to create InfraxError
 static inline InfraxError make_error(InfraxI32 code, const char* msg) {
@@ -101,13 +105,19 @@ typedef void* (*InfraxThreadFunc)(void*);
 // Forward declaration
 typedef struct InfraxCore InfraxCore;
 
+// Assert macros and functions
+#define INFRAX_ASSERT_FAILED_CODE -1000
+
+// Assert handler type definition
+typedef void (*InfraxAssertHandler)(const char* file, int line, const char* func, const char* expr, const char* msg);
+
 // Core structure definition
 struct InfraxCore {
-    // core 特别，不需要构建的，完全全局，用来放全局静态函数
-    // Printf forwarding
+    // Instance pointer
+    InfraxCore* self;
+
+    // Core functions
     int (*printf)(InfraxCore *self, const char* format, ...);
-    
-    // Parameter forwarding function
     void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);
 
     // String operations
@@ -180,26 +190,27 @@ struct InfraxCore {
     InfraxError (*file_remove)(struct InfraxCore *self, const char* path);
     InfraxError (*file_rename)(struct InfraxCore *self, const char* old_path, const char* new_path);
     InfraxError (*file_exists)(struct InfraxCore *self, const char* path, bool* exists);
+
+    // Assert functions
+    void (*assert_failed)(struct InfraxCore *self, const char* file, int line, const char* func, const char* expr, const char* msg);
+    void (*set_assert_handler)(struct InfraxCore *self, InfraxAssertHandler handler);
 };
 
-extern InfraxCore g_infrax_core;  // global infrax core for tricks
-InfraxCore* get_global_infrax_core(void);
+// Get singleton instance
+InfraxCore* _infrax_core_singleton(void);
 
-// TODO:重构，类似 InfraxAsync， static InfraxCoreClass 放这些静态方法就可以了
-// infrax_core_new( )
-// infrax_core_new
-// InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
-// void infrax_async_free(InfraxAsync* self);
+// "Class" for static methods
+static struct {
+    InfraxCore* (*singleton)(void);  // Changed from new/free to singleton
+} InfraxCoreClass = {
+    .singleton = _infrax_core_singleton
+};
 
-// // Factory for InfraxAsync instances
-// static struct {
-//     InfraxAsync* (*new)(AsyncFn fn, void* arg);
-//     void (*free)(InfraxAsync* self);
-// } InfraxAsyncClass = {
-//     .new = infrax_async_new,
-//     .free = infrax_async_free
-// };
+// Assert macros
+#define INFRAX_ASSERT(core, expr) \
+    ((expr) ? (void)0 : (core)->assert_failed(core, __FILE__, __LINE__, __func__, #expr, NULL))
 
-InfraxCore* singleton();
+#define INFRAX_ASSERT_MSG(core, expr, msg) \
+    ((expr) ? (void)0 : (core)->assert_failed(core, __FILE__, __LINE__, __func__, #expr, msg))
 
 #endif // PPDB_INFRAX_CORE_H

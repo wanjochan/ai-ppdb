@@ -583,141 +583,35 @@ static InfraxError infrax_core_file_exists(InfraxCore *self, const char* path, b
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-/* TODO
-//-----------------------------------------------------------------------------
-// File Operations
-//-----------------------------------------------------------------------------
+// Default assert handler
+static InfraxAssertHandler g_assert_handler = NULL;
 
-#define INFRA_FILE_CREATE  (1 << 0)
-#define INFRA_FILE_RDONLY  (1 << 1)
-#define INFRA_FILE_WRONLY  (1 << 2)
-#define INFRA_FILE_RDWR    (INFRA_FILE_RDONLY | INFRA_FILE_WRONLY)
-#define INFRA_FILE_APPEND  (1 << 3)
-#define INFRA_FILE_TRUNC   (1 << 4)
+static void default_assert_handler(const char* file, int line, const char* func, const char* expr, const char* msg) {
+    fprintf(stderr, "Assertion failed at %s:%d in %s\n", file, line, func);
+    fprintf(stderr, "Expression: %s\n", expr);
+    if (msg) {
+        fprintf(stderr, "Message: %s\n", msg);
+    }
+    abort();
+}
 
-#define INFRA_SEEK_SET 0
-#define INFRA_SEEK_CUR 1
-#define INFRA_SEEK_END 2
+static void infrax_core_assert_failed(InfraxCore *self, const char* file, int line, const char* func, const char* expr, const char* msg) {
+    if (g_assert_handler) {
+        g_assert_handler(file, line, func, expr, msg);
+    } else {
+        default_assert_handler(file, line, func, expr, msg);
+    }
+}
 
-infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle);
-infra_error_t infra_file_close(INFRA_CORE_Handle_t handle);
-infra_error_t infra_file_read(INFRA_CORE_Handle_t handle, void* buffer, size_t size, size_t* bytes_read);
-infra_error_t infra_file_write(INFRA_CORE_Handle_t handle, const void* buffer, size_t size, size_t* bytes_written);
-infra_error_t infra_file_seek(INFRA_CORE_Handle_t handle, int64_t offset, int whence);
-infra_error_t infra_file_size(INFRA_CORE_Handle_t handle, size_t* size);
-infra_error_t infra_file_remove(const char* path);
-infra_error_t infra_file_rename(const char* old_path, const char* new_path);
-infra_error_t infra_file_exists(const char* path, bool* exists);
-*/
+static void infrax_core_set_assert_handler(InfraxCore *self, InfraxAssertHandler handler) {
+    g_assert_handler = handler;
+}
 
-// static InfraxError infrax_core_mutex_create(InfraxCore *self, InfraxMutex* mutex) {
-//     pthread_mutex_t* pmutex = malloc(sizeof(pthread_mutex_t));
-//     if (!pmutex) {
-//         return INFRAX_ERROR_OUT_OF_MEMORY;
-//     }
+// Static singleton instance with all function pointers initialized
+static InfraxCore g_infrax_core = {
+    .self = &g_infrax_core,  // Self pointer to the static instance
     
-//     if (pthread_mutex_init(pmutex, NULL) != 0) {
-//         free(pmutex);
-//         return INFRAX_ERROR_MUTEX_CREATE;
-//     }
-    
-//     *mutex = pmutex;
-//     return INFRAX_OK;
-// }
-
-// static void infrax_core_mutex_destroy(InfraxCore *self, InfraxMutex mutex) {
-//     pthread_mutex_t* pmutex = mutex;
-//     pthread_mutex_destroy(pmutex);
-//     free(pmutex);
-// }
-
-// static InfraxError infrax_core_mutex_lock(InfraxCore *self, InfraxMutex mutex) {
-//     pthread_mutex_t* pmutex = mutex;
-//     if (pthread_mutex_lock(pmutex) != 0) {
-//         return INFRAX_ERROR_MUTEX_LOCK;
-//     }
-//     return INFRAX_OK;
-// }
-
-// static InfraxError infrax_core_mutex_unlock(InfraxCore *self, InfraxMutex mutex) {
-//     pthread_mutex_t* pmutex = mutex;
-//     if (pthread_mutex_unlock(pmutex) != 0) {
-//         return INFRAX_ERROR_MUTEX_UNLOCK;
-//     }
-//     return INFRAX_OK;
-// }
-
-// static InfraxError infrax_core_cond_init(InfraxCore *self, InfraxCond* cond) {
-//     pthread_cond_t* pcond = malloc(sizeof(pthread_cond_t));
-//     if (!pcond) {
-//         return INFRAX_ERROR_OUT_OF_MEMORY;
-//     }
-    
-//     if (pthread_cond_init(pcond, NULL) != 0) {
-//         free(pcond);
-//         return INFRAX_ERROR_COND_CREATE;
-//     }
-    
-//     *cond = pcond;
-//     return INFRAX_OK;
-// }
-
-// static void infrax_core_cond_destroy(InfraxCore *self, InfraxCond cond) {
-//     pthread_cond_t* pcond = cond;
-//     pthread_cond_destroy(pcond);
-//     free(pcond);
-// }
-
-// static InfraxError infrax_core_cond_wait(InfraxCore *self, InfraxCond cond, InfraxMutex mutex) {
-//     pthread_cond_t* pcond = cond;
-//     pthread_mutex_t* pmutex = mutex;
-//     if (pthread_cond_wait(pcond, pmutex) != 0) {
-//         return INFRAX_ERROR_COND_WAIT;
-//     }
-//     return INFRAX_OK;
-// }
-
-// static InfraxError infrax_core_cond_timedwait(InfraxCore *self, InfraxCond cond, InfraxMutex mutex, uint32_t timeout_ms) {
-//     pthread_cond_t* pcond = cond;
-//     pthread_mutex_t* pmutex = mutex;
-    
-//     struct timespec ts;
-//     clock_gettime(CLOCK_REALTIME, &ts);
-//     ts.tv_sec += timeout_ms / 1000;
-//     ts.tv_nsec += (timeout_ms % 1000) * 1000000;
-//     if (ts.tv_nsec >= 1000000000) {
-//         ts.tv_sec++;
-//         ts.tv_nsec -= 1000000000;
-//     }
-    
-//     int ret = pthread_cond_timedwait(pcond, pmutex, &ts);
-//     if (ret == ETIMEDOUT) {
-//         return INFRAX_ERROR_TIMEOUT;
-//     } else if (ret != 0) {
-//         return INFRAX_ERROR_COND_WAIT;
-//     }
-//     return INFRAX_OK;
-// }
-
-// static InfraxError infrax_core_cond_signal(InfraxCore *self, InfraxCond cond) {
-//     pthread_cond_t* pcond = cond;
-//     if (pthread_cond_signal(pcond) != 0) {
-//         return INFRAX_ERROR_COND_SIGNAL;
-//     }
-//     return INFRAX_OK;
-// }
-
-// static InfraxError infrax_core_cond_broadcast(InfraxCore *self, InfraxCond cond) {
-//     pthread_cond_t* pcond = cond;
-//     if (pthread_cond_broadcast(pcond) != 0) {
-//         return INFRAX_ERROR_COND_SIGNAL;
-//     }
-//     return INFRAX_OK;
-// }
-
-
-// Global instance
-InfraxCore g_infrax_core = {
+    // Core functions
     .printf = infrax_core_printf,
     .forward_call = infrax_core_forward_call,
     
@@ -782,12 +676,12 @@ InfraxCore g_infrax_core = {
     .file_size = infrax_core_file_size,
     .file_remove = infrax_core_file_remove,
     .file_rename = infrax_core_file_rename,
-    .file_exists = infrax_core_file_exists
-
-    //TODO mutex, cond...
+    .file_exists = infrax_core_file_exists,
+    .assert_failed = infrax_core_assert_failed,
+    .set_assert_handler = infrax_core_set_assert_handler
 };
 
-// Return global instance
-InfraxCore* get_global_infrax_core(void) {
+// Simple singleton getter
+InfraxCore* _infrax_core_singleton(void) {
     return &g_infrax_core;
 }

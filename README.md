@@ -2,7 +2,7 @@
 
 [![Last Update](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/wanjochan/ai-ppdb/main/.github/badges/last-commit.json)](https://github.com/wanjochan/ai-ppdb/commits/main)
 
-[ppdb](ppdb/docs/ARCH.md)
+[ppdb](docs/ARCH.md)
 
 AI编写的分布式数据库，欢迎使用，风险自担。A distributed database written by artificial intelligence. Use freely at your own risk.
 

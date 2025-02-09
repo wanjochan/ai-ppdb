@@ -12,7 +12,7 @@
 
 // Instance methods implementation
 static InfraxError thread_start(InfraxThread* self) {
-    InfraxCore* core = get_global_infrax_core();
+    InfraxCore* core = InfraxCoreClass.singleton();
     
     if (!self || self->is_running) {
         return make_error(INFRAX_ERROR_INVALID_ARGUMENT, "Invalid thread or thread already running");
@@ -30,7 +30,7 @@ static InfraxError thread_start(InfraxThread* self) {
 }
 
 static InfraxError thread_join(InfraxThread* self, void** result) {
-    InfraxCore* core = get_global_infrax_core();
+    InfraxCore* core = InfraxCoreClass.singleton();
     
     if (!self || !self->is_running) {
         return make_error(INFRAX_ERROR_INVALID_ARGUMENT, "Invalid thread or thread not running");
