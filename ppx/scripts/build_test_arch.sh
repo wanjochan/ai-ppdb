@@ -14,6 +14,7 @@ clean_build() {
     rm -f "${TEST_DIR}/arch/test_infrax_sync"
     rm -f "${TEST_DIR}/arch/test_infrax_net"
     rm -f "${TEST_DIR}/arch/test_infrax_async"
+    rm -f "${TEST_DIR}/arch/test_polyx_async"
 }
 
 # Set compile flags with all necessary include paths
