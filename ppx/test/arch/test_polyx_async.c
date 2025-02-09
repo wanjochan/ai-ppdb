@@ -7,7 +7,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+// #include <time.h>//TODO use time function from our core
+
+
 #include <unistd.h>
 
 // Test context structures
@@ -24,18 +26,19 @@ typedef struct {
 static void async_read_file(InfraxAsync* self, void* arg) {
     AsyncFileContext* ctx = (AsyncFileContext*)arg;
     InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxLog* log = InfraxLogClass.singleton();
     
     if (!ctx) {
-        core->printf(core, "[DEBUG] async_read_file: ctx is NULL\n");
+        log->debug(log, "async_read_file: ctx is NULL");
         return;
     }
     
     // Open file if not already open
     if (ctx->fd < 0) {
-        core->printf(core, "[DEBUG] async_read_file: opening file %s\n", ctx->filename);
+        log->debug(log, "async_read_file: opening file %s", ctx->filename);
         ctx->fd = open(ctx->filename, O_RDONLY | O_NONBLOCK);
         if (ctx->fd < 0) {
-            core->printf(core, "[DEBUG] async_read_file: failed to open file, errno=%d\n", errno);
+            log->debug(log, "async_read_file: failed to open file, errno=%d", errno);
             self->state = INFRAX_ASYNC_REJECTED;
             return;
         }
@@ -46,15 +49,15 @@ static void async_read_file(InfraxAsync* self, void* arg) {
                         ctx->buffer + ctx->bytes_processed,
                         ctx->size - ctx->bytes_processed);
     
-    core->printf(core, "[DEBUG] async_read_file: read returned %zd bytes\n", bytes);
+    log->debug(log, "async_read_file: read returned %zd bytes", bytes);
     
     if (bytes > 0) {
         ctx->bytes_processed += bytes;
-        core->printf(core, "[DEBUG] async_read_file: total bytes read: %zu/%zu\n", 
+        log->debug(log, "async_read_file: total bytes read: %zu/%zu", 
                ctx->bytes_processed, ctx->size);
         if (ctx->bytes_processed < ctx->size) {
             ctx->yield_count++;
-            core->printf(core, "[DEBUG] async_read_file: yielding after successful read\n");
+            log->debug(log, "async_read_file: yielding after successful read");
             self->yield(self);
         } else {
             close(ctx->fd);
@@ -63,18 +66,18 @@ static void async_read_file(InfraxAsync* self, void* arg) {
         }
     } else if (bytes == 0) {
         // End of file
-        core->printf(core, "[DEBUG] async_read_file: reached EOF\n");
+        log->debug(log, "async_read_file: reached EOF");
         close(ctx->fd);
         ctx->fd = -1;
         self->state = INFRAX_ASYNC_FULFILLED;
     } else {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             ctx->yield_count++;
-            core->printf(core, "[DEBUG] async_read_file: yielding on EAGAIN\n");
+            log->debug(log, "async_read_file: yielding on EAGAIN");
             self->yield(self);
         } else {
             // Error occurred
-            core->printf(core, "[DEBUG] async_read_file: read error, errno=%d\n", errno);
+            log->debug(log, "async_read_file: read error, errno=%d", errno);
             close(ctx->fd);
             ctx->fd = -1;
             self->state = INFRAX_ASYNC_REJECTED;
@@ -86,18 +89,19 @@ static void async_read_file(InfraxAsync* self, void* arg) {
 static void async_write_file(InfraxAsync* self, void* arg) {
     AsyncFileContext* ctx = (AsyncFileContext*)arg;
     InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxLog* log = InfraxLogClass.singleton();
     
     if (!ctx) {
-        core->printf(core, "[DEBUG] async_write_file: ctx is NULL\n");
+        log->debug(log, "async_write_file: ctx is NULL");
         return;
     }
     
     // Open file if not already open
     if (ctx->fd < 0) {
-        core->printf(core, "[DEBUG] async_write_file: opening file %s\n", ctx->filename);
+        log->debug(log, "async_write_file: opening file %s", ctx->filename);
         ctx->fd = open(ctx->filename, O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK, 0644);
         if (ctx->fd < 0) {
-            core->printf(core, "[DEBUG] async_write_file: failed to open file, errno=%d\n", errno);
+            log->debug(log, "async_write_file: failed to open file, errno=%d", errno);
             self->state = INFRAX_ASYNC_REJECTED;
             return;
         }
@@ -108,15 +112,15 @@ static void async_write_file(InfraxAsync* self, void* arg) {
                          ctx->buffer + ctx->bytes_processed,
                          ctx->size - ctx->bytes_processed);
     
-    core->printf(core, "[DEBUG] async_write_file: write returned %zd bytes\n", bytes);
+    log->debug(log, "async_write_file: write returned %zd bytes", bytes);
     
     if (bytes > 0) {
         ctx->bytes_processed += bytes;
-        core->printf(core, "[DEBUG] async_write_file: total bytes written: %zu/%zu\n", 
+        log->debug(log, "async_write_file: total bytes written: %zu/%zu", 
                ctx->bytes_processed, ctx->size);
         if (ctx->bytes_processed < ctx->size) {
             ctx->yield_count++;
-            core->printf(core, "[DEBUG] async_write_file: yielding after successful write\n");
+            log->debug(log, "async_write_file: yielding after successful write");
             self->yield(self);
         } else {
             close(ctx->fd);
@@ -126,11 +130,11 @@ static void async_write_file(InfraxAsync* self, void* arg) {
     } else {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             ctx->yield_count++;
-            core->printf(core, "[DEBUG] async_write_file: yielding on EAGAIN\n");
+            log->debug(log, "async_write_file: yielding on EAGAIN");
             self->yield(self);
         } else {
             // Error occurred
-            core->printf(core, "[DEBUG] async_write_file: write error, errno=%d\n", errno);
+            log->debug(log, "async_write_file: write error, errno=%d", errno);
             close(ctx->fd);
             ctx->fd = -1;
             self->state = INFRAX_ASYNC_REJECTED;
@@ -141,7 +145,8 @@ static void async_write_file(InfraxAsync* self, void* arg) {
 // Test async file operations
 void test_polyx_async_read_file(void) {
     InfraxCore* core = InfraxCoreClass.singleton();
-    core->printf(core, "[DEBUG] test_polyx_async_read_file: starting\n");
+    InfraxLog* log = InfraxLogClass.singleton();
+    log->info(log, "test_polyx_async_read_file: starting");
     
     const char* test_file = "test.txt";
     
@@ -150,7 +155,7 @@ void test_polyx_async_read_file(void) {
     INFRAX_ASSERT(core, fp != NULL);
     fprintf(fp, "Hello, World!");
     fclose(fp);
-    core->printf(core, "[DEBUG] test_polyx_async_read_file: test file created\n");
+    log->debug(log, "test_polyx_async_read_file: test file created");
     
     // Prepare read context
     char buffer[128] = {0};
@@ -164,41 +169,47 @@ void test_polyx_async_read_file(void) {
     };
     
     // Create and start async task
-    core->printf(core, "[DEBUG] test_polyx_async_read_file: creating async task\n");
+    log->debug(log, "test_polyx_async_read_file: creating async task");
     InfraxAsync* async = InfraxAsyncClass.new(async_read_file, &ctx);
     INFRAX_ASSERT(core, async != NULL);
     
-    core->printf(core, "[DEBUG] test_polyx_async_read_file: starting async task\n");
+    log->debug(log, "test_polyx_async_read_file: starting async task");
     async->start(async, async_read_file, &ctx);
     
     // Wait for completion
-    core->printf(core, "[DEBUG] test_polyx_async_read_file: waiting for completion\n");
+    log->debug(log, "test_polyx_async_read_file: waiting for completion");
+    static time_t last_status = 0;
     while (async->state != INFRAX_ASYNC_FULFILLED && 
            async->state != INFRAX_ASYNC_REJECTED) {
         if (async->state == INFRAX_ASYNC_PENDING) {
             async->start(async, async_read_file, &ctx);
         }
+        time_t now = time(NULL);
+        if (now - last_status >= 1) {  // Log status every second
+            log->debug(log, "test_polyx_async_read_file: waiting... (yield count: %d)", 
+                        ctx.yield_count);
+            last_status = now;
+        }
         core->sleep_ms(core, 10);  // 10ms
-        core->printf(core, "[DEBUG] test_polyx_async_read_file: waiting... (yield count: %d)\n", 
-                    ctx.yield_count);
     }
     
-    core->printf(core, "[DEBUG] test_polyx_async_read_file: task completed\n");
+    log->info(log, "test_polyx_async_read_file: task completed");
     
     // Check result
     INFRAX_ASSERT(core, async->state == INFRAX_ASYNC_FULFILLED);
     INFRAX_ASSERT(core, strcmp("Hello, World!", buffer) == 0);
     
     // Cleanup
-    core->printf(core, "[DEBUG] test_polyx_async_read_file: cleaning up\n");
+    log->debug(log, "test_polyx_async_read_file: cleaning up");
     InfraxAsyncClass.free(async);
     remove(test_file);
-    core->printf(core, "[DEBUG] test_polyx_async_read_file: cleanup complete\n");
+    log->debug(log, "test_polyx_async_read_file: cleanup complete");
 }
 
 void test_polyx_async_write_file(void) {
     InfraxCore* core = InfraxCoreClass.singleton();
-    core->printf(core, "[DEBUG] test_polyx_async_write_file: starting\n");
+    InfraxLog* log = InfraxLogClass.singleton();
+    log->info(log, "test_polyx_async_write_file: starting");
     
     const char* test_file = "test_write.txt";
     const char* test_data = "Hello, Write Test!";
@@ -214,26 +225,31 @@ void test_polyx_async_write_file(void) {
     };
     
     // Create and start async task
-    core->printf(core, "[DEBUG] test_polyx_async_write_file: creating async task\n");
+    log->debug(log, "test_polyx_async_write_file: creating async task");
     InfraxAsync* async = InfraxAsyncClass.new(async_write_file, &ctx);
     INFRAX_ASSERT(core, async != NULL);
     
-    core->printf(core, "[DEBUG] test_polyx_async_write_file: starting async task\n");
+    log->debug(log, "test_polyx_async_write_file: starting async task");
     async->start(async, async_write_file, &ctx);
     
     // Wait for completion
-    core->printf(core, "[DEBUG] test_polyx_async_write_file: waiting for completion\n");
+    log->debug(log, "test_polyx_async_write_file: waiting for completion");
+    static time_t last_status = 0;
     while (async->state != INFRAX_ASYNC_FULFILLED && 
            async->state != INFRAX_ASYNC_REJECTED) {
         if (async->state == INFRAX_ASYNC_PENDING) {
             async->start(async, async_write_file, &ctx);
         }
+        time_t now = time(NULL);
+        if (now - last_status >= 1) {  // Log status every second
+            log->debug(log, "test_polyx_async_write_file: waiting... (yield count: %d)", 
+                        ctx.yield_count);
+            last_status = now;
+        }
         core->sleep_ms(core, 10);  // 10ms
-        core->printf(core, "[DEBUG] test_polyx_async_write_file: waiting... (yield count: %d)\n", 
-                    ctx.yield_count);
     }
     
-    core->printf(core, "[DEBUG] test_polyx_async_write_file: task completed\n");
+    log->info(log, "test_polyx_async_write_file: task completed");
     
     // Verify file contents
     FILE* fp = fopen(test_file, "r");
@@ -247,10 +263,10 @@ void test_polyx_async_write_file(void) {
     INFRAX_ASSERT(core, strcmp(test_data, buffer) == 0);
     
     // Cleanup
-    core->printf(core, "[DEBUG] test_polyx_async_write_file: cleaning up\n");
+    log->debug(log, "test_polyx_async_write_file: cleaning up");
     InfraxAsyncClass.free(async);
     remove(test_file);
-    core->printf(core, "[DEBUG] test_polyx_async_write_file: cleanup complete\n");
+    log->debug(log, "test_polyx_async_write_file: cleanup complete");
 }
 
 // Async delay context
@@ -263,9 +279,10 @@ typedef struct {
 static void async_delay_func(InfraxAsync* self, void* arg) {
     AsyncDelayContext* ctx = (AsyncDelayContext*)arg;
     InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxLog* log = InfraxLogClass.singleton();
     
     if (!ctx) {
-        core->printf(core, "[DEBUG] async_delay: ctx is NULL\n");
+        log->debug(log, "async_delay: ctx is NULL");
         self->state = INFRAX_ASYNC_REJECTED;
         return;
     }
@@ -277,26 +294,27 @@ static void async_delay_func(InfraxAsync* self, void* arg) {
                     (current.tv_nsec - ctx->start.tv_nsec) / 1e9;
     double delay_sec = ctx->delay_ms / 1000.0;
     
-    core->printf(core, "[DEBUG] async_delay: elapsed=%.3f/%.3f seconds\n", 
+    log->debug(log, "async_delay: elapsed=%.3f/%.3f seconds", 
                 elapsed, delay_sec);
     
     // Check if delay is complete
     if (elapsed >= delay_sec) {
-        core->printf(core, "[DEBUG] async_delay: delay complete\n");
+        log->debug(log, "async_delay: delay complete");
         self->state = INFRAX_ASYNC_FULFILLED;
         return;
     }
     
     // Not done yet, yield and continue
-    core->printf(core, "[DEBUG] async_delay: yielding\n");
+    log->debug(log, "async_delay: yielding");
     self->yield(self);
 }
 
 void test_polyx_async_delay(void) {
     InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxLog* log = InfraxLogClass.singleton();
     int delay_ms = 1000;
     
-    core->printf(core, "[DEBUG] test_polyx_async_delay: starting (delay: %d ms)\n", delay_ms);
+    log->info(log, "test_polyx_async_delay: starting (delay: %d ms)", delay_ms);
     
     // Create delay context
     AsyncDelayContext ctx;
@@ -308,21 +326,26 @@ void test_polyx_async_delay(void) {
     INFRAX_ASSERT(core, async != NULL);
     
     // Start the delay
-    core->printf(core, "[DEBUG] test_polyx_async_delay: starting delay\n");
+    log->debug(log, "test_polyx_async_delay: starting delay");
     async->start(async, async_delay_func, &ctx);
     
     // Wait for completion
-    core->printf(core, "[DEBUG] test_polyx_async_delay: waiting for completion\n");
+    log->debug(log, "test_polyx_async_delay: waiting for completion");
+    static time_t last_status = 0;
     while (async->state != INFRAX_ASYNC_FULFILLED && 
            async->state != INFRAX_ASYNC_REJECTED) {
         if (async->state == INFRAX_ASYNC_PENDING) {
             async->start(async, async_delay_func, &ctx);
         }
+        time_t now = time(NULL);
+        if (now - last_status >= 1) {  // Log status every second
+            log->debug(log, "test_polyx_async_delay: waiting...");
+            last_status = now;
+        }
         core->sleep_ms(core, 10);  // 10ms
-        core->printf(core, "[DEBUG] test_polyx_async_delay: waiting...\n");
     }
     
-    core->printf(core, "[DEBUG] test_polyx_async_delay: completed\n");
+    log->info(log, "test_polyx_async_delay: completed");
     
     // Cleanup
     InfraxAsyncClass.free(async);
@@ -330,7 +353,8 @@ void test_polyx_async_delay(void) {
 
 void test_polyx_async_parallel(void) {
     InfraxCore* core = InfraxCoreClass.singleton();
-    core->printf(core, "[DEBUG] test_polyx_async_parallel: starting\n");
+    InfraxLog* log = InfraxLogClass.singleton();
+    log->info(log, "test_polyx_async_parallel: starting");
     
     // Create delay contexts
     AsyncDelayContext ctx1, ctx2, ctx3;
@@ -351,13 +375,14 @@ void test_polyx_async_parallel(void) {
     INFRAX_ASSERT(core, delay3 != NULL);
     
     // Start all tasks
-    core->printf(core, "[DEBUG] test_polyx_async_parallel: starting all tasks\n");
+    log->debug(log, "test_polyx_async_parallel: starting all tasks");
     delay1->start(delay1, async_delay_func, &ctx1);
     delay2->start(delay2, async_delay_func, &ctx2);
     delay3->start(delay3, async_delay_func, &ctx3);
     
     // Wait for all tasks to complete
-    core->printf(core, "[DEBUG] test_polyx_async_parallel: waiting for completion\n");
+    log->debug(log, "test_polyx_async_parallel: waiting for completion");
+    static time_t last_status = 0;
     while (delay1->state != INFRAX_ASYNC_FULFILLED || 
            delay2->state != INFRAX_ASYNC_FULFILLED || 
            delay3->state != INFRAX_ASYNC_FULFILLED) {
@@ -370,11 +395,15 @@ void test_polyx_async_parallel(void) {
         if (delay3->state == INFRAX_ASYNC_PENDING) {
             delay3->start(delay3, async_delay_func, &ctx3);
         }
+        time_t now = time(NULL);
+        if (now - last_status >= 1) {  // Log status every second
+            log->debug(log, "test_polyx_async_parallel: waiting...");
+            last_status = now;
+        }
         core->sleep_ms(core, 10);  // 10ms
-        core->printf(core, "[DEBUG] test_polyx_async_parallel: waiting...\n");
     }
     
-    core->printf(core, "[DEBUG] test_polyx_async_parallel: all tasks completed\n");
+    log->info(log, "test_polyx_async_parallel: all tasks completed");
     
     // Cleanup
     InfraxAsyncClass.free(delay1);
@@ -384,7 +413,8 @@ void test_polyx_async_parallel(void) {
 
 void test_polyx_async_sequence(void) {
     InfraxCore* core = InfraxCoreClass.singleton();
-    core->printf(core, "[DEBUG] test_polyx_async_sequence: starting\n");
+    InfraxLog* log = InfraxLogClass.singleton();
+    log->info(log, "test_polyx_async_sequence: starting");
     
     // Create delay contexts
     AsyncDelayContext ctx1, ctx2;
@@ -395,15 +425,20 @@ void test_polyx_async_sequence(void) {
     InfraxAsync* delay1 = InfraxAsyncClass.new(async_delay_func, &ctx1);
     INFRAX_ASSERT(core, delay1 != NULL);
     
-    core->printf(core, "[DEBUG] test_polyx_async_sequence: starting first task\n");
+    log->debug(log, "test_polyx_async_sequence: starting first task");
     delay1->start(delay1, async_delay_func, &ctx1);
     
+    static time_t last_status1 = 0;
     while (delay1->state != INFRAX_ASYNC_FULFILLED) {
         if (delay1->state == INFRAX_ASYNC_PENDING) {
             delay1->start(delay1, async_delay_func, &ctx1);
         }
+        time_t now = time(NULL);
+        if (now - last_status1 >= 1) {  // Log status every second
+            log->debug(log, "test_polyx_async_sequence: waiting for first task...");
+            last_status1 = now;
+        }
         core->sleep_ms(core, 10);
-        core->printf(core, "[DEBUG] test_polyx_async_sequence: waiting for first task...\n");
     }
     
     // Create and start second task
@@ -413,18 +448,23 @@ void test_polyx_async_sequence(void) {
     InfraxAsync* delay2 = InfraxAsyncClass.new(async_delay_func, &ctx2);
     INFRAX_ASSERT(core, delay2 != NULL);
     
-    core->printf(core, "[DEBUG] test_polyx_async_sequence: starting second task\n");
+    log->debug(log, "test_polyx_async_sequence: starting second task");
     delay2->start(delay2, async_delay_func, &ctx2);
     
+    static time_t last_status2 = 0;
     while (delay2->state != INFRAX_ASYNC_FULFILLED) {
         if (delay2->state == INFRAX_ASYNC_PENDING) {
             delay2->start(delay2, async_delay_func, &ctx2);
         }
+        time_t now = time(NULL);
+        if (now - last_status2 >= 1) {  // Log status every second
+            log->debug(log, "test_polyx_async_sequence: waiting for second task...");
+            last_status2 = now;
+        }
         core->sleep_ms(core, 10);
-        core->printf(core, "[DEBUG] test_polyx_async_sequence: waiting for second task...\n");
     }
     
-    core->printf(core, "[DEBUG] test_polyx_async_sequence: all tasks completed\n");
+    log->info(log, "test_polyx_async_sequence: all tasks completed");
     
     // Cleanup
     InfraxAsyncClass.free(delay1);
@@ -432,13 +472,17 @@ void test_polyx_async_sequence(void) {
 }
 
 int main(void) {
-    printf("===================\nStarting PolyxAsync tests...\n");
-
+    InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxLog* log = InfraxLogClass.singleton();
+    
+    log->info(log, "===================\nStarting PolyxAsync tests...");
+    
     test_polyx_async_read_file();
     test_polyx_async_write_file();
     test_polyx_async_delay();
     test_polyx_async_parallel();
     test_polyx_async_sequence();
-    printf("All tests passed!\n");
+    
+    log->info(log, "All tests passed!\n===================");
     return 0;
 }
