@@ -218,14 +218,26 @@ static infra_error_t kv_get(poly_db_t* db, const char* key, struct kv_pair* pair
                 const char* delete_sql = "DELETE FROM kv_store WHERE key = ?";
                 poly_db_stmt_t* delete_stmt = NULL;
                 err = poly_db_prepare(db, delete_sql, &delete_stmt);
-                if (err == INFRA_OK) {
-                    err = poly_db_bind_text(delete_stmt, 1, key, -1);
-                    if (err == INFRA_OK) {
-                        poly_db_stmt_step(delete_stmt);
-                    }
-                    poly_db_stmt_finalize(delete_stmt);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to prepare delete statement: %d", err);
+                    return INFRA_ERROR_NOT_FOUND;
                 }
                 
+                err = poly_db_bind_text(delete_stmt, 1, key, -1);
+                if (err != INFRA_OK) {
+                    INFRA_LOG_ERROR("Failed to bind key for delete: %d", err);
+                    poly_db_stmt_finalize(delete_stmt);
+                    return INFRA_ERROR_NOT_FOUND;
+                }
+                
+                err = poly_db_stmt_step(delete_stmt);
+                if (err != INFRA_OK && err != INFRA_ERROR_NOT_FOUND) {
+                    INFRA_LOG_ERROR("Failed to execute delete statement: %d", err);
+                    poly_db_stmt_finalize(delete_stmt);
+                    return INFRA_ERROR_NOT_FOUND;
+                }
+                
+                poly_db_stmt_finalize(delete_stmt);
                 return INFRA_ERROR_NOT_FOUND;
             }
         }
@@ -477,13 +489,7 @@ static int handle_get(memkv_conn_t* conn, const char* key) {
             conn->should_close = true;
             return -1;
         }
-        err = send_all(conn->sock, "END\r\n", 5);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send END response: %d", err);
-            conn->should_close = true;
-            return -1;
-        }
-        return 0;
+        return 0;  // 不需要发送 END\r\n，因为这个会在处理完所有 key 后统一发送
     } else if (err != INFRA_OK) {
         INFRA_LOG_ERROR("Failed to get key %s: %d", key, err);
         conn->should_close = true;
@@ -492,12 +498,7 @@ static int handle_get(memkv_conn_t* conn, const char* key) {
 
     if (!pair.value || pair.value_len == 0) {
         INFRA_LOG_DEBUG("Value is NULL or empty for key %s", key);
-        err = send_all(conn->sock, "END\r\n", 5);
-        if (err != INFRA_OK) {
-            INFRA_LOG_ERROR("Failed to send END response: %d", err);
-            conn->should_close = true;
-            return -1;
-        }
+        free(pair.value);  // 确保释放内存
         return 0;
     }
 
@@ -529,37 +530,28 @@ static int handle_get(memkv_conn_t* conn, const char* key) {
         return -1;
     }
 
-    // 发送值的结束标记
+    // 发送值后的换行
     err = send_all(conn->sock, "\r\n", 2);
     if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to send value terminator: %d", err);
+        INFRA_LOG_ERROR("Failed to send newline: %d", err);
         free(pair.value);
         conn->should_close = true;
         return -1;
     }
 
-    free(pair.value);
     INFRA_LOG_INFO("Successfully sent key-value pair: [%s]=[%.*s]", 
                    key, (int)pair.value_len, (char*)pair.value);
-
-    // 发送 END 标记
-    err = send_all(conn->sock, "END\r\n", 5);
-    if (err != INFRA_OK) {
-        INFRA_LOG_ERROR("Failed to send END response: %d", err);
-        conn->should_close = true;
-        return -1;
-    }
-
+    free(pair.value);
     return 1;
 }
 
 static void handle_request(memkv_conn_t* conn) {
     if (!conn || !conn->rx_buf || conn->sock <= 0) {
-        INFRA_LOG_ERROR("Invalid parameters");
+        INFRA_LOG_ERROR("Invalid connection state");
         return;
     }
 
-    // 计算剩余缓冲区空间
+    // 检查缓冲区空间
     size_t remaining_space = MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1;
     if (remaining_space < 1024) {  // 如果剩余空间小于1KB
         if (conn->set_bytes > 0) {  // 如果正在处理SET命令的数据部分
@@ -567,54 +559,55 @@ static void handle_request(memkv_conn_t* conn) {
             remaining_space = MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1;
             if (remaining_space == 0) {
                 INFRA_LOG_ERROR("Buffer full while receiving SET data");
+                send_all(conn->sock, "SERVER_ERROR buffer full\r\n", 24);
                 conn->should_close = true;
                 return;
             }
         } else {
             // 移动未完成的命令到缓冲区开始
-            size_t last_line_pos = 0;
-            for (size_t i = 0; i < conn->rx_len; i++) {
-                if (conn->rx_buf[i] == '\n') {
-                    last_line_pos = i + 1;
-                }
+            if (conn->rx_len > 0) {
+                memmove(conn->rx_buf, conn->rx_buf, conn->rx_len);
             }
-            if (last_line_pos > 0) {
-                size_t remaining = conn->rx_len - last_line_pos;
-                memmove(conn->rx_buf, conn->rx_buf + last_line_pos, remaining);
-                conn->rx_len = remaining;
-                remaining_space = MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1;
-            } else if (conn->rx_len >= MEMKV_CONN_BUFFER_SIZE - 1) {
-                // 命令行太长，可能是攻击
-                INFRA_LOG_ERROR("Command line too long from %s", conn->client_addr);
-                conn->should_close = true;
-                return;
-            }
+            remaining_space = MEMKV_CONN_BUFFER_SIZE - conn->rx_len - 1;
         }
     }
 
     // 接收数据
     size_t received = 0;
     infra_error_t err = infra_net_recv(conn->sock, 
-        conn->rx_buf + conn->rx_len, 
-        remaining_space,
-        &received);
+                                      conn->rx_buf + conn->rx_len,
+                                      remaining_space, 
+                                      &received);
     
-    if (err != INFRA_OK) {
-        if (err != INFRA_ERROR_WOULD_BLOCK) {
-            INFRA_LOG_ERROR("Failed to receive data from %s: %d", conn->client_addr, err);
-            conn->should_close = true;
+    if (err == INFRA_ERROR_IO) {
+        // 检查是否是非阻塞错误
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;  // 暂时没有数据可读，稍后再试
         }
+        INFRA_LOG_ERROR("Failed to receive data from %s: %s", 
+                        conn->client_addr, strerror(errno));
+        conn->should_close = true;
+        return;
+    } else if (err != INFRA_OK) {
+        INFRA_LOG_ERROR("Failed to receive data from %s: %d", 
+                        conn->client_addr, err);
+        conn->should_close = true;
         return;
     }
 
-    if (received > 0) {
-        conn->rx_len += received;
-        conn->rx_buf[conn->rx_len] = '\0';  // 确保字符串以 null 结尾
-        conn->last_active_time = time(NULL);
-
-        INFRA_LOG_DEBUG("Received %zu bytes from %s, total buffer size: %zu", 
-                    received, conn->client_addr, conn->rx_len);
+    if (received == 0) {
+        // 客户端关闭了连接
+        INFRA_LOG_INFO("Client %s closed connection", conn->client_addr);
+        conn->should_close = true;
+        return;
     }
+
+    conn->rx_len += received;
+    conn->rx_buf[conn->rx_len] = '\0';  // 确保字符串以 null 结尾
+    conn->last_active_time = time(NULL);
+
+    INFRA_LOG_DEBUG("Received %zu bytes from %s, total buffer size: %zu", 
+                received, conn->client_addr, conn->rx_len);
 
     // 处理接收到的命令
     char* line = conn->rx_buf;
@@ -697,18 +690,15 @@ static void handle_request(memkv_conn_t* conn) {
         conn->total_commands++;
 
         // 处理命令
-        if (strcmp(cmd, "get") == 0) {
+        if (strncmp(cmd, "get", 3) == 0) {
             // 检查是否有更多的参数
             char* next_key = key;
-            bool found = false;
             bool error_occurred = false;
             
             while (next_key && *next_key && !error_occurred && !conn->should_close) {
                 // 处理当前 key
                 int result = handle_get(conn, next_key);
-                if (result > 0) {
-                    found = true;
-                } else if (result < 0) {
+                if (result < 0) {
                     error_occurred = true;
                     break;
                 }

@@ -146,6 +146,7 @@ static void async_delay(InfraxAsync* self, void* arg) {
     }
     
     // Get current time and calculate elapsed
+    //TODO use core->time_now_ms() instead of clock_gettime
     struct timespec current;
     clock_gettime(CLOCK_MONOTONIC, &current);
     struct timespec* start = (struct timespec*)ctx->user_data;

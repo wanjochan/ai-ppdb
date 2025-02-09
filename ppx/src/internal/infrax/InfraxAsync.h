@@ -13,15 +13,8 @@ typedef struct InfraxAsyncContext InfraxAsyncContext;
 // Function type for async operations
 typedef void (*AsyncFn)(InfraxAsync* self, void* arg);
 
-//我觉得 RUNNING 和 YIELD 有点像，看了代码其实可以合并？
-
 // Async task states
 typedef enum {
-    // INFRAX_ASYNC_INIT = 0,    // Initial state
-    // INFRAX_ASYNC_RUNNING,     // Currently running
-    // INFRAX_ASYNC_YIELD,       // Yielded control
-    // INFRAX_ASYNC_DONE,        // Completed
-    // INFRAX_ASYNC_ERROR,        // Error occurred
     INFRAX_ASYNC_PENDING,    //INIT,RUNNING,YIELD
     INFRAX_ASYNC_FULFILLED,  // from DONE
     INFRAX_ASYNC_REJECTED    // from ERROR
@@ -37,9 +30,8 @@ typedef struct {
 // Internal context structure
 struct InfraxAsyncContext {
     jmp_buf env;           // Saved execution context
-    int yield_count;       // Number of yields
+    int yield_count;       // Number of yields for debug
     void* user_data;       // User data for async operation
-    int pipe_fd[2];        // Status notification pipe
 };
 
 // Instance structure
@@ -51,13 +43,15 @@ struct InfraxAsync {
     AsyncFn fn;                     // Async function
     void* arg;                      // Function argument
     InfraxAsyncStatus state;        // Current state
-    int error;                      // Error code
     void* result;                   // Operation result
+
+    //TODO change to InfraxError later
+    int error;                      // Error code
+    char message[128];              // Error message
 
     // Instance methods
     InfraxAsync* (*start)(InfraxAsync* self, AsyncFn fn, void* arg);
     void (*yield)(InfraxAsync* self);
-    // InfraxAsyncStatus (*status)(InfraxAsync* self);//TODO 这个准备取消，直接 ->state 访问
 };
 
 //NOTES: interal use
