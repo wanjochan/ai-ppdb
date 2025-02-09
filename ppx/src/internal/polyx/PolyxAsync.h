@@ -40,7 +40,7 @@ typedef struct PolyxAsync {
     struct PolyxAsync* (*start)(struct PolyxAsync* self);
     void (*cancel)(struct PolyxAsync* self);
     bool (*is_done)(struct PolyxAsync* self);
-    PolyxAsyncResult* (*get_result)(struct PolyxAsync* self);
+    void* (*get_result)(struct PolyxAsync* self, size_t* size);
     void (*free)(struct PolyxAsync* self);
 } PolyxAsync;
 
@@ -69,7 +69,7 @@ void polyx_async_free(PolyxAsync* self);
 PolyxAsync* polyx_async_start(PolyxAsync* self);
 void polyx_async_cancel(PolyxAsync* self);
 bool polyx_async_is_done(PolyxAsync* self);
-PolyxAsyncResult* polyx_async_get_result(PolyxAsync* self);
+void* polyx_async_get_result(PolyxAsync* self, size_t* size);
 
 // 工厂方法
 PolyxAsync* polyx_async_read_file(const char* path);

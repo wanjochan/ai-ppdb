@@ -58,7 +58,7 @@ static void async_read_file(InfraxAsync* self, void* arg) {
         if (ctx->bytes_processed < ctx->size) {
             ctx->yield_count++;
             log->debug(log, "async_read_file: yielding after successful read");
-            self->yield(self);
+            InfraxAsyncClass.yield(self);
         } else {
             close(ctx->fd);
             ctx->fd = -1;
@@ -74,7 +74,7 @@ static void async_read_file(InfraxAsync* self, void* arg) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             ctx->yield_count++;
             log->debug(log, "async_read_file: yielding on EAGAIN");
-            self->yield(self);
+            InfraxAsyncClass.yield(self);
         } else {
             // Error occurred
             log->debug(log, "async_read_file: read error, errno=%d", errno);
@@ -121,7 +121,7 @@ static void async_write_file(InfraxAsync* self, void* arg) {
         if (ctx->bytes_processed < ctx->size) {
             ctx->yield_count++;
             log->debug(log, "async_write_file: yielding after successful write");
-            self->yield(self);
+            InfraxAsyncClass.yield(self);
         } else {
             close(ctx->fd);
             ctx->fd = -1;
@@ -131,7 +131,7 @@ static void async_write_file(InfraxAsync* self, void* arg) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             ctx->yield_count++;
             log->debug(log, "async_write_file: yielding on EAGAIN");
-            self->yield(self);
+            InfraxAsyncClass.yield(self);
         } else {
             // Error occurred
             log->debug(log, "async_write_file: write error, errno=%d", errno);
@@ -174,7 +174,7 @@ void test_polyx_async_read_file(void) {
     INFRAX_ASSERT(core, async != NULL);
     
     log->debug(log, "test_polyx_async_read_file: starting async task");
-    async->start(async, async_read_file, &ctx);
+    InfraxAsyncClass.start(async);
     
     // Wait for completion
     log->debug(log, "test_polyx_async_read_file: waiting for completion");
@@ -182,7 +182,7 @@ void test_polyx_async_read_file(void) {
     while (async->state != INFRAX_ASYNC_FULFILLED && 
            async->state != INFRAX_ASYNC_REJECTED) {
         if (async->state == INFRAX_ASYNC_PENDING) {
-            async->start(async, async_read_file, &ctx);
+            InfraxAsyncClass.start(async);
         }
         time_t now = time(NULL);
         if (now - last_status >= 1) {  // Log status every second
@@ -230,7 +230,7 @@ void test_polyx_async_write_file(void) {
     INFRAX_ASSERT(core, async != NULL);
     
     log->debug(log, "test_polyx_async_write_file: starting async task");
-    async->start(async, async_write_file, &ctx);
+    InfraxAsyncClass.start(async);
     
     // Wait for completion
     log->debug(log, "test_polyx_async_write_file: waiting for completion");
@@ -238,7 +238,7 @@ void test_polyx_async_write_file(void) {
     while (async->state != INFRAX_ASYNC_FULFILLED && 
            async->state != INFRAX_ASYNC_REJECTED) {
         if (async->state == INFRAX_ASYNC_PENDING) {
-            async->start(async, async_write_file, &ctx);
+            InfraxAsyncClass.start(async);
         }
         time_t now = time(NULL);
         if (now - last_status >= 1) {  // Log status every second
@@ -304,9 +304,8 @@ static void async_delay_func(InfraxAsync* self, void* arg) {
         return;
     }
     
-    // Not done yet, yield and continue
-    log->debug(log, "async_delay: yielding");
-    self->yield(self);
+    // Yield until delay is complete
+    InfraxAsyncClass.yield(self);
 }
 
 void test_polyx_async_delay(void) {
@@ -326,8 +325,8 @@ void test_polyx_async_delay(void) {
     INFRAX_ASSERT(core, async != NULL);
     
     // Start the delay
-    log->debug(log, "test_polyx_async_delay: starting delay");
-    async->start(async, async_delay_func, &ctx);
+    log->debug(log, "test_polyx_async_delay: starting async task");
+    InfraxAsyncClass.start(async);
     
     // Wait for completion
     log->debug(log, "test_polyx_async_delay: waiting for completion");
@@ -335,7 +334,7 @@ void test_polyx_async_delay(void) {
     while (async->state != INFRAX_ASYNC_FULFILLED && 
            async->state != INFRAX_ASYNC_REJECTED) {
         if (async->state == INFRAX_ASYNC_PENDING) {
-            async->start(async, async_delay_func, &ctx);
+            InfraxAsyncClass.start(async);
         }
         time_t now = time(NULL);
         if (now - last_status >= 1) {  // Log status every second
@@ -376,24 +375,24 @@ void test_polyx_async_parallel(void) {
     
     // Start all tasks
     log->debug(log, "test_polyx_async_parallel: starting all tasks");
-    delay1->start(delay1, async_delay_func, &ctx1);
-    delay2->start(delay2, async_delay_func, &ctx2);
-    delay3->start(delay3, async_delay_func, &ctx3);
+    InfraxAsyncClass.start(delay1);
+    InfraxAsyncClass.start(delay2);
+    InfraxAsyncClass.start(delay3);
     
     // Wait for all tasks to complete
     log->debug(log, "test_polyx_async_parallel: waiting for completion");
     static time_t last_status = 0;
-    while (delay1->state != INFRAX_ASYNC_FULFILLED || 
-           delay2->state != INFRAX_ASYNC_FULFILLED || 
-           delay3->state != INFRAX_ASYNC_FULFILLED) {
+    while (!InfraxAsyncClass.is_done(delay1) || 
+           !InfraxAsyncClass.is_done(delay2) || 
+           !InfraxAsyncClass.is_done(delay3)) {
         if (delay1->state == INFRAX_ASYNC_PENDING) {
-            delay1->start(delay1, async_delay_func, &ctx1);
+            InfraxAsyncClass.start(delay1);
         }
         if (delay2->state == INFRAX_ASYNC_PENDING) {
-            delay2->start(delay2, async_delay_func, &ctx2);
+            InfraxAsyncClass.start(delay2);
         }
         if (delay3->state == INFRAX_ASYNC_PENDING) {
-            delay3->start(delay3, async_delay_func, &ctx3);
+            InfraxAsyncClass.start(delay3);
         }
         time_t now = time(NULL);
         if (now - last_status >= 1) {  // Log status every second
@@ -426,17 +425,19 @@ void test_polyx_async_sequence(void) {
     INFRAX_ASSERT(core, delay1 != NULL);
     
     log->debug(log, "test_polyx_async_sequence: starting first task");
-    delay1->start(delay1, async_delay_func, &ctx1);
+    InfraxAsyncClass.start(delay1);
     
-    static time_t last_status1 = 0;
-    while (delay1->state != INFRAX_ASYNC_FULFILLED) {
+    // Wait for first task completion
+    log->debug(log, "test_polyx_async_sequence: waiting for first task");
+    static time_t last_status = 0;
+    while (!InfraxAsyncClass.is_done(delay1)) {
         if (delay1->state == INFRAX_ASYNC_PENDING) {
-            delay1->start(delay1, async_delay_func, &ctx1);
+            InfraxAsyncClass.start(delay1);
         }
         time_t now = time(NULL);
-        if (now - last_status1 >= 1) {  // Log status every second
+        if (now - last_status >= 1) {  // Log status every second
             log->debug(log, "test_polyx_async_sequence: waiting for first task...");
-            last_status1 = now;
+            last_status = now;
         }
         core->sleep_ms(core, 10);
     }
@@ -449,17 +450,18 @@ void test_polyx_async_sequence(void) {
     INFRAX_ASSERT(core, delay2 != NULL);
     
     log->debug(log, "test_polyx_async_sequence: starting second task");
-    delay2->start(delay2, async_delay_func, &ctx2);
+    InfraxAsyncClass.start(delay2);
     
-    static time_t last_status2 = 0;
-    while (delay2->state != INFRAX_ASYNC_FULFILLED) {
+    // Wait for second task completion
+    log->debug(log, "test_polyx_async_sequence: waiting for second task");
+    while (!InfraxAsyncClass.is_done(delay2)) {
         if (delay2->state == INFRAX_ASYNC_PENDING) {
-            delay2->start(delay2, async_delay_func, &ctx2);
+            InfraxAsyncClass.start(delay2);
         }
         time_t now = time(NULL);
-        if (now - last_status2 >= 1) {  // Log status every second
+        if (now - last_status >= 1) {  // Log status every second
             log->debug(log, "test_polyx_async_sequence: waiting for second task...");
-            last_status2 = now;
+            last_status = now;
         }
         core->sleep_ms(core, 10);
     }
