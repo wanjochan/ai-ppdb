@@ -12,13 +12,25 @@ extern const InfraxMemoryClassType InfraxMemoryClass;
 // 全局 Core 实例
 static InfraxCore* g_core = NULL;
 
-// 内部函数声明
+// Internal callback functions for InfraxAsync
+// These functions are intended to be the actual implementations of async operations
+// but most of them are not implemented yet, and some may not be necessary
+
+// File operation callbacks
+// TODO: Consider if these should be moved to a dedicated file operations module
 void async_read_file_fn(InfraxAsync* async, void* arg);
 void async_write_file_fn(InfraxAsync* async, void* arg);
+
+// HTTP operation callbacks
+// TODO: These might be better placed in a separate network/HTTP module
 void async_http_get_fn(InfraxAsync* async, void* arg);
 void async_http_post_fn(InfraxAsync* async, void* arg);
+
+// Timer operation callbacks
 void async_delay_fn(InfraxAsync* async, void* arg);
 void async_interval_fn(InfraxAsync* async, void* arg);
+
+// Task composition callbacks
 void async_parallel_fn(InfraxAsync* async, void* arg);
 void async_sequence_fn(InfraxAsync* async, void* arg);
 

@@ -33,6 +33,7 @@ struct InfraxAsyncContext {
     jmp_buf env;           // Saved execution context
     int yield_count;       // Number of yields for debug
     void* user_data;       // User data for async operation
+    void* fn_state;        // Function state for resuming after yield
 };
 
 // Instance structure

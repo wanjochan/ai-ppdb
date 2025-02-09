@@ -116,7 +116,8 @@ build_tests() {
         else
             echo "Skipping auto-run for ${test_name} (manual run required)"
             # 复制到测试目录方便访问
-            cp "${test_bin}" "${TEST_DIR}/arch/${test_name}"
+            #cp "${test_bin}" "${TEST_DIR}/arch/${test_name}"
+            echo "bin=${test_bin}"
         fi
     done
 }
