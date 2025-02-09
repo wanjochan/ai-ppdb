@@ -29,6 +29,8 @@ sh ppdb/scripts/test_memkv.sh -k test_large_value
 sh ppdb/scripts/test_memkv.sh
 ```
 
+#sh ppdb/scripts/test_memkv.sh -k test_flags
+
 
 】】】
 

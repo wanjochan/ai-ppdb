@@ -1,7 +1,8 @@
 #ifndef INFRAX_ASYNC_H
 #define INFRAX_ASYNC_H
 
-//底层异步原主，适合同一线程（包括主线程）内的非阻塞调度
+//async with setjmp/longjmp
+
 #include <setjmp.h>
 #include <stdbool.h>
 
@@ -12,13 +13,18 @@ typedef struct InfraxAsyncContext InfraxAsyncContext;
 // Function type for async operations
 typedef void (*AsyncFn)(InfraxAsync* self, void* arg);
 
+//我觉得 RUNNING 和 YIELD 有点像，看了代码其实可以合并？
+
 // Async task states
 typedef enum {
-    INFRAX_ASYNC_INIT = 0,    // Initial state
-    INFRAX_ASYNC_RUNNING,     // Currently running
-    INFRAX_ASYNC_YIELD,       // Yielded control
-    INFRAX_ASYNC_DONE,        // Completed
-    INFRAX_ASYNC_ERROR        // Error occurred
+    // INFRAX_ASYNC_INIT = 0,    // Initial state
+    // INFRAX_ASYNC_RUNNING,     // Currently running
+    // INFRAX_ASYNC_YIELD,       // Yielded control
+    // INFRAX_ASYNC_DONE,        // Completed
+    // INFRAX_ASYNC_ERROR,        // Error occurred
+    INFRAX_ASYNC_PENDING,    //INIT,RUNNING,YIELD
+    INFRAX_ASYNC_FULFILLED,  // from DONE
+    INFRAX_ASYNC_REJECTED    // from ERROR
 } InfraxAsyncStatus;
 
 // Result structure for async operations

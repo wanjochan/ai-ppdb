@@ -12,13 +12,13 @@ InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg);
 void infrax_async_yield(InfraxAsync* self);
 InfraxAsyncStatus infrax_async_status(InfraxAsync* self);
 
-void notify_state_change(InfraxAsync* self) {
-    if (!self || !self->result) return;
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
-    
-    char buffer[sizeof(InfraxAsyncStatus)];
-    memcpy(buffer, &self->state, sizeof(buffer));
-}
+//void notify_state_change(InfraxAsync* self) {
+//    if (!self || !self->result) return;
+//    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
+//    
+//    char buffer[sizeof(InfraxAsyncStatus)];
+//    memcpy(buffer, &self->state, sizeof(buffer));
+//}
 
 // Implementation of instance methods
 void infrax_async_yield(InfraxAsync* self) {
@@ -27,10 +27,10 @@ void infrax_async_yield(InfraxAsync* self) {
     if (!ctx) return;
     
     ctx->yield_count++;
-    self->state = INFRAX_ASYNC_YIELD;
+    self->state = INFRAX_ASYNC_PENDING;
     
-    // Notify state change and yield CPU
-    notify_state_change(self);
+    //// Notify state change and yield CPU
+    //notify_state_change(self);
     sched_yield();
     
     longjmp(ctx->env, 1);  // Return to saved context
@@ -39,45 +39,18 @@ void infrax_async_yield(InfraxAsync* self) {
 InfraxAsync* infrax_async_start(InfraxAsync* self, AsyncFn fn, void* arg) {
     if (!self || !fn) return NULL;
     
-    // Initialize task if not already initialized
-    if (self->state == INFRAX_ASYNC_INIT) {
-        self->fn = fn;
-        self->arg = arg;
-        self->error = 0;
-        
-        // Create execution context
-        InfraxAsyncContext* ctx = malloc(sizeof(InfraxAsyncContext));
-        if (!ctx) {
-            self->state = INFRAX_ASYNC_ERROR;
-            self->error = 1;  // Memory allocation error
-            return self;
-        }
-        
-        ctx->yield_count = 0;
-        ctx->user_data = NULL;
-        self->result = ctx;
-        
-        notify_state_change(self);
-    }
-    
-    // Execute or resume task
     InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
     if (!ctx) {
-        self->state = INFRAX_ASYNC_ERROR;
+        self->state = INFRAX_ASYNC_REJECTED;
         return self;
     }
     
     if (setjmp(ctx->env) == 0) {
-        // First entry or resume from yield
-        self->state = INFRAX_ASYNC_RUNNING;
-        notify_state_change(self);
-        
+        self->state = INFRAX_ASYNC_PENDING;
+        //notify_state_change(self);
         self->fn(self, self->arg);
-        
-        // If we get here, the function completed without yielding
-        self->state = INFRAX_ASYNC_DONE;
-        notify_state_change(self);
-        
+        self->state = INFRAX_ASYNC_FULFILLED;
+        //notify_state_change(self);//TODO
         // Clean up user data if present
         if (ctx->user_data) {
             free(ctx->user_data);
@@ -100,18 +73,34 @@ InfraxAsync* infrax_async_new(AsyncFn fn, void* arg) {
     rt->self = rt;
     rt->fn = fn;
     rt->arg = arg;
-    rt->state = INFRAX_ASYNC_INIT;
     rt->error = 0;
     rt->result = NULL;
-    
-    // Set instance methods
-    static const InfraxAsync instance_methods = {
 
-        .yield = infrax_async_yield,
-        .start = infrax_async_start
-    };
-    rt->start = instance_methods.start;
-    rt->yield = instance_methods.yield;
+        rt->state = INFRAX_ASYNC_PENDING;
+    
+        // Create execution context
+        InfraxAsyncContext* ctx = malloc(sizeof(InfraxAsyncContext));
+        if (!ctx) {
+            rt->state = INFRAX_ASYNC_REJECTED;
+            rt->error = 1;  // Memory allocation error
+            return rt;
+        }
+        
+        ctx->yield_count = 0;//for debug
+        ctx->user_data = NULL;
+        rt->result = ctx;
+        
+        //notify_state_change(self);
+
+    // Set instance methods
+    //static const InfraxAsync instance_methods = {
+    //    .yield = infrax_async_yield,
+    //    .start = infrax_async_start
+    //};
+    //rt->start = instance_methods.start;
+    //rt->yield = instance_methods.yield;
+    rt->start = infrax_async_start;
+    rt->yield = infrax_async_yield;
 
     return rt;
 }

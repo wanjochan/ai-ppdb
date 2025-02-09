@@ -119,5 +119,30 @@ class TestMemKVProtocol(unittest.TestCase):
         self.assertTrue(self.client.set('large_key', large_value))
         self.assertEqual(self.client.get('large_key'), large_value.encode())
 
+    def test_flags(self):
+        # 测试 flags 参数
+        logging.info("Testing flags parameter...")
+        key, value = 'key1', 'value1'
+        flags = 12345  # 测试一个非零的 flags 值
+        
+        logging.debug(f"Setting key='{key}' value='{value}' with flags={flags}")
+        try:
+            self.client.set(key, value, flags=flags)
+        except Exception as e:
+            logging.error(f"Error setting key with flags: {e}")
+            raise
+        
+        logging.debug(f"Getting key with flags")
+        try:
+            result = self.client.get_many([key])
+            got_value = result[key][0]  # (value, flags) tuple
+            got_flags = result[key][1]
+            logging.debug(f"Got value: {got_value}, flags: {got_flags}")
+            self.assertEqual(got_value, b'value1')
+            self.assertEqual(got_flags, flags)
+        except Exception as e:
+            logging.error(f"Error getting key with flags: {e}")
+            raise
+
 if __name__ == '__main__':
     unittest.main()
