@@ -299,6 +299,16 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
         return NULL;
     }
 
+    // Set SO_REUSEADDR if requested
+    if (config->reuse_addr) {
+        int reuse = 1;
+        if (INFRAX_ERROR_IS_ERR(set_socket_option(sock_instance->native_handle, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)))) {
+            close(sock_instance->native_handle);
+            memory->dealloc(memory, sock_instance);
+            return NULL;
+        }
+    }
+
     // Set socket options
     if (config->is_nonblocking) {
         if (INFRAX_ERROR_IS_ERR(set_socket_nonblocking(sock_instance->native_handle, true))) {

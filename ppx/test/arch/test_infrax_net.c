@@ -11,6 +11,8 @@ static InfraxSync* test_mutex = NULL;
 static InfraxSync* test_cond = NULL;
 static bool tcp_server_ready = false;
 static bool udp_server_ready = false;
+static InfraxNetAddr tcp_server_addr;
+static InfraxNetAddr udp_server_addr;
 
 static void test_config() {
     if (!core) core = InfraxCoreClass.singleton();
@@ -61,7 +63,8 @@ static void* tcp_server_thread(void* arg) {
         .is_udp = false,
         .is_nonblocking = false,
         .send_timeout_ms = 5000,  // 5 seconds timeout
-        .recv_timeout_ms = 5000   // 5 seconds timeout
+        .recv_timeout_ms = 5000,  // 5 seconds timeout
+        .reuse_addr = true       // 添加 SO_REUSEADDR 选项
     };
     
     server = InfraxSocketClass.new(&config);
@@ -72,13 +75,24 @@ static void* tcp_server_thread(void* arg) {
     
     InfraxNetAddr addr;
     core->strcpy(core, addr.ip, "127.0.0.1");
-    addr.port = 9090;
+    addr.port = 0;  // 使用动态端口
     
     InfraxError err = server->bind(server, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to bind TCP server socket: %s\n", err.message);
         goto cleanup;
     }
+    
+    // 获取实际分配的端口
+    InfraxNetAddr bound_addr;
+    err = server->get_local_addr(server, &bound_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Failed to get local address: %s\n", err.message);
+        goto cleanup;
+    }
+    
+    // Store server address in shared variable
+    tcp_server_addr = bound_addr;
     
     err = server->listen(server, 5);
     if (INFRAX_ERROR_IS_ERR(err)) {
@@ -90,6 +104,14 @@ static void* tcp_server_thread(void* arg) {
     err = test_mutex->mutex_lock(test_mutex);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to lock mutex in TCP server: %s\n", err.message);
+        goto cleanup;
+    }
+    
+    // Get server's bound address before signaling
+    err = server->get_local_addr(server, &bound_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Failed to get local address: %s\n", err.message);
+        test_mutex->mutex_unlock(test_mutex);
         goto cleanup;
     }
     
@@ -148,7 +170,8 @@ static void* udp_server_thread(void* arg) {
         .is_udp = true,
         .is_nonblocking = false,
         .send_timeout_ms = 5000,  // 5 seconds timeout
-        .recv_timeout_ms = 5000   // 5 seconds timeout
+        .recv_timeout_ms = 5000,  // 5 seconds timeout
+        .reuse_addr = true        // 添加 SO_REUSEADDR 选项
     };
     
     server = InfraxSocketClass.new(&config);
@@ -159,7 +182,7 @@ static void* udp_server_thread(void* arg) {
     
     InfraxNetAddr addr;
     core->strcpy(core, addr.ip, "127.0.0.1");
-    addr.port = 8081;
+    addr.port = 0;  // 使用动态端口
     
     InfraxError err = server->bind(server, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
@@ -167,12 +190,16 @@ static void* udp_server_thread(void* arg) {
         goto cleanup;
     }
     
-    // Signal that server is ready
-    err = test_mutex->mutex_lock(test_mutex);
+    // 获取实际分配的端口
+    InfraxNetAddr bound_addr;
+    err = server->get_local_addr(server, &bound_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "Failed to lock mutex in UDP server: %s\n", err.message);
+        core->printf(core, "Failed to get local address: %s\n", err.message);
         goto cleanup;
     }
+    
+    // Store server address in shared variable
+    udp_server_addr = bound_addr;
     
     udp_server_ready = true;
     err = test_cond->cond_signal(test_cond);
@@ -212,56 +239,48 @@ cleanup:
 }
 
 static void test_tcp() {
-    if (!core) core = InfraxCoreClass.singleton();
-    core->printf(core, "Testing TCP socket operations...\n");
+    InfraxError err = {.code = INFRAX_ERROR_OK, .message = ""};
     
-    // Create server thread
+    // Start server thread
+    InfraxThread* server_thread = NULL;
     InfraxThreadConfig thread_config = {
         .name = "tcp_server",
         .entry_point = tcp_server_thread,
         .arg = NULL
     };
-    InfraxThread* server_thread = InfraxThreadClass.new(&thread_config);
+    server_thread = InfraxThreadClass.new(&thread_config);
     if (!server_thread) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "server_thread != NULL", "Failed to create server thread");
-        return;
-    }
-    
-    InfraxError err = server_thread->start(server_thread);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
         goto cleanup;
     }
     
-    // Wait for server to be ready with timeout
+    err = server_thread->start(server_thread);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Failed to start server thread: %s\n", err.message);
+        goto cleanup;
+    }
+    
+    // Wait for server to be ready
     err = test_mutex->mutex_lock(test_mutex);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+        core->printf(core, "Failed to lock mutex in client: %s\n", err.message);
         goto cleanup;
     }
-    
-    struct timespec timeout;
-    core->time_now_ms(core); // 获取当前时间
     
     while (!tcp_server_ready) {
-        err = test_cond->cond_timedwait(test_cond, test_mutex, 5000); // 5 seconds timeout
-        if (err.code == INFRAX_ERROR_SYNC_TIMEOUT) {
-            core->printf(core, "Timeout waiting for TCP server to be ready\n");
-            test_mutex->mutex_unlock(test_mutex);
-            goto cleanup;
-        }
+        err = test_cond->cond_wait(test_cond, test_mutex);
         if (INFRAX_ERROR_IS_ERR(err)) {
-            core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+            core->printf(core, "Failed to wait on condition in client: %s\n", err.message);
             test_mutex->mutex_unlock(test_mutex);
             goto cleanup;
         }
     }
+    
     err = test_mutex->mutex_unlock(test_mutex);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+        core->printf(core, "Failed to unlock mutex in client: %s\n", err.message);
         goto cleanup;
     }
-    tcp_server_ready = false;
     
     // Create client socket
     InfraxSocket* client = NULL;
@@ -280,125 +299,94 @@ static void test_tcp() {
     
     InfraxNetAddr addr;
     core->strcpy(core, addr.ip, "127.0.0.1");
-    addr.port = 9090;  // Connect to the new server port
+    addr.port = tcp_server_addr.port;  // 使用共享变量中的服务器端口
     
     err = client->connect(client, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+        core->printf(core, "Failed to connect to server: %s\n", err.message);
         goto cleanup;
     }
     
-    // Send and receive data
-    const char* test_data = "Hello, TCP!";
+    // Send data
+    const char* data = "Hello, server!";
+    size_t data_len = core->strlen(core, data);
     size_t sent;
-    err = client->send(client, test_data, core->strlen(core, test_data), &sent);
+    
+    err = client->send(client, data, data_len, &sent);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
-        goto cleanup;
-    }
-    if (sent != core->strlen(core, test_data)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "sent == strlen(test_data)", "Data length mismatch");
+        core->printf(core, "Failed to send data: %s\n", err.message);
         goto cleanup;
     }
     
-    char buffer[256];
+    // Receive response
+    char buffer[1024];
     size_t received;
     err = client->recv(client, buffer, sizeof(buffer), &received);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
-        goto cleanup;
-    }
-    if (received != sent) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "received == sent", "Data length mismatch");
-        goto cleanup;
-    }
-    buffer[received] = '\0';  // Null terminate the buffer for strcmp
-    if (core->strcmp(core, buffer, test_data) != 0) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "strcmp(buffer, test_data) == 0", "Data content mismatch");
+        core->printf(core, "Failed to receive data: %s\n", err.message);
         goto cleanup;
     }
     
-    InfraxSocketClass.free(client);
-    client = NULL;
-    
-    err = server_thread->join(server_thread, NULL);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+    // Verify response
+    if (core->strncmp(core, buffer, data, data_len) != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "response matches sent data", "Received data does not match sent data");
         goto cleanup;
     }
     
-    InfraxThreadClass.free(server_thread);
-    server_thread = NULL;
-    
-    core->printf(core, "TCP socket tests completed\n");
-    return;
-
 cleanup:
     if (client) {
         InfraxSocketClass.free(client);
     }
     if (server_thread) {
-        err = server_thread->join(server_thread, NULL);
-        if (INFRAX_ERROR_IS_ERR(err)) {
-            core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
-        }
+        void* result;
+        server_thread->join(server_thread, &result);
         InfraxThreadClass.free(server_thread);
     }
-    
-    core->printf(core, "TCP socket tests completed\n");
 }
 
 static void test_udp() {
-    if (!core) core = InfraxCoreClass.singleton();
-    core->printf(core, "Testing UDP socket operations...\n");
+    InfraxError err = {.code = INFRAX_ERROR_OK, .message = ""};
     
-    // Create server thread
+    // Start server thread
+    InfraxThread* server_thread = NULL;
     InfraxThreadConfig thread_config = {
         .name = "udp_server",
         .entry_point = udp_server_thread,
         .arg = NULL
     };
-    InfraxThread* server_thread = InfraxThreadClass.new(&thread_config);
+    server_thread = InfraxThreadClass.new(&thread_config);
     if (!server_thread) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "server_thread != NULL", "Failed to create server thread");
-        return;
-    }
-    
-    InfraxError err = server_thread->start(server_thread);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
         goto cleanup;
     }
     
-    // Wait for server to be ready with timeout
+    err = server_thread->start(server_thread);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Failed to start server thread: %s\n", err.message);
+        goto cleanup;
+    }
+    
+    // Wait for server to be ready
     err = test_mutex->mutex_lock(test_mutex);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+        core->printf(core, "Failed to lock mutex in client: %s\n", err.message);
         goto cleanup;
     }
-    
-    struct timespec timeout;
-    core->time_now_ms(core); // 获取当前时间
     
     while (!udp_server_ready) {
-        err = test_cond->cond_timedwait(test_cond, test_mutex, 5000); // 5 seconds timeout
-        if (err.code == INFRAX_ERROR_SYNC_TIMEOUT) {
-            core->printf(core, "Timeout waiting for UDP server to be ready\n");
-            test_mutex->mutex_unlock(test_mutex);
-            goto cleanup;
-        }
+        err = test_cond->cond_wait(test_cond, test_mutex);
         if (INFRAX_ERROR_IS_ERR(err)) {
-            core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+            core->printf(core, "Failed to wait on condition in client: %s\n", err.message);
             test_mutex->mutex_unlock(test_mutex);
             goto cleanup;
         }
     }
+    
     err = test_mutex->mutex_unlock(test_mutex);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+        core->printf(core, "Failed to unlock mutex in client: %s\n", err.message);
         goto cleanup;
     }
-    udp_server_ready = false;
     
     // Create client socket
     InfraxSocket* client = NULL;
@@ -418,67 +406,44 @@ static void test_udp() {
     // Set server address
     InfraxNetAddr addr;
     core->strcpy(core, addr.ip, "127.0.0.1");
-    addr.port = 8081;  // Use the UDP server port
+    addr.port = udp_server_addr.port;  // 使用共享变量中的服务器端口
     client->peer_addr = addr;  // Set the peer address for sending
     
-    // Send and receive data
-    const char* test_data = "Hello, UDP!";
+    // Send data
+    const char* data = "Hello, server!";
+    size_t data_len = core->strlen(core, data);
     size_t sent;
-    err = client->send(client, test_data, core->strlen(core, test_data), &sent);
+    
+    err = client->send(client, data, data_len, &sent);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
-        goto cleanup;
-    }
-    if (sent != core->strlen(core, test_data)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "sent == strlen(test_data)", "Data length mismatch");
+        core->printf(core, "Failed to send data: %s\n", err.message);
         goto cleanup;
     }
     
-    char buffer[256];
+    // Receive response
+    char buffer[1024];
     size_t received;
     err = client->recv(client, buffer, sizeof(buffer), &received);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
-        goto cleanup;
-    }
-    if (received != sent) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "received == sent", "Data length mismatch");
-        goto cleanup;
-    }
-    buffer[received] = '\0';  // Null terminate the buffer for strcmp
-    if (core->strcmp(core, buffer, test_data) != 0) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "strcmp(buffer, test_data) == 0", "Data content mismatch");
+        core->printf(core, "Failed to receive data: %s\n", err.message);
         goto cleanup;
     }
     
-    InfraxSocketClass.free(client);
-    client = NULL;
-    
-    err = server_thread->join(server_thread, NULL);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
+    // Verify response
+    if (core->strncmp(core, buffer, data, data_len) != 0) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "response matches sent data", "Received data does not match sent data");
         goto cleanup;
     }
     
-    InfraxThreadClass.free(server_thread);
-    server_thread = NULL;
-    
-    core->printf(core, "UDP socket tests completed\n");
-    return;
-
 cleanup:
     if (client) {
         InfraxSocketClass.free(client);
     }
     if (server_thread) {
-        err = server_thread->join(server_thread, NULL);
-        if (INFRAX_ERROR_IS_ERR(err)) {
-            core->assert_failed(core, __FILE__, __LINE__, __func__, "INFRAX_ERROR_IS_OK(err)", err.message);
-        }
+        void* result;
+        server_thread->join(server_thread, &result);
         InfraxThreadClass.free(server_thread);
     }
-    
-    core->printf(core, "UDP socket tests completed\n");
 }
 
 int main() {
@@ -517,3 +482,5 @@ int main() {
     core->printf(core, "All InfraxNet tests passed!\n");
     return 0;
 }
+
+

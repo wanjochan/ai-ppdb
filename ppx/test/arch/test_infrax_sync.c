@@ -1,7 +1,4 @@
-// #include "cosmopolitan.h"
-// #include "libc/thread/thread.h"
-// #include "libc/thread/semaphore.h"
-// #include "libc/atomic.h"
+
 #include "internal/infrax/InfraxSync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"

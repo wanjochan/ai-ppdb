@@ -26,6 +26,7 @@ typedef struct {
 typedef struct {
     bool is_udp;           // true for UDP, false for TCP
     bool is_nonblocking;   // true for non-blocking mode
+    bool reuse_addr;       // true to enable SO_REUSEADDR
     uint32_t send_timeout_ms;
     uint32_t recv_timeout_ms;
 } InfraxSocketConfig;
