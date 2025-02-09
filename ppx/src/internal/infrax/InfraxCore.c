@@ -1,14 +1,5 @@
-// #include <stdarg.h>
-// #include <stdio.h>
-// #include <stdlib.h>
-#include "cosmopolitan.h"
 #include "internal/infrax/InfraxCore.h"
 
-// Forward declarations of internal functions
-// static void infrax_core_init(InfraxCore* self);
-// static void infrax_core_print(InfraxCore* self);
-
-// Printf forwarding implementation
 int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     va_list args;
     va_start(args, format);

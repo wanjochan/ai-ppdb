@@ -4,16 +4,10 @@
 //design pattern: singleton
 
 #include "cosmopolitan.h"
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
-#include <string.h>
-// #include "internal/infrax/InfraxError.h"
 
 //-----------------------------------------------------------------------------
 // Basic Types
 //-----------------------------------------------------------------------------
-
 typedef int32_t InfraxI32;
 typedef uint32_t InfraxU32;
 typedef int InfraxBool;

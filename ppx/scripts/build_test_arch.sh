@@ -16,6 +16,7 @@ clean_build() {
     rm -f "${TEST_DIR}/arch/test_infrax_net"
     rm -f "${TEST_DIR}/arch/test_infrax_async"
     rm -f "${TEST_DIR}/arch/test_polyx_async"
+    rm -f "${TEST_DIR}/arch/test_c1m"  # 添加新测试
 }
 
 # Set compile flags with all necessary include paths
@@ -44,6 +45,7 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_infrax_thread.c"
     "${TEST_DIR}/arch/test_infrax_async.c"
     "${TEST_DIR}/arch/test_polyx_async.c"
+    "${TEST_DIR}/arch/test_c1m.c"  # 添加新测试
 )
 
 # Build the new architecture library
@@ -98,23 +100,23 @@ build_tests() {
         
         echo "Building test: ${test_name}"
         "${CC}" ${CFLAGS} "${src}" -L"${build_dir}" -larch -o "${test_bin}"
-        
-        if [ -x "${test_bin}" ]; then
-            tests+=("${test_name}")
-        else
-            echo "Error: Failed to build test ${test_name}"
+        if [ $? -ne 0 ]; then
+            echo "Failed to build test: ${test_name}"
             exit 1
         fi
-    done
-
-    # Run tests
-    for test in "${tests[@]}"; do
-        echo "Running test: ${test}"
-        test_bin="${BUILD_DIR}/arch/tests/${test}"
-        "${test_bin}"
-        if [ $? -ne 0 ]; then
-            echo "Test ${test} failed. Stopping all tests."
-            exit 1
+        
+        # 对于C1M测试，我们不自动运行它
+        if [ "${test_name}" != "test_c1m" ]; then
+            echo "Running test: ${test_name}"
+            "${test_bin}"
+            if [ $? -ne 0 ]; then
+                echo "Test failed: ${test_name}"
+                exit 1
+            fi
+        else
+            echo "Skipping auto-run for ${test_name} (manual run required)"
+            # 复制到测试目录方便访问
+            cp "${test_bin}" "${TEST_DIR}/arch/${test_name}"
         fi
     done
 }
