@@ -9,6 +9,10 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxLog.h"
 
+// Forward declarations
+void infrax_scheduler_init(void);
+void infrax_scheduler_poll(void);
+
 // Test configuration
 #define DELAY_SECONDS 1.0
 
@@ -53,7 +57,7 @@ static void async_read_file(InfraxAsync* self, void* arg) {
         
         // Yield after file open
         ctx->yield_count++;
-        infrax_async_yield(self);
+        InfraxAsyncClass.yield(self);
     }
     
     // Read file in chunks
@@ -63,7 +67,7 @@ static void async_read_file(InfraxAsync* self, void* arg) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Yield on non-blocking read
                 ctx->yield_count++;
-                infrax_async_yield(self);
+                InfraxAsyncClass.yield(self);
                 continue;
             }
             // Error occurred
@@ -80,7 +84,7 @@ static void async_read_file(InfraxAsync* self, void* arg) {
     }
     
     // Store result
-    infrax_async_set_result(self, ctx->buffer, ctx->bytes_read);
+    InfraxAsyncClass.set_result(self, ctx->buffer, ctx->bytes_read);
     self->state = INFRAX_ASYNC_FULFILLED;
     
     // Close file
@@ -104,25 +108,25 @@ void test_async_file_read(void) {
     };
     
     // Create and start async task
-    InfraxAsync* async = infrax_async_new(async_read_file, &ctx);
+    InfraxAsync* async = InfraxAsyncClass.new(async_read_file, &ctx);
     if (!async) {
         log->error(log, "Failed to create async task");
         return;
     }
     
     // Start task
-    infrax_async_start(async);
+    InfraxAsyncClass.start(async);
     
     // Process until done
     while (async->state == INFRAX_ASYNC_PENDING) {
-        // In real application, we would process other tasks here
-        infrax_async_start(async);
+        // Poll scheduler to process tasks
+        infrax_scheduler_poll();
     }
     
     // Check result
     if (async->state == INFRAX_ASYNC_FULFILLED) {
         size_t size;
-        void* data = infrax_async_get_result(async, &size);
+        void* data = InfraxAsyncClass.get_result(async, &size);
         log->info(log, "Read %zu bytes from file", size);
         log->info(log, "Yielded %d times", ctx.yield_count);
     } else {
@@ -131,7 +135,7 @@ void test_async_file_read(void) {
     
     // Cleanup
     free(ctx.buffer);
-    infrax_async_free(async);
+    InfraxAsyncClass.free(async);
 }
 
 // Async delay function
@@ -149,12 +153,12 @@ void async_delay(InfraxAsync* self, void* arg) {
         ctx->end_time = core->time_now_ms(core);
         double elapsed = (ctx->end_time - ctx->start_time) / 1000.0;
         if (elapsed >= ctx->delay_seconds) break;
-        infrax_async_yield(self);
+        InfraxAsyncClass.yield(self);
     }
     
     // Store result
     double elapsed = (ctx->end_time - ctx->start_time) / 1000.0;
-    infrax_async_set_result(self, &elapsed, sizeof(elapsed));
+    InfraxAsyncClass.set_result(self, &elapsed, sizeof(elapsed));
     self->state = INFRAX_ASYNC_FULFILLED;
 }
 
@@ -169,25 +173,25 @@ void test_async_delay(void) {
     };
     
     // Create and start async task
-    InfraxAsync* async = infrax_async_new(async_delay, &delay_ctx);
+    InfraxAsync* async = InfraxAsyncClass.new(async_delay, &delay_ctx);
     if (!async) {
         log->error(log, "Failed to create async task");
         return;
     }
     
     // Start task
-    infrax_async_start(async);
+    InfraxAsyncClass.start(async);
     
     // Process until done
     while (async->state == INFRAX_ASYNC_PENDING) {
-        // In real application, we would process other tasks here
-        infrax_async_start(async);
+        // Poll scheduler to process tasks
+        infrax_scheduler_poll();
     }
     
     // Check result
     if (async->state == INFRAX_ASYNC_FULFILLED) {
         size_t size;
-        double* elapsed = infrax_async_get_result(async, &size);
+        double* elapsed = InfraxAsyncClass.get_result(async, &size);
         if (elapsed && size == sizeof(double)) {
             log->info(log, "Delay completed in %.3f seconds", *elapsed);
         }
@@ -196,7 +200,7 @@ void test_async_delay(void) {
     }
     
     // Cleanup
-    infrax_async_free(async);
+    InfraxAsyncClass.free(async);
 }
 
 // Test concurrent async operations
@@ -220,42 +224,38 @@ void test_async_concurrent(void) {
     };
     
     // Create tasks
-    InfraxAsync* read_task = infrax_async_new(async_read_file, &ctx);
-    InfraxAsync* delay_task = infrax_async_new(async_delay, &delay_ctx);
+    InfraxAsync* read_task = InfraxAsyncClass.new(async_read_file, &ctx);
+    InfraxAsync* delay_task = InfraxAsyncClass.new(async_delay, &delay_ctx);
     
     if (!read_task || !delay_task) {
         log->error(log, "Failed to create async tasks");
-        if (read_task) infrax_async_free(read_task);
-        if (delay_task) infrax_async_free(delay_task);
+        if (read_task) InfraxAsyncClass.free(read_task);
+        if (delay_task) InfraxAsyncClass.free(delay_task);
         free(ctx.buffer);
         return;
     }
     
     // Start both tasks
-    infrax_async_start(read_task);
-    infrax_async_start(delay_task);
+    InfraxAsyncClass.start(read_task);
+    InfraxAsyncClass.start(delay_task);
     
     // Process until both are done
     while (read_task->state == INFRAX_ASYNC_PENDING || 
            delay_task->state == INFRAX_ASYNC_PENDING) {
-        if (read_task->state == INFRAX_ASYNC_PENDING) {
-            infrax_async_start(read_task);
-        }
-        if (delay_task->state == INFRAX_ASYNC_PENDING) {
-            infrax_async_start(delay_task);
-        }
+        // Poll scheduler to process tasks
+        infrax_scheduler_poll();
     }
     
     // Check results
     if (read_task->state == INFRAX_ASYNC_FULFILLED) {
         size_t size;
-        void* data = infrax_async_get_result(read_task, &size);
+        void* data = InfraxAsyncClass.get_result(read_task, &size);
         log->info(log, "Read task completed: %zu bytes", size);
     }
     
     if (delay_task->state == INFRAX_ASYNC_FULFILLED) {
         size_t size;
-        double* elapsed = infrax_async_get_result(delay_task, &size);
+        double* elapsed = InfraxAsyncClass.get_result(delay_task, &size);
         if (elapsed && size == sizeof(double)) {
             log->info(log, "Delay task completed in %.3f seconds", *elapsed);
         }
@@ -263,14 +263,17 @@ void test_async_concurrent(void) {
     
     // Cleanup
     free(ctx.buffer);
-    infrax_async_free(read_task);
-    infrax_async_free(delay_task);
+    InfraxAsyncClass.free(read_task);
+    InfraxAsyncClass.free(delay_task);
 }
 
 // Main test function
 int main(void) {
     InfraxLog* log = InfraxLogClass.singleton();
     log->info(log, "Starting InfraxAsync tests...");
+    
+    // Initialize scheduler
+    infrax_scheduler_init();
     
     test_async_file_read();
     test_async_delay();

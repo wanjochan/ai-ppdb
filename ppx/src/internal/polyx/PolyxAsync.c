@@ -224,7 +224,7 @@ void polyx_async_free(PolyxAsync* self) {
     }
     
     if (self->infra) {
-        infrax_async_free(self->infra);
+        InfraxAsyncClass.free(self->infra);
     }
     
     if (self->result) {
@@ -240,7 +240,7 @@ void polyx_async_free(PolyxAsync* self) {
 // 实现实例方法
 PolyxAsync* polyx_async_start(PolyxAsync* self) {
     if (!self || !self->infra) return self;
-    infrax_async_start(self->infra);
+    InfraxAsyncClass.start(self->infra);
     return self;
 }
 
@@ -251,9 +251,8 @@ void polyx_async_cancel(PolyxAsync* self) {
 }
 
 bool polyx_async_is_done(PolyxAsync* self) {
-    if (!self || !self->infra) return false;
-    return self->infra->state == INFRAX_ASYNC_FULFILLED || 
-           self->infra->state == INFRAX_ASYNC_REJECTED;
+    if (!self || !self->infra) return true;
+    return InfraxAsyncClass.is_done(self->infra);
 }
 
 void* polyx_async_get_result(PolyxAsync* self, size_t* size) {
@@ -308,7 +307,7 @@ PolyxAsync* polyx_async_read_file(const char* path) {
     }
     memcpy(task->path, path, path_len);
     
-    self->infra = infrax_async_new(async_read_file_fn, task);
+    self->infra = InfraxAsyncClass.new(async_read_file_fn, task);
     if (!self->infra) {
         file_read_task_cleanup(task);
         polyx_async_free(self);
@@ -352,7 +351,7 @@ PolyxAsync* polyx_async_write_file(const char* path, const void* data, size_t si
     memcpy(task->data, data, size);
     task->size = size;
     
-    self->infra = infrax_async_new(async_write_file_fn, task);
+    self->infra = InfraxAsyncClass.new(async_write_file_fn, task);
     if (!self->infra) {
         file_write_task_cleanup(task);
         polyx_async_free(self);
@@ -379,7 +378,7 @@ PolyxAsync* polyx_async_delay(int ms) {
     }
     
     task->ms = ms;
-    self->infra = infrax_async_new(async_delay_fn, task);
+    self->infra = InfraxAsyncClass.new(async_delay_fn, task);
     if (!self->infra) {
         g_memory->dealloc(g_memory, task);
         polyx_async_free(self);
@@ -498,7 +497,7 @@ PolyxAsync* polyx_async_http_get(const char* url) {
     memcpy(task->url, url, url_len);
     
     // 创建底层异步任务
-    self->infra = infrax_async_new(async_http_get_fn, task);
+    self->infra = InfraxAsyncClass.new(async_http_get_fn, task);
     if (!self->infra) {
         g_memory->dealloc(g_memory, task->url);
         g_memory->dealloc(g_memory, task);
@@ -548,7 +547,7 @@ PolyxAsync* polyx_async_http_post(const char* url, const void* data, size_t size
     task->size = size;
     
     // 创建底层异步任务
-    self->infra = infrax_async_new(async_http_post_fn, task);
+    self->infra = InfraxAsyncClass.new(async_http_post_fn, task);
     if (!self->infra) {
         g_memory->dealloc(g_memory, task->data);
         g_memory->dealloc(g_memory, task->url);
@@ -582,7 +581,7 @@ PolyxAsync* polyx_async_interval(int ms, int count) {
     task->current = 0;
     
     // 创建底层异步任务
-    self->infra = infrax_async_new(async_interval_fn, task);
+    self->infra = InfraxAsyncClass.new(async_interval_fn, task);
     if (!self->infra) {
         g_memory->dealloc(g_memory, task);
         polyx_async_free(self);
@@ -630,7 +629,7 @@ void* polyx_async_parallel_get_result(PolyxAsync* self, size_t* size) {
         return NULL;
     }
     
-    ParallelSequenceData* parallel_data = (ParallelSequenceData*)self->infra->ctx->user_data;
+    ParallelSequenceData* parallel_data = (ParallelSequenceData*)self->infra->user_data;
     if (!parallel_data) {
         if (size) *size = 0;
         return NULL;
@@ -735,7 +734,7 @@ void* polyx_async_sequence_get_result(PolyxAsync* self, size_t* size) {
         return NULL;
     }
     
-    ParallelSequenceData* sequence_data = (ParallelSequenceData*)self->infra->ctx->user_data;
+    ParallelSequenceData* sequence_data = (ParallelSequenceData*)self->infra->user_data;
     if (!sequence_data) {
         if (size) *size = 0;
         return NULL;

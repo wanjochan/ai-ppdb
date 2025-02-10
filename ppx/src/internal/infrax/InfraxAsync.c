@@ -3,9 +3,61 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <setjmp.h>
+
+// Internal context structure
+typedef struct InfraxAsyncContext {
+    jmp_buf env;           // Saved execution context
+    void* stack;           // Stack for this coroutine
+    size_t stack_size;     // Size of allocated stack
+    int yield_count;       // Number of yields for debug
+} InfraxAsyncContext;
+
+// Timer structure
+struct InfraxTimer {
+    int64_t deadline;          // Timeout timestamp
+    InfraxAsync* task;         // Associated task
+    TimerCallback callback;    // Timeout callback
+    void* arg;                 // Callback argument
+};
+
+// Scheduler structure
+struct InfraxScheduler {
+    InfraxAsync* current;      // Currently running task
+    InfraxAsync* ready_head;   // Head of ready queue
+    InfraxAsync* ready_tail;   // Tail of ready queue
+    InfraxTimer* timers;       // Timer array
+    size_t timer_count;        // Number of active timers
+    size_t timer_capacity;     // Timer array capacity
+    int64_t last_poll;         // Last poll timestamp
+};
+
+// Function declarations
+static InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
+static void infrax_async_free(InfraxAsync* self);
+static InfraxAsync* infrax_async_start(InfraxAsync* self);
+static void infrax_async_yield(InfraxAsync* self);
+static void infrax_async_set_result(InfraxAsync* self, void* data, size_t size);
+static void* infrax_async_get_result(InfraxAsync* self, size_t* size);
+static int infrax_async_add_timer(InfraxAsync* task, int64_t ms, TimerCallback cb, void* arg);
+static void infrax_async_cancel_timer(InfraxAsync* task);
+static bool infrax_async_is_done(InfraxAsync* self);
 
 // Global scheduler instance
 static InfraxScheduler g_scheduler = {0};
+
+// Global class instance
+const struct InfraxAsyncClassType InfraxAsyncClass = {
+    .new = infrax_async_new,
+    .free = infrax_async_free,
+    .start = infrax_async_start,
+    .yield = infrax_async_yield,
+    .set_result = infrax_async_set_result,
+    .get_result = infrax_async_get_result,
+    .add_timer = infrax_async_add_timer,
+    .cancel_timer = infrax_async_cancel_timer,
+    .is_done = infrax_async_is_done
+};
 
 // Get current timestamp in milliseconds
 static int64_t get_timestamp_ms(void) {
@@ -29,53 +81,58 @@ static void add_to_ready_queue(InfraxAsync* task) {
 // Resume task execution
 static void resume_task(InfraxAsync* task) {
     g_scheduler.current = task;
-    longjmp(task->ctx->env, 1);
+    InfraxAsyncContext* ctx = (InfraxAsyncContext*)task->ctx;
+    longjmp(ctx->env, 1);
 }
 
-InfraxAsync* infrax_async_new(AsyncFn fn, void* arg) {
+static InfraxAsync* infrax_async_new(AsyncFn fn, void* arg) {
     InfraxAsync* self = (InfraxAsync*)malloc(sizeof(InfraxAsync));
     if (!self) return NULL;
     
     self->fn = fn;
     self->arg = arg;
     self->state = INFRAX_ASYNC_PENDING;
-    self->ctx = NULL;
+    self->ctx = malloc(sizeof(InfraxAsyncContext));
+    if (!self->ctx) {
+        free(self);
+        return NULL;
+    }
+    memset(self->ctx, 0, sizeof(InfraxAsyncContext));
+    self->user_data = NULL;
+    self->data_size = 0;
     self->next = NULL;
     self->error = 0;
     
     return self;
 }
 
-void infrax_async_free(InfraxAsync* self) {
+static void infrax_async_free(InfraxAsync* self) {
     if (!self) return;
     if (self->ctx) {
-        if (self->ctx->stack) {
-            free(self->ctx->stack);
+        InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
+        if (ctx->stack) {
+            free(ctx->stack);
         }
-        if (self->ctx->user_data) {
-            free(self->ctx->user_data);
-        }
-        free(self->ctx);
+        free(ctx);
+    }
+    if (self->user_data) {
+        free(self->user_data);
     }
     free(self);
 }
 
-InfraxAsync* infrax_async_start(InfraxAsync* self) {
+static InfraxAsync* infrax_async_start(InfraxAsync* self) {
     if (!self || !self->fn) return NULL;
     
-    // Create context if not exists
-    if (!self->ctx) {
-        self->ctx = (InfraxAsyncContext*)malloc(sizeof(InfraxAsyncContext));
-        if (!self->ctx) {
-            self->error = ENOMEM;
-            self->state = INFRAX_ASYNC_REJECTED;
-            return NULL;
-        }
-        memset(self->ctx, 0, sizeof(InfraxAsyncContext));
+    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
+    if (!ctx) {
+        self->error = ENOMEM;
+        self->state = INFRAX_ASYNC_REJECTED;
+        return NULL;
     }
     
     // Save current context
-    if (setjmp(self->ctx->env) == 0) {
+    if (setjmp(ctx->env) == 0) {
         // Call async function
         self->fn(self, self->arg);
         
@@ -86,11 +143,12 @@ InfraxAsync* infrax_async_start(InfraxAsync* self) {
     return self;
 }
 
-void infrax_async_yield(InfraxAsync* self) {
+static void infrax_async_yield(InfraxAsync* self) {
     if (!self || !self->ctx) return;
     
-    if (setjmp(self->ctx->env) == 0) {
-        self->ctx->yield_count++;
+    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
+    if (setjmp(ctx->env) == 0) {
+        ctx->yield_count++;
         // Add self to ready queue
         add_to_ready_queue(self);
         // Return to scheduler
@@ -99,24 +157,29 @@ void infrax_async_yield(InfraxAsync* self) {
     }
 }
 
-void infrax_async_set_result(InfraxAsync* self, void* data, size_t size) {
-    if (!self || !self->ctx) return;
+static void infrax_async_set_result(InfraxAsync* self, void* data, size_t size) {
+    if (!self) return;
     
-    if (self->ctx->user_data) {
-        free(self->ctx->user_data);
+    if (self->user_data) {
+        free(self->user_data);
     }
     
-    self->ctx->user_data = malloc(size);
-    if (self->ctx->user_data) {
-        memcpy(self->ctx->user_data, data, size);
-        self->ctx->data_size = size;
+    if (data && size > 0) {
+        self->user_data = malloc(size);
+        if (self->user_data) {
+            memcpy(self->user_data, data, size);
+            self->data_size = size;
+        }
+    } else {
+        self->user_data = NULL;
+        self->data_size = 0;
     }
 }
 
-void* infrax_async_get_result(InfraxAsync* self, size_t* size) {
-    if (!self || !self->ctx) return NULL;
-    if (size) *size = self->ctx->data_size;
-    return self->ctx->user_data;
+static void* infrax_async_get_result(InfraxAsync* self, size_t* size) {
+    if (!self) return NULL;
+    if (size) *size = self->data_size;
+    return self->user_data;
 }
 
 // Initialize scheduler
@@ -131,7 +194,7 @@ void infrax_scheduler_init(void) {
 }
 
 // Add a timer
-int infrax_async_add_timer(InfraxAsync* task, int64_t ms, TimerCallback cb, void* arg) {
+static int infrax_async_add_timer(InfraxAsync* task, int64_t ms, TimerCallback cb, void* arg) {
     if (g_scheduler.timer_count >= g_scheduler.timer_capacity) {
         size_t new_capacity = g_scheduler.timer_capacity * 2;
         InfraxTimer* new_timers = realloc(g_scheduler.timers, 
@@ -153,7 +216,7 @@ int infrax_async_add_timer(InfraxAsync* task, int64_t ms, TimerCallback cb, void
 }
 
 // Cancel a timer
-void infrax_async_cancel_timer(InfraxAsync* task) {
+static void infrax_async_cancel_timer(InfraxAsync* task) {
     for (size_t i = 0; i < g_scheduler.timer_count; i++) {
         if (g_scheduler.timers[i].task == task) {
             // Move last timer to this slot
@@ -213,7 +276,7 @@ void infrax_scheduler_poll(void) {
 }
 
 // 检查异步任务是否完成
-bool infrax_async_is_done(InfraxAsync* self) {
-    if (!self) return true;  // 空任务视为已完成
-    return self->state == INFRAX_ASYNC_FULFILLED || self->state == INFRAX_ASYNC_REJECTED;
+static bool infrax_async_is_done(InfraxAsync* self) {
+    if (!self) return false;
+    return self->state == INFRAX_ASYNC_FULFILLED;
 }
