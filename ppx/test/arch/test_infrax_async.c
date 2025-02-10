@@ -6,8 +6,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/resource.h>
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxLog.h"
+
+// static int test_get_max_file_descriptors(void) {
+//     // 支持高并发的默认值
+//     // 1. 65536 (64K) 足够支持中等规模并发
+//     // 2. 如果需要百万级并发，建议通过配置调整系统限制
+//     // 3. 实际值应该根据系统配置和应用需求来设定
+//     return 65536;  // 基础值设为 64K
+// }
 
 // Test configuration
 #define DELAY_SECONDS 1.0
@@ -183,7 +192,7 @@ void test_async_delay(void) {
     while (async->state == INFRAX_ASYNC_PENDING) {
         // Task will handle its own timing
         InfraxCore* core = InfraxCoreClass.singleton();
-        core->sleep_ms(core, 10);
+        core->sleep_ms(core, 10);//TODO coding the async timer, wait for it.
     }
     
     // Check result
@@ -266,15 +275,93 @@ void test_async_concurrent(void) {
     InfraxAsyncClass.free(delay_task);
 }
 
+// Test async function
+static void test_async_fn(InfraxAsync* self, void* arg) {
+    printf("Test async function started\n");
+    InfraxAsyncClass.yield(self);
+    printf("Test async function resumed\n");
+}
+
+// Test poll callback
+static void test_poll_callback(int fd, short revents, void* arg) {
+    if (revents & INFRAX_POLLIN) {
+        char buf[128];
+        ssize_t n = read(fd, buf, sizeof(buf) - 1);
+        if (n > 0) {
+            buf[n] = '\0';
+            printf("Poll callback received: %s\n", buf);
+        }
+    }
+}
+
 // Main test function
 int main(void) {
     InfraxLog* log = InfraxLogClass.singleton();
     log->info(log, "Starting InfraxAsync tests...");
     
+    // int maxfd = test_get_max_file_descriptors();
+    // log->info(log, "maxfd=%d\n", maxfd);
+    
     test_async_file_read();
     test_async_delay();
     test_async_concurrent();
     
-    log->info(log, "All InfraxAsync tests completed!");
+    printf("\n=== Testing InfraxAsync ===\n\n");
+    
+    // Test 1: Basic async task
+    printf("Test 1: Basic async task\n");
+    InfraxAsync* async = InfraxAsyncClass.new(test_async_fn, NULL);
+    if (!async) {
+        printf("Failed to create async task\n");
+        return 1;
+    }
+    
+    InfraxAsyncClass.start(async);
+    printf("Async task started\n");
+    
+    InfraxAsyncClass.start(async);  // Resume
+    printf("Async task completed\n");
+    
+    // Test 2: Pollset
+    printf("\nTest 2: Pollset\n");
+    
+    // Create pipe for testing
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        printf("Failed to create pipe\n");
+        InfraxAsyncClass.free(async);
+        return 1;
+    }
+    
+    // Set non-blocking
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
+    
+    // Add read end to pollset
+    if (InfraxAsyncClass.pollset_add_fd(async, pipefd[0], INFRAX_POLLIN, test_poll_callback, NULL) != 0) {
+        printf("Failed to add fd to pollset\n");
+        close(pipefd[0]);
+        close(pipefd[1]);
+        InfraxAsyncClass.free(async);
+        return 1;
+    }
+    
+    // Write some data
+    const char* test_data = "Hello, Poll!";
+    write(pipefd[1], test_data, strlen(test_data));
+    
+    // Poll for events
+    printf("Polling for events...\n");
+    InfraxAsyncClass.pollset_poll(async, 1000);
+    
+    // Remove fd from pollset
+    InfraxAsyncClass.pollset_remove_fd(async, pipefd[0]);
+    
+    // Cleanup
+    close(pipefd[0]);
+    close(pipefd[1]);
+    InfraxAsyncClass.free(async);
+    
+    printf("\n=== All tests completed ===\n");
     return 0;
 }

@@ -1,84 +1,75 @@
 #ifndef POLYX_ASYNC_H
 #define POLYX_ASYNC_H
 
-#include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxAsync.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
 
-// 高级异步操作封装，提供更友好的异步接口
-// 基于 InfraxAsync 构建，添加更多高级特性
-
-// 清理函数类型定义
-typedef void (*PolyxAsyncCleanupFn)(void* private_data);
-
-// 异步操作的状态
+// Event types
 typedef enum {
-    POLYX_ASYNC_PENDING,
-    POLYX_ASYNC_SUCCESS,
-    POLYX_ASYNC_ERROR
-} PolyxAsyncStatus;
+    POLYX_EVENT_TIMER,    // Timer event
+    POLYX_EVENT_CUSTOM    // Custom event
+} PolyxEventType;
 
-// 异步操作的结果
+// Event structure
+typedef struct PolyxEvent {
+    PolyxEventType type;   // Event type
+    int read_fd;          // Read end of event pipe
+    int write_fd;         // Write end of event pipe
+    void* data;           // Event data
+    size_t data_size;     // Size of event data
+} PolyxEvent;
+
+// Forward declarations
+typedef struct PolyxAsync PolyxAsync;
+typedef void (*TimerCallback)(void* arg);
+typedef void (*EventCallback)(PolyxEvent* event, void* arg);
+
+// Timer configuration
+typedef struct PolyxTimerConfig {
+    int64_t interval_ms;   // Timer interval in milliseconds
+    bool is_periodic;      // Whether timer repeats
+    TimerCallback callback; // Timer callback function
+    void* arg;            // Callback argument
+} PolyxTimerConfig;
+
+// Event configuration
+typedef struct PolyxEventConfig {
+    PolyxEventType type;   // Event type
+    EventCallback callback; // Event callback function
+    void* arg;            // Callback argument
+    void* data;           // Initial event data
+    size_t data_size;     // Size of event data
+} PolyxEventConfig;
+
+// Async structure
+struct PolyxAsync {
+    InfraxAsync* infra;    // Underlying InfraxAsync instance
+    void* ctx;            // Internal context
+};
+
+// Async class interface
 typedef struct {
-    void* data;
-    size_t size;
-    int error_code;
-    PolyxAsyncStatus status;
-} PolyxAsyncResult;
-
-// 异步操作的回调函数类型
-typedef void (*PolyxAsyncCallback)(PolyxAsyncResult* result);
-
-// 异步操作的基本结构
-typedef struct PolyxAsync {
-    InfraxAsync* infra;  // 底层异步实现
-    PolyxAsyncResult* result;  // 异步操作结果
-    void* private_data;  // 任务特定数据
-    PolyxAsyncCallback callback;  // 完成回调
-    PolyxAsyncCleanupFn cleanup_fn;  // 清理函数
-    
-    // Instance methods
-    struct PolyxAsync* (*start)(struct PolyxAsync* self);
-    void (*cancel)(struct PolyxAsync* self);
-    bool (*is_done)(struct PolyxAsync* self);
-    void* (*get_result)(struct PolyxAsync* self, size_t* size);
-    void (*free)(struct PolyxAsync* self);
-} PolyxAsync;
-
-// 工厂方法类型
-typedef struct {
+    // Lifecycle
     PolyxAsync* (*new)(void);
     void (*free)(PolyxAsync* self);
-    PolyxAsync* (*read_file)(const char* path);
-    PolyxAsync* (*write_file)(const char* path, const void* data, size_t size);
-    PolyxAsync* (*http_get)(const char* url);
-    PolyxAsync* (*http_post)(const char* url, const void* data, size_t size);
-    PolyxAsync* (*delay)(int ms);
-    PolyxAsync* (*interval)(int ms, int count);
-    PolyxAsync* (*parallel)(PolyxAsync** tasks, int count);
-    PolyxAsync* (*sequence)(PolyxAsync** tasks, int count);
-} PolyxAsyncClassType;
+    
+    // Event operations
+    PolyxEvent* (*create_event)(PolyxAsync* self, const PolyxEventConfig* config);
+    int (*trigger_event)(PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
+    void (*destroy_event)(PolyxAsync* self, PolyxEvent* event);
+    
+    // Timer operations
+    PolyxEvent* (*create_timer)(PolyxAsync* self, const PolyxTimerConfig* config);
+    int (*start_timer)(PolyxAsync* self, PolyxEvent* timer);
+    int (*stop_timer)(PolyxAsync* self, PolyxEvent* timer);
+    
+    // Poll operations
+    int (*poll)(PolyxAsync* self, int timeout_ms);
+} PolyxAsyncClass_t;
 
-// 全局静态类实例
-extern const PolyxAsyncClassType PolyxAsyncClass;
-
-// 构造和析构函数
-PolyxAsync* polyx_async_new(void);
-void polyx_async_free(PolyxAsync* self);
-
-// 实例方法
-PolyxAsync* polyx_async_start(PolyxAsync* self);
-void polyx_async_cancel(PolyxAsync* self);
-bool polyx_async_is_done(PolyxAsync* self);
-void* polyx_async_get_result(PolyxAsync* self, size_t* size);
-
-// 工厂方法
-PolyxAsync* polyx_async_read_file(const char* path);
-PolyxAsync* polyx_async_write_file(const char* path, const void* data, size_t size);
-PolyxAsync* polyx_async_http_get(const char* url);
-PolyxAsync* polyx_async_http_post(const char* url, const void* data, size_t size);
-PolyxAsync* polyx_async_delay(int ms);
-PolyxAsync* polyx_async_interval(int ms, int count);
-PolyxAsync* polyx_async_parallel(PolyxAsync** tasks, int count);
-PolyxAsync* polyx_async_sequence(PolyxAsync** tasks, int count);
+// Global class instance
+extern const PolyxAsyncClass_t PolyxAsyncClass;
 
 #endif // POLYX_ASYNC_H

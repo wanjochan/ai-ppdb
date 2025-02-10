@@ -4,6 +4,10 @@
 #include "internal/infrax/InfraxNet.h"
 #include "internal/infrax/InfraxCore.h"
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 // 全局内存管理器
 static InfraxMemory* g_memory = NULL;
@@ -99,6 +103,22 @@ typedef struct {
     int completed;
     int current;
 } ParallelSequenceData;
+
+// Timer data structure
+typedef struct TimerData {
+    int64_t interval_ms;    // Timer interval
+    int64_t next_trigger;   // Next trigger time
+    bool is_periodic;       // Whether timer repeats
+    TimerCallback callback; // Timer callback
+    void* arg;             // Callback argument
+} TimerData;
+
+// Internal context structure
+typedef struct PolyxAsyncContext {
+    PolyxEvent** events;    // Array of events
+    size_t event_count;     // Number of events
+    size_t event_capacity;  // Event array capacity
+} PolyxAsyncContext;
 
 // 清理函数定义
 static void file_read_task_cleanup(void* private_data) {
@@ -782,8 +802,8 @@ void polyx_async_sequence_cancel(PolyxAsync* self) {
     }
 }
 
-// 全局类实例定义
-const PolyxAsyncClassType PolyxAsyncClass = {
+// Global class instance
+const PolyxAsyncClass_t PolyxAsyncClass = {
     .new = polyx_async_new,
     .free = polyx_async_free,
     .read_file = polyx_async_read_file,
@@ -795,6 +815,28 @@ const PolyxAsyncClassType PolyxAsyncClass = {
     .parallel = polyx_async_parallel,
     .sequence = polyx_async_sequence
 };
+
+// Event callback wrapper for InfraxAsync
+static void event_callback(int fd, short revents, void* arg) {
+    PolyxEvent* event = (PolyxEvent*)arg;
+    if (!event || !event->data) return;
+    
+    if (revents & INFRAX_POLLIN) {
+        char buf[1];
+        if (read(fd, buf, 1) > 0) {  // Clear the pipe
+            if (event->type == POLYX_EVENT_TIMER) {
+                TimerData* timer = (TimerData*)event->data;
+                if (timer && timer->callback) {
+                    timer->callback(timer->arg);
+                    if (timer->is_periodic) {
+                        // Update next trigger time
+                        timer->next_trigger += timer->interval_ms;
+                    }
+                }
+            }
+        }
+    }
+}
 
 // 异步间隔执行回调
 void async_interval_fn(InfraxAsync* async, void* arg) {

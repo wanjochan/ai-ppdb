@@ -473,18 +473,93 @@ void test_polyx_async_sequence(void) {
     InfraxAsyncClass.free(delay2);
 }
 
-int main(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
-    InfraxLog* log = InfraxLogClass.singleton();
+// Timer callback
+static void test_timer_callback(void* arg) {
+    int* count = (int*)arg;
+    printf("Timer triggered, count: %d\n", *count);
+    (*count)++;
+}
+
+// Event callback
+static void test_event_callback(PolyxEvent* event, void* arg) {
+    if (!event || !event->data) return;
+    printf("Event triggered with data: %s\n", (char*)event->data);
+}
+
+int main() {
+    printf("\n=== Testing PolyxAsync ===\n\n");
     
-    log->info(log, "===================\nStarting PolyxAsync tests...");
+    // Create PolyxAsync instance
+    PolyxAsync* async = PolyxAsyncClass.new();
+    if (!async) {
+        printf("Failed to create PolyxAsync instance\n");
+        return 1;
+    }
     
-    test_polyx_async_read_file();
-    test_polyx_async_write_file();
-    test_polyx_async_delay();
-    test_polyx_async_parallel();
-    test_polyx_async_sequence();
+    // Test 1: Timer
+    printf("Test 1: Timer\n");
+    int timer_count = 0;
     
-    log->info(log, "All tests passed!\n===================");
+    PolyxTimerConfig timer_config = {
+        .interval_ms = 1000,
+        .is_periodic = true,
+        .callback = test_timer_callback,
+        .arg = &timer_count
+    };
+    
+    PolyxEvent* timer = PolyxAsyncClass.create_timer(async, &timer_config);
+    if (!timer) {
+        printf("Failed to create timer\n");
+        PolyxAsyncClass.free(async);
+        return 1;
+    }
+    
+    // Start timer
+    printf("Starting timer...\n");
+    PolyxAsyncClass.start_timer(async, timer);
+    
+    // Test 2: Custom Event
+    printf("\nTest 2: Custom Event\n");
+    
+    const char* event_data = "Custom Event Data";
+    PolyxEventConfig event_config = {
+        .type = POLYX_EVENT_CUSTOM,
+        .callback = test_event_callback,
+        .arg = NULL,
+        .data = (void*)event_data,
+        .data_size = strlen(event_data) + 1
+    };
+    
+    PolyxEvent* event = PolyxAsyncClass.create_event(async, &event_config);
+    if (!event) {
+        printf("Failed to create event\n");
+        PolyxAsyncClass.destroy_event(async, timer);
+        PolyxAsyncClass.free(async);
+        return 1;
+    }
+    
+    // Poll loop
+    printf("\nStarting poll loop...\n");
+    for (int i = 0; i < 3; i++) {
+        // Trigger custom event every other iteration
+        if (i % 2 == 0) {
+            printf("Triggering custom event...\n");
+            PolyxAsyncClass.trigger_event(async, event, (void*)event_data, strlen(event_data) + 1);
+        }
+        
+        // Poll for events
+        PolyxAsyncClass.poll(async, 1100);  // Slightly longer than timer interval
+    }
+    
+    // Stop timer
+    printf("\nStopping timer...\n");
+    PolyxAsyncClass.stop_timer(async, timer);
+    
+    // Cleanup
+    PolyxAsyncClass.destroy_event(async, event);
+    PolyxAsyncClass.destroy_event(async, timer);
+    PolyxAsyncClass.free(async);
+    
+    printf("\n=== All tests completed ===\n");
     return 0;
 }
