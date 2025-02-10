@@ -1,4 +1,5 @@
 #include "internal/infrax/InfraxAsync.h"
+#include "internal/infrax/InfraxCore.h"
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -14,12 +15,12 @@ typedef struct InfraxAsyncContext {
 } InfraxAsyncContext;
 
 // Timer structure
-struct InfraxTimer {
+typedef struct InfraxTimer {
     int64_t deadline;          // Timeout timestamp
     InfraxAsync* task;         // Associated task
     TimerCallback callback;    // Timeout callback
     void* arg;                 // Callback argument
-};
+} InfraxTimer;
 
 // Scheduler structure
 struct InfraxScheduler {
@@ -33,7 +34,7 @@ struct InfraxScheduler {
 };
 
 // Function declarations
-static InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
+static InfraxAsync* infrax_async_new(AsyncFunction fn, void* arg);
 static void infrax_async_free(InfraxAsync* self);
 static InfraxAsync* infrax_async_start(InfraxAsync* self);
 static void infrax_async_yield(InfraxAsync* self);
@@ -44,10 +45,10 @@ static void infrax_async_cancel_timer(InfraxAsync* task);
 static bool infrax_async_is_done(InfraxAsync* self);
 
 // Global scheduler instance
-static InfraxScheduler g_scheduler = {0};
+// static InfraxScheduler g_scheduler = {0};
 
 // Global class instance
-const struct InfraxAsyncClassType InfraxAsyncClass = {
+const InfraxAsyncClass_t InfraxAsyncClass = {
     .new = infrax_async_new,
     .free = infrax_async_free,
     .start = infrax_async_start,
@@ -59,33 +60,38 @@ const struct InfraxAsyncClassType InfraxAsyncClass = {
     .is_done = infrax_async_is_done
 };
 
-// Get current timestamp in milliseconds
+// Simple timer implementation
 static int64_t get_timestamp_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    InfraxCore* core = InfraxCoreClass.singleton();
+    return core->time_now_ms(core);
 }
 
-// Add task to ready queue
-static void add_to_ready_queue(InfraxAsync* task) {
-    if (!g_scheduler.ready_head) {
-        g_scheduler.ready_head = task;
-        g_scheduler.ready_tail = task;
-    } else {
-        g_scheduler.ready_tail->next = task;
-        g_scheduler.ready_tail = task;
+static void sleep_ms(int64_t ms) {
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->sleep_ms(core, ms);
+}
+
+// Add a timer
+static int infrax_async_add_timer(InfraxAsync* task, int64_t ms, TimerCallback cb, void* arg) {
+    if (!task) return -1;
+    
+    int64_t deadline = get_timestamp_ms() + ms;
+    
+    while (get_timestamp_ms() < deadline) {
+        sleep_ms(10); // Sleep in small intervals
+        if (task->state == INFRAX_ASYNC_REJECTED) {
+            return -1;
+        }
     }
-    task->next = NULL;
+    
+    if (cb) {
+        cb(arg);
+    }
+    
+    return 0;
 }
 
-// Resume task execution
-static void resume_task(InfraxAsync* task) {
-    g_scheduler.current = task;
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)task->ctx;
-    longjmp(ctx->env, 1);
-}
-
-static InfraxAsync* infrax_async_new(AsyncFn fn, void* arg) {
+static InfraxAsync* infrax_async_new(AsyncFunction fn, void* arg) {
     InfraxAsync* self = (InfraxAsync*)malloc(sizeof(InfraxAsync));
     if (!self) return NULL;
     
@@ -99,7 +105,7 @@ static InfraxAsync* infrax_async_new(AsyncFn fn, void* arg) {
     }
     memset(self->ctx, 0, sizeof(InfraxAsyncContext));
     self->user_data = NULL;
-    self->data_size = 0;
+    self->user_data_size = 0;
     self->next = NULL;
     self->error = 0;
     
@@ -147,14 +153,12 @@ static void infrax_async_yield(InfraxAsync* self) {
     if (!self || !self->ctx) return;
     
     InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
-    if (setjmp(ctx->env) == 0) {
-        ctx->yield_count++;
-        // Add self to ready queue
-        add_to_ready_queue(self);
-        // Return to scheduler
-        g_scheduler.current = NULL;
-        return;
-    }
+    ctx->yield_count++;
+    
+    // Simple yield implementation - just sleep a bit
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->yield(core);
+    core->sleep_ms(core, 1);  // Small sleep to prevent busy waiting
 }
 
 static void infrax_async_set_result(InfraxAsync* self, void* data, size_t size) {
@@ -168,111 +172,24 @@ static void infrax_async_set_result(InfraxAsync* self, void* data, size_t size) 
         self->user_data = malloc(size);
         if (self->user_data) {
             memcpy(self->user_data, data, size);
-            self->data_size = size;
+            self->user_data_size = size;
         }
     } else {
         self->user_data = NULL;
-        self->data_size = 0;
+        self->user_data_size = 0;
     }
 }
 
 static void* infrax_async_get_result(InfraxAsync* self, size_t* size) {
     if (!self) return NULL;
-    if (size) *size = self->data_size;
+    if (size) *size = self->user_data_size;
     return self->user_data;
-}
-
-// Initialize scheduler
-void infrax_scheduler_init(void) {
-    g_scheduler.timer_capacity = 16;  // Initial capacity
-    g_scheduler.timers = malloc(sizeof(InfraxTimer) * g_scheduler.timer_capacity);
-    g_scheduler.timer_count = 0;
-    g_scheduler.last_poll = get_timestamp_ms();
-    g_scheduler.ready_head = NULL;
-    g_scheduler.ready_tail = NULL;
-    g_scheduler.current = NULL;
-}
-
-// Add a timer
-static int infrax_async_add_timer(InfraxAsync* task, int64_t ms, TimerCallback cb, void* arg) {
-    if (g_scheduler.timer_count >= g_scheduler.timer_capacity) {
-        size_t new_capacity = g_scheduler.timer_capacity * 2;
-        InfraxTimer* new_timers = realloc(g_scheduler.timers, 
-            sizeof(InfraxTimer) * new_capacity);
-        if (!new_timers) {
-            return -1;  // Memory allocation failed
-        }
-        g_scheduler.timers = new_timers;
-        g_scheduler.timer_capacity = new_capacity;
-    }
-
-    int64_t now = get_timestamp_ms();
-    InfraxTimer* timer = &g_scheduler.timers[g_scheduler.timer_count++];
-    timer->deadline = now + ms;
-    timer->task = task;
-    timer->callback = cb;
-    timer->arg = arg;
-    return 0;
 }
 
 // Cancel a timer
 static void infrax_async_cancel_timer(InfraxAsync* task) {
-    for (size_t i = 0; i < g_scheduler.timer_count; i++) {
-        if (g_scheduler.timers[i].task == task) {
-            // Move last timer to this slot
-            if (i < g_scheduler.timer_count - 1) {
-                g_scheduler.timers[i] = g_scheduler.timers[g_scheduler.timer_count - 1];
-            }
-            g_scheduler.timer_count--;
-            break;
-        }
-    }
-}
-
-// Check and trigger expired timers
-static void check_timers(void) {
-    int64_t now = get_timestamp_ms();
-    size_t i = 0;
-    
-    while (i < g_scheduler.timer_count) {
-        InfraxTimer* timer = &g_scheduler.timers[i];
-        if (now >= timer->deadline) {
-            // Timer expired, trigger callback
-            if (timer->callback) {
-                timer->callback(timer->arg);
-            }
-            // Add task to ready queue
-            add_to_ready_queue(timer->task);
-            // Remove this timer
-            if (i < g_scheduler.timer_count - 1) {
-                g_scheduler.timers[i] = g_scheduler.timers[g_scheduler.timer_count - 1];
-            }
-            g_scheduler.timer_count--;
-        } else {
-            i++;
-        }
-    }
-}
-
-// Poll scheduler
-void infrax_scheduler_poll(void) {
-    int64_t now = get_timestamp_ms();
-    
-    // Check timers at least once per second
-    if (now >= g_scheduler.last_poll + 1000) {
-        check_timers();
-        g_scheduler.last_poll = now;
-    }
-    
-    // Process ready queue
-    if (g_scheduler.ready_head) {
-        InfraxAsync* task = g_scheduler.ready_head;
-        g_scheduler.ready_head = task->next;
-        if (!g_scheduler.ready_head) {
-            g_scheduler.ready_tail = NULL;
-        }
-        resume_task(task);
-    }
+    if (!task) return;
+    task->state = INFRAX_ASYNC_REJECTED;
 }
 
 // 检查异步任务是否完成

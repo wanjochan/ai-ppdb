@@ -10,53 +10,51 @@
 #include <time.h>
 
 // Forward declarations
-struct InfraxAsync;
-struct InfraxTimer;
-struct InfraxScheduler;
-
 typedef struct InfraxAsync InfraxAsync;
-typedef struct InfraxTimer InfraxTimer;
-typedef struct InfraxScheduler InfraxScheduler;
-typedef void (*AsyncFn)(InfraxAsync* self, void* arg);
+typedef void (*AsyncFunction)(InfraxAsync* self, void* arg);
 typedef void (*TimerCallback)(void* arg);
 
 // Async task states
 typedef enum {
-    INFRAX_ASYNC_PENDING,    //INIT,RUNNING,YIELD
-    INFRAX_ASYNC_FULFILLED,  // from DONE
-    INFRAX_ASYNC_REJECTED    // from ERROR
-} InfraxAsyncStatus;
+    INFRAX_ASYNC_PENDING,
+    INFRAX_ASYNC_FULFILLED,
+    INFRAX_ASYNC_REJECTED
+} InfraxAsyncState;
 
-// Instance structure
+// Async task structure
 struct InfraxAsync {
-    AsyncFn fn;                     // Async function
-    void* arg;                      // Function argument
-    InfraxAsyncStatus state;        // Current state
-    void* ctx;                      // Internal context (opaque pointer)
-    void* user_data;                // User data for async operation，is this result?
-    size_t data_size;               // Size of user data
-    InfraxAsync* next;              // Next task in ready queue
-    int error;                      // Error code
+    AsyncFunction fn;          // Task function
+    void* arg;                // Function argument
+    void* ctx;                // Execution context
+    void* user_data;          // User data storage
+    size_t user_data_size;    // Size of user data
+    int error;                // Error code
+    InfraxAsyncState state;   // Task state
+    InfraxAsync* next;        // Next task in queue
 };
 
-// "Class" for static methods
-struct InfraxAsyncClassType {
-    InfraxAsync* (*new)(AsyncFn fn, void* arg);
+// Async class interface
+typedef struct {
+    // Task management
+    InfraxAsync* (*new)(AsyncFunction fn, void* arg);
     void (*free)(InfraxAsync* self);
     InfraxAsync* (*start)(InfraxAsync* self);
+    void (*cancel)(InfraxAsync* self);
     void (*yield)(InfraxAsync* self);
+    
+    // Result handling
     void (*set_result)(InfraxAsync* self, void* data, size_t size);
     void* (*get_result)(InfraxAsync* self, size_t* size);
-    int (*add_timer)(InfraxAsync* task, int64_t ms, TimerCallback cb, void* arg);
-    void (*cancel_timer)(InfraxAsync* task);
+    
+    // Timer operations
+    int (*add_timer)(InfraxAsync* self, int64_t ms, TimerCallback cb, void* arg);
+    void (*cancel_timer)(InfraxAsync* self);
+    
+    // State checking
     bool (*is_done)(InfraxAsync* self);
-};
+} InfraxAsyncClass_t;
 
 // Global class instance
-extern const struct InfraxAsyncClassType InfraxAsyncClass;
-
-// Scheduler functions
-void infrax_scheduler_init(void);
-void infrax_scheduler_poll(void);
+extern const InfraxAsyncClass_t InfraxAsyncClass;
 
 #endif // INFRAX_ASYNC_H

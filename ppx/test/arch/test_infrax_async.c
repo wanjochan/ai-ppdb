@@ -9,10 +9,6 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxLog.h"
 
-// Forward declarations
-void infrax_scheduler_init(void);
-void infrax_scheduler_poll(void);
-
 // Test configuration
 #define DELAY_SECONDS 1.0
 
@@ -117,10 +113,11 @@ void test_async_file_read(void) {
     // Start task
     InfraxAsyncClass.start(async);
     
-    // Process until done
+    // Wait for completion
     while (async->state == INFRAX_ASYNC_PENDING) {
-        // Poll scheduler to process tasks
-        infrax_scheduler_poll();
+        // Task will handle its own timing
+        InfraxCore* core = InfraxCoreClass.singleton();
+        core->sleep_ms(core, 10);//这里是错的？
     }
     
     // Check result
@@ -182,10 +179,11 @@ void test_async_delay(void) {
     // Start task
     InfraxAsyncClass.start(async);
     
-    // Process until done
+    // Wait for completion
     while (async->state == INFRAX_ASYNC_PENDING) {
-        // Poll scheduler to process tasks
-        infrax_scheduler_poll();
+        // Task will handle its own timing
+        InfraxCore* core = InfraxCoreClass.singleton();
+        core->sleep_ms(core, 10);
     }
     
     // Check result
@@ -239,11 +237,12 @@ void test_async_concurrent(void) {
     InfraxAsyncClass.start(read_task);
     InfraxAsyncClass.start(delay_task);
     
-    // Process until both are done
+    // Wait for both tasks to complete
     while (read_task->state == INFRAX_ASYNC_PENDING || 
            delay_task->state == INFRAX_ASYNC_PENDING) {
-        // Poll scheduler to process tasks
-        infrax_scheduler_poll();
+        // Tasks will handle their own timing
+        InfraxCore* core = InfraxCoreClass.singleton();
+        core->sleep_ms(core, 10);
     }
     
     // Check results
@@ -271,9 +270,6 @@ void test_async_concurrent(void) {
 int main(void) {
     InfraxLog* log = InfraxLogClass.singleton();
     log->info(log, "Starting InfraxAsync tests...");
-    
-    // Initialize scheduler
-    infrax_scheduler_init();
     
     test_async_file_read();
     test_async_delay();
