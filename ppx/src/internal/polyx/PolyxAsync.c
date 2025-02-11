@@ -569,6 +569,7 @@ static int polyx_async_poll(PolyxAsync* self, int timeout_ms) {
                 char dummy = 1;
                 write(internal->write_fd, &dummy, 1);
             }
+            g_core->hint_yield(g_core);
         }
     }
     

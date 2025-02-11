@@ -111,8 +111,7 @@ build_tests() {
             echo "Failed to build test: ${test_name}"
             exit 1
         fi
-
-        ls -al "test_bin=${test_bin}"
+        ls -al "${test_bin}"
         
         # 对于C1M测试，我们不自动运行它
         if [ "${test_name}" != "test_c1m" ]; then
