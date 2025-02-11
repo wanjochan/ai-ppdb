@@ -2,13 +2,10 @@
 #include "internal/infrax/InfraxCore.h"
 #include <pthread.h> //等我们的 thread 通过要用我们的 thread
 
+InfraxCore* core = NULL;
 // Test basic error operations
 void test_error_operations(void) {
     printf("Testing basic error operations...\n");
-    
-    // Get core instance
-    InfraxCore* core = InfraxCoreClass.singleton();
-    
     InfraxError error = INFRAX_ERROR_OK_STRUCT;
     
     // Test initial state
@@ -26,9 +23,6 @@ void test_error_operations(void) {
 // Test error creation
 void test_new_error(void) {
     printf("Testing error creation...\n");
-    
-    // Get core instance
-    InfraxCore* core = InfraxCoreClass.singleton();
     
     // Test creating new error
     InfraxError e1 = make_error(INFRAX_ERROR_INVALID_PARAM, "Test error");
@@ -62,9 +56,6 @@ void test_new_error(void) {
 void test_error_value_semantics(void) {
     printf("Testing error value semantics...\n");
     
-    // Get core instance
-    InfraxCore* core = InfraxCoreClass.singleton();
-    
     InfraxError e1 = make_error(INFRAX_ERROR_INVALID_PARAM, "Original error");
     InfraxError e2 = e1;  // Copy the error
     
@@ -82,9 +73,6 @@ void test_error_value_semantics(void) {
 
 // Thread function for testing thread safety
 void* thread_func(void* arg) {
-    // Get core instance
-    InfraxCore* core = InfraxCoreClass.singleton();
-    
     InfraxError error = make_error(INFRAX_ERROR_INVALID_PARAM, "Thread specific error");
     
     // Verify thread-specific error
@@ -97,9 +85,6 @@ void* thread_func(void* arg) {
 // Test thread safety
 void test_thread_safety(void) {
     printf("Testing thread safety...\n");
-    
-    // Get core instance
-    InfraxCore* core = InfraxCoreClass.singleton();
     
     pthread_t thread;
     InfraxError main_error = make_error(INFRAX_ERROR_INVALID_PARAM, "Main thread error");
@@ -129,9 +114,6 @@ InfraxError process_with_error(int value) {
 void test_error_handling(void) {
     printf("Testing error handling...\n");
     
-    // Get core instance
-    InfraxCore* core = InfraxCoreClass.singleton();
-    
     InfraxError error;
     
     // Test negative value
@@ -154,7 +136,7 @@ void test_error_handling(void) {
 
 int main(void) {
     printf("===================\nStarting InfraxError tests...\n");
-    
+    core = InfraxCoreClass.singleton();
     test_error_operations();
     test_new_error();
     test_error_value_semantics();

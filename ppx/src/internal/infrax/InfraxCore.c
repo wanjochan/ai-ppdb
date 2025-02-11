@@ -8,6 +8,12 @@ int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     return result;
 }
 
+int infrax_core_snprintf(InfraxCore *self, char* str, size_t size, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    int result = vsnprintf(str, size, format, args);
+    va_end(args);
+}
 // Parameter forwarding function implementation
 void* infrax_core_forward_call(InfraxCore *self,void* (*target_func)(va_list), ...) {
     va_list args;
@@ -603,8 +609,9 @@ static InfraxCore g_infrax_core = {
     .self = &g_infrax_core,  // Self pointer to the static instance
     
     // Core functions
-    .printf = infrax_core_printf,
     .forward_call = infrax_core_forward_call,
+    .printf = infrax_core_printf,
+    .snprintf = infrax_core_snprintf,
     
     // String operations
     .strlen = infrax_core_strlen,

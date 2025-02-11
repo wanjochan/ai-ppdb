@@ -1,13 +1,10 @@
-#include <stdio.h>
 #include "internal/infrax/InfraxLog.h"
 #include "internal/infrax/InfraxCore.h"
 // #include <assert.h> use assert from our core
 
+InfraxCore* core = NULL;
 void test_log_basic() {
-    printf("Testing basic logging...\n");
-    
-    // Get core instance
-    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Testing basic logging...\n");
     
     // Test different log levels
     InfraxLog* log = InfraxLogClass.new();
@@ -20,14 +17,11 @@ void test_log_basic() {
     
     InfraxLogClass.free(log);
     
-    printf("Basic logging test passed\n");
+    core->printf(core, "Basic logging test passed\n");
 }
 
 void test_log_format() {
-    printf("Testing log formatting...\n");
-    
-    // Get core instance
-    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Testing log formatting...\n");
     
     InfraxLog* log = InfraxLogClass.new();
     INFRAX_ASSERT(core, log != NULL);
@@ -40,15 +34,16 @@ void test_log_format() {
     
     InfraxLogClass.free(log);
     
-    printf("Log formatting test passed\n");
+    core->printf(core, "Log formatting test passed\n");
 }
 
 int main() {
-    printf("===================\nStarting InfraxLog tests...\n");
+    core = InfraxCoreClass.singleton();
+    core->printf(core, "===================\nStarting InfraxLog tests...\n");
     
     test_log_basic();
     test_log_format();
     
-    printf("All InfraxLog tests passed!\n===================\n");
+    core->printf(core, "All InfraxLog tests passed!\n===================\n");
     return 0;
 }

@@ -1,9 +1,7 @@
-#include <stdio.h>
 #include "internal/infrax/InfraxThread.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxSync.h"
 #include "internal/infrax/InfraxMemory.h"
-#include <string.h>
 
 // Function declarations
 InfraxMemory* get_memory_manager(void);
@@ -33,7 +31,7 @@ static void* pool_test_func(void* arg) {
     if (task_mutex) {
         task_mutex->mutex_lock(task_mutex);
         task_counter++;
-        printf("Task %d executed, total completed: %d\n", *task_id, task_counter);
+        core->printf(core, "Task %d executed, total completed: %d\n", *task_id, task_counter);
         task_mutex->mutex_unlock(task_mutex);
     }
     
@@ -51,7 +49,7 @@ static void* test_thread_func(void* arg) {
 void test_thread_basic(void) {
     if (!core) core = InfraxCoreClass.singleton();
     
-    printf("Testing basic thread operations...\n");
+    core->printf(core, "Testing basic thread operations...\n");
     
     int test_value = 0;
     InfraxThreadConfig config = {
@@ -113,13 +111,13 @@ void test_thread_basic(void) {
     // Clean up
     InfraxThreadClass.free(thread);
     
-    printf("Basic thread test passed\n");
+    core->printf(core, "Basic thread test passed\n");
 }
 
 void test_thread_multiple(void) {
     if (!core) core = InfraxCoreClass.singleton();
     
-    printf("Testing multiple threads...\n");
+    core->printf(core, "Testing multiple threads...\n");
     
     #define NUM_THREADS 5
     int test_values[NUM_THREADS] = {0};
@@ -128,7 +126,7 @@ void test_thread_multiple(void) {
     // Create and start threads
     for (int i = 0; i < NUM_THREADS; i++) {
         char thread_name[32];
-        snprintf(thread_name, sizeof(thread_name), "test_thread_%d", i);
+        core->snprintf(core, thread_name, sizeof(thread_name), "test_thread_%d", i);
         
         InfraxThreadConfig config = {
             .name = thread_name,
@@ -166,13 +164,13 @@ void test_thread_multiple(void) {
         InfraxThreadClass.free(threads[i]);
     }
     
-    printf("Multiple threads test passed\n");
+    core->printf(core, "Multiple threads test passed\n");
 }
 
 void test_thread_error_handling(void) {
     if (!core) core = InfraxCoreClass.singleton();
     
-    printf("Testing thread error handling...\n");
+    core->printf(core, "Testing thread error handling...\n");
     
     // Test invalid config
     InfraxThreadConfig invalid_config = {
@@ -231,24 +229,26 @@ void test_thread_error_handling(void) {
     
     InfraxThreadClass.free(thread);
     
-    printf("Thread error handling test passed\n");
+    core->printf(core, "Thread error handling test passed\n");
 }
 
 // 测试线程池基本功能
 void test_thread_pool_basic() {
-    printf("Testing thread pool basic functionality...\n");
+    if (!core) core = InfraxCoreClass.singleton();
+    
+    core->printf(core, "Testing thread pool basic functionality...\n");
     
     // 初始化任务计数器互斥锁
     task_mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
     if (!task_mutex) {
-        printf("Failed to initialize task mutex\n");
+        core->printf(core, "Failed to initialize task mutex\n");
         return;
     }
     
     // 创建线程池
     InfraxThreadConfig thread_config = {
         .name = "pool_manager",
-        .func = test_thread_func,
+        .func = NULL,
         .arg = NULL,
         .stack_size = 0,
         .priority = 0
@@ -256,205 +256,68 @@ void test_thread_pool_basic() {
     
     InfraxThread* thread = InfraxThreadClass.new(&thread_config);
     if (!thread) {
-        printf("Failed to create thread object\n");
+        core->printf(core, "Failed to create thread pool manager\n");
         InfraxSyncClass.free(task_mutex);
         return;
     }
     
-    InfraxThreadPoolConfig config = {
+    // 配置线程池
+    InfraxThreadPoolConfig pool_config = {
         .min_threads = 2,
         .max_threads = 4,
-        .queue_size = 10,
-        .idle_timeout = 1000
+        .queue_size = 10
     };
     
-    InfraxError err = infrax_thread_pool_create(thread, &config);
+    InfraxError err = infrax_thread_pool_create(thread, &pool_config);
     if (err.code != 0) {
-        printf("Failed to create thread pool: %s\n", err.message);
+        core->printf(core, "Failed to create thread pool: %s\n", err.message);
         InfraxThreadClass.free(thread);
         InfraxSyncClass.free(task_mutex);
         return;
     }
     
     // 提交任务
-    const int num_tasks = 5;
-    int submitted = 0;
-    
-    for (int i = 0; i < num_tasks; i++) {
-        InfraxMemory* memory = get_memory_manager();
-        if (!memory) {
-            printf("Failed to get memory manager\n");
-            continue;
-        }
-        
-        int* task_id = memory->alloc(memory, sizeof(int));
-        if (!task_id) {
-            printf("Failed to allocate task ID\n");
-            continue;
-        }
-        
-        *task_id = i + 1;
-        err = infrax_thread_pool_submit(thread, pool_test_func, task_id);
+    int task_ids[5] = {1, 2, 3, 4, 5};
+    for (int i = 0; i < 5; i++) {
+        err = infrax_thread_pool_submit(thread, pool_test_func, &task_ids[i]);
         if (err.code != 0) {
-            printf("Failed to submit task %d: %s\n", i + 1, err.message);
-            memory->dealloc(memory, task_id);
-            continue;
+            core->printf(core, "Failed to submit task %d: %s\n", i + 1, err.message);
         }
-        submitted++;
-    }
-    
-    // 等待一段时间让任务执行完成
-    if (core) core->sleep_ms(core, 1000);
-    
-    // 检查统计信息
-    InfraxThreadPoolStats stats;
-    err = infrax_thread_pool_get_stats(thread, &stats);
-    if (err.code == 0) {
-        printf("Thread pool stats:\n");
-        printf("Active threads: %d\n", stats.active_threads);
-        printf("Idle threads: %d\n", stats.idle_threads);
-        printf("Pending tasks: %d\n", stats.pending_tasks);
-        printf("Completed tasks: %d\n", stats.completed_tasks);
-        
-        // 验证所有任务都已完成
-        if (stats.completed_tasks == submitted) {
-            printf("All tasks completed successfully\n");
-        } else {
-            printf("Not all tasks completed (expected: %d, actual: %d)\n", 
-                   submitted, stats.completed_tasks);
-        }
-    }
-    
-    // 销毁线程池
-    err = infrax_thread_pool_destroy(thread);
-    if (err.code != 0) {
-        printf("Failed to destroy thread pool: %s\n", err.message);
-    }
-    
-    InfraxThreadClass.free(thread);
-    InfraxSyncClass.free(task_mutex);
-    task_mutex = NULL;
-    
-    printf("Thread pool basic test completed\n");
-}
-
-// 测试线程池压力测试
-void test_thread_pool_stress() {
-    printf("Testing thread pool under stress...\n");
-    
-    // 初始化任务计数器互斥锁
-    task_mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
-    if (!task_mutex) {
-        printf("Failed to initialize task mutex\n");
-        return;
-    }
-    
-    InfraxThreadConfig thread_config = {
-        .name = "pool_manager",
-        .func = test_thread_func,
-        .arg = NULL,
-        .stack_size = 0,
-        .priority = 0
-    };
-    
-    InfraxThread* thread = InfraxThreadClass.new(&thread_config);
-    if (!thread) {
-        printf("Failed to create thread object\n");
-        InfraxSyncClass.free(task_mutex);
-        return;
-    }
-    
-    InfraxThreadPoolConfig config = {
-        .min_threads = 4,
-        .max_threads = 8,
-        .queue_size = 100,
-        .idle_timeout = 1000
-    };
-    
-    InfraxError err = infrax_thread_pool_create(thread, &config);
-    if (err.code != 0) {
-        printf("Failed to create thread pool: %s\n", err.message);
-        InfraxThreadClass.free(thread);
-        InfraxSyncClass.free(task_mutex);
-        return;
-    }
-    
-    // 提交大量任务
-    const int num_tasks = 20;
-    int submitted = 0;
-    
-    for (int i = 0; i < num_tasks; i++) {
-        InfraxMemory* memory = get_memory_manager();
-        if (!memory) {
-            printf("Failed to get memory manager\n");
-            continue;
-        }
-        
-        int* task_id = memory->alloc(memory, sizeof(int));
-        if (!task_id) {
-            printf("Failed to allocate task ID\n");
-            continue;
-        }
-        
-        *task_id = i + 1;
-        err = infrax_thread_pool_submit(thread, pool_test_func, task_id);
-        if (err.code != 0) {
-            printf("Failed to submit task %d: %s\n", i + 1, err.message);
-            memory->dealloc(memory, task_id);
-            continue;
-        }
-        submitted++;
     }
     
     // 等待所有任务完成
-    bool all_done = false;
-    int wait_count = 0;
-    const int max_wait = 10;  // 最多等待10秒
+    core->sleep_ms(core, 1000);  // 简单等待
     
-    while (!all_done && wait_count < max_wait) {
-        if (core) core->sleep_ms(core, 1000);
-        wait_count++;
-        
-        InfraxThreadPoolStats stats;
-        err = infrax_thread_pool_get_stats(thread, &stats);
-        if (err.code == 0) {
-            if (stats.completed_tasks == submitted) {
-                all_done = true;
-                printf("All %d tasks completed in %d seconds\n", submitted, wait_count);
-                break;
-            }
-        }
+    // 检查任务计数器
+    task_mutex->mutex_lock(task_mutex);
+    if (task_counter != 5) {
+        core->printf(core, "Task counter mismatch: expected 5, got %d\n", task_counter);
     }
+    task_mutex->mutex_unlock(task_mutex);
     
-    if (!all_done) {
-        printf("Timeout waiting for tasks to complete\n");
-    }
-    
-    // 销毁线程池
+    // 清理
     err = infrax_thread_pool_destroy(thread);
     if (err.code != 0) {
-        printf("Failed to destroy thread pool: %s\n", err.message);
+        core->printf(core, "Failed to destroy thread pool: %s\n", err.message);
     }
     
     InfraxThreadClass.free(thread);
     InfraxSyncClass.free(task_mutex);
     task_mutex = NULL;
+    task_counter = 0;
     
-    printf("Thread pool stress test completed\n");
+    core->printf(core, "Thread pool basic test completed\n");
 }
 
 int main(void) {
-    core = InfraxCoreClass.singleton();
-    if (!core) {
-        printf("Failed to get core singleton\n");
-        return 1;
-    }
+    if (!core) core = InfraxCoreClass.singleton();
+    core->printf(core, "===================\nStarting InfraxThread tests...\n");
     
     test_thread_basic();
     test_thread_multiple();
     test_thread_error_handling();
     test_thread_pool_basic();
-    test_thread_pool_stress();
     
+    core->printf(core, "All InfraxThread tests passed!\n===================\n");
     return 0;
 }

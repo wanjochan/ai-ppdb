@@ -13,7 +13,7 @@
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/time.h>
-#include <poll.h>
+// #include <poll.h>
 
 // 全局内存管理器
 static InfraxMemory* g_memory = NULL;

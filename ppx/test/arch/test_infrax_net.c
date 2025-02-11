@@ -18,25 +18,7 @@ static InfraxNetAddr udp_server_addr;
 static bool core_initialized = false;
 static InfraxSync* core_mutex = NULL;
 
-static void ensure_core_initialized() {
-    if (!core_mutex) {
-        core_mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
-        if (!core_mutex) return;
-    }
-    
-    InfraxError err = core_mutex->mutex_lock(core_mutex);
-    if (INFRAX_ERROR_IS_ERR(err)) return;
-    
-    if (!core_initialized) {
-        core = InfraxCoreClass.singleton();
-        if (core) core_initialized = true;
-    }
-    
-    core_mutex->mutex_unlock(core_mutex);
-}
-
 static void test_config() {
-    ensure_core_initialized();
     if (!core) return;
     core->printf(core, "Testing socket configuration...\n");
     
@@ -77,10 +59,6 @@ static void test_config() {
 }
 
 static void* tcp_server_thread(void* arg) {
-    ensure_core_initialized();
-    if (!core) {
-        return (void*)-1;  // Return error status
-    }
     (void)arg;
     InfraxSocket* server = NULL;
     InfraxSocket* client = NULL;
@@ -176,10 +154,6 @@ cleanup:
 }
 
 static void* udp_server_thread(void* arg) {
-    ensure_core_initialized();
-    if (!core) {
-        return (void*)-1;  // Return error status
-    }
     (void)arg;
     InfraxSocket* server = NULL;
     InfraxSocketConfig config = {
@@ -461,8 +435,15 @@ cleanup:
 }
 
 int main() {
-    // Initialize core first
-    ensure_core_initialized();
+    core_mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+    
+    InfraxError err = core_mutex->mutex_lock(core_mutex);
+    if (INFRAX_ERROR_IS_ERR(err)) return 99;
+    
+    core = InfraxCoreClass.singleton();
+    
+    core_mutex->mutex_unlock(core_mutex);
+
     if (!core) {
         printf("Failed to initialize InfraxCore\n");
         return 1;

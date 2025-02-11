@@ -1,10 +1,9 @@
-
 #include "internal/infrax/InfraxSync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
 
 // Forward declarations
-static InfraxCore* core = NULL;
+InfraxCore* core = NULL;
 
 // Helper function for memory management
 InfraxMemory* get_memory_manager(void) {
@@ -23,7 +22,6 @@ InfraxMemory* get_memory_manager(void) {
 
 // Test functions
 static void test_mutex(void) {
-    if (!core) core = InfraxCoreClass.singleton();
 
     InfraxSync* mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
     if (mutex == NULL) {
@@ -58,7 +56,6 @@ static void test_mutex(void) {
 }
 
 static void test_cond(void) {
-    if (!core) core = InfraxCoreClass.singleton();
 
     // Create new mutex and condition variable instances
     InfraxSync* mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
@@ -102,7 +99,6 @@ static void test_cond(void) {
 }
 
 static void test_rwlock(void) {
-    if (!core) core = InfraxCoreClass.singleton();
 
     InfraxSync* rwlock = InfraxSyncClass.new(INFRAX_SYNC_TYPE_RWLOCK);
     if (rwlock == NULL) {
@@ -136,7 +132,6 @@ static void test_rwlock(void) {
 }
 
 static void test_spinlock(void) {
-    if (!core) core = InfraxCoreClass.singleton();
 
     InfraxSync* spinlock = InfraxSyncClass.new(INFRAX_SYNC_TYPE_SPINLOCK);
     if (spinlock == NULL) {
@@ -159,7 +154,6 @@ static void test_spinlock(void) {
 }
 
 static void test_semaphore(void) {
-    if (!core) core = InfraxCoreClass.singleton();
 
     InfraxSync* sem = InfraxSyncClass.new(INFRAX_SYNC_TYPE_SEMAPHORE);
     if (sem == NULL) {
@@ -203,7 +197,6 @@ static void test_semaphore(void) {
 }
 
 static void test_atomic(void) {
-    if (!core) core = InfraxCoreClass.singleton();
 
     InfraxSync* atomic = InfraxSyncClass.new(INFRAX_SYNC_TYPE_ATOMIC);
     if (atomic == NULL) {
@@ -270,6 +263,7 @@ static void test_atomic(void) {
 
 int main() {
     printf("===================\nStarting InfraxSync tests...\n");
+    core = InfraxCoreClass.singleton();
     
     test_mutex();
     printf("Mutex test passed\n");

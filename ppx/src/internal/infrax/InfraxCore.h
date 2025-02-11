@@ -113,8 +113,9 @@ struct InfraxCore {
     InfraxCore* self;
 
     // Core functions
-    int (*printf)(InfraxCore *self, const char* format, ...);
     void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);
+    int (*printf)(InfraxCore *self, const char* format, ...);
+    int (*snprintf)(InfraxCore *self, char* str, size_t size, const char* format, ...);
 
     // String operations
     size_t (*strlen)(InfraxCore *self, const char* s);
