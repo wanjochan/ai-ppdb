@@ -28,16 +28,23 @@ c) 其他
 inotify fd (文件系统事件监控)
  */
 
-// #include <setjmp.h>
+#include <setjmp.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
+#include <poll.h>
 
 // Forward declarations
-typedef struct InfraxAsync InfraxAsync;
-typedef void (*AsyncFunction)(InfraxAsync* self, void* arg);
-typedef void (*PollCallback)(int fd, short revents, void* arg);
+struct InfraxAsync;
+struct InfraxPollInfo;
+struct InfraxPollset;
+struct InfraxAsyncContext;
+
+// Type definitions
+typedef void (*AsyncFunction)(struct InfraxAsync* self, void* arg);
+typedef void (*PollCallback)(int fd, short events, void* arg);
+typedef void (*TimerCallback)(void* arg);
 
 // Async task states
 typedef enum {
@@ -53,26 +60,43 @@ typedef enum {
 #define INFRAX_POLLHUP     0x010  /* Hung up */
 #define INFRAX_POLLNVAL    0x020  /* Invalid request: fd not open */
 
-// Internal pollset structure
-typedef struct InfraxPollInfo {
-    int fd;                 // File descriptor
-    short events;          // Events to watch for
-    PollCallback callback; // Callback function
-    void* arg;            // Callback argument
-    struct InfraxPollInfo* next;  // Next in list
-} InfraxPollInfo;
+// Poll info structure
+struct InfraxPollInfo {
+    int fd;
+    short events;
+    PollCallback callback;
+    void* arg;
+    struct InfraxPollInfo* next;
+};
+
+// Pollset structure
+struct InfraxPollset {
+    struct pollfd* fds;
+    struct InfraxPollInfo** infos;
+    size_t size;
+    size_t capacity;
+};
+
+// Async context structure
+struct InfraxAsyncContext {
+    jmp_buf env;
+    void* stack;
+    size_t stack_size;
+    int yield_count;
+    struct InfraxPollset pollset;
+};
 
 // Async task structure
-struct InfraxAsync {
-    AsyncFunction fn;          // Task function
-    void* arg;                // Function argument
-    void* ctx;                // Execution context
-    void* user_data;          // User data storage
-    size_t user_data_size;    // Size of user data
-    int error;                // Error code
-    InfraxAsyncState state;   // Task state
-    InfraxAsync* next;        // Next task in queue
-};
+typedef struct InfraxAsync {
+    AsyncFunction fn;
+    void* arg;
+    InfraxAsyncState state;
+    void* ctx;
+    void* user_data;
+    size_t user_data_size;
+    struct InfraxAsync* next;
+    int error;
+} InfraxAsync;
 
 // Async class interface
 typedef struct {

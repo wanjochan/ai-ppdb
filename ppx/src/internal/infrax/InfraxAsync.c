@@ -9,60 +9,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-// Internal context structure
-typedef struct InfraxAsyncContext {
-    jmp_buf env;           // Saved execution context
-    void* stack;           // Stack for this coroutine
-    size_t stack_size;     // Size of allocated stack
-    int yield_count;       // Number of yields for debug
-    InfraxPollset pollset; // Pollset for this async task
-} InfraxAsyncContext;
-
-// Timer structure
-typedef struct InfraxTimer {
-    int64_t deadline;          // Timeout timestamp
-    InfraxAsync* task;         // Associated task
-    TimerCallback callback;    // Timeout callback
-    void* arg;                 // Callback argument
-} InfraxTimer;
-
-// Scheduler structure
-struct InfraxScheduler {
-    InfraxAsync* current;      // Currently running task
-    InfraxAsync* ready_head;   // Head of ready queue
-    InfraxAsync* ready_tail;   // Tail of ready queue
-    InfraxTimer* timers;       // Timer array
-    size_t timer_count;        // Number of active timers
-    size_t timer_capacity;     // Timer array capacity
-    int64_t last_poll;         // Last poll timestamp
-};
-
-// Pollset implementation
-typedef struct InfraxPollset {
-    struct pollfd* fds;        // Array of pollfd structures
-    InfraxPollInfo** infos;    // Array of poll info pointers
-    size_t size;              // Current size of arrays
-    size_t capacity;          // Capacity of arrays
-} InfraxPollset;
-
-// Event structure
-typedef struct InfraxEvent {
-    InfraxEventType type;       // Event type
-    int read_fd;               // Read file descriptor
-    int write_fd;              // Write file descriptor
-    void* data;                // Event data
-    size_t data_size;           // Size of event data
-} InfraxEvent;
-
-// Timer callback wrapper
-typedef struct {
-    TimerCallback callback;
-    void* arg;
-    int64_t interval_ms;
-    int64_t next_trigger;
-    bool is_periodic;
-} TimerData;
-
 // Function declarations
 static InfraxAsync* infrax_async_new(AsyncFunction fn, void* arg);
 static void infrax_async_free(InfraxAsync* self);
@@ -70,15 +16,11 @@ static InfraxAsync* infrax_async_start(InfraxAsync* self);
 static void infrax_async_yield(InfraxAsync* self);
 static void infrax_async_set_result(InfraxAsync* self, void* data, size_t size);
 static void* infrax_async_get_result(InfraxAsync* self, size_t* size);
-static int infrax_async_add_timer(InfraxAsync* task, int64_t ms, TimerCallback cb, void* arg);
-static void infrax_async_cancel_timer(InfraxAsync* task);
 static bool infrax_async_is_done(InfraxAsync* self);
 static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, PollCallback cb, void* arg);
 static int infrax_async_pollset_remove_fd(InfraxAsync* self, int fd);
 static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms);
-
-// Global scheduler instance
-// static InfraxScheduler g_scheduler = {0};
+static void infrax_async_cancel(InfraxAsync* self);
 
 // Global class instance
 const InfraxAsyncClass_t InfraxAsyncClass = {
@@ -95,16 +37,10 @@ const InfraxAsyncClass_t InfraxAsyncClass = {
     .yield = infrax_async_yield
 };
 
-// Simple timer implementation
-static int64_t get_timestamp_ms(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
-    return core->time_now_ms(core);
-}
-
 // Initialize pollset
-static int pollset_init(InfraxPollset* ps, size_t initial_capacity) {
+static int pollset_init(struct InfraxPollset* ps, size_t initial_capacity) {
     ps->fds = (struct pollfd*)malloc(initial_capacity * sizeof(struct pollfd));
-    ps->infos = (InfraxPollInfo**)malloc(initial_capacity * sizeof(InfraxPollInfo*));
+    ps->infos = (struct InfraxPollInfo**)malloc(initial_capacity * sizeof(struct InfraxPollInfo*));
     if (!ps->fds || !ps->infos) {
         free(ps->fds);
         free(ps->infos);
@@ -116,7 +52,7 @@ static int pollset_init(InfraxPollset* ps, size_t initial_capacity) {
 }
 
 // Clean up pollset
-static void pollset_cleanup(InfraxPollset* ps) {
+static void pollset_cleanup(struct InfraxPollset* ps) {
     if (!ps) return;
     for (size_t i = 0; i < ps->size; i++) {
         free(ps->infos[i]);
@@ -133,8 +69,8 @@ static void pollset_cleanup(InfraxPollset* ps) {
 static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, PollCallback cb, void* arg) {
     if (!self || !self->ctx || fd < 0) return -1;
     
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
-    InfraxPollset* ps = &ctx->pollset;
+    struct InfraxAsyncContext* ctx = (struct InfraxAsyncContext*)self->ctx;
+    struct InfraxPollset* ps = &ctx->pollset;
     
     // Initialize pollset if needed
     if (ps->capacity == 0) {
@@ -159,7 +95,7 @@ static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, 
     if (ps->size >= ps->capacity) {
         size_t new_capacity = ps->capacity * 2;
         struct pollfd* new_fds = (struct pollfd*)realloc(ps->fds, new_capacity * sizeof(struct pollfd));
-        InfraxPollInfo** new_infos = (InfraxPollInfo**)realloc(ps->infos, new_capacity * sizeof(InfraxPollInfo*));
+        struct InfraxPollInfo** new_infos = (struct InfraxPollInfo**)realloc(ps->infos, new_capacity * sizeof(struct InfraxPollInfo*));
         if (!new_fds || !new_infos) {
             free(new_fds);
             free(new_infos);
@@ -171,7 +107,7 @@ static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, 
     }
     
     // Add new entry
-    InfraxPollInfo* info = (InfraxPollInfo*)malloc(sizeof(InfraxPollInfo));
+    struct InfraxPollInfo* info = (struct InfraxPollInfo*)malloc(sizeof(struct InfraxPollInfo));
     if (!info) return -1;
     
     info->fd = fd;
@@ -193,8 +129,8 @@ static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, 
 static int infrax_async_pollset_remove_fd(InfraxAsync* self, int fd) {
     if (!self || !self->ctx || fd < 0) return -1;
     
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
-    InfraxPollset* ps = &ctx->pollset;
+    struct InfraxAsyncContext* ctx = (struct InfraxAsyncContext*)self->ctx;
+    struct InfraxPollset* ps = &ctx->pollset;
     
     for (size_t i = 0; i < ps->size; i++) {
         if (ps->fds[i].fd == fd) {
@@ -219,8 +155,8 @@ static int infrax_async_pollset_remove_fd(InfraxAsync* self, int fd) {
 static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
     if (!self || !self->ctx) return -1;
     
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
-    InfraxPollset* ps = &ctx->pollset;
+    struct InfraxAsyncContext* ctx = (struct InfraxAsyncContext*)self->ctx;
+    struct InfraxPollset* ps = &ctx->pollset;
     
     if (ps->size == 0) return 0;
     
@@ -248,15 +184,15 @@ static InfraxAsync* infrax_async_new(AsyncFunction fn, void* arg) {
     self->fn = fn;
     self->arg = arg;
     self->state = INFRAX_ASYNC_PENDING;
-    self->ctx = malloc(sizeof(InfraxAsyncContext));
+    self->ctx = malloc(sizeof(struct InfraxAsyncContext));
     if (!self->ctx) {
         free(self);
         return NULL;
     }
-    memset(self->ctx, 0, sizeof(InfraxAsyncContext));
+    memset(self->ctx, 0, sizeof(struct InfraxAsyncContext));
     
     // Initialize pollset
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
+    struct InfraxAsyncContext* ctx = (struct InfraxAsyncContext*)self->ctx;
     if (pollset_init(&ctx->pollset, 16) < 0) {
         free(self->ctx);
         free(self);
@@ -274,7 +210,7 @@ static InfraxAsync* infrax_async_new(AsyncFunction fn, void* arg) {
 static void infrax_async_free(InfraxAsync* self) {
     if (!self) return;
     if (self->ctx) {
-        InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
+        struct InfraxAsyncContext* ctx = (struct InfraxAsyncContext*)self->ctx;
         if (ctx->stack) {
             free(ctx->stack);
         }
@@ -290,7 +226,7 @@ static void infrax_async_free(InfraxAsync* self) {
 static InfraxAsync* infrax_async_start(InfraxAsync* self) {
     if (!self || !self->fn) return NULL;
     
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
+    struct InfraxAsyncContext* ctx = (struct InfraxAsyncContext*)self->ctx;
     if (!ctx) {
         self->error = ENOMEM;
         self->state = INFRAX_ASYNC_REJECTED;
@@ -316,7 +252,7 @@ static InfraxAsync* infrax_async_start(InfraxAsync* self) {
 static void infrax_async_yield(InfraxAsync* self) {
     if (!self || !self->ctx) return;
     
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->ctx;
+    struct InfraxAsyncContext* ctx = (struct InfraxAsyncContext*)self->ctx;
     ctx->yield_count++;
     
     // Use longjmp to yield control
@@ -348,20 +284,12 @@ static void* infrax_async_get_result(InfraxAsync* self, size_t* size) {
     return self->user_data;
 }
 
-// Cancel a timer
-static void infrax_async_cancel_timer(InfraxAsync* task) {
-    if (!task) return;
-    task->state = INFRAX_ASYNC_REJECTED;
-}
-
-// 检查异步任务是否完成
 static bool infrax_async_is_done(InfraxAsync* self) {
     if (!self) return false;
     return self->state == INFRAX_ASYNC_FULFILLED;
 }
 
-
 static void infrax_async_cancel(InfraxAsync* self) {
     if (!self) return;
     self->state = INFRAX_ASYNC_REJECTED;
-}
+} 
