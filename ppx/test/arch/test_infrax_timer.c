@@ -39,6 +39,6 @@ int main() {
     // Cleanup
     InfraxAsyncClass.free(task);
     
-    core->printf(core, "Test completed successfully\n");
+    core->printf(core, "All timer tests passed!\n");
     return 0;
 }

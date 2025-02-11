@@ -304,6 +304,6 @@ int main() {
     PolyxAsyncClass.destroy_event(async, timer);
     PolyxAsyncClass.free(async);
     
-    core->printf(core, "\n=== All tests completed ===\n");
+    core->printf(core, "\n=== All polyx_async tests completed ===\n");
     return 0;
 }

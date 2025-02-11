@@ -124,6 +124,6 @@ int main() {
     test_pool_memory();
     test_realloc();
     
-    core->printf(core, "All InfraxMemory tests passed!\n===================\n");
+    core->printf(core, "All infrax_memory tests passed!\n===================\n");
     return 0;
 }

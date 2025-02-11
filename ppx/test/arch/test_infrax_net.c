@@ -472,6 +472,6 @@ int main() {
     if (test_cond) InfraxSyncClass.free(test_cond);
     if (core_mutex) InfraxSyncClass.free(core_mutex);
     
-    if (core) core->printf(core, "All InfraxNet tests passed!\n");
+    if (core) core->printf(core, "All infrax_net tests passed!\n");
     return 0;
 }

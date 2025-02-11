@@ -283,6 +283,6 @@ int main() {
     test_atomic();
     printf("Atomic test passed\n");
     
-    printf("All InfraxSync tests passed!\n");
+    printf("All infrax_sync tests passed!\n");
     return 0;
 }

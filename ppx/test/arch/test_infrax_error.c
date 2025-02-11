@@ -143,6 +143,6 @@ int main(void) {
     test_thread_safety();
     test_error_handling();
     
-    printf("All InfraxError tests passed!\n===================\n");
+    printf("All infrax_error tests passed!\n===================\n");
     return 0;
 }

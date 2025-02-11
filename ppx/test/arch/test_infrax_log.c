@@ -43,6 +43,6 @@ int main() {
     test_log_basic();
     test_log_format();
     
-    core->printf(core, "All InfraxLog tests passed!\n===================\n");
+    core->printf(core, "All infrax_log tests passed!\n===================\n");
     return 0;
 }

@@ -80,6 +80,6 @@ int main(void) {
     core->close_fd(core, pipefd[1]);
     InfraxAsyncClass.free(async);
     
-    core->printf(core, "\n=== All tests completed ===\n");
+    core->printf(core, "\n=== All infrax_async tests completed ===\n");
     return 0;
 }

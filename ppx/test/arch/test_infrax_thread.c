@@ -318,6 +318,6 @@ int main(void) {
     test_thread_error_handling();
     test_thread_pool_basic();
     
-    core->printf(core, "All InfraxThread tests passed!\n===================\n");
+    core->printf(core, "All infrax_thread tests passed!\n===================\n");
     return 0;
 }
