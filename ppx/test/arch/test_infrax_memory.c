@@ -184,6 +184,124 @@ void test_realloc() {
     core->printf(core, "Memory reallocation test passed\n");
 }
 
+// 测试内存压力
+void test_memory_stress() {
+    core->printf(core, "Testing memory stress...\n");
+    
+    InfraxMemoryConfig config = {
+        .initial_size = 1024 * 1024,  // 1MB
+        .use_gc = false,
+        .use_pool = true,
+        .gc_threshold = 0
+    };
+    
+    InfraxMemory* memory = InfraxMemoryClass.new(&config);
+    INFRAX_ASSERT(core, memory != NULL);
+    
+    // 获取初始状态
+    InfraxMemoryStats initial_stats;
+    memory->get_stats(memory, &initial_stats);
+    
+    #define STRESS_ALLOCS 50
+    void* ptrs[STRESS_ALLOCS] = {NULL};
+    size_t sizes[STRESS_ALLOCS] = {0};
+    
+    // 随机种子
+    core->random_seed(core, 12345);
+    
+    // Phase 1: 随机分配
+    core->printf(core, "Phase 1: Random allocation\n");
+    for (int i = 0; i < STRESS_ALLOCS; i++) {
+        sizes[i] = (core->random(core) % 512) + 64;  // 64-576 bytes
+        ptrs[i] = memory->alloc(memory, sizes[i]);
+        INFRAX_ASSERT(core, ptrs[i] != NULL);
+        
+        // 填充数据
+        memset(ptrs[i], i & 0xFF, sizes[i]);
+    }
+    
+    // Phase 2: 验证数据
+    core->printf(core, "Phase 2: Verify data\n");
+    for (int i = 0; i < STRESS_ALLOCS; i++) {
+        unsigned char* p = (unsigned char*)ptrs[i];
+        for (size_t j = 0; j < sizes[i]; j++) {
+            INFRAX_ASSERT(core, p[j] == (i & 0xFF));
+        }
+    }
+    
+    // Phase 3: 随机重分配
+    core->printf(core, "Phase 3: Random reallocation\n");
+    for (int i = 0; i < STRESS_ALLOCS/2; i++) {
+        int idx = core->random(core) % STRESS_ALLOCS;
+        if (ptrs[idx]) {
+            size_t old_size = sizes[idx];
+            size_t new_size = old_size + 128;
+            unsigned char old_val = idx & 0xFF;
+            
+            void* new_ptr = memory->realloc(memory, ptrs[idx], new_size);
+            INFRAX_ASSERT(core, new_ptr != NULL);
+            
+            // 验证原数据
+            unsigned char* p = (unsigned char*)new_ptr;
+            for (size_t j = 0; j < old_size; j++) {
+                INFRAX_ASSERT(core, p[j] == old_val);
+            }
+            
+            // 填充新空间
+            for (size_t j = old_size; j < new_size; j++) {
+                p[j] = old_val;
+            }
+            
+            ptrs[idx] = new_ptr;
+            sizes[idx] = new_size;
+        }
+    }
+    
+    // Phase 4: 随机释放一半内存
+    core->printf(core, "Phase 4: Random deallocation\n");
+    int freed_count = 0;
+    for (int i = 0; i < STRESS_ALLOCS/2; i++) {
+        int idx = core->random(core) % STRESS_ALLOCS;
+        if (ptrs[idx]) {
+            memory->dealloc(memory, ptrs[idx]);
+            ptrs[idx] = NULL;
+            sizes[idx] = 0;
+            freed_count++;
+        }
+    }
+    
+    // Phase 5: 重新分配释放的空间
+    core->printf(core, "Phase 5: Reallocate freed space\n");
+    for (int i = 0; i < STRESS_ALLOCS; i++) {
+        if (ptrs[i] == NULL) {
+            sizes[i] = (core->random(core) % 512) + 64;
+            ptrs[i] = memory->alloc(memory, sizes[i]);
+            INFRAX_ASSERT(core, ptrs[i] != NULL);
+            memset(ptrs[i], i & 0xFF, sizes[i]);
+        }
+    }
+    
+    // Phase 6: 最终验证和清理
+    core->printf(core, "Phase 6: Final verification and cleanup\n");
+    for (int i = 0; i < STRESS_ALLOCS; i++) {
+        if (ptrs[i]) {
+            unsigned char* p = (unsigned char*)ptrs[i];
+            for (size_t j = 0; j < sizes[i]; j++) {
+                INFRAX_ASSERT(core, p[j] == (i & 0xFF));
+            }
+            memory->dealloc(memory, ptrs[i]);
+        }
+    }
+    
+    // 检查内存泄漏
+    InfraxMemoryStats final_stats;
+    memory->get_stats(memory, &final_stats);
+    INFRAX_ASSERT(core, final_stats.current_usage == initial_stats.current_usage);
+    
+    InfraxMemoryClass.free(memory);
+    core->printf(core, "Memory stress test passed\n");
+}
+
 int main() {
     core = InfraxCoreClass.singleton();
     INFRAX_ASSERT(core, core != NULL);
@@ -194,6 +312,7 @@ int main() {
     test_base_memory();
     test_pool_memory();
     test_realloc();
+    test_memory_stress();  // 添加压力测试
     
     core->printf(core, "All infrax_memory tests passed!\n");
     core->printf(core, "===================\n");

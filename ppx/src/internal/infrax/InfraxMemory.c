@@ -239,9 +239,48 @@ static void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
         return NULL;
     }
     
-    MemoryBlock* block = (MemoryBlock*)((char*)ptr - sizeof(MemoryBlock));
-    if (block->size >= size) return ptr;
+    // Align size to 8 bytes
+    size = (size + 7) & ~7;
     
+    MemoryBlock* block = (MemoryBlock*)((char*)ptr - sizeof(MemoryBlock));
+    
+    // 如果新的大小小于或等于当前大小,直接返回
+    if (size <= block->size) {
+        return ptr;
+    }
+    
+    // 检查是否在内存池中
+    bool is_pool_block = (self->config.use_pool && 
+                         (char*)ptr >= (char*)self->pool_start && 
+                         (char*)ptr < (char*)self->pool_start + self->pool_size);
+    
+    if (is_pool_block) {
+        // 尝试合并后面的空闲块
+        size_t needed_size = size - block->size;
+        MemoryBlock* next = block->next;
+        
+        if (next && !next->is_used && 
+            (sizeof(MemoryBlock) + next->size) >= needed_size) {
+            // 可以直接扩展当前块
+            size_t remaining = next->size - needed_size;
+            if (remaining >= sizeof(MemoryBlock) + 8) {
+                // 分割剩余空间
+                MemoryBlock* new_next = (MemoryBlock*)((char*)next + needed_size);
+                new_next->size = remaining - sizeof(MemoryBlock);
+                new_next->is_used = false;
+                new_next->is_gc_root = false;
+                new_next->next = next->next;
+                block->next = new_next;
+            } else {
+                // 全部使用
+                block->next = next->next;
+            }
+            block->size = size;
+            return ptr;
+        }
+    }
+    
+    // 分配新内存并复制数据
     void* new_ptr = infrax_memory_alloc(self, size);
     if (!new_ptr) return NULL;
     
