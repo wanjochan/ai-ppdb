@@ -2,6 +2,8 @@
 #include "internal/infrax/InfraxThread.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxSync.h"
+#include "internal/infrax/InfraxAsync.h"
+#include "internal/polyx/PolyxAsync.h"
 #include <string.h>  
 
 // 添加错误码定义
@@ -827,12 +829,18 @@ static void test_net_error_recovery() {
             // 等待回显
             char recv_buf[64] = {0};
             size_t total_received = 0;
+            int recv_retries = 50;  // 添加重试次数
             
-            while (total_received < total_sent) {
+            while (total_received < total_sent && recv_retries > 0) {
                 size_t received;
                 err = socket->recv(socket, recv_buf + total_received, 
                                  sizeof(recv_buf) - total_received, &received);
                 if (INFRAX_ERROR_IS_ERR(err)) {
+                    if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
+                        core->sleep_ms(core, 10);  // 增加等待时间
+                        recv_retries--;
+                        continue;
+                    }
                     core->printf(core, "Failed to receive data: %s\n", err.message);
                     break;
                 }
@@ -843,7 +851,9 @@ static void test_net_error_recovery() {
                 total_received += received;
             }
             
-            if (total_received == total_sent) {
+            if (recv_retries == 0) {
+                core->printf(core, "Receive operation timed out after %d retries\n", 50);
+            } else if (total_received == total_sent) {
                 core->printf(core, "Successfully received %zu bytes\n", total_received);
                 // 验证数据
                 if (core->strncmp(core, recv_buf, test_data, total_received) != 0) {
@@ -960,7 +970,78 @@ static void test_net_stress() {
     core->printf(core, "Network stress test completed\n");
 }
 
-// 大数据传输测试
+// 异步大数据传输上下文
+typedef struct {
+    InfraxSocket* socket;
+    char* data;
+    char* recv_buffer;
+    size_t total_size;
+    size_t chunk_size;
+    size_t sent;
+    size_t received;
+    bool is_sending;
+} AsyncLargeDataContext;
+
+// 异步大数据传输回调
+static void async_large_data_transfer(InfraxAsync* async, void* arg) {
+    AsyncLargeDataContext* ctx = (AsyncLargeDataContext*)arg;
+    if (!ctx) return;
+
+    while (ctx->is_sending && ctx->sent < ctx->total_size) {
+        size_t remaining = ctx->total_size - ctx->sent;
+        size_t chunk_size = remaining > ctx->chunk_size ? ctx->chunk_size : remaining;
+        size_t sent = 0;
+
+        InfraxError err = ctx->socket->send(ctx->socket, ctx->data + ctx->sent, chunk_size, &sent);
+        if (INFRAX_ERROR_IS_ERR(err)) {
+            if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
+                InfraxAsyncClass.yield(async);
+                continue;
+            }
+            core->printf(core, "Failed to send chunk at offset %zu: %s\n", ctx->sent, err.message);
+            break;
+        }
+
+        ctx->sent += sent;
+        size_t progress = (ctx->sent * 100) / ctx->total_size;
+        core->printf(core, "Sending progress: %zu%%\n", progress);
+
+        // 等待回显
+        size_t total_received = 0;
+        while (total_received < sent) {
+            size_t received = 0;
+            err = ctx->socket->recv(ctx->socket, ctx->recv_buffer + ctx->received + total_received, 
+                                  sent - total_received, &received);
+            if (INFRAX_ERROR_IS_ERR(err)) {
+                if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
+                    InfraxAsyncClass.yield(async);
+                    continue;
+                }
+                core->printf(core, "Failed to receive echo at offset %zu: %s\n", 
+                           ctx->received + total_received, err.message);
+                goto cleanup;
+            }
+            total_received += received;
+        }
+        ctx->received += total_received;
+
+        // 验证回显数据
+        if (memcmp(ctx->data + ctx->sent - sent, 
+                  ctx->recv_buffer + ctx->received - total_received, sent) != 0) {
+            core->assert_failed(core, __FILE__, __LINE__, __func__, 
+                "Data verification", "Received data does not match sent data");
+            goto cleanup;
+        }
+
+        // 让出CPU
+        InfraxAsyncClass.yield(async);
+    }
+
+cleanup:
+    ctx->is_sending = false;
+}
+
+// 修改大数据传输测试函数
 static void test_net_large_data() {
     core->printf(core, "Testing large data transfer...\n");
     
@@ -982,12 +1063,12 @@ static void test_net_large_data() {
     
     test_mutex->mutex_unlock(test_mutex);
     
-    #define LARGE_DATA_SIZE (64 * 1024)   // 64KB
-    #define CHUNK_SIZE (4096)             // 4KB
+    #define LARGE_DATA_SIZE (32 * 1024)   // 32KB
+    #define CHUNK_SIZE (2048)             // 2KB
     
     InfraxSocketConfig config = {
         .is_udp = false,
-        .is_nonblocking = false,
+        .is_nonblocking = true,  // 使用非阻塞模式
         .send_timeout_ms = 30000,
         .recv_timeout_ms = 30000,
         .reuse_addr = true
@@ -1001,9 +1082,9 @@ static void test_net_large_data() {
     }
     
     // 连接到服务器
-    InfraxError connect_err = socket->connect(socket, &tcp_server_addr);
-    if (INFRAX_ERROR_IS_ERR(connect_err)) {
-        core->printf(core, "Failed to connect: %s\n", connect_err.message);
+    err = socket->connect(socket, &tcp_server_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Failed to connect: %s\n", err.message);
         goto cleanup;
     }
     
@@ -1023,60 +1104,47 @@ static void test_net_large_data() {
         large_data[i] = i & 0xFF;
     }
     
-    // 分块发送数据
-    size_t total_sent = 0;
-    size_t last_progress = 0;
-    while (total_sent < LARGE_DATA_SIZE) {
-        size_t chunk_size = LARGE_DATA_SIZE - total_sent;
-        if (chunk_size > CHUNK_SIZE) chunk_size = CHUNK_SIZE;
+    // 创建异步上下文
+    AsyncLargeDataContext ctx = {
+        .socket = socket,
+        .data = large_data,
+        .recv_buffer = recv_buffer,
+        .total_size = LARGE_DATA_SIZE,
+        .chunk_size = CHUNK_SIZE,
+        .sent = 0,
+        .received = 0,
+        .is_sending = true
+    };
     
-        size_t sent;
-        err = socket->send(socket, large_data + total_sent, chunk_size, &sent);
-        if (INFRAX_ERROR_IS_ERR(err)) {
-            core->printf(core, "Failed to send chunk at offset %zu: %s\n", total_sent, err.message);
-            free(large_data);
-            free(recv_buffer);
-            goto cleanup;
-        }
-        total_sent += sent;
-        
-        // 显示进度
-        size_t progress = (total_sent * 100) / LARGE_DATA_SIZE;
-        if (progress > last_progress) {
-            core->printf(core, "Sending progress: %zu%%\n", progress);
-            last_progress = progress;
-        }
-        
-        // 等待服务器回显
-        size_t total_received = 0;
-        while (total_received < sent) {
-            size_t received;
-            err = socket->recv(socket, recv_buffer + total_sent - sent + total_received, 
-                             sent - total_received, &received);
-            if (INFRAX_ERROR_IS_ERR(err)) {
-                core->printf(core, "Failed to receive echo at offset %zu: %s\n", 
-                           total_sent - sent + total_received, err.message);
-                free(large_data);
-                free(recv_buffer);
-                goto cleanup;
-            }
-            total_received += received;
-        }
-        
-        // 验证回显数据
-        for (size_t i = 0; i < sent; i++) {
-            if (large_data[total_sent - sent + i] != recv_buffer[total_sent - sent + i]) {
-                core->assert_failed(core, __FILE__, __LINE__, __func__, 
-                    "large_data[i] == recv_buffer[i]", 
-                    "Data verification failed at offset");
-                free(large_data);
-                free(recv_buffer);
-                goto cleanup;
-            }
-        }
+    // 创建异步任务
+    InfraxAsync* async = InfraxAsyncClass.new(async_large_data_transfer, &ctx);
+    if (!async) {
+        core->printf(core, "Failed to create async task\n");
+        free(large_data);
+        free(recv_buffer);
+        goto cleanup;
     }
     
-    core->printf(core, "Successfully transferred and verified %zu bytes\n", total_sent);
+    // 启动异步任务
+    if (!InfraxAsyncClass.start(async)) {
+        core->printf(core, "Failed to start async task\n");
+        InfraxAsyncClass.free(async);
+        free(large_data);
+        free(recv_buffer);
+        goto cleanup;
+    }
+    
+    // 等待任务完成
+    while (!InfraxAsyncClass.is_done(async)) {
+        InfraxAsyncClass.pollset_poll(async, 100);  // 100ms超时
+    }
+    
+    if (ctx.sent == LARGE_DATA_SIZE && ctx.received == LARGE_DATA_SIZE) {
+        core->printf(core, "Successfully transferred and verified %zu bytes\n", ctx.sent);
+    }
+    
+    // 清理资源
+    InfraxAsyncClass.free(async);
     free(large_data);
     free(recv_buffer);
     

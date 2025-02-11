@@ -591,27 +591,132 @@ static int polyx_async_poll(PolyxAsync* self, int timeout_ms) {
     return InfraxAsyncClass.pollset_poll(self->infrax, timeout_ms);
 }
 
-// Global class instance
-const PolyxAsyncClassType PolyxAsyncClass = {
-    .new = polyx_async_new,
-    .free = polyx_async_free
-};
+// Timer heap operations
+static TimerHeap* timer_heap_create() {
+    TimerHeap* heap = (TimerHeap*)malloc(sizeof(TimerHeap));
+    if (heap) {
+        heap->root = NULL;
+        heap->size = 0;
+    }
+    return heap;
+}
+
+static void timer_heap_insert(TimerHeap* heap, uint64_t due_time, TimerCallback callback, void* arg) {
+    if (!heap) return;
+    
+    TimerHeapNode* node = (TimerHeapNode*)malloc(sizeof(TimerHeapNode));
+    if (!node) return;
+    
+    node->due_time = due_time;
+    node->callback = callback;
+    node->arg = arg;
+    node->left = node->right = node->parent = NULL;
+    
+    if (!heap->root) {
+        heap->root = node;
+    } else {
+        TimerHeapNode* current = heap->root;
+        while (1) {
+            if (due_time < current->due_time) {
+                if (!current->left) {
+                    current->left = node;
+                    node->parent = current;
+                    break;
+                }
+                current = current->left;
+            } else {
+                if (!current->right) {
+                    current->right = node;
+                    node->parent = current;
+                    break;
+                }
+                current = current->right;
+            }
+        }
+    }
+    heap->size++;
+}
+
+static TimerHeapNode* timer_heap_min(TimerHeap* heap) {
+    if (!heap || !heap->root) return NULL;
+    
+    TimerHeapNode* current = heap->root;
+    while (current->left) {
+        current = current->left;
+    }
+    return current;
+}
+
+static void timer_heap_remove_min(TimerHeap* heap) {
+    if (!heap || !heap->root) return;
+    
+    TimerHeapNode* min = timer_heap_min(heap);
+    if (!min) return;
+    
+    if (min == heap->root) {
+        if (min->right) {
+            heap->root = min->right;
+            min->right->parent = NULL;
+        } else {
+            heap->root = NULL;
+        }
+    } else {
+        if (min->right) {
+            min->right->parent = min->parent;
+            min->parent->left = min->right;
+        } else {
+            min->parent->left = NULL;
+        }
+    }
+    
+    free(min);
+    heap->size--;
+}
 
 // 异步间隔执行回调
 void async_interval_fn(InfraxAsync* async, void* arg) {
     if (!async || !arg) return;
     
     IntervalTask* task = (IntervalTask*)arg;
+    TimerHeap* timer_heap = timer_heap_create();
+    
+    if (!timer_heap) return;
+    
+    uint64_t current_time = g_core->time_monotonic_ms(g_core);  // 使用单调时钟
+    uint64_t next_run = current_time;
+    
+    // Set up initial timer
+    timer_heap_insert(timer_heap, next_run + task->ms, NULL, task);
     
     while (task->current < task->count && async->state != INFRAX_ASYNC_REJECTED) {
-        // 使用 Core 的 sleep_ms 函数
-        g_core->sleep_ms(g_core, task->ms);
+        TimerHeapNode* min = timer_heap_min(timer_heap);
+        if (!min) break;
         
-        task->current++;
+        current_time = g_core->time_monotonic_ms(g_core);  // 使用单调时钟
         
-        // 每次间隔后让出 CPU
+        if (current_time >= min->due_time) {
+            task->current++;
+            next_run = current_time + task->ms;
+            timer_heap_remove_min(timer_heap);
+            
+            if (task->current < task->count) {
+                timer_heap_insert(timer_heap, next_run, NULL, task);
+            }
+        }
+        
+        // 让出CPU而不是睡眠
         InfraxAsyncClass.yield(async);
     }
     
-    async->state = INFRAX_ASYNC_FULFILLED;
+    // Cleanup
+    while (timer_heap->root) {
+        timer_heap_remove_min(timer_heap);
+    }
+    free(timer_heap);
 }
+
+// Global class instance
+const PolyxAsyncClassType PolyxAsyncClass = {
+    .new = polyx_async_new,
+    .free = polyx_async_free
+};

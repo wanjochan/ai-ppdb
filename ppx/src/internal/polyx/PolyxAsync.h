@@ -65,6 +65,22 @@ struct PolyxEvent {
     void* private_data;  // Internal use only
 };
 
+// Timer heap node structure
+typedef struct TimerHeapNode {
+    uint64_t due_time;      // When this timer should fire
+    TimerCallback callback;
+    void* arg;
+    struct TimerHeapNode* left;
+    struct TimerHeapNode* right;
+    struct TimerHeapNode* parent;
+} TimerHeapNode;
+
+// Timer heap structure
+typedef struct {
+    TimerHeapNode* root;
+    size_t size;
+} TimerHeap;
+
 // Async structure
 struct PolyxAsync {
     InfraxAsync* infrax;
