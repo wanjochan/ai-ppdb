@@ -33,6 +33,6 @@ struct InfraxLog {
 };
 
 // The "static" interface instance (like Java's Class object)
-extern const InfraxLogClassType InfraxLogClass;
+extern InfraxLogClassType InfraxLogClass;
 
 #endif // PPDB_INFRAX_LOG_H

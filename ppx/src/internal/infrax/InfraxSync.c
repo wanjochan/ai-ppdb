@@ -179,7 +179,7 @@ static void infrax_sync_free(InfraxSync* sync) {
 }
 
 // The "static" interface implementation
-const InfraxSyncClassType InfraxSyncClass = {
+InfraxSyncClassType InfraxSyncClass = {
     .new = infrax_sync_new,
     .free = infrax_sync_free
 };

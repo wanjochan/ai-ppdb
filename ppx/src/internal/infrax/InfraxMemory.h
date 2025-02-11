@@ -65,6 +65,6 @@ struct InfraxMemory {
 };
 
 // The "static" interface instance (like Java's Class object)
-extern const InfraxMemoryClassType InfraxMemoryClass;
+extern InfraxMemoryClassType InfraxMemoryClass;
 
 #endif // INFRAX_MEMORY_H

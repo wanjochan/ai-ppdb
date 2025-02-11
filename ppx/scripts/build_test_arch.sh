@@ -1,5 +1,5 @@
 #!/bin/bash
-# timeout 15s ./ppx/scripts/build_test_arch.sh
+# timeout 60s ./ppx/scripts/build_test_arch.sh
 
 # Import common functions and environment variables
 source "$(dirname "$0")/build_env.sh"

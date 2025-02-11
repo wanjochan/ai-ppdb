@@ -111,6 +111,6 @@ typedef struct {
 } InfraxAsyncClassType;
 
 // Global class instance
-extern const InfraxAsyncClassType InfraxAsyncClass;
+extern InfraxAsyncClassType InfraxAsyncClass;
 
 #endif // INFRAX_ASYNC_H

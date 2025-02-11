@@ -18,7 +18,7 @@
 
 // 全局内存管理器
 static InfraxMemory* g_memory = NULL;
-extern const InfraxMemoryClassType InfraxMemoryClass;
+extern InfraxMemoryClassType InfraxMemoryClass;
 
 // 全局 Core 实例
 static InfraxCore* g_core = NULL;

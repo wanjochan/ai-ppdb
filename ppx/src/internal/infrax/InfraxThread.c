@@ -124,7 +124,7 @@ static void thread_free(InfraxThread* self) {
 }
 
 // The "static" interface implementation
-const InfraxThreadClassType InfraxThreadClass = {
+InfraxThreadClassType InfraxThreadClass = {
     .new = thread_new,
     .free = thread_free,
     .start = thread_start,

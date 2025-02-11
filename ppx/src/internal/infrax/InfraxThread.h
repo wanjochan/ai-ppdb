@@ -78,7 +78,7 @@ typedef struct {
 } InfraxThreadClassType;
 
 // The "static" interface instance (like Java's Class object)
-extern const InfraxThreadClassType InfraxThreadClass;
+extern InfraxThreadClassType InfraxThreadClass;
 
 // // Memory manager function 不要暴露！
 // InfraxMemory* get_memory_manager(void);

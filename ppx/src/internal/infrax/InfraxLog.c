@@ -30,7 +30,7 @@ static InfraxLog* infrax_log_singleton(void) {
 }
 
 // The "static" interface implementation
-const InfraxLogClassType InfraxLogClass = {
+InfraxLogClassType InfraxLogClass = {
     .singleton = infrax_log_singleton
 };
 

@@ -65,7 +65,7 @@ struct InfraxSocket {
 };
 
 // The "static" interface instance
-extern const InfraxSocketClassType InfraxSocketClass;
+extern InfraxSocketClassType InfraxSocketClass;
 
 // Socket level options (compatible with system socket options)
 #define INFRAX_SOL_SOCKET      1

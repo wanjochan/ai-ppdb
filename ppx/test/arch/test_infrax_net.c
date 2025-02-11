@@ -767,8 +767,8 @@ static void test_net_error_recovery() {
     InfraxSocketConfig config = {
         .is_udp = false,
         .is_nonblocking = false,  // 使用阻塞模式
-        .send_timeout_ms = 5000,  // 增加超时时间
-        .recv_timeout_ms = 5000,
+        .send_timeout_ms = 1000,  // 1秒超时
+        .recv_timeout_ms = 1000,
         .reuse_addr = true
     };
     
@@ -784,10 +784,12 @@ static void test_net_error_recovery() {
     core->strcpy(core, invalid_addr.ip, "256.256.256.256");  
     invalid_addr.port = 12345;
     
-    InfraxError connect_err = socket->connect(socket, &invalid_addr);
-    if (!INFRAX_ERROR_IS_ERR(connect_err)) {
+    err = socket->connect(socket, &invalid_addr);
+    if (!INFRAX_ERROR_IS_ERR(err)) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, 
-            "INFRAX_ERROR_IS_ERR(connect_err)", "Connection to invalid address should fail");
+            "INFRAX_ERROR_IS_ERR(err)", "Connection to invalid address should fail");
+    } else {
+        core->printf(core, "Expected error connecting to invalid address: %s\n", err.message);
     }
     
     // 测试重连机制
@@ -799,44 +801,62 @@ static void test_net_error_recovery() {
             connected = true;
             break;
         }
-        core->sleep_ms(core, 1000);  
+        core->printf(core, "Retrying connection: %s\n", err.message);
+        core->sleep_ms(core, 100);  
     }
     
     if (connected) {
         // 发送一些数据
         const char* test_data = "Test error recovery";
-        size_t sent;
-        err = socket->send(socket, test_data, core->strlen(core, test_data), &sent);
-        if (INFRAX_ERROR_IS_ERR(err)) {
-            core->printf(core, "Failed to send data: %s\n", err.message);
-        } else {
-            core->printf(core, "Server echoed %zu bytes\n", sent);
+        size_t data_len = core->strlen(core, test_data);
+        size_t total_sent = 0;
+        
+        while (total_sent < data_len) {
+            size_t sent;
+            err = socket->send(socket, test_data + total_sent, data_len - total_sent, &sent);
+            if (INFRAX_ERROR_IS_ERR(err)) {
+                core->printf(core, "Failed to send data: %s\n", err.message);
+                break;
+            }
+            total_sent += sent;
+        }
+        
+        if (total_sent == data_len) {
+            core->printf(core, "Successfully sent %zu bytes\n", total_sent);
             
             // 等待回显
             char recv_buf[64] = {0};
-            size_t received = 0;
-            int retry_count = 10;  // 最多重试10次
+            size_t total_received = 0;
             
-            while (received < sent && retry_count > 0) {
-                size_t bytes;
-                err = socket->recv(socket, recv_buf + received, sizeof(recv_buf) - received, &bytes);
+            while (total_received < total_sent) {
+                size_t received;
+                err = socket->recv(socket, recv_buf + total_received, 
+                                 sizeof(recv_buf) - total_received, &received);
                 if (INFRAX_ERROR_IS_ERR(err)) {
-                    if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
-                        core->sleep_ms(core, 100);  // 等待100ms再重试
-                        retry_count--;
-                        continue;
-                    }
                     core->printf(core, "Failed to receive data: %s\n", err.message);
                     break;
                 }
-                received += bytes;
-                if (bytes == 0) break;  // 连接关闭
+                if (received == 0) {
+                    core->printf(core, "Connection closed by peer\n");
+                    break;
+                }
+                total_received += received;
             }
             
-            if (received > 0) {
-                core->printf(core, "Received %zu bytes in error recovery test\n", received);
+            if (total_received == total_sent) {
+                core->printf(core, "Successfully received %zu bytes\n", total_received);
+                // 验证数据
+                if (core->strncmp(core, recv_buf, test_data, total_received) != 0) {
+                    core->assert_failed(core, __FILE__, __LINE__, __func__, 
+                        "Data verification", "Received data does not match sent data");
+                }
+            } else {
+                core->printf(core, "Incomplete receive: got %zu of %zu bytes\n", 
+                           total_received, total_sent);
             }
         }
+    } else {
+        core->printf(core, "Failed to connect after retries\n");
     }
     
     InfraxSocketClass.free(socket);

@@ -32,7 +32,7 @@ __thread struct InfraxPollset* g_pollset = NULL;
 
 // Global memory manager
 static InfraxMemory* g_memory = NULL;
-extern const InfraxMemoryClassType InfraxMemoryClass;
+extern InfraxMemoryClassType InfraxMemoryClass;
 
 // Global Core instance
 static InfraxCore* g_core = NULL;
@@ -302,7 +302,7 @@ static void infrax_async_yield(InfraxAsync* self) {
 }
 
 // Global class instance
-const InfraxAsyncClassType InfraxAsyncClass = {
+InfraxAsyncClassType InfraxAsyncClass = {
     .new = infrax_async_new,
     .free = infrax_async_free,
     .start = infrax_async_start,

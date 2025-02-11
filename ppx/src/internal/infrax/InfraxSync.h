@@ -100,6 +100,6 @@ struct InfraxSync {
 };
 
 // The "static" interface instance (like Java's Class object)
-extern const InfraxSyncClassType InfraxSyncClass;
+extern InfraxSyncClassType InfraxSyncClass;
 
 #endif // INFRAX_SYNC_H

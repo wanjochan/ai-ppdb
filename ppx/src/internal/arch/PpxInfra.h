@@ -3,21 +3,23 @@
 
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
+#include "internal/infrax/InfraxMemory.h"
+#include "internal/infrax/InfraxSync.h"
+#include "internal/infrax/InfraxThread.h"
+#include "internal/infrax/InfraxNet.h"
+#include "internal/infrax/InfraxAsync.h"
 
 typedef struct {
-    // Core components
     InfraxCore *core;   
-    InfraxCoreClassType *coreClass;  // 使用正确的类型名
-
-    // Logging components
     InfraxLog *logger;  
 
-    //InfraxMemoryClassType InfraxMemoryClass;
-    //InfraxMemory *memory;
-
-    // 未来可以方便地添加新组件
-    // InfraxMemory *memory;
-    // InfraxThread *thread;
+    InfraxLogClassType* logClass;
+    InfraxCoreClassType* coreClass;
+    InfraxMemoryClassType* memoryClass;
+    InfraxThreadClassType* threadClass;
+    InfraxSocketClassType* socketClass;
+    InfraxSyncClassType* syncClass;
+    InfraxAsyncClassType* asyncClass;
 } PpxInfra;
 
 // 全局单例（将来会用于给插件、脚本调用）

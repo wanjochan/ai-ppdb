@@ -469,7 +469,7 @@ static void socket_free(InfraxSocket* self) {
 }
 
 // Socket class instance
-const InfraxSocketClassType InfraxSocketClass = {
+InfraxSocketClassType InfraxSocketClass = {
     .new = socket_new,
     .free = socket_free
 };

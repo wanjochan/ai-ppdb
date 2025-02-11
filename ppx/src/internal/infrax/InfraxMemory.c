@@ -67,7 +67,7 @@ static void infrax_memory_free(InfraxMemory* self) {
 }
 
 // The "static" interface implementation
-const InfraxMemoryClassType InfraxMemoryClass = {
+InfraxMemoryClassType InfraxMemoryClass = {
     .new = infrax_memory_new,
     .free = infrax_memory_free
 };
