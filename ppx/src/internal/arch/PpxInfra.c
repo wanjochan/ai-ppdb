@@ -10,6 +10,7 @@ const PpxInfra* ppx_infra(void) {
     if (!g_infra_initialized) {
         // Initialize core components
         g_infra.core = InfraxCoreClass.singleton();
+        g_infra.coreClass = &InfraxCoreClass;//for plugin and script
         g_infra.logger = InfraxLogClass.singleton();
         g_infra_initialized = true;
     }

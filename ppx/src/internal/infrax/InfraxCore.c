@@ -292,6 +292,13 @@ static InfraxError infrax_core_buffer_reserve(InfraxCore *self, InfraxBuffer* bu
     buf->capacity = capacity;
     return INFRAX_ERROR_OK_STRUCT;
 }
+static int infrax_core_memcmp(InfraxCore *self, const void* ptr1, const void* ptr2, size_t num) {
+    if (!ptr1 || !ptr2) {
+        return 0;
+    }
+    return memcmp(ptr1, ptr2, num);
+}
+
 
 static InfraxError infrax_core_buffer_write(InfraxCore *self, InfraxBuffer* buf, const void* data, size_t size) {
     if (!buf || !buf->data || !data || size == 0) {
@@ -695,6 +702,9 @@ static InfraxCore singleton = {
     .time_now_ms = infrax_core_time_now_ms,
     .time_monotonic_ms = infrax_core_time_monotonic_ms,
     .sleep_ms = infrax_core_sleep_ms,
+
+    // Misc operations
+    .memcmp = infrax_core_memcmp,
     .hint_yield = infrax_core_hint_yield,
     .pid = infrax_core_pid,
     
@@ -765,6 +775,6 @@ InfraxCore* infrax_core_singleton(void) {
     return &singleton;
 };
 
-const InfraxCoreClassType InfraxCoreClass = {
+InfraxCoreClassType InfraxCoreClass = {
     .singleton = infrax_core_singleton
 };

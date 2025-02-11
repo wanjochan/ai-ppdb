@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -20,6 +21,31 @@ static void socket_free(InfraxSocket* self);
 
 // Forward declarations
 static InfraxMemory* get_memory_manager(void);
+
+// Socket option mapping
+static int map_socket_level(int level) {
+    switch (level) {
+        case INFRAX_SOL_SOCKET:
+            return SOL_SOCKET;
+        default:
+            return level;
+    }
+}
+
+static int map_socket_option(int option) {
+    switch (option) {
+        case INFRAX_SO_REUSEADDR:
+            return SO_REUSEADDR;
+        case INFRAX_SO_KEEPALIVE:
+            return SO_KEEPALIVE;
+        case INFRAX_SO_RCVTIMEO:
+            return SO_RCVTIMEO;
+        case INFRAX_SO_SNDTIMEO:
+            return SO_SNDTIMEO;
+        default:
+            return option;
+    }
+}
 
 // Memory manager instance
 static InfraxMemory* get_memory_manager(void) {
@@ -38,19 +64,20 @@ static InfraxMemory* get_memory_manager(void) {
 
 // Instance methods implementations
 static InfraxError socket_bind(InfraxSocket* self, const InfraxNetAddr* addr) {
-    if (!self || !addr) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (!self || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket or address");
 
     struct sockaddr_in bind_addr;
     memset(&bind_addr, 0, sizeof(bind_addr));
     bind_addr.sin_family = AF_INET;
     bind_addr.sin_port = htons(addr->port);
     
-    if (inet_pton(AF_INET, addr->ip, &bind_addr.sin_addr) <= 0) {
-        return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    }
+    // 直接使用inet_pton，因为在infrax_net_addr_from_string中已经验证过了
+    inet_pton(AF_INET, addr->ip, &bind_addr.sin_addr);
 
     if (bind(self->native_handle, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
-        return INFRAX_ERROR_NET_BIND_FAILED;
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Bind failed: %s (errno=%d)", strerror(errno), errno);
+        return make_error(INFRAX_ERROR_NET_BIND_FAILED_CODE, err_msg);
     }
 
     self->local_addr = *addr;
@@ -205,6 +232,67 @@ static InfraxError socket_recv(InfraxSocket* self, void* buffer, size_t size, si
     return INFRAX_ERROR_OK_STRUCT;
 }
 
+static InfraxError socket_sendto(InfraxSocket* self, const void* data, size_t size, size_t* sent, const InfraxNetAddr* addr) {
+    if (!self || !data || !sent || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid arguments");
+
+    struct sockaddr_in dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(addr->port);
+    
+    if (inet_pton(AF_INET, addr->ip, &dest_addr.sin_addr) <= 0) {
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid IP address format");
+    }
+
+    ssize_t result = sendto(self->native_handle, data, size, 0, 
+                          (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+
+    if (result < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return INFRAX_ERROR_NET_WOULD_BLOCK;
+        }
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Send failed: %s (errno=%d)", strerror(errno), errno);
+        return make_error(INFRAX_ERROR_NET_SEND_FAILED_CODE, err_msg);
+    }
+
+    *sent = result;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError socket_recvfrom(InfraxSocket* self, void* buffer, size_t size, size_t* received, InfraxNetAddr* addr) {
+    if (!self || !buffer || !received || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid arguments");
+
+    struct sockaddr_in src_addr;
+    memset(&src_addr, 0, sizeof(src_addr));
+    socklen_t addr_len = sizeof(src_addr);
+
+    ssize_t result = recvfrom(self->native_handle, buffer, size, 0, 
+                             (struct sockaddr*)&src_addr, &addr_len);
+
+    if (result < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return INFRAX_ERROR_NET_WOULD_BLOCK;
+        }
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Receive failed: %s (errno=%d)", strerror(errno), errno);
+        return make_error(INFRAX_ERROR_NET_RECV_FAILED_CODE, err_msg);
+    }
+
+    // 转换源地址
+    char ip[64];
+    if (inet_ntop(AF_INET, &src_addr.sin_addr, ip, sizeof(ip)) == NULL) {
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Failed to convert source IP address");
+    }
+
+    strncpy(addr->ip, ip, sizeof(addr->ip) - 1);
+    addr->ip[sizeof(addr->ip) - 1] = '\0';
+    addr->port = ntohs(src_addr.sin_port);
+
+    *received = result;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
 static InfraxError socket_set_option(InfraxSocket* self, int level, int option, const void* value, size_t len) {
     if (!self || !value) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     return set_socket_option(self->native_handle, level, option, value, len);
@@ -313,6 +401,8 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     self->connect = socket_connect;
     self->send = socket_send;
     self->recv = socket_recv;
+    self->sendto = socket_sendto;
+    self->recvfrom = socket_recvfrom;
     self->set_option = socket_set_option;
     self->get_option = socket_get_option;
     self->set_nonblock = socket_set_nonblock;
@@ -386,15 +476,21 @@ const InfraxSocketClassType InfraxSocketClass = {
 
 // Private helper functions implementations
 static InfraxError set_socket_option(intptr_t handle, int level, int option, const void* value, size_t len) {
-    if (setsockopt(handle, level, option, value, len) < 0) {
+    int sys_level = map_socket_level(level);
+    int sys_option = map_socket_option(option);
+    
+    if (setsockopt(handle, sys_level, sys_option, value, len) < 0) {
         return INFRAX_ERROR_NET_OPTION_FAILED;
     }
     return INFRAX_ERROR_OK_STRUCT;
 }
 
 static InfraxError get_socket_option(intptr_t handle, int level, int option, void* value, size_t* len) {
+    int sys_level = map_socket_level(level);
+    int sys_option = map_socket_option(option);
+    
     socklen_t optlen = *len;
-    if (getsockopt(handle, level, option, value, &optlen) < 0) {
+    if (getsockopt(handle, sys_level, sys_option, value, &optlen) < 0) {
         return INFRAX_ERROR_NET_OPTION_FAILED;
     }
     *len = optlen;

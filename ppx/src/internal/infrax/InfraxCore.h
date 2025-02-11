@@ -120,6 +120,7 @@ static inline InfraxError make_error(InfraxI32 code, const char* msg) {
     return err;
 }
 
+//TODO 后面全部同意改用 make_error()
 #define INFRAX_ERROR_OK_STRUCT (InfraxError){.code = INFRAX_ERROR_OK, .message = ""}
 
 // Helper macro to compare InfraxError
@@ -179,6 +180,8 @@ struct InfraxCore {
     char* (*strdup)(InfraxCore *self, const char* s);
     char* (*strndup)(InfraxCore *self, const char* s, size_t n);
 
+    //Misc operations
+    int (*memcmp)(struct InfraxCore *self, const void* s1, const void* s2, size_t n);
     void (*hint_yield)(struct InfraxCore *self);//hint only, not guaranteed to yield
     int (*pid)(struct InfraxCore *self);
     
@@ -253,7 +256,7 @@ struct InfraxCore {
 struct InfraxCoreClassType {
     InfraxCore* (*singleton)(void);  // Singleton getter
 };
-extern const InfraxCoreClassType InfraxCoreClass;
+extern InfraxCoreClassType InfraxCoreClass;
 
 // Assert macros
 #define INFRAX_ASSERT(core, expr) \

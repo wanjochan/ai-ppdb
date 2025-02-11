@@ -54,6 +54,8 @@ struct InfraxSocket {
     InfraxError (*connect)(InfraxSocket* self, const InfraxNetAddr* addr);
     InfraxError (*send)(InfraxSocket* self, const void* data, size_t size, size_t* sent);
     InfraxError (*recv)(InfraxSocket* self, void* buffer, size_t size, size_t* received);
+    InfraxError (*sendto)(InfraxSocket* self, const void* data, size_t size, size_t* sent, const InfraxNetAddr* addr);
+    InfraxError (*recvfrom)(InfraxSocket* self, void* buffer, size_t size, size_t* received, InfraxNetAddr* addr);
     InfraxError (*set_option)(InfraxSocket* self, int level, int option, const void* value, size_t len);
     InfraxError (*get_option)(InfraxSocket* self, int level, int option, void* value, size_t* len);
     InfraxError (*set_nonblock)(InfraxSocket* self, bool nonblock);
