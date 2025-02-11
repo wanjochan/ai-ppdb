@@ -18,6 +18,14 @@ static InfraxError thread_start(InfraxThread* self, InfraxThreadFunc func, void*
 static InfraxError thread_join(InfraxThread* self, void** result);
 static InfraxThreadId thread_tid(InfraxThread* self);
 
+// Forward declarations of thread pool methods
+InfraxError infrax_thread_pool_create(InfraxThread* self, InfraxThreadPoolConfig* config);
+InfraxError infrax_thread_pool_destroy(InfraxThread* self);
+InfraxError infrax_thread_pool_submit(InfraxThread* self, InfraxThreadFunc func, void* arg);
+InfraxError infrax_thread_pool_get_stats(InfraxThread* self, InfraxThreadPoolStats* stats);
+
+// InfraxMemory* get_memory_manager(void);
+
 // Thread function wrapper
 static void* thread_func(void* arg) {
     InfraxThread* self = (InfraxThread*)arg;
@@ -44,7 +52,7 @@ InfraxMemory* get_memory_manager(void) {
 
 // Constructor implementation
 static InfraxThread* thread_new(InfraxThreadConfig* config) {
-    if (!config || !config->name || !config->func) {
+    if (!config || !config->name) {
         return NULL;
     }
 
@@ -121,7 +129,11 @@ const InfraxThreadClassType InfraxThreadClass = {
     .free = thread_free,
     .start = thread_start,
     .join = thread_join,
-    .tid = thread_tid
+    .tid = thread_tid,
+    .pool_create = infrax_thread_pool_create,
+    .pool_destroy = infrax_thread_pool_destroy,
+    .pool_submit = infrax_thread_pool_submit,
+    .pool_get_stats = infrax_thread_pool_get_stats
 };
 
 // Instance methods implementation
@@ -138,6 +150,8 @@ static InfraxError thread_start(InfraxThread* self, InfraxThreadFunc func, void*
     if (func) {
         self->config.func = func;
         self->config.arg = arg;
+    } else if (!self->config.func) {
+        return make_error(INFRAX_ERROR_THREAD_INVALID_ARGUMENT, "No thread function specified");
     }
     
     // Set thread attributes

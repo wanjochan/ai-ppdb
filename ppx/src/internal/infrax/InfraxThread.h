@@ -80,13 +80,7 @@ typedef struct {
 // The "static" interface instance (like Java's Class object)
 extern const InfraxThreadClassType InfraxThreadClass;
 
-// Memory manager function
-InfraxMemory* get_memory_manager(void);
-
-// // 线程池相关函数声明
-// InfraxError infrax_thread_pool_create(InfraxThread* self, InfraxThreadPoolConfig* config);
-// InfraxError infrax_thread_pool_destroy(InfraxThread* self);
-// InfraxError infrax_thread_pool_submit(InfraxThread* self, InfraxThreadFunc func, void* arg);
-// InfraxError infrax_thread_pool_get_stats(InfraxThread* self, InfraxThreadPoolStats* stats);
+// // Memory manager function 不要暴露！
+// InfraxMemory* get_memory_manager(void);
 
 #endif /* INFRAX_THREAD_H */
