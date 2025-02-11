@@ -201,7 +201,7 @@ void test_polyx_async_read_file(void) {
                         ctx.yield_count);
             last_status = now;
         }
-        core->sleep_ms(core, 1);  // 1ms sleep
+        InfraxAsyncClass.yield(async);  // 使用异步 yield 替代阻塞的 sleep
     }
     
     log->info(log, "test_polyx_async_read_file: task completed");

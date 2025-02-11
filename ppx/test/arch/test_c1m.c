@@ -63,15 +63,24 @@ typedef struct {
 void cleanup_task(TaskContext* ctx) {
     if (ctx) {
         if (ctx->async) {
+            if (!InfraxAsyncClass.is_done(ctx->async)) {
+                InfraxAsyncClass.cancel(ctx->async);  // 先取消任务
+                // 等待任务完全停止，使用 yield 而不是 sleep
+                while (!InfraxAsyncClass.is_done(ctx->async)) {
+                    InfraxAsyncClass.yield(ctx->async);  // 使用异步 yield 替代阻塞的 sleep
+                }
+            }
             InfraxAsyncClass.free(ctx->async);
         }
-        InfraxMemoryClass.dealloc(memory, ctx);
+        memory->dealloc(memory, ctx);
         __atomic_fetch_sub(&metrics.active_tasks, 1, __ATOMIC_SEQ_CST);
     }
 }
 
 // Long running task function
 void long_running_task(InfraxAsync* self, void* arg) {
+    if (!self || !arg) return;  // 参数检查
+    
     TaskContext* ctx = (TaskContext*)arg;
     static __thread int yield_count = 0;
     
@@ -100,15 +109,13 @@ void long_running_task(InfraxAsync* self, void* arg) {
         // Increment yield count with bounds checking
         if (yield_count < MAX_YIELD_COUNT) {
             yield_count++;
+            InfraxAsyncClass.yield(self);
         } else {
             // Task has yielded too many times, terminate it
             self->state = INFRAX_ASYNC_REJECTED;
             __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
             return;
         }
-        
-        // Yield control
-        InfraxAsyncClass.yield(self);
     }
 }
 
@@ -122,14 +129,16 @@ void process_active_tasks() {
     static int cycle_count = 0;
     cycle_count++;
     
-    // Simplified sleep strategy - only sleep when necessary
+    // 使用 yield 来让出执行权，而不是阻塞的 sleep
     if (cycle_count % 50 == 0 && metrics.active_tasks > TARGET_CONNECTIONS * 0.95) {
-        core->sleep_us(core, 50);  // Minimal sleep when system is heavily loaded
+        core->yield(core);  // 使用非阻塞的 yield
     }
 }
 
 // Create and start a batch of timer tasks
 void create_task_batch(size_t target_tasks) {
+    if (!memory || !core) return;  // 安全检查
+    
     size_t current_active = metrics.active_tasks;
     size_t to_create = target_tasks > current_active ? target_tasks - current_active : 0;
     
@@ -144,25 +153,30 @@ void create_task_batch(size_t target_tasks) {
     to_create = to_create > batch_size ? batch_size : to_create;
     
     for (size_t i = 0; i < to_create && metrics.active_tasks < TARGET_CONNECTIONS; i++) {
-        TaskContext* ctx = InfraxMemoryClass.alloc(memory, sizeof(TaskContext));
+        TaskContext* ctx = memory->alloc(memory, sizeof(TaskContext));
         if (!ctx) continue;
         
-        InfraxMemoryClass.clear(memory, ctx, sizeof(TaskContext));
+        memset(ctx, 0, sizeof(TaskContext));
         core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
         ctx->is_active = 1;
         
         ctx->async = InfraxAsyncClass.new(long_running_task, ctx);
         if (!ctx->async) {
-            InfraxMemoryClass.dealloc(memory, ctx);
+            memory->dealloc(memory, ctx);
             continue;
         }
         
+        // 先增加计数，再启动任务
         size_t current_active = __atomic_fetch_add(&metrics.active_tasks, 1, __ATOMIC_SEQ_CST) + 1;
         if (current_active > metrics.peak_active_tasks) {
             metrics.peak_active_tasks = current_active;
         }
         
-        InfraxAsyncClass.start(ctx->async);
+        if (!InfraxAsyncClass.start(ctx->async)) {  // 检查启动结果
+            __atomic_fetch_sub(&metrics.active_tasks, 1, __ATOMIC_SEQ_CST);
+            cleanup_task(ctx);
+            continue;
+        }
         
         if (ctx->async->state == INFRAX_ASYNC_REJECTED) {
             __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
@@ -193,14 +207,33 @@ void print_metrics(time_t elapsed_seconds) {
 }
 
 int main() {
+    printf("Initializing core...\n");
     core = InfraxCoreClass.singleton();
-    memory = InfraxMemoryClass.new();
+    if (!core) {
+        printf("Failed to initialize core!\n");
+        return 1;
+    }
+    
+    printf("Initializing memory...\n");
+    InfraxMemoryConfig config = {
+        .initial_size = 1024 * 1024,  // 1MB initial size
+        .use_gc = false,
+        .use_pool = true,
+        .gc_threshold = 0
+    };
+    memory = InfraxMemoryClass.new(&config);
+    if (!memory) {
+        printf("Failed to initialize memory!\n");
+        return 1;
+    }
+    
+    printf("Initialization completed, starting test...\n");
     core->printf(core, "Starting 1K Concurrent Tasks Test...\n");
     core->printf(core, "Target Connections: %d\n", TARGET_CONNECTIONS);
     core->printf(core, "Test Duration: %d seconds\n", TEST_DURATION_SEC);
     core->printf(core, "Task Lifetime: %d ms\n", TASK_LIFETIME_MS);
     core->printf(core, "----------------------------------------\n");
-    core->sleep(core, 2);  // 给操作者时间阅读参数
+    core->yield(core);  // 使用 yield 替代 sleep
 
     core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &metrics.start_time);
     time_t start_time = core->time(core, NULL);
@@ -218,7 +251,7 @@ int main() {
             last_print_time = current_time;
         }
 
-        core->sleep_us(core, 1000); // 1ms
+        core->yield(core);  // 使用 yield 替代 sleep
     }
 
     // Final metrics
