@@ -42,6 +42,10 @@ static int map_socket_option(int option) {
             return SO_RCVTIMEO;
         case INFRAX_SO_SNDTIMEO:
             return SO_SNDTIMEO;
+        case INFRAX_SO_RCVBUF:
+            return SO_RCVBUF;
+        case INFRAX_SO_SNDBUF:
+            return SO_SNDBUF;
         default:
             return option;
     }

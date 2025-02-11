@@ -73,6 +73,8 @@ extern InfraxSocketClassType InfraxSocketClass;
 #define INFRAX_SO_KEEPALIVE    3
 #define INFRAX_SO_RCVTIMEO     4
 #define INFRAX_SO_SNDTIMEO     5
+#define INFRAX_SO_RCVBUF       6
+#define INFRAX_SO_SNDBUF       7
 
 //-----------------------------------------------------------------------------
 // Error codes
