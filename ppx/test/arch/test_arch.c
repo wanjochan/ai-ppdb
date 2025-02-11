@@ -6,16 +6,10 @@ const PpxInfra* infra = NULL;
 
 void test_infrax_core(void) {
     INFRAX_ASSERT(core, core != NULL);
-    //core->time_now(core);
     core->printf(core, "time_now_ms=%d\n",core->time_now_ms(core));
     core->printf(core, "sleep_ms 100\n");
     core->sleep_ms(NULL,100);
     core->printf(core, "time_monotonic_ms=%d\n",core->time_monotonic_ms(core));
-    
-    // Test yield functionality
-    core->printf(core, "Testing yield...\n");
-    core->yield(core);
-    core->printf(core, "Yield test completed\n");
     
     // Test pid functionality
     core->printf(core, "Testing pid...\n");

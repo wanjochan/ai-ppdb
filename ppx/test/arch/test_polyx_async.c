@@ -17,7 +17,7 @@ typedef struct {
     int yield_count;    // Count how many times yield is called
 } AsyncFileContext;
 
-// Async read file function
+// Test async read file function
 static void async_read_file(InfraxAsync* self, void* arg) {
     AsyncFileContext* ctx = (AsyncFileContext*)arg;
     InfraxCore* core = InfraxCoreClass.singleton();
@@ -25,6 +25,7 @@ static void async_read_file(InfraxAsync* self, void* arg) {
     
     if (!ctx) {
         log->debug(log, "async_read_file: ctx is NULL");
+        self->state = INFRAX_ASYNC_REJECTED;
         return;
     }
     
@@ -183,25 +184,24 @@ void test_polyx_async_read_file(void) {
     InfraxTime last_status = 0;
     InfraxTime start_time = core->time_monotonic_ms(core);
     
-    while (async->state != INFRAX_ASYNC_FULFILLED && 
-           async->state != INFRAX_ASYNC_REJECTED) {
+    while (!InfraxAsyncClass.is_done(async)) {
         // Check timeout
         if (core->time_monotonic_ms(core) - start_time > TEST_TIMEOUT_MS) {
             log->error(log, "test_polyx_async_read_file: timeout after %d ms", TEST_TIMEOUT_MS);
-            async->state = INFRAX_ASYNC_REJECTED;
+            InfraxAsyncClass.cancel(async);
             break;
         }
         
         if (async->state == INFRAX_ASYNC_PENDING) {
             InfraxAsyncClass.start(async);
         }
+        InfraxAsyncClass.yield(async);
         InfraxTime now = core->time_monotonic_ms(core);
         if (now - last_status >= 1000) {  // Log status every second
             log->debug(log, "test_polyx_async_read_file: waiting... (yield count: %d)", 
                         ctx.yield_count);
             last_status = now;
         }
-        InfraxAsyncClass.yield(async);  // 使用异步 yield 替代阻塞的 sleep
     }
     
     log->info(log, "test_polyx_async_read_file: task completed");
@@ -220,16 +220,16 @@ void test_polyx_async_read_file(void) {
 // Timer callback
 static void test_timer_callback(void* arg) {
     int* count = (int*)arg;
-    InfraxCore* core = InfraxCoreClass.singleton();
-    core->printf(core, "Timer triggered, count: %d\n", *count);
     (*count)++;
+    
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Timer callback called %d times\n", *count);
 }
 
 // Event callback
 static void test_event_callback(PolyxEvent* event, void* arg) {
-    if (!event || !arg) return;
     InfraxCore* core = InfraxCoreClass.singleton();
-    core->printf(core, "Event triggered with data: %s\n", (const char*)arg);
+    core->printf(core, "Event callback called with data: %s\n", (const char*)arg);
 }
 
 int main() {
@@ -253,7 +253,7 @@ int main() {
         .arg = &timer_count
     };
     
-    PolyxEvent* timer = PolyxAsyncClass.create_timer(async, &timer_config);
+    PolyxEvent* timer = async->create_timer(async, &timer_config);
     if (!timer) {
         core->printf(core, "Failed to create timer\n");
         PolyxAsyncClass.free(async);
@@ -262,7 +262,7 @@ int main() {
     
     // Start timer
     core->printf(core, "Starting timer...\n");
-    PolyxAsyncClass.start_timer(async, timer);
+    async->start_timer(async, timer);
     
     // Test 2: Custom Event
     core->printf(core, "\nTest 2: Custom Event\n");
@@ -274,10 +274,10 @@ int main() {
         .arg = (void*)event_data
     };
     
-    PolyxEvent* event = PolyxAsyncClass.create_event(async, &event_config);
+    PolyxEvent* event = async->create_event(async, &event_config);
     if (!event) {
         core->printf(core, "Failed to create event\n");
-        PolyxAsyncClass.destroy_event(async, timer);
+        async->destroy_event(async, timer);
         PolyxAsyncClass.free(async);
         return 1;
     }
@@ -288,20 +288,20 @@ int main() {
         // Trigger custom event every other iteration
         if (i % 2 == 0) {
             core->printf(core, "Triggering custom event...\n");
-            PolyxAsyncClass.trigger_event(async, event, (void*)event_data, core->strlen(core, event_data) + 1);
+            async->trigger_event(async, event, (void*)event_data, core->strlen(core, event_data) + 1);
         }
         
         // Poll for events
-        PolyxAsyncClass.poll(async, 1100);  // Slightly longer than timer interval
+        async->poll(async, 1100);  // Slightly longer than timer interval
     }
     
     // Stop timer
     core->printf(core, "\nStopping timer...\n");
-    PolyxAsyncClass.stop_timer(async, timer);
+    async->stop_timer(async, timer);
     
     // Cleanup
-    PolyxAsyncClass.destroy_event(async, event);
-    PolyxAsyncClass.destroy_event(async, timer);
+    async->destroy_event(async, event);
+    async->destroy_event(async, timer);
     PolyxAsyncClass.free(async);
     
     core->printf(core, "\n=== All polyx_async tests completed ===\n");

@@ -8,10 +8,11 @@ static void test_async_fn(InfraxAsync* self, void* arg) {
     core->printf(core, "Test async function started\n");
     InfraxAsyncClass.yield(self);
     core->printf(core, "Test async function resumed\n");
+    self->state = INFRAX_ASYNC_FULFILLED;
 }
 
 // Test poll callback
-static void test_poll_callback(int fd, short revents, void* arg) {
+static void test_poll_callback(InfraxAsync* self, int fd, short revents, void* arg) {
     if (revents & INFRAX_POLLIN) {
         char buf[128];
         ssize_t n = core->read_fd(core, fd, buf, sizeof(buf) - 1);

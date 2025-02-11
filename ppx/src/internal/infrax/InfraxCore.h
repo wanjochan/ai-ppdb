@@ -177,7 +177,7 @@ struct InfraxCore {
     char* (*strdup)(InfraxCore *self, const char* s);
     char* (*strndup)(InfraxCore *self, const char* s, size_t n);
 
-    void (*yield)(struct InfraxCore *self);//hint only, not guaranteed to yield
+    void (*hint_yield)(struct InfraxCore *self);//hint only, not guaranteed to yield
     int (*pid)(struct InfraxCore *self);
     
     // Random number operations

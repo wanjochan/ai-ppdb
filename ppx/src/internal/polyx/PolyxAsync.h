@@ -27,68 +27,76 @@ inotify fd (文件系统事件监控)
 #include "internal/infrax/InfraxMemory.h"
 // #include <poll.h>
 
-// Event types
-typedef enum {
-    POLYX_EVENT_TIMER,    // Timer event
-    POLYX_EVENT_IO,       // I/O event
-    POLYX_EVENT_SIGNAL    // Signal event
-} PolyxEventType;
-
-// Event structure
-typedef struct PolyxEvent {
-    PolyxEventType type;   // Event type
-    int read_fd;          // Read end of event pipe
-    int write_fd;         // Write end of event pipe
-    void* data;           // Event data
-    size_t data_size;     // Size of event data
-} PolyxEvent;
-
 // Forward declarations
 typedef struct PolyxAsync PolyxAsync;
+typedef struct PolyxEvent PolyxEvent;
+
+// Event types
+typedef enum {
+    POLYX_EVENT_NONE = 0,
+    POLYX_EVENT_IO,
+    POLYX_EVENT_TIMER,
+    POLYX_EVENT_SIGNAL
+} PolyxEventType;
+
+// Timer callback type
 typedef void (*TimerCallback)(void* arg);
+
+// Event callback type
 typedef void (*EventCallback)(PolyxEvent* event, void* arg);
 
 // Timer configuration
-typedef struct PolyxTimerConfig {
-    int interval_ms;      // Timer interval in milliseconds
-    TimerCallback callback; // Timer callback function
-    void* arg;            // Callback argument
+typedef struct {
+    unsigned int interval_ms;
+    TimerCallback callback;
+    void* arg;
 } PolyxTimerConfig;
 
 // Event configuration
-typedef struct PolyxEventConfig {
-    PolyxEventType type;   // Event type
-    EventCallback callback; // Event callback function
-    void* arg;            // Callback argument
+typedef struct {
+    PolyxEventType type;
+    EventCallback callback;
+    void* arg;
 } PolyxEventConfig;
+
+// Event structure
+struct PolyxEvent {
+    PolyxEventType type;
+    void* private_data;  // Internal use only
+};
 
 // Async structure
 struct PolyxAsync {
-    InfraxAsync* infra;    // Underlying InfraxAsync instance
-    void* ctx;            // Internal context
+    InfraxAsync* infrax;
+    PolyxEvent** events;
+    size_t event_count;
+    size_t event_capacity;
+    
+    // 对象方法 - 事件管理
+    PolyxEvent* (*create_event)(struct PolyxAsync* self, PolyxEventConfig* config);
+    PolyxEvent* (*create_timer)(struct PolyxAsync* self, PolyxTimerConfig* config);
+    void (*destroy_event)(struct PolyxAsync* self, PolyxEvent* event);
+    
+    // 对象方法 - 定时器控制
+    void (*start_timer)(struct PolyxAsync* self, PolyxEvent* timer);
+    void (*stop_timer)(struct PolyxAsync* self, PolyxEvent* timer);
+    
+    // 对象方法 - 事件触发
+    void (*trigger_event)(struct PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
+    
+    // 对象方法 - 轮询
+    int (*poll)(struct PolyxAsync* self, int timeout_ms);
 };
 
-// Async class interface
+// 类接口
 typedef struct {
-    // Lifecycle
     PolyxAsync* (*new)(void);
     void (*free)(PolyxAsync* self);
-    
-    // Event operations
-    PolyxEvent* (*create_event)(PolyxAsync* self, const PolyxEventConfig* config);
-    int (*trigger_event)(PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
-    void (*destroy_event)(PolyxAsync* self, PolyxEvent* event);
-    
-    // Timer operations
-    PolyxEvent* (*create_timer)(PolyxAsync* self, const PolyxTimerConfig* config);
-    int (*start_timer)(PolyxAsync* self, PolyxEvent* timer);
-    int (*stop_timer)(PolyxAsync* self, PolyxEvent* timer);
-    
-    // Poll operations
-    int (*poll)(PolyxAsync* self, int timeout_ms);
-} PolyxAsyncClass_t;
 
-// Global class instance
-extern const PolyxAsyncClass_t PolyxAsyncClass;
+    //有没有线程相关的处理需要搬过来？可能后面有一些工具方法，针对 poll 的类型做的便捷函数！
+} PolyxAsyncClassType;
+
+// 全局类实例
+extern const PolyxAsyncClassType PolyxAsyncClass;
 
 #endif // POLYX_ASYNC_H

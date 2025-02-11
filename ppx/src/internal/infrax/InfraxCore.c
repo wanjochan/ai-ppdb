@@ -26,8 +26,8 @@ void* infrax_core_forward_call(InfraxCore *self,void* (*target_func)(va_list), .
     return result;
 }
 
-static void infrax_core_yield(InfraxCore *self) {
-    sched_yield();
+static void infrax_core_hint_yield(InfraxCore *self) {
+    sched_yield();//在多线程情况下，提示当前线程放弃CPU，让其他线程运行，但并不是一定成功的
 }
 
 int infrax_core_pid(InfraxCore *self) {
@@ -695,7 +695,7 @@ static InfraxCore singleton = {
     .time_now_ms = infrax_core_time_now_ms,
     .time_monotonic_ms = infrax_core_time_monotonic_ms,
     .sleep_ms = infrax_core_sleep_ms,
-    .yield = infrax_core_yield,
+    .hint_yield = infrax_core_hint_yield,
     .pid = infrax_core_pid,
     
     // Random number operations
