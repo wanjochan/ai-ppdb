@@ -1,6 +1,6 @@
 // #include "cosmopolitan.h"
 #include "internal/infrax/InfraxCore.h"
-#include <pthread.h> //等我们的 thread 通过要用我们的 thread
+#include "internal/infrax/InfraxThread.h"
 
 InfraxCore* core = NULL;
 // Test basic error operations

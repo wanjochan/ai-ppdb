@@ -1,8 +1,10 @@
 #include "internal/arch/PpxInfra.h"
 #include "internal/infrax/InfraxLog.h"
 
+InfraxCore* core = NULL;
+const PpxInfra* infra = NULL;
+
 void test_infrax_core(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
     INFRAX_ASSERT(core, core != NULL);
     //core->time_now(core);
     core->printf(core, "time_now_ms=%d\n",core->time_now_ms(core));
@@ -49,9 +51,6 @@ void test_infrax_core(void) {
 }
 
 void test_ppx_infra(void) {
-    // Test global instance
-    const PpxInfra* infra = ppx_infra();
-    InfraxCore* core = InfraxCoreClass.singleton();
     INFRAX_ASSERT(core, infra != NULL);
     INFRAX_ASSERT(core, infra->core != NULL);
     INFRAX_ASSERT(core, infra->logger != NULL);
@@ -71,7 +70,6 @@ void test_ppx_infra(void) {
 }
 
 static void test_string_operations(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
     
     // Test strlen
     const char* test_str = "Hello, World!";
@@ -123,7 +121,6 @@ static void test_string_operations(void) {
 }
 
 static void test_time_operations(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
     
     // Test time_now_ms
     InfraxTime t1 = core->time_now_ms(core);
@@ -149,7 +146,6 @@ static void test_time_operations(void) {
 }
 
 static void test_random_operations(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
     
     // Test random seed and generation
     core->random_seed(core, 12345);  // Set a fixed seed
@@ -166,7 +162,6 @@ static void test_random_operations(void) {
 }
 
 static void test_buffer_operations(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
     InfraxBuffer buf;
     
     // Test buffer initialization
@@ -201,7 +196,6 @@ static void test_buffer_operations(void) {
 }
 
 static void test_ring_buffer_operations(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
     InfraxRingBuffer rb;
     
     // Test ring buffer initialization
@@ -243,7 +237,6 @@ static void test_ring_buffer_operations(void) {
 }
 
 static void test_file_operations(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
     InfraxHandle file;
     const char* test_path = "./test.txt";
     const char* test_data = "Hello, File I/O!";
@@ -302,6 +295,10 @@ static void test_file_operations(void) {
 
 int main(void) {
     printf("Starting architecture tests...\n");
+    infra = ppx_infra();
+    //core = infra->core;//should be the same as InfraxCoreClass.singleton()
+    //core = InfraxCoreClass.singleton();
+    core = infra->core;
     InfraxError err = make_error(INFRAX_ERROR_OK, "OK");
     printf("test make_error %d,%s\n",err.code,err.message);
     test_infrax_core();

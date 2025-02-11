@@ -1,28 +1,29 @@
 #include "internal/infrax/InfraxAsync.h"
-#include <stdio.h>
-#include <assert.h>
+#include "internal/infrax/InfraxCore.h"
 
 static int timer_called = 0;
+static InfraxCore* core = NULL;
 
 static void timer_callback(void* arg) {
     timer_called = 1;
-    printf("Timer callback called with arg: %p\n", arg);
+    core->printf(core, "Timer callback called with arg: %p\n", arg);
 }
 
 static void async_task(InfraxAsync* self, void* arg) {
-    printf("Task started\n");
+    core->printf(core, "Task started\n");
     
     // Add a timer for 100ms
     int ret = InfraxAsyncClass.add_timer(self, 100, timer_callback, arg);
-    assert(ret == 0);
+    INFRAX_ASSERT(core, ret == 0);
     
     // Yield to let timer run
     InfraxAsyncClass.yield(self);
     
-    printf("Task resumed after timer\n");
+    core->printf(core, "Task resumed after timer\n");
 }
 
 int main() {
+    core = InfraxCoreClass.singleton();
     // Initialize scheduler
     infrax_scheduler_init();
     
@@ -38,6 +39,6 @@ int main() {
     // Cleanup
     InfraxAsyncClass.free(task);
     
-    printf("Test completed successfully\n");
+    core->printf(core, "Test completed successfully\n");
     return 0;
 }

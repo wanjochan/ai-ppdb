@@ -1,13 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include <unistd.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxMemory.h"
+
+static InfraxCore* core = NULL;
 
 #define TARGET_CONNECTIONS 1000
 #define BATCH_SIZE 50  // 减小初始批次大小
@@ -22,7 +17,7 @@ typedef struct {
     size_t failed_tasks;
     double avg_response_time;
     size_t peak_memory;
-    struct timespec start_time;
+    InfraxTimeSpec start_time;
     double cpu_usage;
     size_t total_memory;
     size_t peak_active_tasks;  // 新增：记录峰值并发数
@@ -33,11 +28,11 @@ TestMetrics metrics = {0};
 // Get CPU usage
 double get_cpu_usage() {
     static clock_t last_cpu = 0;
-    static struct timespec last_time = {0};
+    static InfraxTimeSpec last_time = {0};
     
-    clock_t current_cpu = clock();
-    struct timespec current_time;
-    clock_gettime(CLOCK_MONOTONIC, &current_time);
+    clock_t current_cpu = core->clock(core);
+    InfraxTimeSpec current_time;
+    core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &current_time);
     
     if (last_cpu == 0) {
         last_cpu = current_cpu;
@@ -45,7 +40,7 @@ double get_cpu_usage() {
         return 0.0;
     }
     
-    double cpu_time = (double)(current_cpu - last_cpu) / CLOCKS_PER_SEC;
+    double cpu_time = (double)(current_cpu - last_cpu) / core->clocks_per_sec(core);
     double real_time = (current_time.tv_sec - last_time.tv_sec) + 
                       (current_time.tv_nsec - last_time.tv_nsec) / 1e9;
     
@@ -58,7 +53,7 @@ double get_cpu_usage() {
 // Task context structure
 typedef struct {
     InfraxAsync* async;
-    struct timespec start_time;
+    InfraxTimeSpec start_time;
     int is_active;
     int state;  // 0: initial, 1: running, 2: completed
 } TaskContext;
@@ -67,9 +62,9 @@ typedef struct {
 void cleanup_task(TaskContext* ctx) {
     if (ctx) {
         if (ctx->async) {
-            InfraxAsyncClass.free(ctx->async); // 修正：使用正确的释放函数
+            InfraxAsyncClass.free(ctx->async);
         }
-        free(ctx);
+        core->free(core, ctx);
         __atomic_fetch_sub(&metrics.active_tasks, 1, __ATOMIC_SEQ_CST);
     }
 }
@@ -82,14 +77,14 @@ void long_running_task(InfraxAsync* self, void* arg) {
     // First time entry
     if (ctx->state == 0) {
         ctx->state = 1;
-        clock_gettime(CLOCK_MONOTONIC, &ctx->start_time);
+        core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
         yield_count = 0;
     }
     
     while (self->state == INFRAX_ASYNC_PENDING) {
         // Check if we've run long enough
-        struct timespec current_time;
-        clock_gettime(CLOCK_MONOTONIC, &current_time);
+        InfraxTimeSpec current_time;
+        core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &current_time);
         long elapsed_ms = (current_time.tv_sec - ctx->start_time.tv_sec) * 1000 +
                          (current_time.tv_nsec - ctx->start_time.tv_nsec) / 1000000;
                          
@@ -118,9 +113,7 @@ void long_running_task(InfraxAsync* self, void* arg) {
 
 // Get current memory usage
 size_t get_memory_usage() {
-    struct rusage usage;
-    getrusage(RUSAGE_SELF, &usage);
-    return usage.ru_maxrss;
+    return core->get_memory_usage(core);
 }
 
 // Process active tasks
@@ -130,7 +123,7 @@ void process_active_tasks() {
     
     // Simplified sleep strategy - only sleep when necessary
     if (cycle_count % 50 == 0 && metrics.active_tasks > TARGET_CONNECTIONS * 0.95) {
-        usleep(50);  // Minimal sleep when system is heavily loaded
+        core->sleep_us(core, 50);  // Minimal sleep when system is heavily loaded
     }
 }
 
@@ -150,16 +143,16 @@ void create_task_batch(size_t target_tasks) {
     to_create = to_create > batch_size ? batch_size : to_create;
     
     for (size_t i = 0; i < to_create && metrics.active_tasks < TARGET_CONNECTIONS; i++) {
-        TaskContext* ctx = malloc(sizeof(TaskContext));
+        TaskContext* ctx = core->malloc(core, sizeof(TaskContext));
         if (!ctx) continue;
         
-        memset(ctx, 0, sizeof(TaskContext));
-        clock_gettime(CLOCK_MONOTONIC, &ctx->start_time);
+        core->memset(core, ctx, 0, sizeof(TaskContext));
+        core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
         ctx->is_active = 1;
         
         ctx->async = InfraxAsyncClass.new(long_running_task, ctx);
         if (!ctx->async) {
-            free(ctx);
+            core->free(core, ctx);
             continue;
         }
         
@@ -185,34 +178,35 @@ void print_metrics(time_t elapsed_seconds) {
         metrics.peak_memory = metrics.total_memory;
     }
     
-    printf("\033[2J\033[H");  // 清屏并移到开头
-    printf("=== Test Progress: %ld/%d seconds ===\n", elapsed_seconds, TEST_DURATION_SEC);
-    printf("Current Active Tasks: %zu\n", metrics.active_tasks);
-    printf("Peak Active Tasks:   %zu\n", metrics.peak_active_tasks);
-    printf("Completed Tasks:     %zu\n", metrics.completed_tasks);
-    printf("Failed Tasks:        %zu\n", metrics.failed_tasks);
-    printf("CPU Usage:           %.1f%%\n", metrics.cpu_usage);
-    printf("Current Memory:      %.2f MB\n", metrics.total_memory / 1024.0);
-    printf("Peak Memory:         %.2f MB\n", metrics.peak_memory / 1024.0);
-    printf("Tasks/sec:           %.2f\n", metrics.completed_tasks / (double)elapsed_seconds);
-    printf("----------------------------------------\n");
+    core->printf(core, "\033[2J\033[H");  // 清屏并移到开头
+    core->printf(core, "=== Test Progress: %ld/%d seconds ===\n", elapsed_seconds, TEST_DURATION_SEC);
+    core->printf(core, "Current Active Tasks: %zu\n", metrics.active_tasks);
+    core->printf(core, "Peak Active Tasks:   %zu\n", metrics.peak_active_tasks);
+    core->printf(core, "Completed Tasks:     %zu\n", metrics.completed_tasks);
+    core->printf(core, "Failed Tasks:        %zu\n", metrics.failed_tasks);
+    core->printf(core, "CPU Usage:           %.1f%%\n", metrics.cpu_usage);
+    core->printf(core, "Current Memory:      %.2f MB\n", metrics.total_memory / 1024.0);
+    core->printf(core, "Peak Memory:         %.2f MB\n", metrics.peak_memory / 1024.0);
+    core->printf(core, "Tasks/sec:           %.2f\n", metrics.completed_tasks / (double)elapsed_seconds);
+    core->printf(core, "----------------------------------------\n");
 }
 
 int main() {
-    printf("Starting 1K Concurrent Tasks Test...\n");
-    printf("Target Connections: %d\n", TARGET_CONNECTIONS);
-    printf("Test Duration: %d seconds\n", TEST_DURATION_SEC);
-    printf("Task Lifetime: %d ms\n", TASK_LIFETIME_MS);
-    printf("----------------------------------------\n");
-    sleep(2);  // 给操作者时间阅读参数
+    core = InfraxCoreClass.singleton();
+    core->printf(core, "Starting 1K Concurrent Tasks Test...\n");
+    core->printf(core, "Target Connections: %d\n", TARGET_CONNECTIONS);
+    core->printf(core, "Test Duration: %d seconds\n", TEST_DURATION_SEC);
+    core->printf(core, "Task Lifetime: %d ms\n", TASK_LIFETIME_MS);
+    core->printf(core, "----------------------------------------\n");
+    core->sleep(core, 2);  // 给操作者时间阅读参数
 
-    clock_gettime(CLOCK_MONOTONIC, &metrics.start_time);
-    time_t start_time = time(NULL);
+    core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &metrics.start_time);
+    time_t start_time = core->time(core, NULL);
     time_t current_time;
     time_t last_print_time = 0;
 
     // Main test loop
-    while ((current_time = time(NULL)) - start_time < TEST_DURATION_SEC) {
+    while ((current_time = core->time(core, NULL)) - start_time < TEST_DURATION_SEC) {
         create_task_batch(TARGET_CONNECTIONS);
         process_active_tasks();
         
@@ -222,11 +216,11 @@ int main() {
             last_print_time = current_time;
         }
 
-        usleep(1000); // 1ms
+        core->sleep_us(core, 1000); // 1ms
     }
 
     // Final metrics
-    printf("\nTest Completed!\n");
+    core->printf(core, "\nTest Completed!\n");
     print_metrics(TEST_DURATION_SEC);
     
     return 0;

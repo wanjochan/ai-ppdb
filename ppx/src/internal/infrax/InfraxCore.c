@@ -1,4 +1,7 @@
 #include "internal/infrax/InfraxCore.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/resource.h>
 
 int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     va_list args;
@@ -604,9 +607,102 @@ static void infrax_core_set_assert_handler(InfraxCore *self, InfraxAssertHandler
     g_assert_handler = handler;
 }
 
-// Static singleton instance with all function pointers initialized
-static InfraxCore g_infrax_core = {
-    .self = &g_infrax_core,  // Self pointer to the static instance
+// File descriptor operations
+static ssize_t infrax_core_read_fd(InfraxCore *self, int fd, void* buf, size_t count) {
+    return read(fd, buf, count);
+}
+
+static ssize_t infrax_core_write_fd(InfraxCore *self, int fd, const void* buf, size_t count) {
+    return write(fd, buf, count);
+}
+
+static int infrax_core_create_pipe(InfraxCore *self, int pipefd[2]) {
+    return pipe(pipefd);
+}
+
+static int infrax_core_set_nonblocking(InfraxCore *self, int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static int infrax_core_close_fd(InfraxCore *self, int fd) {
+    return close(fd);
+}
+
+// Time operations
+static InfraxClock infrax_core_clock(InfraxCore *self) {
+    return clock();
+}
+
+static int infrax_core_clock_gettime(InfraxCore *self, int clk_id, InfraxTimeSpec* tp) {
+    struct timespec ts;
+    int result = clock_gettime(clk_id == INFRAX_CLOCK_REALTIME ? CLOCK_REALTIME : CLOCK_MONOTONIC, &ts);
+    if (result == 0) {
+        tp->tv_sec = ts.tv_sec;
+        tp->tv_nsec = ts.tv_nsec;
+    }
+    return result;
+}
+
+static time_t infrax_core_time(InfraxCore *self, time_t* tloc) {
+    return time(tloc);
+}
+
+static int infrax_core_clocks_per_sec(InfraxCore *self) {
+    return CLOCKS_PER_SEC;
+}
+
+static void infrax_core_sleep(InfraxCore *self, unsigned int seconds) {
+    sleep(seconds);
+}
+
+static void infrax_core_sleep_us(InfraxCore *self, unsigned int microseconds) {
+    usleep(microseconds);
+}
+
+static size_t infrax_core_get_memory_usage(InfraxCore *self) {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+}
+
+// Memory management functions
+static void* infrax_core_malloc(InfraxCore *self, size_t size) {
+    return malloc(size);
+}
+
+static void infrax_core_free(InfraxCore *self, void* ptr) {
+    free(ptr);
+}
+
+static void* infrax_core_calloc(InfraxCore *self, size_t nmemb, size_t size) {
+    return calloc(nmemb, size);
+}
+
+static void* infrax_core_realloc(InfraxCore *self, void* ptr, size_t size) {
+    return realloc(ptr, size);
+}
+
+static void* infrax_core_memset(InfraxCore *self, void* s, int c, size_t n) {
+    return memset(s, c, n);
+}
+
+static void* infrax_core_memcpy(InfraxCore *self, void* dest, const void* src, size_t n) {
+    return memcpy(dest, src, n);
+}
+
+static void* infrax_core_memmove(InfraxCore *self, void* dest, const void* src, size_t n) {
+    return memmove(dest, src, n);
+}
+
+static int infrax_core_memcmp(InfraxCore *self, const void* s1, const void* s2, size_t n) {
+    return memcmp(s1, s2, n);
+}
+
+// Initialize singleton instance
+static InfraxCore singleton = {
+    .self = &singleton,  // Self pointer to the static instance
     
     // Core functions
     .forward_call = infrax_core_forward_call,
@@ -676,10 +772,36 @@ static InfraxCore g_infrax_core = {
     .file_rename = infrax_core_file_rename,
     .file_exists = infrax_core_file_exists,
     .assert_failed = infrax_core_assert_failed,
-    .set_assert_handler = infrax_core_set_assert_handler
+    .set_assert_handler = infrax_core_set_assert_handler,
+    
+    // File descriptor operations
+    .read_fd = infrax_core_read_fd,
+    .write_fd = infrax_core_write_fd,
+    .create_pipe = infrax_core_create_pipe,
+    .set_nonblocking = infrax_core_set_nonblocking,
+    .close_fd = infrax_core_close_fd,
+    
+    // Time operations
+    .clock = infrax_core_clock,
+    .clock_gettime = infrax_core_clock_gettime,
+    .time = infrax_core_time,
+    .clocks_per_sec = infrax_core_clocks_per_sec,
+    .sleep = infrax_core_sleep,
+    .sleep_us = infrax_core_sleep_us,
+    .get_memory_usage = infrax_core_get_memory_usage,
+    
+    // Memory management
+    .malloc = infrax_core_malloc,
+    .free = infrax_core_free,
+    .calloc = infrax_core_calloc,
+    .realloc = infrax_core_realloc,
+    .memset = infrax_core_memset,
+    .memcpy = infrax_core_memcpy,
+    .memmove = infrax_core_memmove,
+    .memcmp = infrax_core_memcmp
 };
 
 // Simple singleton getter
 InfraxCore* _infrax_core_singleton(void) {
-    return &g_infrax_core;
+    return &singleton;
 }

@@ -1,6 +1,5 @@
 #include "internal/infrax/InfraxLog.h"
 #include "internal/infrax/InfraxCore.h"
-// #include <assert.h> use assert from our core
 
 InfraxCore* core = NULL;
 void test_log_basic() {

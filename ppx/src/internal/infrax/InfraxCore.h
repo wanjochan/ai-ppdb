@@ -8,9 +8,22 @@
 //-----------------------------------------------------------------------------
 // Basic Types
 //-----------------------------------------------------------------------------
+typedef int8_t InfraxI8;
+typedef uint8_t InfraxU8;
+typedef int16_t InfraxI16;
+typedef uint16_t InfraxU16;
 typedef int32_t InfraxI32;
 typedef uint32_t InfraxU32;
+typedef int64_t InfraxI64;
+typedef uint64_t InfraxU64;
+typedef size_t InfraxSize;
+typedef ssize_t InfraxSSize;
 typedef int InfraxBool;
+typedef int InfraxInt;
+
+typedef clock_t InfraxClock;
+typedef time_t InfraxTime;
+// typedef InfraxU64 InfraxTime;//
 
 #define INFRAX_TRUE  1
 #define INFRAX_FALSE 0
@@ -20,32 +33,56 @@ typedef struct InfraxError InfraxError;
 
 // Error structure definition
 struct InfraxError {
+    InfraxError* self;//point to self
     // Error state
     InfraxI32 code;
     char message[128];
-    // TODO: Add stack trace support when solution is available
-    // void* stack_frames[32];
-    // int stack_depth;
-    // (char stack_trace[1024])dump_stack()
+    #ifdef INFRAX_ENABLE_STACKTRACE
+    void* stack_frames[32];
+    int stack_depth;
+    char stack_trace[1024];
+    #endif
 };
-
-typedef uint64_t InfraxTime;//
-typedef uint32_t InfraxFlags;
-typedef uint64_t InfraxHandle;
+//TODO
+// Helper macro to create InfraxError with stack trace
+static inline InfraxError make_error_with_stack(InfraxI32 code, const char* msg) {
+    InfraxError err = {.code = code};
+    if (msg) {
+        strncpy(err.message, msg, sizeof(err.message) - 1);
+        err.message[sizeof(err.message) - 1] = '\0';
+    }
+    
+    #ifdef INFRAX_ENABLE_STACKTRACE
+    err.stack_depth = backtrace(err.stack_frames, 32);
+    char** symbols = backtrace_symbols(err.stack_frames, err.stack_depth);
+    if (symbols) {
+        int pos = 0;
+        for (int i = 0; i < err.stack_depth && pos < sizeof(err.stack_trace) - 1; i++) {
+            pos += snprintf(err.stack_trace + pos, sizeof(err.stack_trace) - pos, 
+                          "%s\n", symbols[i]);
+        }
+        free(symbols);
+    }
+    #endif
+    
+    return err;
+}
+typedef InfraxU32 InfraxFlags;
+typedef InfraxU64 InfraxHandle;
 
 // Buffer Types
 typedef struct InfraxBuffer {
-    uint8_t* data;
-    size_t size;
-    size_t capacity;
+    InfraxU8* data;
+    InfraxSize size;
+    InfraxSize capacity;
 } InfraxBuffer;
 
 typedef struct InfraxRingBuffer {
-    uint8_t* buffer;
-    size_t size;
-    size_t read_pos;
-    size_t write_pos;
-    bool full;
+    InfraxU8* buffer;
+    InfraxSize size;
+    InfraxSize read_pos;
+    InfraxSize write_pos;
+    InfraxBool full;
 } InfraxRingBuffer;
 
 // File Operation Flags
@@ -107,10 +144,29 @@ typedef struct InfraxCore InfraxCore;
 // Assert handler type definition
 typedef void (*InfraxAssertHandler)(const char* file, int line, const char* func, const char* expr, const char* msg);
 
+// Time spec structure
+typedef struct {
+    int64_t tv_sec;
+    int64_t tv_nsec;
+} InfraxTimeSpec;
+
+#define INFRAX_CLOCK_REALTIME  0
+#define INFRAX_CLOCK_MONOTONIC 1
+
 // Core structure definition
 struct InfraxCore {
     // Instance pointer
     InfraxCore* self;
+
+    // Memory management
+    void* (*malloc)(InfraxCore *self, size_t size);
+    void (*free)(InfraxCore *self, void* ptr);
+    void* (*calloc)(InfraxCore *self, size_t nmemb, size_t size);
+    void* (*realloc)(InfraxCore *self, void* ptr, size_t size);
+    void* (*memset)(InfraxCore *self, void* s, int c, size_t n);
+    void* (*memcpy)(InfraxCore *self, void* dest, const void* src, size_t n);
+    void* (*memmove)(InfraxCore *self, void* dest, const void* src, size_t n);
+    int (*memcmp)(InfraxCore *self, const void* s1, const void* s2, size_t n);
 
     // Core functions
     void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);
@@ -131,19 +187,7 @@ struct InfraxCore {
     char* (*strdup)(InfraxCore *self, const char* s);
     char* (*strndup)(InfraxCore *self, const char* s, size_t n);
 
-    // Time management
-    InfraxTime (*time_now_ms)(InfraxCore *self);
-    InfraxTime (*time_monotonic_ms)(struct InfraxCore *self);
-    void (*sleep_ms)(struct InfraxCore *self, uint32_t milliseconds);
-    /*
-    在 InfraxCore 中实现这个功能，说明这个框架考虑到了多线程场景下的性能优化需求。它可以被用在：
-自旋锁的实现中
-等待队列的实现中
-需要让出 CPU 的协作式多任务处理中
-不过需要注意的是，yield 只是一个提示（hint）给操作系统，具体是否真的切换到其他线程，还是由操作系统的调度器决定的。
-    */
-    void (*yield)(struct InfraxCore *self);
-    //getpid
+    void (*yield)(struct InfraxCore *self);//hint only, not guaranteed to yield
     int (*pid)(struct InfraxCore *self);
     
     // Random number operations
@@ -151,12 +195,12 @@ struct InfraxCore {
     void (*random_seed)(struct InfraxCore *self, uint32_t seed);  // Set random seed
     
     // Network byte order conversion
-    uint16_t (*host_to_net16)(struct InfraxCore *self, uint16_t host16);  // Host to network (16-bit)
-    uint32_t (*host_to_net32)(struct InfraxCore *self, uint32_t host32);  // Host to network (32-bit)
-    uint64_t (*host_to_net64)(struct InfraxCore *self, uint64_t host64);  // Host to network (64-bit)
-    uint16_t (*net_to_host16)(struct InfraxCore *self, uint16_t net16);   // Network to host (16-bit)
-    uint32_t (*net_to_host32)(struct InfraxCore *self, uint32_t net32);   // Network to host (32-bit)
-    uint64_t (*net_to_host64)(struct InfraxCore *self, uint64_t net64);   // Network to host (64-bit)
+    InfraxU16 (*host_to_net16)(struct InfraxCore *self, InfraxU16 host16);  // Host to network (16-bit)
+    InfraxU32 (*host_to_net32)(struct InfraxCore *self, InfraxU32 host32);  // Host to network (32-bit)
+    InfraxU64 (*host_to_net64)(struct InfraxCore *self, InfraxU64 host64);  // Host to network (64-bit)
+    InfraxU16 (*net_to_host16)(struct InfraxCore *self, InfraxU16 net16);   // Network to host (16-bit)
+    InfraxU32 (*net_to_host32)(struct InfraxCore *self, InfraxU32 net32);   // Network to host (32-bit)
+    InfraxU64 (*net_to_host64)(struct InfraxCore *self, InfraxU64 net64);   // Network to host (64-bit)
 
     // Buffer operations
     InfraxError (*buffer_init)(struct InfraxCore *self, InfraxBuffer* buf, size_t initial_capacity);
@@ -173,11 +217,11 @@ struct InfraxCore {
     void (*ring_buffer_destroy)(struct InfraxCore *self, InfraxRingBuffer* rb);
     InfraxError (*ring_buffer_write)(struct InfraxCore *self, InfraxRingBuffer* rb, const void* data, size_t size);
     InfraxError (*ring_buffer_read)(struct InfraxCore *self, InfraxRingBuffer* rb, void* data, size_t size);
-    size_t (*ring_buffer_readable)(struct InfraxCore *self, const InfraxRingBuffer* rb);
-    size_t (*ring_buffer_writable)(struct InfraxCore *self, const InfraxRingBuffer* rb);
+    InfraxSize (*ring_buffer_readable)(struct InfraxCore *self, const InfraxRingBuffer* rb);
+    InfraxSize (*ring_buffer_writable)(struct InfraxCore *self, const InfraxRingBuffer* rb);
     void (*ring_buffer_reset)(struct InfraxCore *self, InfraxRingBuffer* rb);
 
-    // File operations
+    // File operations (synchronous)
     InfraxError (*file_open)(struct InfraxCore *self, const char* path, InfraxFlags flags, int mode, InfraxHandle* handle);
     InfraxError (*file_close)(struct InfraxCore *self, InfraxHandle handle);
     InfraxError (*file_read)(struct InfraxCore *self, InfraxHandle handle, void* buffer, size_t size, size_t* bytes_read);
@@ -191,6 +235,26 @@ struct InfraxCore {
     // Assert functions
     void (*assert_failed)(struct InfraxCore *self, const char* file, int line, const char* func, const char* expr, const char* msg);
     void (*set_assert_handler)(struct InfraxCore *self, InfraxAssertHandler handler);
+
+    // File descriptor operations (for async now)
+    InfraxSSize (*read_fd)(InfraxCore *self, int fd, void* buf, InfraxSize count);
+    InfraxSSize (*write_fd)(InfraxCore *self, int fd, const void* buf, InfraxSize count);
+    int (*create_pipe)(InfraxCore *self, int pipefd[2]);
+    int (*set_nonblocking)(InfraxCore *self, int fd);
+    int (*close_fd)(InfraxCore *self, int fd);
+
+    // Time operations
+    // Time management
+    InfraxTime (*time_now_ms)(InfraxCore *self);
+    InfraxTime (*time_monotonic_ms)(struct InfraxCore *self);
+    InfraxClock (*clock)(InfraxCore *self);
+    int (*clock_gettime)(InfraxCore *self, int clk_id, InfraxTimeSpec* tp);
+    InfraxTime (*time)(InfraxCore *self, InfraxTime* tloc);
+    int (*clocks_per_sec)(InfraxCore *self);
+    void (*sleep)(InfraxCore *self, unsigned int seconds);
+    void (*sleep_ms)(struct InfraxCore *self, uint32_t milliseconds);
+    void (*sleep_us)(InfraxCore *self, unsigned int microseconds);
+    InfraxSize (*get_memory_usage)(InfraxCore *self);
 };
 
 // Get singleton instance

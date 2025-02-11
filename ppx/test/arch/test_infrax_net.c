@@ -2,9 +2,6 @@
 #include "internal/infrax/InfraxThread.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxSync.h"
-// #include <assert.h> use assert from our core
-#include <string.h> //todo use string func from our core
-#include <time.h> //todo use time func from our core
 
 static InfraxCore* core = NULL;
 static InfraxSync* test_mutex = NULL;
