@@ -30,6 +30,8 @@ typedef time_t InfraxTime;
 
 // Forward declaration
 typedef struct InfraxError InfraxError;
+typedef struct InfraxCoreClassType InfraxCoreClassType;
+
 
 // Error structure definition
 struct InfraxError {
@@ -247,15 +249,11 @@ struct InfraxCore {
     InfraxSize (*get_memory_usage)(InfraxCore *self);
 };
 
-// Get singleton instance
-InfraxCore* _infrax_core_singleton(void);
-
 // "Class" for static methods
-static struct {
-    InfraxCore* (*singleton)(void);  // Changed from new/free to singleton
-} InfraxCoreClass = {
-    .singleton = _infrax_core_singleton
+struct InfraxCoreClassType {
+    InfraxCore* (*singleton)(void);  // Singleton getter
 };
+extern const InfraxCoreClassType InfraxCoreClass;
 
 // Assert macros
 #define INFRAX_ASSERT(core, expr) \

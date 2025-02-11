@@ -46,6 +46,7 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_infrax_async.c"
     "${TEST_DIR}/arch/test_polyx_async.c"
     "${TEST_DIR}/arch/test_c1m.c"  # 添加新测试
+    "${TEST_DIR}/arch/test_cosmopolitan.c"  # 添加新测试
 )
 
 # Build the new architecture library
@@ -88,6 +89,7 @@ build_arch() {
 build_tests() {
     local build_dir="${BUILD_DIR}/arch"
     local test_dir="${build_dir}/tests"
+    local target_test="$1"
     
     mkdir -p "${test_dir}"
 
@@ -96,7 +98,12 @@ build_tests() {
     local tests=()
     for src in "${TEST_SOURCES[@]}"; do
         local test_name="$(basename "${src}" .c)"
-        local test_bin="${test_dir}/${test_name}"
+        local test_bin="${test_dir}/${test_name}.exe"
+        
+        # Skip if target test is specified and doesn't match
+        if [ -n "${target_test}" ] && [ "${test_name}" != "${target_test}" ]; then
+            continue
+        fi
         
         echo "Building test: ${test_name}"
         "${CC}" ${CFLAGS} "${src}" -L"${build_dir}" -larch -o "${test_bin}"
@@ -104,6 +111,8 @@ build_tests() {
             echo "Failed to build test: ${test_name}"
             exit 1
         fi
+
+        ls -al "test_bin=${test_bin}"
         
         # 对于C1M测试，我们不自动运行它
         if [ "${test_name}" != "test_c1m" ]; then
@@ -115,8 +124,6 @@ build_tests() {
             fi
         else
             echo "Skipping auto-run for ${test_name} (manual run required)"
-            # 复制到测试目录方便访问
-            #cp "${test_bin}" "${TEST_DIR}/arch/${test_name}"
             echo "bin=${test_bin}"
         fi
     done
@@ -126,5 +133,5 @@ build_tests() {
 clean_build
 build_arch
 if [ $? -eq 0 ]; then
-    build_tests
+    build_tests "$1"
 fi

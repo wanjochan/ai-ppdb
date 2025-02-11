@@ -761,6 +761,10 @@ static InfraxCore singleton = {
 };
 
 // Simple singleton getter
-InfraxCore* _infrax_core_singleton(void) {
+InfraxCore* infrax_core_singleton(void) {
     return &singleton;
-}
+};
+
+const InfraxCoreClassType InfraxCoreClass = {
+    .singleton = infrax_core_singleton
+};
