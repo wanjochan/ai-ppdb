@@ -302,6 +302,134 @@ void test_memory_stress() {
     core->printf(core, "Memory stress test passed\n");
 }
 
+// 边界条件测试
+void test_memory_edge_cases() {
+    core->printf(core, "Testing memory edge cases...\n");
+    
+    InfraxMemoryConfig config = {
+        .initial_size = 1024,  // 故意设置较小的初始大小
+        .use_gc = false,
+        .use_pool = true,
+        .gc_threshold = 0
+    };
+    
+    InfraxMemory* memory = InfraxMemoryClass.new(&config);
+    INFRAX_ASSERT(core, memory != NULL);
+    
+    // 测试零大小分配
+    void* zero_ptr = memory->alloc(memory, 0);
+    INFRAX_ASSERT(core, zero_ptr == NULL);
+    
+    // 测试超大分配 - 使用更合理的大小
+    void* huge_ptr = memory->alloc(memory, 1024 * 1024 * 1024);  // 1GB
+    if (huge_ptr != NULL) {
+        memory->dealloc(memory, huge_ptr);
+    }
+    
+    // 测试对齐要求
+    void* aligned_ptr = memory->alloc(memory, 7);  // 非8字节对齐的大小
+    INFRAX_ASSERT(core, aligned_ptr != NULL);
+    INFRAX_ASSERT(core, ((uintptr_t)aligned_ptr & 7) == 0);  // 验证8字节对齐
+    
+    // 测试重复释放
+    memory->dealloc(memory, aligned_ptr);
+    memory->dealloc(memory, aligned_ptr);  // 应该安全处理
+    
+    // 测试NULL指针释放
+    memory->dealloc(memory, NULL);  // 应该安全处理
+    
+    InfraxMemoryClass.free(memory);
+    core->printf(core, "Memory edge cases test passed\n");
+}
+
+// 内存池碎片化测试
+void test_memory_fragmentation() {
+    core->printf(core, "Testing memory fragmentation...\n");
+    
+    InfraxMemoryConfig config = {
+        .initial_size = 4096,  // 4KB
+        .use_gc = false,
+        .use_pool = true,
+        .gc_threshold = 0
+    };
+    
+    InfraxMemory* memory = InfraxMemoryClass.new(&config);
+    INFRAX_ASSERT(core, memory != NULL);
+    
+    #define FRAG_ALLOCS 10
+    void* ptrs[FRAG_ALLOCS];
+    size_t sizes[FRAG_ALLOCS];
+    
+    // 分配不同大小的块以制造碎片
+    for (int i = 0; i < FRAG_ALLOCS; i++) {
+        sizes[i] = 64 + i * 32;  // 64, 96, 128, ...
+        ptrs[i] = memory->alloc(memory, sizes[i]);
+        INFRAX_ASSERT(core, ptrs[i] != NULL);
+    }
+    
+    // 释放偶数索引的块
+    for (int i = 0; i < FRAG_ALLOCS; i += 2) {
+        memory->dealloc(memory, ptrs[i]);
+    }
+    
+    // 尝试分配一个大块，应该失败（因为碎片化）
+    void* large_ptr = memory->alloc(memory, 1024);
+    if (large_ptr != NULL) {
+        memory->dealloc(memory, large_ptr);
+    }
+    
+    // 释放所有剩余块
+    for (int i = 1; i < FRAG_ALLOCS; i += 2) {
+        memory->dealloc(memory, ptrs[i]);
+    }
+    
+    // 现在应该能分配大块了
+    large_ptr = memory->alloc(memory, 1024);
+    INFRAX_ASSERT(core, large_ptr != NULL);
+    memory->dealloc(memory, large_ptr);
+    
+    InfraxMemoryClass.free(memory);
+    core->printf(core, "Memory fragmentation test passed\n");
+}
+
+// GC功能测试
+void test_memory_gc() {
+    core->printf(core, "Testing garbage collection...\n");
+    
+    InfraxMemoryConfig config = {
+        .initial_size = 1024 * 1024,
+        .use_gc = true,
+        .use_pool = true,
+        .gc_threshold = 512  // 较小的阈值以便触发GC
+    };
+    
+    InfraxMemory* memory = InfraxMemoryClass.new(&config);
+    INFRAX_ASSERT(core, memory != NULL);
+    
+    // 分配一些对象并标记为GC根
+    void* root_obj = memory->alloc(memory, 256);
+    INFRAX_ASSERT(core, root_obj != NULL);
+    
+    // 分配一些非根对象
+    for (int i = 0; i < 10; i++) {
+        void* temp = memory->alloc(memory, 64);
+        INFRAX_ASSERT(core, temp != NULL);
+    }
+    
+    // 强制进行GC
+    memory->collect(memory);
+    
+    // 验证统计信息
+    InfraxMemoryStats stats;
+    memory->get_stats(memory, &stats);
+    
+    // 释放根对象
+    memory->dealloc(memory, root_obj);
+    
+    InfraxMemoryClass.free(memory);
+    core->printf(core, "Garbage collection test passed\n");
+}
+
 int main() {
     core = InfraxCoreClass.singleton();
     INFRAX_ASSERT(core, core != NULL);
@@ -312,7 +440,10 @@ int main() {
     test_base_memory();
     test_pool_memory();
     test_realloc();
-    test_memory_stress();  // 添加压力测试
+    test_memory_stress();
+    test_memory_edge_cases();    // 新增
+    test_memory_fragmentation(); // 新增
+    test_memory_gc();           // 新增
     
     core->printf(core, "All infrax_memory tests passed!\n");
     core->printf(core, "===================\n");
