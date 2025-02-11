@@ -23,7 +23,7 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms);
 static void infrax_async_cancel(InfraxAsync* self);
 
 // Global class instance
-const InfraxAsyncClass_t InfraxAsyncClass = {
+const InfraxAsyncClassType InfraxAsyncClass = {
     .new = infrax_async_new,
     .free = infrax_async_free,
     .start = infrax_async_start,

@@ -87,7 +87,9 @@ struct InfraxAsyncContext {
 };
 
 // Async task structure
+typedef struct InfraxAsync InfraxAsync;
 typedef struct InfraxAsync {
+    InfraxAsync* self;//TODO 
     AsyncFunction fn;
     void* arg;
     InfraxAsyncState state;
@@ -118,9 +120,9 @@ typedef struct {
 
     // State checking
     bool (*is_done)(InfraxAsync* self);
-} InfraxAsyncClass_t;
+} InfraxAsyncClassType;
 
 // Global class instance
-extern const InfraxAsyncClass_t InfraxAsyncClass;
+extern const InfraxAsyncClassType InfraxAsyncClass;
 
 #endif // INFRAX_ASYNC_H

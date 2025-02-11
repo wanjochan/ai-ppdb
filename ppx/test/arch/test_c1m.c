@@ -26,6 +26,23 @@ typedef struct {
 
 TestMetrics metrics = {0};
 
+// Task context structure
+typedef struct {
+    InfraxAsync* async;
+    InfraxTimeSpec start_time;
+    int is_active;
+    int state;  // 0: initial, 1: running, 2: completed
+} TaskContext;
+
+// Forward declarations
+static void long_running_task(InfraxAsync* self, void* arg);
+static void cleanup_task(TaskContext* ctx);
+static double get_cpu_usage(void);
+static size_t get_memory_usage(void);
+static void process_active_tasks(void);
+static void create_task_batch(size_t target_tasks);
+static void print_metrics(time_t elapsed_seconds);
+
 // Get CPU usage
 double get_cpu_usage() {
     static clock_t last_cpu = 0;
@@ -51,23 +68,14 @@ double get_cpu_usage() {
     return (cpu_time / real_time) * 100.0;
 }
 
-// Task context structure
-typedef struct {
-    InfraxAsync* async;
-    InfraxTimeSpec start_time;
-    int is_active;
-    int state;  // 0: initial, 1: running, 2: completed
-} TaskContext;
-
 // Task cleanup function
 void cleanup_task(TaskContext* ctx) {
     if (ctx) {
         if (ctx->async) {
             if (!InfraxAsyncClass.is_done(ctx->async)) {
                 InfraxAsyncClass.cancel(ctx->async);  // 先取消任务
-                // 等待任务完全停止，使用 yield 而不是 sleep
                 while (!InfraxAsyncClass.is_done(ctx->async)) {
-                    InfraxAsyncClass.yield(ctx->async);  // 使用异步 yield 替代阻塞的 sleep
+                    InfraxAsyncClass.yield(ctx->async); 
                 }
             }
             InfraxAsyncClass.free(ctx->async);
@@ -77,61 +85,21 @@ void cleanup_task(TaskContext* ctx) {
     }
 }
 
-// Long running task function
-void long_running_task(InfraxAsync* self, void* arg) {
-    if (!self || !arg) return;  // 参数检查
-    
-    TaskContext* ctx = (TaskContext*)arg;
-    static __thread int yield_count = 0;
-    
-    // First time entry
-    if (ctx->state == 0) {
-        ctx->state = 1;
-        core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
-        yield_count = 0;
-    }
-    
-    while (self->state == INFRAX_ASYNC_PENDING) {
-        // Check if we've run long enough
-        InfraxTimeSpec current_time;
-        core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &current_time);
-        long elapsed_ms = (current_time.tv_sec - ctx->start_time.tv_sec) * 1000 +
-                         (current_time.tv_nsec - ctx->start_time.tv_nsec) / 1000000;
-                         
-        if (elapsed_ms >= TASK_LIFETIME_MS) {
-            // Task completed
-            ctx->state = 2;
-            __atomic_fetch_add(&metrics.completed_tasks, 1, __ATOMIC_SEQ_CST);
-            self->state = INFRAX_ASYNC_FULFILLED;
-            return;
-        }
-        
-        // Increment yield count with bounds checking
-        if (yield_count < MAX_YIELD_COUNT) {
-            yield_count++;
-            InfraxAsyncClass.yield(self);
-        } else {
-            // Task has yielded too many times, terminate it
-            self->state = INFRAX_ASYNC_REJECTED;
-            __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
-            return;
-        }
-    }
-}
-
-// Get current memory usage
-size_t get_memory_usage() {
-    return core->get_memory_usage(core);
-}
-
 // Process active tasks
 void process_active_tasks() {
     static int cycle_count = 0;
     cycle_count++;
     
-    // 使用 yield 来让出执行权，而不是阻塞的 sleep
-    if (cycle_count % 50 == 0 && metrics.active_tasks > TARGET_CONNECTIONS * 0.95) {
-        core->yield(core);  // 使用非阻塞的 yield
+    // 使用 pollset 来处理异步任务，增加超时时间避免过度轮询
+    InfraxAsyncClass.pollset_poll(NULL, 10);  // 添加 10ms 超时
+    
+    // 每100个周期检查一次任务状态
+    if (cycle_count % 100 == 0) {
+        size_t active_count = 0;
+        for (size_t i = 0; i < metrics.active_tasks; i++) {
+            InfraxAsyncClass.pollset_poll(NULL, 0);
+        }
+        metrics.active_tasks = active_count;
     }
 }
 
@@ -140,7 +108,9 @@ void create_task_batch(size_t target_tasks) {
     if (!memory || !core) return;  // 安全检查
     
     size_t current_active = metrics.active_tasks;
-    size_t to_create = target_tasks > current_active ? target_tasks - current_active : 0;
+    if (current_active >= target_tasks) return;  // 已经达到目标数量
+    
+    size_t to_create = target_tasks - current_active;
     
     // Dynamic batch size based on system load
     size_t batch_size = BATCH_SIZE;
@@ -182,7 +152,57 @@ void create_task_batch(size_t target_tasks) {
             __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
             cleanup_task(ctx);
         }
+        
+        // 每创建一批任务后进行一次 poll
+        InfraxAsyncClass.pollset_poll(NULL, 0);
     }
+}
+
+// Long running task function
+void long_running_task(InfraxAsync* self, void* arg) {
+    if (!self || !arg) return;  // 参数检查
+    
+    TaskContext* ctx = (TaskContext*)arg;
+    static __thread int yield_count = 0;
+    
+    // First time entry
+    if (ctx->state == 0) {
+        ctx->state = 1;
+        core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
+        yield_count = 0;
+    }
+    
+    // Check if we've run long enough
+    InfraxTimeSpec current_time;
+    core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &current_time);
+    long elapsed_ms = (current_time.tv_sec - ctx->start_time.tv_sec) * 1000 +
+                     (current_time.tv_nsec - ctx->start_time.tv_nsec) / 1000000;
+                     
+    if (elapsed_ms >= TASK_LIFETIME_MS) {
+        // Task completed
+        ctx->state = 2;
+        __atomic_fetch_add(&metrics.completed_tasks, 1, __ATOMIC_SEQ_CST);
+        self->state = INFRAX_ASYNC_FULFILLED;
+        cleanup_task(ctx);  // 任务完成后立即清理
+        return;
+    }
+    
+    // Increment yield count with bounds checking
+    if (yield_count < MAX_YIELD_COUNT) {
+        yield_count++;
+        InfraxAsyncClass.yield(self);
+    } else {
+        // Task has yielded too many times, terminate it
+        self->state = INFRAX_ASYNC_REJECTED;
+        __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
+        cleanup_task(ctx);  // 任务失败后立即清理
+        return;
+    }
+}
+
+// Get current memory usage
+size_t get_memory_usage() {
+    return core->get_memory_usage(core);
 }
 
 // Print current metrics
@@ -233,7 +253,6 @@ int main() {
     core->printf(core, "Test Duration: %d seconds\n", TEST_DURATION_SEC);
     core->printf(core, "Task Lifetime: %d ms\n", TASK_LIFETIME_MS);
     core->printf(core, "----------------------------------------\n");
-    core->yield(core);  // 使用 yield 替代 sleep
 
     core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &metrics.start_time);
     time_t start_time = core->time(core, NULL);
@@ -249,9 +268,13 @@ int main() {
         if (current_time != last_print_time) {
             print_metrics(current_time - start_time);
             last_print_time = current_time;
+            
+            // 如果没有任务完成且 CPU 使用率过高，增加 yield 来减轻负载
+            if (metrics.completed_tasks == 0 && metrics.cpu_usage > 90.0) {
+                InfraxAsyncClass.yield(NULL);
+                core->sleep_us(core, 1000);  // 短暂休眠 1ms
+            }
         }
-
-        core->yield(core);  // 使用 yield 替代 sleep
     }
 
     // Final metrics
