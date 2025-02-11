@@ -228,24 +228,28 @@ static void test_timer_callback(void* arg) {
 
 // Event callback
 static void test_event_callback(PolyxEvent* event, void* arg) {
+    int* count = (int*)arg;
+    (*count)++;
+    
     InfraxCore* core = InfraxCoreClass.singleton();
-    core->printf(core, "Event callback called with data: %s\n", (const char*)arg);
+    core->printf(core, "Event callback called %d times\n", *count);
 }
 
 int main() {
     InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxLog* log = InfraxLogClass.singleton();
+    int test_result = 0;  // 用于跟踪测试结果
+    
     core->printf(core, "\n=== Testing PolyxAsync ===\n\n");
     
     // Create PolyxAsync instance
     PolyxAsync* async = PolyxAsyncClass.new();
-    if (!async) {
-        core->printf(core, "Failed to create PolyxAsync instance\n");
-        return 1;
-    }
+    INFRAX_ASSERT(core, async != NULL);
     
     // Test 1: Timer
     core->printf(core, "Test 1: Timer\n");
     int timer_count = 0;
+    int expected_timer_count = 2;  // 期望定时器触发2次
     
     PolyxTimerConfig timer_config = {
         .interval_ms = 1000,
@@ -254,11 +258,7 @@ int main() {
     };
     
     PolyxEvent* timer = async->create_timer(async, &timer_config);
-    if (!timer) {
-        core->printf(core, "Failed to create timer\n");
-        PolyxAsyncClass.free(async);
-        return 1;
-    }
+    INFRAX_ASSERT(core, timer != NULL);
     
     // Start timer
     core->printf(core, "Starting timer...\n");
@@ -268,31 +268,53 @@ int main() {
     core->printf(core, "\nTest 2: Custom Event\n");
     
     const char* event_data = "Custom Event Data";
+    int event_trigger_count = 0;
+    int event_callback_count = 0;
+    
     PolyxEventConfig event_config = {
         .type = POLYX_EVENT_IO,
         .callback = test_event_callback,
-        .arg = (void*)event_data
+        .arg = &event_callback_count
     };
     
     PolyxEvent* event = async->create_event(async, &event_config);
-    if (!event) {
-        core->printf(core, "Failed to create event\n");
-        async->destroy_event(async, timer);
-        PolyxAsyncClass.free(async);
-        return 1;
-    }
+    INFRAX_ASSERT(core, event != NULL);
     
     // Poll loop
     core->printf(core, "\nStarting poll loop...\n");
-    for (int i = 0; i < 3; i++) {
+    InfraxTime start_time = core->time_monotonic_ms(core);
+    
+    while (core->time_monotonic_ms(core) - start_time < TEST_TIMEOUT_MS) {
         // Trigger custom event every other iteration
-        if (i % 2 == 0) {
+        if (event_trigger_count < 2) {  // 只触发两次事件
             core->printf(core, "Triggering custom event...\n");
             async->trigger_event(async, event, (void*)event_data, core->strlen(core, event_data) + 1);
+            event_trigger_count++;
         }
         
         // Poll for events
-        async->poll(async, 1100);  // Slightly longer than timer interval
+        async->poll(async, 100);  // 使用更短的轮询间隔
+        
+        // 检查是否达到预期结果
+        if (timer_count >= expected_timer_count && event_callback_count >= event_trigger_count) {
+            break;
+        }
+    }
+    
+    // 验证定时器结果
+    core->printf(core, "\nVerifying timer results...\n");
+    if (timer_count != expected_timer_count) {
+        log->error(log, "Timer test failed: expected %d calls, got %d", 
+                  expected_timer_count, timer_count);
+        test_result = 1;
+    }
+    
+    // 验证事件结果
+    core->printf(core, "Verifying event results...\n");
+    if (event_callback_count != event_trigger_count) {
+        log->error(log, "Event test failed: triggered %d times, callback called %d times",
+                  event_trigger_count, event_callback_count);
+        test_result = 1;
     }
     
     // Stop timer
@@ -304,6 +326,10 @@ int main() {
     async->destroy_event(async, timer);
     PolyxAsyncClass.free(async);
     
-    core->printf(core, "\n=== All polyx_async tests completed ===\n");
-    return 0;
+    if (test_result == 0) {
+        core->printf(core, "\n=== All polyx_async tests PASSED ===\n");
+    } else {
+        core->printf(core, "\n=== Some polyx_async tests FAILED ===\n");
+    }
+    return test_result;
 }

@@ -113,6 +113,28 @@ build_tests() {
         fi
         ls -al "${test_bin}"
         
+        # 如果没有指定测试名称，则跳过 test_c1m 的自动运行
+        if [ -z "${target_test}" ]; then
+            if [ "${test_name}" != "test_c1m" ]; then
+                echo "Running test: ${test_name}"
+                "${test_bin}"
+                if [ $? -ne 0 ]; then
+                    echo "Test failed: ${test_name}"
+                    exit 1
+                fi
+            else
+                echo "Skipping auto-run for ${test_name} (manual run required)"
+                echo "bin=${test_bin}"
+            fi
+        else
+            # 指定了测试名称时直接运行
+            echo "Running test: ${test_name}"
+            "${test_bin}"
+            if [ $? -ne 0 ]; then
+                echo "Test failed: ${test_name}"
+                exit 1
+            fi
+        fi
         # 对于C1M测试，我们不自动运行它
         if [ "${test_name}" != "test_c1m" ]; then
             echo "Running test: ${test_name}"

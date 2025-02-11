@@ -3,6 +3,7 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxNet.h"
 #include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxLog.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -277,11 +278,12 @@ static void event_callback_wrapper(InfraxAsync* async, int fd, short events, voi
     PolyxEventInternal* event = (PolyxEventInternal*)arg;
     if (!event || !event->callback) return;
     
-    // Clear the pipe
-    char dummy;
-    read(fd, &dummy, 1);
+    // 每次只读取一个事件的数据
+    char buffer[1024];
+    ssize_t bytes_read = read(fd, buffer, sizeof(buffer));
+    if (bytes_read <= 0) return;
     
-    // Call the callback
+    // 调用用户回调
     EventCallback callback = (EventCallback)event->callback;
     callback((PolyxEvent*)event, event->arg);
 }
@@ -414,8 +416,20 @@ static void polyx_async_trigger_event(PolyxAsync* self, PolyxEvent* event, void*
     if (!self || !event) return;
     
     PolyxEventInternal* internal = (PolyxEventInternal*)event;
+    
+    // 清空pipe中可能存在的旧数据
+    char buffer[1024];
+    while (read(internal->read_fd, buffer, sizeof(buffer)) > 0) {
+        // 丢弃旧数据
+    }
+    
     // Write event data to pipe
-    write(internal->write_fd, data, size);
+    ssize_t written = write(internal->write_fd, data, size);
+    if (written < 0) {
+        // 写入失败，记录错误
+        InfraxLog* log = InfraxLogClass.singleton();
+        log->error(log, "Failed to write event data: %s", strerror(errno));
+    }
 }
 
 // Destroy event
