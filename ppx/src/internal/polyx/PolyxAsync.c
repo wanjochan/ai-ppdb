@@ -8,6 +8,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+// #include <sys/timerfd.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/event.h>
+#include <sys/time.h>
+#include <poll.h>
 
 // 全局内存管理器
 static InfraxMemory* g_memory = NULL;
@@ -105,7 +111,7 @@ typedef struct {
 } ParallelSequenceData;
 
 // Timer data structure
-typedef struct TimerData {
+typedef struct {
     int64_t interval_ms;    // Timer interval
     int64_t next_trigger;   // Next trigger time
     bool is_periodic;       // Whether timer repeats
@@ -114,10 +120,17 @@ typedef struct TimerData {
 } TimerData;
 
 // Internal context structure
-typedef struct PolyxAsyncContext {
-    PolyxEvent** events;    // Array of events
-    size_t event_count;     // Number of events
-    size_t event_capacity;  // Event array capacity
+typedef struct {
+    InfraxMemory* memory;
+    InfraxAsync* infra;
+    void* private_data;
+    void (*cleanup_fn)(void*);
+    struct pollfd* fds;
+    size_t fds_count;
+    size_t fds_capacity;
+    TimerData** timers;
+    size_t timers_count;
+    size_t timers_capacity;
 } PolyxAsyncContext;
 
 // 清理函数定义
@@ -200,620 +213,329 @@ bool init_memory() {
     return g_memory != NULL && g_core != NULL;
 }
 
-// 构造函数
-PolyxAsync* polyx_async_new(void) {
-    if (!init_memory()) return NULL;
-    
-    PolyxAsync* self = g_memory->alloc(g_memory, sizeof(PolyxAsync));
-    if (!self) return NULL;
-    
-    // Initialize result
-    self->result = g_memory->alloc(g_memory, sizeof(PolyxAsyncResult));
-    if (!self->result) {
-        g_memory->dealloc(g_memory, self);
+// Forward declarations of internal functions
+static void polyx_async_free(PolyxAsync* self);
+static PolyxEvent* polyx_async_create_event(PolyxAsync* self, const PolyxEventConfig* config);
+static int polyx_async_trigger_event(PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
+static void polyx_async_destroy_event(PolyxAsync* self, PolyxEvent* event);
+static PolyxEvent* polyx_async_create_timer(PolyxAsync* self, const PolyxTimerConfig* config);
+static int polyx_async_start_timer(PolyxAsync* self, PolyxEvent* timer);
+static int polyx_async_stop_timer(PolyxAsync* self, PolyxEvent* timer);
+static int polyx_async_poll(PolyxAsync* self, int timeout_ms);
+
+// Timer callback wrapper
+static void timer_callback_wrapper(int fd, short events, void* arg) {
+    PolyxEvent* timer = (PolyxEvent*)arg;
+    if (timer->data) {
+        TimerCallback callback = (TimerCallback)timer->data;
+        callback(timer->data_size ? (void*)timer->data_size : NULL);
+    }
+}
+
+// Event callback wrapper
+static void event_callback_wrapper(int fd, short events, void* arg) {
+    PolyxEvent* event = (PolyxEvent*)arg;
+    if (event->data) {
+        EventCallback callback = (EventCallback)event->data;
+        callback(event, event->data_size ? (void*)event->data_size : NULL);
+    }
+}
+
+// Create new PolyxAsync instance
+static PolyxAsync* polyx_async_new(void) {
+    // Initialize memory first
+    if (!init_memory()) {
         return NULL;
     }
     
-    self->result->data = NULL;
-    self->result->size = 0;
-    self->result->error_code = 0;
-    self->result->status = POLYX_ASYNC_PENDING;
+    PolyxAsync* self = (PolyxAsync*)malloc(sizeof(PolyxAsync));
+    if (!self) return NULL;
     
-    // Initialize other members
-    self->infra = NULL;
-    self->private_data = NULL;
-    self->callback = NULL;
+    // Initialize context
+    PolyxAsyncContext* ctx = (PolyxAsyncContext*)malloc(sizeof(PolyxAsyncContext));
+    if (!ctx) {
+        free(self);
+        return NULL;
+    }
     
-    // Initialize instance methods
-    self->start = polyx_async_start;
-    self->cancel = polyx_async_cancel;
-    self->is_done = polyx_async_is_done;
-    self->get_result = polyx_async_get_result;
-    self->free = polyx_async_free;
+    // Get memory manager
+    ctx->memory = g_memory;
+    if (!ctx->memory) {
+        free(ctx);
+        free(self);
+        return NULL;
+    }
+    
+    // Initialize poll fds
+    ctx->fds_capacity = 32;
+    ctx->fds = (struct pollfd*)malloc(sizeof(struct pollfd) * ctx->fds_capacity);
+    if (!ctx->fds) {
+        free(ctx);
+        free(self);
+        return NULL;
+    }
+    ctx->fds_count = 0;
+    
+    // Initialize timers
+    ctx->timers_capacity = 32;
+    ctx->timers = (TimerData**)malloc(sizeof(TimerData*) * ctx->timers_capacity);
+    if (!ctx->timers) {
+        free(ctx->fds);
+        free(ctx);
+        free(self);
+        return NULL;
+    }
+    ctx->timers_count = 0;
+    
+    // Create InfraxAsync instance
+    ctx->infra = InfraxAsyncClass.new(NULL, NULL);
+    if (!ctx->infra) {
+        free(ctx->timers);
+        free(ctx->fds);
+        free(ctx);
+        free(self);
+        return NULL;
+    }
+    
+    ctx->private_data = NULL;
+    ctx->cleanup_fn = NULL;
+    
+    self->infra = ctx->infra;
+    self->ctx = ctx;
     
     return self;
 }
 
-// 析构函数
-void polyx_async_free(PolyxAsync* self) {
+// Free PolyxAsync instance
+static void polyx_async_free(PolyxAsync* self) {
     if (!self) return;
     
-    // 先清理私有数据
-    if (self->private_data && self->cleanup_fn) {
-        self->cleanup_fn(self->private_data);
-    }
-    
-    if (self->infra) {
-        InfraxAsyncClass.free(self->infra);
-    }
-    
-    if (self->result) {
-        if (self->result->data) {
-            g_memory->dealloc(g_memory, self->result->data);
+    PolyxAsyncContext* ctx = (PolyxAsyncContext*)self->ctx;
+    if (ctx) {
+        if (ctx->cleanup_fn && ctx->private_data) {
+            ctx->cleanup_fn(ctx->private_data);
         }
-        g_memory->dealloc(g_memory, self->result);
-    }
-    
-    g_memory->dealloc(g_memory, self);
-}
-
-// 实现实例方法
-PolyxAsync* polyx_async_start(PolyxAsync* self) {
-    if (!self || !self->infra) return self;
-    InfraxAsyncClass.start(self->infra);
-    return self;
-}
-
-void polyx_async_cancel(PolyxAsync* self) {
-    if (!self || !self->infra) return;
-    self->infra->error = ECANCELED;
-    self->infra->state = INFRAX_ASYNC_REJECTED;
-}
-
-bool polyx_async_is_done(PolyxAsync* self) {
-    if (!self || !self->infra) return true;
-    return InfraxAsyncClass.is_done(self->infra);
-}
-
-void* polyx_async_get_result(PolyxAsync* self, size_t* size) {
-    if (!self || !self->infra) return NULL;
-    
-    // Create result if not exists
-    if (!self->result) {
-        self->result = (PolyxAsyncResult*)malloc(sizeof(PolyxAsyncResult));
-        if (!self->result) return NULL;
-        
-        self->result->data = NULL;
-        self->result->size = 0;
-        self->result->error_code = 0;
-    }
-    
-    // Update result
-    if (self->infra->state == INFRAX_ASYNC_REJECTED) {
-        self->result->error_code = self->infra->error;
-        if (size) *size = 0;
-        return NULL;
-    }
-    
-    // Get result data
-    void* data = InfraxAsyncClass.get_result(self->infra, size);
-    if (data) {
-        self->result->data = data;
-        self->result->size = *size;
-    }
-    
-    return data;
-}
-
-// 文件读取操作
-PolyxAsync* polyx_async_read_file(const char* path) {
-    if (!path) return NULL;
-    
-    PolyxAsync* self = polyx_async_new();
-    if (!self) return NULL;
-    
-    FileReadTask* task = g_memory->alloc(g_memory, sizeof(FileReadTask));
-    if (!task) {
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    size_t path_len = strlen(path) + 1;
-    task->path = g_memory->alloc(g_memory, path_len);
-    if (!task->path) {
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    memcpy(task->path, path, path_len);
-    
-    self->infra = InfraxAsyncClass.new(async_read_file_fn, task);
-    if (!self->infra) {
-        file_read_task_cleanup(task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    self->private_data = task;
-    self->cleanup_fn = file_read_task_cleanup;
-    
-    return self;
-}
-
-// 文件写入操作
-PolyxAsync* polyx_async_write_file(const char* path, const void* data, size_t size) {
-    if (!path || !data) return NULL;
-    
-    PolyxAsync* self = polyx_async_new();
-    if (!self) return NULL;
-    
-    FileWriteTask* task = g_memory->alloc(g_memory, sizeof(FileWriteTask));
-    if (!task) {
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    size_t path_len = strlen(path) + 1;
-    task->path = g_memory->alloc(g_memory, path_len);
-    if (!task->path) {
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    memcpy(task->path, path, path_len);
-    
-    task->data = g_memory->alloc(g_memory, size);
-    if (!task->data) {
-        file_write_task_cleanup(task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    memcpy(task->data, data, size);
-    task->size = size;
-    
-    self->infra = InfraxAsyncClass.new(async_write_file_fn, task);
-    if (!self->infra) {
-        file_write_task_cleanup(task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    self->private_data = task;
-    self->cleanup_fn = file_write_task_cleanup;
-    
-    return self;
-}
-
-// 实现延迟操作
-PolyxAsync* polyx_async_delay(int ms) {
-    if (ms < 0) return NULL;
-    
-    PolyxAsync* self = polyx_async_new();
-    if (!self) return NULL;
-    
-    DelayTask* task = g_memory->alloc(g_memory, sizeof(DelayTask));
-    if (!task) {
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    task->ms = ms;
-    self->infra = InfraxAsyncClass.new(async_delay_fn, task);
-    if (!self->infra) {
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    self->private_data = task;
-    self->cleanup_fn = delay_task_cleanup;
-    
-    return self;
-}
-
-// 并行执行操作
-PolyxAsync* polyx_async_parallel(PolyxAsync** tasks, int count) {
-    PolyxAsync* self = polyx_async_new();
-    if (!self) return NULL;
-    
-    ParallelSequenceData* parallel_data = g_memory->alloc(g_memory, sizeof(ParallelSequenceData));
-    if (!parallel_data) {
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    parallel_data->tasks = g_memory->alloc(g_memory, sizeof(PolyxAsync*) * count);
-    if (!parallel_data->tasks) {
-        g_memory->dealloc(g_memory, parallel_data);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    for (int i = 0; i < count; i++) {
-        parallel_data->tasks[i] = tasks[i];
-    }
-    parallel_data->count = count;
-    parallel_data->completed = 0;
-    parallel_data->current = 0;
-    
-    self->private_data = parallel_data;
-    self->cleanup_fn = parallel_sequence_task_cleanup;
-    
-    return self;
-}
-
-// 序列执行操作
-PolyxAsync* polyx_async_sequence(PolyxAsync** tasks, int count) {
-    PolyxAsync* self = polyx_async_new();
-    if (!self) return NULL;
-    
-    // Initialize result
-    self->result = g_memory->alloc(g_memory, sizeof(PolyxAsyncResult));
-    if (!self->result) {
-        polyx_async_free(self);
-        return NULL;
-    }
-    self->result->data = NULL;
-    self->result->size = 0;
-    self->result->error_code = 0;
-    
-    // Store tasks for later use
-    self->private_data = g_memory->alloc(g_memory, sizeof(ParallelSequenceData));
-    
-    if (!self->private_data) {
-        g_memory->dealloc(g_memory, self->result);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    ParallelSequenceData* sequence_data = self->private_data;
-    
-    sequence_data->tasks = g_memory->alloc(g_memory, sizeof(PolyxAsync*) * count);
-    if (!sequence_data->tasks) {
-        g_memory->dealloc(g_memory, self->private_data);
-        g_memory->dealloc(g_memory, self->result);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    for (int i = 0; i < count; i++) {
-        sequence_data->tasks[i] = tasks[i];
-    }
-    sequence_data->count = count;
-    sequence_data->completed = 0;
-    sequence_data->current = 0;
-    
-    // Set up instance methods
-    self->start = polyx_async_sequence_start;
-    self->cancel = polyx_async_sequence_cancel;
-    self->is_done = polyx_async_sequence_is_done;
-    self->get_result = polyx_async_sequence_get_result;
-    
-    return self;
-}
-
-// HTTP GET操作
-PolyxAsync* polyx_async_http_get(const char* url) {
-    if (!url) return NULL;
-    
-    PolyxAsync* self = polyx_async_new();
-    if (!self) return NULL;
-    
-    // 创建HTTP GET任务
-    HttpGetTask* task = g_memory->alloc(g_memory, sizeof(HttpGetTask));
-    if (!task) {
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    // 复制URL
-    size_t url_len = strlen(url) + 1;
-    task->url = g_memory->alloc(g_memory, url_len);
-    if (!task->url) {
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    memcpy(task->url, url, url_len);
-    
-    // 创建底层异步任务
-    self->infra = InfraxAsyncClass.new(async_http_get_fn, task);
-    if (!self->infra) {
-        g_memory->dealloc(g_memory, task->url);
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    self->private_data = task;
-    self->cleanup_fn = http_get_task_cleanup;
-    
-    return self;
-}
-
-// HTTP POST操作
-PolyxAsync* polyx_async_http_post(const char* url, const void* data, size_t size) {
-    if (!url || !data) return NULL;
-    
-    PolyxAsync* self = polyx_async_new();
-    if (!self) return NULL;
-    
-    // 创建HTTP POST任务
-    HttpPostTask* task = g_memory->alloc(g_memory, sizeof(HttpPostTask));
-    if (!task) {
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    // 复制URL
-    size_t url_len = strlen(url) + 1;
-    task->url = g_memory->alloc(g_memory, url_len);
-    if (!task->url) {
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    memcpy(task->url, url, url_len);
-    
-    // 复制数据
-    task->data = g_memory->alloc(g_memory, size);
-    if (!task->data) {
-        g_memory->dealloc(g_memory, task->url);
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    memcpy(task->data, data, size);
-    task->size = size;
-    
-    // 创建底层异步任务
-    self->infra = InfraxAsyncClass.new(async_http_post_fn, task);
-    if (!self->infra) {
-        g_memory->dealloc(g_memory, task->data);
-        g_memory->dealloc(g_memory, task->url);
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    self->private_data = task;
-    self->cleanup_fn = http_post_task_cleanup;
-    
-    return self;
-}
-
-// 间隔执行操作
-PolyxAsync* polyx_async_interval(int ms, int count) {
-    if (ms < 0 || count < 0) return NULL;
-    
-    PolyxAsync* self = polyx_async_new();
-    if (!self) return NULL;
-    
-    // 创建间隔任务数据
-    IntervalTask* task = g_memory->alloc(g_memory, sizeof(IntervalTask));
-    if (!task) {
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    task->ms = ms;
-    task->count = count;
-    task->current = 0;
-    
-    // 创建底层异步任务
-    self->infra = InfraxAsyncClass.new(async_interval_fn, task);
-    if (!self->infra) {
-        g_memory->dealloc(g_memory, task);
-        polyx_async_free(self);
-        return NULL;
-    }
-    
-    return self;
-}
-
-// 并行执行操作的实例方法
-PolyxAsync* polyx_async_parallel_start(PolyxAsync* self) {
-    if (!self || !self->private_data) return self;
-    
-    ParallelSequenceData* parallel_data = self->private_data;
-    
-    // Start all tasks
-    for (int i = 0; i < parallel_data->count; i++) {
-        if (parallel_data->tasks[i]) {
-            parallel_data->tasks[i] = parallel_data->tasks[i]->start(parallel_data->tasks[i]);
+        if (ctx->infra) {
+            InfraxAsyncClass.free(ctx->infra);
         }
-    }
-    
-    return self;
-}
-
-bool polyx_async_parallel_is_done(PolyxAsync* self) {
-    if (!self || !self->private_data) return true;
-    
-    ParallelSequenceData* parallel_data = self->private_data;
-    
-    // Check if all tasks are done
-    parallel_data->completed = 0;
-    for (int i = 0; i < parallel_data->count; i++) {
-        if (parallel_data->tasks[i] && parallel_data->tasks[i]->is_done(parallel_data->tasks[i])) {
-            parallel_data->completed++;
+        if (ctx->fds) {
+            free(ctx->fds);
         }
+        if (ctx->timers) {
+            for (size_t i = 0; i < ctx->timers_count; i++) {
+                free(ctx->timers[i]);
+            }
+            free(ctx->timers);
+        }
+        free(ctx);
     }
     
-    return parallel_data->completed == parallel_data->count;
+    free(self);
 }
 
-void* polyx_async_parallel_get_result(PolyxAsync* self, size_t* size) {
-    if (!self || !self->infra) {
-        if (size) *size = 0;
+// Create event
+static PolyxEvent* polyx_async_create_event(PolyxAsync* self, const PolyxEventConfig* config) {
+    if (!self || !config) return NULL;
+    
+    PolyxEvent* event = (PolyxEvent*)malloc(sizeof(PolyxEvent));
+    if (!event) return NULL;
+    
+    // Create pipe for event communication
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        free(event);
         return NULL;
     }
     
-    ParallelSequenceData* parallel_data = (ParallelSequenceData*)self->infra->user_data;
-    if (!parallel_data) {
-        if (size) *size = 0;
+    // Set non-blocking mode
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
+    
+    event->type = config->type;
+    event->read_fd = pipefd[0];
+    event->write_fd = pipefd[1];
+    event->data = config->callback;
+    event->data_size = (size_t)config->arg;
+    
+    // Add read end to pollset
+    if (InfraxAsyncClass.pollset_add_fd(self->infra, event->read_fd, INFRAX_POLLIN, event_callback_wrapper, event) < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        free(event);
         return NULL;
     }
     
-    // Create result if not exists
-    if (!self->result) {
-        self->result = g_memory->alloc(g_memory, sizeof(PolyxAsyncResult));
-        if (!self->result) {
-            if (size) *size = 0;
+    return event;
+}
+
+// Trigger event
+static int polyx_async_trigger_event(PolyxAsync* self, PolyxEvent* event, void* data, size_t size) {
+    if (!self || !event) return -1;
+    
+    // Write event data to pipe
+    ssize_t written = write(event->write_fd, data, size);
+    return (written == (ssize_t)size) ? 0 : -1;
+}
+
+// Destroy event
+static void polyx_async_destroy_event(PolyxAsync* self, PolyxEvent* event) {
+    if (!self || !event) return;
+    
+    InfraxAsyncClass.pollset_remove_fd(self->infra, event->read_fd);
+    close(event->read_fd);
+    close(event->write_fd);
+    free(event);
+}
+
+// Create timer
+static PolyxEvent* polyx_async_create_timer(PolyxAsync* self, const PolyxTimerConfig* config) {
+    if (!self || !config) return NULL;
+    
+    PolyxEvent* timer = (PolyxEvent*)malloc(sizeof(PolyxEvent));
+    if (!timer) return NULL;
+    
+    PolyxAsyncContext* ctx = (PolyxAsyncContext*)self->ctx;
+    
+    // Create pipe for timer communication
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        free(timer);
+        return NULL;
+    }
+    
+    // Set non-blocking mode
+    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
+    
+    timer->type = POLYX_EVENT_TIMER;
+    timer->read_fd = pipefd[0];
+    timer->write_fd = pipefd[1];
+    timer->data = config->callback;
+    timer->data_size = (size_t)config->arg;
+    
+    // Create timer data
+    TimerData* timer_data = (TimerData*)malloc(sizeof(TimerData));
+    if (!timer_data) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        free(timer);
+        return NULL;
+    }
+    
+    timer_data->interval_ms = config->interval_ms;
+    timer_data->next_trigger = g_core->time_monotonic_ms(g_core) + config->interval_ms;
+    timer_data->is_periodic = true;
+    timer_data->callback = config->callback;
+    timer_data->arg = config->arg;
+    
+    // Add to timers array
+    if (ctx->timers_count >= ctx->timers_capacity) {
+        size_t new_capacity = ctx->timers_capacity * 2;
+        TimerData** new_timers = (TimerData**)realloc(ctx->timers, sizeof(TimerData*) * new_capacity);
+        if (!new_timers) {
+            free(timer_data);
+            close(pipefd[0]);
+            close(pipefd[1]);
+            free(timer);
             return NULL;
         }
-        
-        self->result->data = NULL;
-        self->result->size = 0;
-        self->result->error_code = 0;
+        ctx->timers = new_timers;
+        ctx->timers_capacity = new_capacity;
     }
     
-    // Check if any task failed
-    for (size_t i = 0; i < parallel_data->count; i++) {
-        if (parallel_data->tasks[i]->infra->state == INFRAX_ASYNC_REJECTED) {
-            self->result->error_code = parallel_data->tasks[i]->infra->error;
-            if (size) *size = 0;
-            return NULL;
-        }
-    }
+    ctx->timers[ctx->timers_count++] = timer_data;
     
-    // Get result from last task
-    if (parallel_data->count > 0) {
-        size_t task_size;
-        void* data = parallel_data->tasks[parallel_data->count - 1]->get_result(
-            parallel_data->tasks[parallel_data->count - 1], &task_size);
-            
-        self->result->data = data;
-        self->result->size = task_size;
-        if (size) *size = task_size;
-        return data;
-    }
-    
-    if (size) *size = 0;
-    return NULL;
-}
-
-void polyx_async_parallel_cancel(PolyxAsync* self) {
-    if (!self || !self->private_data) return;
-    
-    ParallelSequenceData* parallel_data = self->private_data;
-    
-    // Cancel all tasks
-    for (int i = 0; i < parallel_data->count; i++) {
-        if (parallel_data->tasks[i]) {
-            parallel_data->tasks[i]->cancel(parallel_data->tasks[i]);
-        }
-    }
-}
-
-// 序列执行操作的实例方法
-PolyxAsync* polyx_async_sequence_start(PolyxAsync* self) {
-    if (!self || !self->private_data) return self;
-    
-    ParallelSequenceData* sequence_data = self->private_data;
-    
-    // Start first task if not started
-    if (sequence_data->current < sequence_data->count && sequence_data->tasks[sequence_data->current]) {
-        sequence_data->tasks[sequence_data->current] = 
-            sequence_data->tasks[sequence_data->current]->start(sequence_data->tasks[sequence_data->current]);
-    }
-    
-    return self;
-}
-
-bool polyx_async_sequence_is_done(PolyxAsync* self) {
-    if (!self || !self->private_data) return true;
-    
-    ParallelSequenceData* sequence_data = self->private_data;
-    
-    // Check current task
-    if (sequence_data->current >= sequence_data->count) {
-        return true;
-    }
-    
-    if (!sequence_data->tasks[sequence_data->current]) {
-        sequence_data->current++;
-        return sequence_data->current >= sequence_data->count;
-    }
-    
-    if (sequence_data->tasks[sequence_data->current]->is_done(sequence_data->tasks[sequence_data->current])) {
-        // Start next task
-        sequence_data->current++;
-        if (sequence_data->current < sequence_data->count && sequence_data->tasks[sequence_data->current]) {
-            sequence_data->tasks[sequence_data->current] = 
-                sequence_data->tasks[sequence_data->current]->start(sequence_data->tasks[sequence_data->current]);
-        }
-    }
-    
-    return sequence_data->current >= sequence_data->count;
-}
-
-void* polyx_async_sequence_get_result(PolyxAsync* self, size_t* size) {
-    if (!self || !self->infra) {
-        if (size) *size = 0;
+    // Add read end to pollset
+    if (InfraxAsyncClass.pollset_add_fd(self->infra, timer->read_fd, INFRAX_POLLIN, timer_callback_wrapper, timer) < 0) {
+        ctx->timers_count--;
+        free(timer_data);
+        close(pipefd[0]);
+        close(pipefd[1]);
+        free(timer);
         return NULL;
     }
     
-    ParallelSequenceData* sequence_data = (ParallelSequenceData*)self->infra->user_data;
-    if (!sequence_data) {
-        if (size) *size = 0;
-        return NULL;
-    }
-    
-    // Create result if not exists
-    if (!self->result) {
-        self->result = g_memory->alloc(g_memory, sizeof(PolyxAsyncResult));
-        if (!self->result) {
-            if (size) *size = 0;
-            return NULL;
-        }
-        
-        self->result->data = NULL;
-        self->result->size = 0;
-        self->result->error_code = 0;
-    }
-    
-    // Get result from last completed task
-    if (sequence_data->count > 0) {
-        PolyxAsync* last_task = sequence_data->tasks[sequence_data->count - 1];
-        if (last_task && last_task->is_done(last_task)) {
-            size_t task_size;
-            void* data = last_task->get_result(last_task, &task_size);
-            
-            self->result->data = data;
-            self->result->size = task_size;
-            if (size) *size = task_size;
-            return data;
-        }
-    }
-    
-    if (size) *size = 0;
-    return NULL;
+    return timer;
 }
 
-void polyx_async_sequence_cancel(PolyxAsync* self) {
-    if (!self || !self->private_data) return;
+// Start timer
+static int polyx_async_start_timer(PolyxAsync* self, PolyxEvent* timer) {
+    if (!self || !timer || timer->type != POLYX_EVENT_TIMER) return -1;
     
-    ParallelSequenceData* sequence_data = self->private_data;
+    PolyxAsyncContext* ctx = (PolyxAsyncContext*)self->ctx;
     
-    // Cancel current task
-    if (sequence_data->current < sequence_data->count && sequence_data->tasks[sequence_data->current]) {
-        sequence_data->tasks[sequence_data->current]->cancel(sequence_data->tasks[sequence_data->current]);
+    // Find timer data
+    TimerData* timer_data = NULL;
+    for (size_t i = 0; i < ctx->timers_count; i++) {
+        if (ctx->timers[i]->callback == timer->data) {
+            timer_data = ctx->timers[i];
+            break;
+        }
     }
+    
+    if (!timer_data) return -1;
+    
+    // Update next trigger time
+    timer_data->next_trigger = g_core->time_monotonic_ms(g_core) + timer_data->interval_ms;
+    
+    return 0;
+}
+
+// Stop timer
+static int polyx_async_stop_timer(PolyxAsync* self, PolyxEvent* timer) {
+    if (!self || !timer || timer->type != POLYX_EVENT_TIMER) return -1;
+    
+    PolyxAsyncContext* ctx = (PolyxAsyncContext*)self->ctx;
+    
+    // Find and remove timer data
+    for (size_t i = 0; i < ctx->timers_count; i++) {
+        if (ctx->timers[i]->callback == timer->data) {
+            free(ctx->timers[i]);
+            memmove(&ctx->timers[i], &ctx->timers[i + 1], 
+                   (ctx->timers_count - i - 1) * sizeof(TimerData*));
+            ctx->timers_count--;
+            break;
+        }
+    }
+    
+    return 0;
+}
+
+// Poll events
+static int polyx_async_poll(PolyxAsync* self, int timeout_ms) {
+    if (!self) return -1;
+    
+    PolyxAsyncContext* ctx = (PolyxAsyncContext*)self->ctx;
+    
+    // Check timers
+    int64_t now = g_core->time_monotonic_ms(g_core);
+    for (size_t i = 0; i < ctx->timers_count; i++) {
+        TimerData* timer = ctx->timers[i];
+        if (now >= timer->next_trigger) {
+            if (timer->callback) {
+                timer->callback(timer->arg);
+            }
+            if (timer->is_periodic) {
+                timer->next_trigger = now + timer->interval_ms;
+            }
+        }
+    }
+    
+    // Process pollset events with minimal timeout
+    return InfraxAsyncClass.pollset_poll(self->infra, 1);  // 1ms timeout
 }
 
 // Global class instance
 const PolyxAsyncClass_t PolyxAsyncClass = {
     .new = polyx_async_new,
     .free = polyx_async_free,
-    .read_file = polyx_async_read_file,
-    .write_file = polyx_async_write_file,
-    .http_get = polyx_async_http_get,
-    .http_post = polyx_async_http_post,
-    .delay = polyx_async_delay,
-    .interval = polyx_async_interval,
-    .parallel = polyx_async_parallel,
-    .sequence = polyx_async_sequence
+    .create_event = polyx_async_create_event,
+    .trigger_event = polyx_async_trigger_event,
+    .destroy_event = polyx_async_destroy_event,
+    .create_timer = polyx_async_create_timer,
+    .start_timer = polyx_async_start_timer,
+    .stop_timer = polyx_async_stop_timer,
+    .poll = polyx_async_poll
 };
 
 // Event callback wrapper for InfraxAsync

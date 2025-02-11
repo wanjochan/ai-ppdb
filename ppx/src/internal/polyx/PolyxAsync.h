@@ -2,14 +2,16 @@
 #define POLYX_ASYNC_H
 
 #include "internal/infrax/InfraxAsync.h"
-#include <stddef.h>
-#include <stdint.h>
-#include <stdbool.h>
+#include "internal/infrax/InfraxCore.h"
+#include <sys/types.h>
+#include <sys/time.h>
+#include <poll.h>
 
 // Event types
 typedef enum {
     POLYX_EVENT_TIMER,    // Timer event
-    POLYX_EVENT_CUSTOM    // Custom event
+    POLYX_EVENT_IO,       // I/O event
+    POLYX_EVENT_SIGNAL    // Signal event
 } PolyxEventType;
 
 // Event structure
@@ -28,8 +30,7 @@ typedef void (*EventCallback)(PolyxEvent* event, void* arg);
 
 // Timer configuration
 typedef struct PolyxTimerConfig {
-    int64_t interval_ms;   // Timer interval in milliseconds
-    bool is_periodic;      // Whether timer repeats
+    int interval_ms;      // Timer interval in milliseconds
     TimerCallback callback; // Timer callback function
     void* arg;            // Callback argument
 } PolyxTimerConfig;
@@ -39,8 +40,6 @@ typedef struct PolyxEventConfig {
     PolyxEventType type;   // Event type
     EventCallback callback; // Event callback function
     void* arg;            // Callback argument
-    void* data;           // Initial event data
-    size_t data_size;     // Size of event data
 } PolyxEventConfig;
 
 // Async structure

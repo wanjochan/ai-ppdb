@@ -12,6 +12,9 @@
 
 #include <unistd.h>
 
+// Test timeout control
+#define TEST_TIMEOUT_MS 2000  // 2 seconds timeout for each test
+
 // Test context structures
 typedef struct {
     int fd;             // File descriptor
@@ -176,11 +179,20 @@ void test_polyx_async_read_file(void) {
     log->debug(log, "test_polyx_async_read_file: starting async task");
     InfraxAsyncClass.start(async);
     
-    // Wait for completion
+    // Wait for completion with timeout
     log->debug(log, "test_polyx_async_read_file: waiting for completion");
     static time_t last_status = 0;
+    time_t start_time = time(NULL);
+    
     while (async->state != INFRAX_ASYNC_FULFILLED && 
            async->state != INFRAX_ASYNC_REJECTED) {
+        // Check timeout
+        if (time(NULL) - start_time > TEST_TIMEOUT_MS/1000) {
+            log->error(log, "test_polyx_async_read_file: timeout after %d ms", TEST_TIMEOUT_MS);
+            async->state = INFRAX_ASYNC_REJECTED;
+            break;
+        }
+        
         if (async->state == INFRAX_ASYNC_PENDING) {
             InfraxAsyncClass.start(async);
         }
@@ -190,7 +202,7 @@ void test_polyx_async_read_file(void) {
                         ctx.yield_count);
             last_status = now;
         }
-        core->sleep_ms(core, 10);  // 10ms
+        core->sleep_ms(core, 1);  // Reduced from 10ms to 1ms
     }
     
     log->info(log, "test_polyx_async_read_file: task completed");
@@ -232,11 +244,20 @@ void test_polyx_async_write_file(void) {
     log->debug(log, "test_polyx_async_write_file: starting async task");
     InfraxAsyncClass.start(async);
     
-    // Wait for completion
+    // Wait for completion with timeout
     log->debug(log, "test_polyx_async_write_file: waiting for completion");
     static time_t last_status = 0;
+    time_t start_time = time(NULL);
+    
     while (async->state != INFRAX_ASYNC_FULFILLED && 
            async->state != INFRAX_ASYNC_REJECTED) {
+        // Check timeout
+        if (time(NULL) - start_time > TEST_TIMEOUT_MS/1000) {
+            log->error(log, "test_polyx_async_write_file: timeout after %d ms", TEST_TIMEOUT_MS);
+            async->state = INFRAX_ASYNC_REJECTED;
+            break;
+        }
+        
         if (async->state == INFRAX_ASYNC_PENDING) {
             InfraxAsyncClass.start(async);
         }
@@ -246,7 +267,7 @@ void test_polyx_async_write_file(void) {
                         ctx.yield_count);
             last_status = now;
         }
-        core->sleep_ms(core, 10);  // 10ms
+        core->sleep_ms(core, 1);  // Reduced from 10ms to 1ms
     }
     
     log->info(log, "test_polyx_async_write_file: task completed");
@@ -482,8 +503,8 @@ static void test_timer_callback(void* arg) {
 
 // Event callback
 static void test_event_callback(PolyxEvent* event, void* arg) {
-    if (!event || !event->data) return;
-    printf("Event triggered with data: %s\n", (char*)event->data);
+    if (!event || !arg) return;
+    printf("Event triggered with data: %s\n", (const char*)arg);
 }
 
 int main() {
@@ -502,7 +523,6 @@ int main() {
     
     PolyxTimerConfig timer_config = {
         .interval_ms = 1000,
-        .is_periodic = true,
         .callback = test_timer_callback,
         .arg = &timer_count
     };
@@ -523,11 +543,9 @@ int main() {
     
     const char* event_data = "Custom Event Data";
     PolyxEventConfig event_config = {
-        .type = POLYX_EVENT_CUSTOM,
+        .type = POLYX_EVENT_IO,
         .callback = test_event_callback,
-        .arg = NULL,
-        .data = (void*)event_data,
-        .data_size = strlen(event_data) + 1
+        .arg = (void*)event_data
     };
     
     PolyxEvent* event = PolyxAsyncClass.create_event(async, &event_config);
