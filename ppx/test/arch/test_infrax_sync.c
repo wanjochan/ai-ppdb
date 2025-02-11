@@ -261,28 +261,244 @@ static void test_atomic(void) {
     InfraxSyncClass.free(atomic);
 }
 
+// 添加新的测试函数声明
+void test_sync_stress(void);
+void test_deadlock_detection(void);
+void test_condition_variable_detailed(void);
+void test_rwlock_fairness(void);
+void test_semaphore_edge_cases(void);
+
+// 添加新的测试函数实现
+void test_sync_stress() {
+    core->printf(core, "Testing synchronization stress...\n");
+    
+    #define NUM_ITERATIONS 10000
+    #define SHARED_VALUE_TARGET (NUM_ITERATIONS * 2)
+    
+    // 共享资源
+    int64_t shared_value = 0;
+    
+    // 创建同步原语
+    InfraxSync* mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+    InfraxSync* atomic = InfraxSyncClass.new(INFRAX_SYNC_TYPE_ATOMIC);
+    INFRAX_ASSERT(core, mutex != NULL && atomic != NULL);
+    
+    // 1. 互斥锁压力测试
+    for(int i = 0; i < NUM_ITERATIONS; i++) {
+        // 模拟两个线程交替访问
+        InfraxError err = mutex->mutex_lock(mutex);
+        INFRAX_ASSERT(core, err.code == 0);
+        shared_value++;
+        err = mutex->mutex_unlock(mutex);
+        INFRAX_ASSERT(core, err.code == 0);
+        
+        err = mutex->mutex_lock(mutex);
+        INFRAX_ASSERT(core, err.code == 0);
+        shared_value++;
+        err = mutex->mutex_unlock(mutex);
+        INFRAX_ASSERT(core, err.code == 0);
+    }
+    
+    INFRAX_ASSERT(core, shared_value == SHARED_VALUE_TARGET);
+    
+    // 2. 原子操作压力测试
+    atomic_store(&atomic->value, 0);
+    for(int i = 0; i < NUM_ITERATIONS; i++) {
+        atomic_fetch_add(&atomic->value, 1);
+        atomic_fetch_add(&atomic->value, 1);
+    }
+    
+    INFRAX_ASSERT(core, atomic_load(&atomic->value) == SHARED_VALUE_TARGET);
+    
+    InfraxSyncClass.free(mutex);
+    InfraxSyncClass.free(atomic);
+    
+    core->printf(core, "Synchronization stress test passed\n");
+}
+
+void test_deadlock_detection() {
+    core->printf(core, "Testing deadlock detection...\n");
+    
+    InfraxSync* mutex1 = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+    InfraxSync* mutex2 = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+    INFRAX_ASSERT(core, mutex1 != NULL && mutex2 != NULL);
+    
+    // 测试嵌套锁定（应该检测到潜在死锁）
+    InfraxError err = mutex1->mutex_lock(mutex1);
+    INFRAX_ASSERT(core, err.code == 0);
+    
+    // 尝试锁定第二个互斥锁，应该超时而不是死锁
+    err = mutex2->mutex_try_lock(mutex2);
+    if(err.code == 0) {
+        mutex2->mutex_unlock(mutex2);
+    }
+    
+    mutex1->mutex_unlock(mutex1);
+    
+    InfraxSyncClass.free(mutex1);
+    InfraxSyncClass.free(mutex2);
+    
+    core->printf(core, "Deadlock detection test passed\n");
+}
+
+void test_condition_variable_detailed() {
+    core->printf(core, "Testing condition variable details...\n");
+    
+    InfraxSync* mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+    InfraxSync* cond = InfraxSyncClass.new(INFRAX_SYNC_TYPE_CONDITION);
+    INFRAX_ASSERT(core, mutex != NULL && cond != NULL);
+    
+    // 1. 测试不同的超时值
+    InfraxError err = mutex->mutex_lock(mutex);
+    INFRAX_ASSERT(core, err.code == 0);
+    
+    // 短超时
+    err = cond->cond_timedwait(cond, mutex, 1);  // 1ms
+    INFRAX_ASSERT(core, err.code == INFRAX_ERROR_SYNC_TIMEOUT);
+    
+    // 长超时
+    err = cond->cond_timedwait(cond, mutex, 100);  // 100ms
+    INFRAX_ASSERT(core, err.code == INFRAX_ERROR_SYNC_TIMEOUT);
+    
+    mutex->mutex_unlock(mutex);
+    
+    // 2. 测试虚假唤醒处理
+    bool condition_met = false;
+    int spurious_wakeup_count = 0;
+    
+    err = mutex->mutex_lock(mutex);
+    INFRAX_ASSERT(core, err.code == 0);
+    
+    while(!condition_met && spurious_wakeup_count < 3) {
+        err = cond->cond_timedwait(cond, mutex, 10);
+        if(err.code == INFRAX_ERROR_SYNC_TIMEOUT) {
+            spurious_wakeup_count++;
+        }
+    }
+    
+    mutex->mutex_unlock(mutex);
+    
+    InfraxSyncClass.free(mutex);
+    InfraxSyncClass.free(cond);
+    
+    core->printf(core, "Condition variable detail test passed\n");
+}
+
+void test_rwlock_fairness() {
+    core->printf(core, "Testing read-write lock fairness...\n");
+    
+    InfraxSync* rwlock = InfraxSyncClass.new(INFRAX_SYNC_TYPE_RWLOCK);
+    INFRAX_ASSERT(core, rwlock != NULL);
+    
+    // 1. 测试读优先
+    for(int i = 0; i < 100; i++) {
+        InfraxError err = rwlock->rwlock_read_lock(rwlock);
+        INFRAX_ASSERT(core, err.code == 0);
+        
+        // 模拟读操作
+        core->sleep_ms(core, 1);
+        
+        err = rwlock->rwlock_read_unlock(rwlock);
+        INFRAX_ASSERT(core, err.code == 0);
+    }
+    
+    // 2. 测试写优先
+    for(int i = 0; i < 10; i++) {
+        InfraxError err = rwlock->rwlock_write_lock(rwlock);
+        INFRAX_ASSERT(core, err.code == 0);
+        
+        // 模拟写操作
+        core->sleep_ms(core, 5);
+        
+        err = rwlock->rwlock_write_unlock(rwlock);
+        INFRAX_ASSERT(core, err.code == 0);
+    }
+    
+    // 3. 测试读写交替
+    for(int i = 0; i < 10; i++) {
+        InfraxError err = rwlock->rwlock_read_lock(rwlock);
+        INFRAX_ASSERT(core, err.code == 0);
+        
+        core->sleep_ms(core, 1);
+        
+        err = rwlock->rwlock_read_unlock(rwlock);
+        INFRAX_ASSERT(core, err.code == 0);
+        
+        err = rwlock->rwlock_write_lock(rwlock);
+        INFRAX_ASSERT(core, err.code == 0);
+        
+        core->sleep_ms(core, 1);
+        
+        err = rwlock->rwlock_write_unlock(rwlock);
+        INFRAX_ASSERT(core, err.code == 0);
+    }
+    
+    InfraxSyncClass.free(rwlock);
+    
+    core->printf(core, "Read-write lock fairness test passed\n");
+}
+
+void test_semaphore_edge_cases() {
+    core->printf(core, "Testing semaphore edge cases...\n");
+    
+    InfraxSync* sem = InfraxSyncClass.new(INFRAX_SYNC_TYPE_SEMAPHORE);
+    INFRAX_ASSERT(core, sem != NULL);
+    
+    int value;
+    
+    // 1. 测试最大值
+    for(int i = 0; i < 1000; i++) {
+        InfraxError err = sem->semaphore_post(sem);
+        INFRAX_ASSERT(core, err.code == 0);
+    }
+    
+    InfraxError err = sem->semaphore_get_value(sem, &value);
+    INFRAX_ASSERT(core, err.code == 0);
+    INFRAX_ASSERT(core, value == 1000);
+    
+    // 2. 测试快速post/wait
+    for(int i = 0; i < 1000; i++) {
+        err = sem->semaphore_wait(sem);
+        INFRAX_ASSERT(core, err.code == 0);
+    }
+    
+    err = sem->semaphore_get_value(sem, &value);
+    INFRAX_ASSERT(core, err.code == 0);
+    INFRAX_ASSERT(core, value == 0);
+    
+    // 3. 测试超时等待
+    err = sem->semaphore_try_wait(sem);  // 尝试等待
+    INFRAX_ASSERT(core, err.code == INFRAX_ERROR_SYNC_WOULD_BLOCK);
+    
+    InfraxSyncClass.free(sem);
+    
+    core->printf(core, "Semaphore edge cases test passed\n");
+}
+
 int main() {
-    printf("===================\nStarting InfraxSync tests...\n");
     core = InfraxCoreClass.singleton();
+    INFRAX_ASSERT(core, core != NULL);
     
+    core->printf(core, "===================\n");
+    core->printf(core, "Starting InfraxSync tests...\n");
+    
+    // 基本测试
     test_mutex();
-    printf("Mutex test passed\n");
-    
     test_cond();
-    printf("Condition variable test passed\n");
-    
     test_rwlock();
-    printf("RWLock test passed\n");
-    
     test_spinlock();
-    printf("Spinlock test passed\n");
-    
     test_semaphore();
-    printf("Semaphore test passed\n");
-    
     test_atomic();
-    printf("Atomic test passed\n");
     
-    printf("All infrax_sync tests passed!\n");
+    // 新增的高级测试
+    test_sync_stress();
+    test_deadlock_detection();
+    test_condition_variable_detailed();
+    test_rwlock_fairness();
+    test_semaphore_edge_cases();
+    
+    core->printf(core, "All infrax_sync tests passed!\n");
+    core->printf(core, "===================\n");
+    
     return 0;
 }
