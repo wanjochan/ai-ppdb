@@ -158,16 +158,6 @@ struct InfraxCore {
     // Instance pointer
     InfraxCore* self;
 
-    // Memory management
-    void* (*malloc)(InfraxCore *self, size_t size);
-    void (*free)(InfraxCore *self, void* ptr);
-    void* (*calloc)(InfraxCore *self, size_t nmemb, size_t size);
-    void* (*realloc)(InfraxCore *self, void* ptr, size_t size);
-    void* (*memset)(InfraxCore *self, void* s, int c, size_t n);
-    void* (*memcpy)(InfraxCore *self, void* dest, const void* src, size_t n);
-    void* (*memmove)(InfraxCore *self, void* dest, const void* src, size_t n);
-    int (*memcmp)(InfraxCore *self, const void* s1, const void* s2, size_t n);
-
     // Core functions
     void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);
     int (*printf)(InfraxCore *self, const char* format, ...);

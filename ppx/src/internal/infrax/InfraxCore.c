@@ -667,38 +667,6 @@ static size_t infrax_core_get_memory_usage(InfraxCore *self) {
     return usage.ru_maxrss;
 }
 
-// Memory management functions
-static void* infrax_core_malloc(InfraxCore *self, size_t size) {
-    return malloc(size);
-}
-
-static void infrax_core_free(InfraxCore *self, void* ptr) {
-    free(ptr);
-}
-
-static void* infrax_core_calloc(InfraxCore *self, size_t nmemb, size_t size) {
-    return calloc(nmemb, size);
-}
-
-static void* infrax_core_realloc(InfraxCore *self, void* ptr, size_t size) {
-    return realloc(ptr, size);
-}
-
-static void* infrax_core_memset(InfraxCore *self, void* s, int c, size_t n) {
-    return memset(s, c, n);
-}
-
-static void* infrax_core_memcpy(InfraxCore *self, void* dest, const void* src, size_t n) {
-    return memcpy(dest, src, n);
-}
-
-static void* infrax_core_memmove(InfraxCore *self, void* dest, const void* src, size_t n) {
-    return memmove(dest, src, n);
-}
-
-static int infrax_core_memcmp(InfraxCore *self, const void* s1, const void* s2, size_t n) {
-    return memcmp(s1, s2, n);
-}
 
 // Initialize singleton instance
 static InfraxCore singleton = {
@@ -790,15 +758,6 @@ static InfraxCore singleton = {
     .sleep_us = infrax_core_sleep_us,
     .get_memory_usage = infrax_core_get_memory_usage,
     
-    // Memory management
-    .malloc = infrax_core_malloc,
-    .free = infrax_core_free,
-    .calloc = infrax_core_calloc,
-    .realloc = infrax_core_realloc,
-    .memset = infrax_core_memset,
-    .memcpy = infrax_core_memcpy,
-    .memmove = infrax_core_memmove,
-    .memcmp = infrax_core_memcmp
 };
 
 // Simple singleton getter

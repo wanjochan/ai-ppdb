@@ -3,6 +3,7 @@
 #include "internal/infrax/InfraxMemory.h"
 
 static InfraxCore* core = NULL;
+static InfraxMemory* memory = NULL;
 
 #define TARGET_CONNECTIONS 1000
 #define BATCH_SIZE 50  // 减小初始批次大小
@@ -64,7 +65,7 @@ void cleanup_task(TaskContext* ctx) {
         if (ctx->async) {
             InfraxAsyncClass.free(ctx->async);
         }
-        core->free(core, ctx);
+        InfraxMemoryClass.dealloc(memory, ctx);
         __atomic_fetch_sub(&metrics.active_tasks, 1, __ATOMIC_SEQ_CST);
     }
 }
@@ -143,16 +144,16 @@ void create_task_batch(size_t target_tasks) {
     to_create = to_create > batch_size ? batch_size : to_create;
     
     for (size_t i = 0; i < to_create && metrics.active_tasks < TARGET_CONNECTIONS; i++) {
-        TaskContext* ctx = core->malloc(core, sizeof(TaskContext));
+        TaskContext* ctx = InfraxMemoryClass.alloc(memory, sizeof(TaskContext));
         if (!ctx) continue;
         
-        core->memset(core, ctx, 0, sizeof(TaskContext));
+        InfraxMemoryClass.clear(memory, ctx, sizeof(TaskContext));
         core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
         ctx->is_active = 1;
         
         ctx->async = InfraxAsyncClass.new(long_running_task, ctx);
         if (!ctx->async) {
-            core->free(core, ctx);
+            InfraxMemoryClass.dealloc(memory, ctx);
             continue;
         }
         
@@ -193,6 +194,7 @@ void print_metrics(time_t elapsed_seconds) {
 
 int main() {
     core = InfraxCoreClass.singleton();
+    memory = InfraxMemoryClass.new();
     core->printf(core, "Starting 1K Concurrent Tasks Test...\n");
     core->printf(core, "Target Connections: %d\n", TARGET_CONNECTIONS);
     core->printf(core, "Test Duration: %d seconds\n", TEST_DURATION_SEC);
