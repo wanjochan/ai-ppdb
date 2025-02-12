@@ -5,11 +5,15 @@
 static InfraxCore* core = NULL;
 static InfraxMemory* memory = NULL;
 
+// 添加任务数组管理
+static InfraxAsync** tasks = NULL;
+static size_t tasks_capacity = 0;
+
 #define TARGET_CONNECTIONS 10     // 从1000改为10
 #define BATCH_SIZE 2             // 从20改为2
 #define TEST_DURATION_SEC 10     // 从30改为10
-#define TASK_LIFETIME_MS 500     // 从2000改为500
-#define MAX_YIELD_COUNT 100      // 从1000改为100
+#define TASK_LIFETIME_MS 2000    // 从500改为2000
+#define COMPUTATION_LIMIT 1000   // 从100改为1000
 
 // Performance metrics
 typedef struct {
@@ -35,7 +39,7 @@ typedef struct {
     InfraxTimeSpec start_time;
     int is_active;
     int state;  // 0: initial, 1: running, 2: completed
-    int yield_count;  // 添加 yield_count 字段
+    int computation_count;  // 计算次数
 } TaskContext;
 
 // Forward declarations
@@ -78,9 +82,6 @@ void cleanup_task(TaskContext* ctx) {
         if (ctx->async) {
             if (!InfraxAsyncClass.is_done(ctx->async)) {
                 InfraxAsyncClass.cancel(ctx->async);  // 先取消任务
-                while (!InfraxAsyncClass.is_done(ctx->async)) {
-                    InfraxAsyncClass.yield(ctx->async); 
-                }
             }
             InfraxAsyncClass.free(ctx->async);
         }
@@ -91,8 +92,41 @@ void cleanup_task(TaskContext* ctx) {
 
 // Process active tasks
 void process_active_tasks() {
-    // 每次都处理，不再使用cycle_count
-    InfraxAsyncClass.pollset_poll(NULL, 1);  // 1ms timeout
+    static InfraxTime last_process_time = 0;
+    InfraxTime now = core->time_monotonic_ms(core);
+    
+    // 限制处理频率
+    if (now - last_process_time < 10) {  // 每10ms处理一次
+        return;
+    }
+    last_process_time = now;
+    
+    // 遍历所有活跃任务
+    for (size_t i = 0; i < tasks_capacity; i++) {
+        if (tasks[i] && !InfraxAsyncClass.is_done(tasks[i])) {
+            // 轮询事件
+            InfraxAsyncClass.pollset_poll(tasks[i], 1);
+            
+            // 如果任务还在pending状态,继续执行
+            if (tasks[i]->state == INFRAX_ASYNC_PENDING) {
+                InfraxAsyncClass.start(tasks[i]);
+            }
+        }
+        
+        // 清理已完成的任务
+        if (tasks[i] && InfraxAsyncClass.is_done(tasks[i])) {
+            TaskContext* ctx = (TaskContext*)tasks[i]->arg;
+            if (tasks[i]->state == INFRAX_ASYNC_FULFILLED) {
+                __atomic_fetch_add(&metrics.completed_tasks, 1, __ATOMIC_SEQ_CST);
+                core->printf(core, "Task completed successfully\n");
+            } else {
+                __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
+                core->printf(core, "Task failed\n");
+            }
+            cleanup_task(ctx);
+            tasks[i] = NULL;
+        }
+    }
     
     // 更新性能指标
     metrics.cpu_usage = get_cpu_usage();
@@ -115,26 +149,53 @@ static void create_task_batch(size_t target_tasks) {
         1 : // 高负载时每次只创建1个
         BATCH_SIZE; // 正常负载使用标准批次大小
     
+    // 确保任务数组容量足够
+    if (tasks_capacity < TARGET_CONNECTIONS) {
+        size_t new_capacity = TARGET_CONNECTIONS * 2;
+        InfraxAsync** new_tasks = memory->alloc(memory, sizeof(InfraxAsync*) * new_capacity);
+        if (!new_tasks) return;
+        
+        if (tasks) {
+            memcpy(new_tasks, tasks, sizeof(InfraxAsync*) * tasks_capacity);
+            memory->dealloc(memory, tasks);
+        }
+        tasks = new_tasks;
+        tasks_capacity = new_capacity;
+    }
+    
     // 创建任务
     size_t created = 0;
     for (size_t i = 0; i < max_new_tasks && metrics.active_tasks < TARGET_CONNECTIONS; i++) {
+        // 找一个空槽位
+        size_t slot;
+        for (slot = 0; slot < tasks_capacity; slot++) {
+            if (!tasks[slot]) break;
+        }
+        if (slot >= tasks_capacity) break;
+        
         TaskContext* ctx = memory->alloc(memory, sizeof(TaskContext));
         if (!ctx) continue;
         
-        // 正确使用 new 函数，传入回调函数和参数
-        ctx->async = InfraxAsyncClass.new(long_running_task, ctx);
-        if (!ctx->async) {
+        // 初始化上下文
+        memset(ctx, 0, sizeof(TaskContext));
+        ctx->is_active = 1;
+        ctx->state = 0;
+        core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
+        
+        // 创建异步任务
+        InfraxAsync* async = InfraxAsyncClass.new(long_running_task, ctx);
+        if (!async) {
             memory->dealloc(memory, ctx);
             continue;
         }
         
-        ctx->is_active = 1;
-        ctx->state = 0;
+        ctx->async = async;
+        tasks[slot] = async;
         
-        // 正确使用 start 函数，只传入 async 对象
-        if (!InfraxAsyncClass.start(ctx->async)) {
-            InfraxAsyncClass.free(ctx->async);
-            memory->dealloc(memory, ctx);
+        // 启动任务
+        if (!InfraxAsyncClass.start(async)) {
+            cleanup_task(ctx);
+            tasks[slot] = NULL;
             continue;
         }
         
@@ -160,7 +221,8 @@ void long_running_task(InfraxAsync* self, void* arg) {
     if (ctx->state == 0) {
         ctx->state = 1;
         core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
-        ctx->yield_count = 0;  // 使用 ctx 的 yield_count
+        ctx->computation_count = 0;
+        core->printf(core, "Task started\n");
     }
     
     // Check if we've run long enough
@@ -172,29 +234,32 @@ void long_running_task(InfraxAsync* self, void* arg) {
     if (elapsed_ms >= TASK_LIFETIME_MS) {
         // Task completed
         ctx->state = 2;
-        __atomic_fetch_add(&metrics.completed_tasks, 1, __ATOMIC_SEQ_CST);
         self->state = INFRAX_ASYNC_FULFILLED;
-        cleanup_task(ctx);  // 任务完成后立即清理
+        core->printf(core, "Task completed after %ld ms\n", elapsed_ms);
         return;
     }
     
     // 添加一些实际工作
-    for(volatile int i = 0; i < 1000; i++) {
+    for(volatile int i = 0; i < 100; i++) {  // 减少每次的计算量
         // 模拟一些计算工作
         volatile int x = i * i;
     }
     
-    // Increment yield count with bounds checking
-    if (ctx->yield_count < MAX_YIELD_COUNT) {  // 使用 ctx 的 yield_count
-        ctx->yield_count++;  // 使用 ctx 的 yield_count
-        InfraxAsyncClass.yield(self);
-    } else {
-        // Task has yielded too many times, terminate it
+    // 增加计算次数
+    ctx->computation_count++;
+    
+    // 如果计算次数超过限制，就结束任务
+    if (ctx->computation_count >= COMPUTATION_LIMIT) {
+        core->printf(core, "Task failed: too many computations (%d)\n", ctx->computation_count);
         self->state = INFRAX_ASYNC_REJECTED;
-        __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
-        cleanup_task(ctx);  // 任务失败后立即清理
         return;
     }
+    
+    // 返回让其他任务运行
+    self->state = INFRAX_ASYNC_PENDING;  // 确保任务保持在pending状态
+    
+    core->hint_yield(core);//hint cpu to yield?
+    return;
 }
 
 // Get current memory usage
@@ -243,6 +308,16 @@ int main() {
         printf("Failed to initialize memory!\n");
         return 1;
     }
+    
+    // 初始化任务数组
+    tasks_capacity = TARGET_CONNECTIONS * 2;
+    tasks = memory->alloc(memory, sizeof(InfraxAsync*) * tasks_capacity);
+    if (!tasks) {
+        printf("Failed to allocate tasks array!\n");
+        InfraxMemoryClass.free(memory);
+        return 1;
+    }
+    memset(tasks, 0, sizeof(InfraxAsync*) * tasks_capacity);
     
     printf("Initialization completed, starting test...\n");
     
