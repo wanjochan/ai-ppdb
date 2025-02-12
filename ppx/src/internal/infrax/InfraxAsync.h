@@ -44,6 +44,7 @@ typedef struct InfraxAsyncClassType InfraxAsyncClassType;
 // Async states
 typedef enum {
     INFRAX_ASYNC_PENDING = 0,
+    INFRAX_ASYNC_RUNNING,     // 新增运行中状态
     INFRAX_ASYNC_FULFILLED,
     INFRAX_ASYNC_REJECTED
 } InfraxAsyncState;
