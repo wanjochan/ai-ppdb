@@ -78,6 +78,7 @@ extern InfraxSocketClassType InfraxSocketClass;
 #define INFRAX_SO_SNDTIMEO     5
 #define INFRAX_SO_RCVBUF       6
 #define INFRAX_SO_SNDBUF       7
+#define INFRAX_SO_ERROR        8
 
 //-----------------------------------------------------------------------------
 // Error codes
@@ -96,6 +97,7 @@ extern InfraxSocketClassType InfraxSocketClass;
 #define INFRAX_ERROR_NET_ALREADY_CONNECTED_CODE -109
 #define INFRAX_ERROR_NET_NOT_CONNECTED_CODE -110
 #define INFRAX_ERROR_NET_WOULD_BLOCK_CODE -111
+#define INFRAX_ERROR_NET_TIMEOUT_CODE -112
 
 // Error structs
 #define INFRAX_ERROR_NET_INVALID_ARGUMENT make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid argument")
@@ -110,6 +112,7 @@ extern InfraxSocketClassType InfraxSocketClass;
 #define INFRAX_ERROR_NET_ALREADY_CONNECTED make_error(INFRAX_ERROR_NET_ALREADY_CONNECTED_CODE, "Socket is already connected")
 #define INFRAX_ERROR_NET_NOT_CONNECTED make_error(INFRAX_ERROR_NET_NOT_CONNECTED_CODE, "Socket is not connected")
 #define INFRAX_ERROR_NET_WOULD_BLOCK make_error(INFRAX_ERROR_NET_WOULD_BLOCK_CODE, "Operation would block")
+#define INFRAX_ERROR_NET_TIMEOUT make_error(INFRAX_ERROR_NET_TIMEOUT_CODE, "Operation timed out")
 
 // Utility functions for address conversion
 InfraxError infrax_net_addr_from_string(const char* ip, uint16_t port, InfraxNetAddr* addr);

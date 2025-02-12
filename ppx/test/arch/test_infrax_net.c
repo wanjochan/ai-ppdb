@@ -4,9 +4,7 @@
 #include "internal/infrax/InfraxSync.h"
 #include <string.h>
 #include <stdlib.h>
-#include <fcntl.h>
-#include <errno.h>
-// #include <sys/select.h>
+
 
 // Test parameters
 #define TEST_PORT_BASE 22345
@@ -663,10 +661,10 @@ static bool test_connection_timeout(void* arg) {
 
     TEST_LOG_INFO("Starting connection timeout test");
 
-    // 创建客户端socket，使用非阻塞模式
+    // 创建客户端socket，使用阻塞模式
     client_socket = InfraxSocketClass.new(&(InfraxSocketConfig){
         .is_udp = false,
-        .is_nonblocking = true,  // 使用非阻塞模式
+        .is_nonblocking = false,  // 使用阻塞模式
         .send_timeout_ms = 500,
         .recv_timeout_ms = 500
     });
@@ -677,8 +675,8 @@ static bool test_connection_timeout(void* arg) {
 
     TEST_LOG_INFO("Creating client socket with timeout: 500 ms");
 
-    // 创建一个不存在的服务器地址 (使用一个不可达的IP地址)
-    err = infrax_net_addr_from_string("192.168.255.255", 54321, &addr);
+    // 使用一个不可达的地址（这个地址在RFC 5737中定义为测试用途）
+    err = infrax_net_addr_from_string("192.0.2.1", 54321, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         TEST_LOG_ERROR("Failed to create address: %s", err.message);
         goto cleanup;
@@ -688,25 +686,9 @@ static bool test_connection_timeout(void* arg) {
     start_time = core->time_monotonic_ms(core);
     TEST_LOG_INFO("Starting connection attempt at: %lu ms", start_time);
 
-    // 尝试连接 - 这里应该返回EINPROGRESS
+    // 尝试连接 - 这里应该超时
     err = client_socket->connect(client_socket, &addr);
-    if (!INFRAX_ERROR_IS_ERR(err)) {
-        TEST_LOG_ERROR("Connection unexpectedly succeeded immediately");
-        goto cleanup;
-    }
-
-    // 等待连接完成或超时
-    fd_set write_fds;
-    struct timeval tv = {
-        .tv_sec = 0,
-        .tv_usec = 500000  // 500ms
-    };
     
-    FD_ZERO(&write_fds);
-    FD_SET(client_socket->native_handle, &write_fds);
-    
-    int ret = select(client_socket->native_handle + 1, NULL, &write_fds, NULL, &tv);
-
     // 记录结束时间
     end_time = core->time_monotonic_ms(core);
     TEST_LOG_INFO("Connection attempt ended at: %lu ms", end_time);
@@ -715,25 +697,18 @@ static bool test_connection_timeout(void* arg) {
     InfraxTime elapsed = end_time - start_time;
     TEST_LOG_INFO("Connection attempt took %lu ms", elapsed);
 
-    // 检查select结果
-    if (ret > 0) {
-        // 检查连接是否真的成功
-        int error;
-        socklen_t len = sizeof(error);
-        if (getsockopt(client_socket->native_handle, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
-            // 连接失败，这是我们期望的结果
-            TEST_LOG_INFO("Connection failed as expected");
-        } else {
-            TEST_LOG_ERROR("Connection unexpectedly succeeded");
-            goto cleanup;
-        }
-    } else if (ret == 0) {
-        // select超时，这也是一个可接受的结果
-        TEST_LOG_INFO("Select timed out as expected");
-    } else {
-        TEST_LOG_ERROR("Select failed");
+    // 检查结果
+    if (!INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Connection unexpectedly succeeded");
         goto cleanup;
     }
+
+    if (err.code != INFRAX_ERROR_NET_TIMEOUT_CODE) {
+        TEST_LOG_ERROR("Expected timeout error, got: %s", err.message);
+        goto cleanup;
+    }
+
+    TEST_LOG_INFO("Connection failed as expected");
 
     // 检查经过的时间是否在合理范围内 (500ms +/- 100ms)
     if (elapsed < 400 || elapsed > 600) {

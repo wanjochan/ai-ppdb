@@ -46,6 +46,8 @@ static int map_socket_option(int option) {
             return SO_RCVBUF;
         case INFRAX_SO_SNDBUF:
             return SO_SNDBUF;
+        case INFRAX_SO_ERROR:
+            return SO_ERROR;
         default:
             return option;
     }
@@ -163,16 +165,74 @@ static InfraxError socket_connect(InfraxSocket* self, const InfraxNetAddr* addr)
         return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     }
 
+    // 保存原始的非阻塞状态
+    bool was_nonblocking = self->config.is_nonblocking;
+    
+    // 设置为非阻塞模式
+    InfraxError err = set_socket_nonblocking(self->native_handle, true);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        return err;
+    }
+
     // 尝试连接
-    if (connect(self->native_handle, (struct sockaddr*)&connect_addr, sizeof(connect_addr)) < 0) {
-        if (errno == EINPROGRESS && self->config.is_nonblocking) {
-            // 对于非阻塞模式，直接返回WOULD_BLOCK
-            // 让调用者自己处理后续的select/poll
-            return INFRAX_ERROR_NET_WOULD_BLOCK;
-        } else if (errno == ETIMEDOUT || errno == EINPROGRESS) {
-            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, "Connection timed out");
-        } else {
-            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, strerror(errno));
+    int connect_result = connect(self->native_handle, (struct sockaddr*)&connect_addr, sizeof(connect_addr));
+    if (connect_result < 0) {
+        if (errno != EINPROGRESS) {
+            // 如果不是EINPROGRESS，说明是立即失败
+            if (errno == ECONNREFUSED) {
+                return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, "Connection refused");
+            } else {
+                char err_msg[256];
+                snprintf(err_msg, sizeof(err_msg), "Connect failed: %s (errno=%d)", strerror(errno), errno);
+                return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
+            }
+        }
+
+        // 使用select等待连接完成或超时
+        fd_set write_fds;
+        struct timeval tv;
+        
+        FD_ZERO(&write_fds);
+        FD_SET(self->native_handle, &write_fds);
+        
+        tv.tv_sec = self->config.send_timeout_ms / 1000;
+        tv.tv_usec = (self->config.send_timeout_ms % 1000) * 1000;
+
+        int select_result = select(self->native_handle + 1, NULL, &write_fds, NULL, &tv);
+        
+        if (select_result == 0) {
+            // 超时
+            return make_error(INFRAX_ERROR_NET_TIMEOUT_CODE, "Connection timed out");
+        } else if (select_result < 0) {
+            // select错误
+            char err_msg[256];
+            snprintf(err_msg, sizeof(err_msg), "Select failed: %s (errno=%d)", strerror(errno), errno);
+            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
+        }
+        
+        // 检查socket是否真的已连接
+        int socket_error;
+        socklen_t len = sizeof(socket_error);
+        if (getsockopt(self->native_handle, SOL_SOCKET, SO_ERROR, &socket_error, &len) < 0) {
+            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, "Failed to get socket error");
+        }
+        
+        if (socket_error) {
+            if (socket_error == ETIMEDOUT) {
+                return make_error(INFRAX_ERROR_NET_TIMEOUT_CODE, "Connection timed out");
+            } else {
+                char err_msg[256];
+                snprintf(err_msg, sizeof(err_msg), "Connect failed: %s (errno=%d)", strerror(socket_error), socket_error);
+                return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
+            }
+        }
+    }
+
+    // 恢复原始的非阻塞状态
+    if (!was_nonblocking) {
+        err = set_socket_nonblocking(self->native_handle, false);
+        if (INFRAX_ERROR_IS_ERR(err)) {
+            return err;
         }
     }
 
