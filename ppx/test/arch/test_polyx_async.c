@@ -236,7 +236,7 @@ int main() {
         }
         
         // Poll for events
-        async->poll(async, 100);  // 使用更短的轮询间隔
+        async->poll(async, 50);  // 使用更短的轮询间隔
         
         // 检查是否达到预期结果
         if (timer_count >= expected_timer_count && event_callback_count >= event_trigger_count) {

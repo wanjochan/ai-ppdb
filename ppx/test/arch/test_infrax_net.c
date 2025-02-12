@@ -45,17 +45,17 @@ static InfraxError ensure_core_initialized() {
         return INFRAX_ERROR_OK_STRUCT;
     }
 
-    core = InfraxCoreClass.new();
+    core = InfraxCoreClass.singleton();
     if (!core) {
-        return (InfraxError){.code = INFRAX_ERROR_FAILED, .message = "Failed to create core"};
+        return make_error(INFRAX_ERROR_CORE_INIT_FAILED, "Failed to create core");
     }
 
-    InfraxError err = infrax_net_addr_from_string("127.0.0.1", 12345, &tcp_server_addr);
+    InfraxError err = infrax_net_addr_from_string("127.0.0.1", 22345, &tcp_server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         return err;
     }
 
-    err = infrax_net_addr_from_string("127.0.0.1", 12346, &udp_server_addr);
+    err = infrax_net_addr_from_string("127.0.0.1", 22346, &udp_server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         return err;
     }
@@ -123,12 +123,12 @@ static void* tcp_server_thread(void* arg) {
             err = client->recv(client, buffer, sizeof(buffer), &received);
             
             if (INFRAX_ERROR_IS_ERR(err)) {
-                if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK) {
-                    core->sleep_ms(core, 10);  // 短暂等待后重试
-                    continue;
+                if (err.code != INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
+                    core->printf(core, "Server receive error: %s\n", err.message);
+                    break;
                 }
-                core->printf(core, "Server receive error: %s\n", err.message);
-                break;
+                core->sleep_ms(core, 10);  // 短暂等待后重试
+                continue;
             }
 
             if (received == 0) {
@@ -892,7 +892,7 @@ static int test_net_large_data() {
 
     // Connect to server
     InfraxNetAddr server_addr;
-    err = infrax_net_addr_from_string("127.0.0.1", 12345, &server_addr);
+    err = infrax_net_addr_from_string("127.0.0.1", 22345, &server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to create server address: %s\n", err.message);
         free(send_buffer);
@@ -1016,7 +1016,7 @@ static int test_infrax_net() {
     }
 
     // Set server address
-    err = infrax_net_addr_from_string("127.0.0.1", 12345, &tcp_server_addr);
+    err = infrax_net_addr_from_string("127.0.0.1", 22345, &tcp_server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to set TCP server address: %s\n", err.message);
         return -1;
@@ -1250,11 +1250,6 @@ cleanup:
         test_cond = NULL;
     }
 
-    // Free core
-    if (core) {
-        InfraxCoreClass.free(core);
-        core = NULL;
-    }
-
+    // No need to free core since it's a singleton
     return 0;
 }

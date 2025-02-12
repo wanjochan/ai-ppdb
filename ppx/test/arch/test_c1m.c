@@ -122,7 +122,7 @@ void process_active_tasks() {
         } else {
             active_count++;
             // 减少 poll 超时时间，提高响应速度
-            InfraxAsyncClass.pollset_poll(tasks[i], 1);
+            InfraxAsyncClass.pollset_poll(tasks[i], 10);
             if (tasks[i]->state == INFRAX_ASYNC_PENDING) {
                 InfraxAsyncClass.start(tasks[i]);
             }
@@ -342,7 +342,7 @@ int main() {
         }
         
         // 让出控制权给事件循环
-        InfraxAsyncClass.pollset_poll(NULL, 0);
+        InfraxAsyncClass.pollset_poll(NULL, 10);
     }
     
     // Print final metrics
