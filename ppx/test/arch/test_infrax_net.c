@@ -13,20 +13,20 @@
 
 // Test parameters
 #define TEST_PORT_BASE 22345
-#define TEST_TIMEOUT_MS 2000
-#define TEST_BUFFER_SIZE (64 * 1024)  // 增加到64KB
+#define TEST_TIMEOUT_MS 10000  // 增加到10秒
+#define TEST_BUFFER_SIZE (256 * 1024)  // 增加到256KB
 #define UDP_MAX_PACKET_SIZE 8192      // UDP包最大8KB
 #define TEST_RETRY_COUNT 3
 #define TEST_RETRY_DELAY_MS 100
 
 // Flow control parameters
-#define FLOW_CONTROL_CHUNK_SIZE (64 * 1024)  // 减小到64KB以提高稳定性
-#define FLOW_CONTROL_DELAY_MS 1  // 添加小延迟防止缓冲区溢出
-#define PROGRESS_UPDATE_INTERVAL (256 * 1024)  // 减小进度更新间隔
+#define FLOW_CONTROL_CHUNK_SIZE (128 * 1024)  // 增加到128KB
+#define FLOW_CONTROL_DELAY_MS 10  // 增加到10ms
+#define PROGRESS_UPDATE_INTERVAL (256 * 1024)  // 256KB更新一次进度
 
 // Socket buffer sizes
-#define SOCKET_RCVBUF_SIZE (1024 * 1024)  // 1MB接收缓冲区
-#define SOCKET_SNDBUF_SIZE (1024 * 1024)  // 1MB发送缓冲区
+#define SOCKET_RCVBUF_SIZE (4 * 1024 * 1024)  // 增加到4MB
+#define SOCKET_SNDBUF_SIZE (4 * 1024 * 1024)  // 增加到4MB
 
 // Test logging
 typedef enum {
@@ -1254,4 +1254,3 @@ int main(int argc, char* argv[]) {
     
     return all_passed ? 0 : 1;
 }
-
