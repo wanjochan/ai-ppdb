@@ -5,7 +5,6 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
-#include <setjmp.h>
 #include <poll.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -13,16 +12,12 @@
 #include <sys/event.h>
 #include <sys/time.h>
 
-// Thread-local scheduler context
-static __thread jmp_buf scheduler_env;
-
 // Forward declarations
 static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg);
 static void infrax_async_free(InfraxAsync* self);
 static bool infrax_async_start(InfraxAsync* self);
 static void infrax_async_cancel(InfraxAsync* self);
 static bool infrax_async_is_done(InfraxAsync* self);
-static void infrax_async_yield(InfraxAsync* self);
 static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, InfraxPollCallback callback, void* arg);
 static void infrax_async_pollset_remove_fd(InfraxAsync* self, int fd);
 static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms);
@@ -175,7 +170,7 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
                                             g_pollset->fds[i].revents, 
                                             g_pollset->infos[i]->arg);
             }
-            g_pollset->fds[i].revents = 0;  // Clear events
+            g_pollset->fds[i].revents = 0;
         }
     }
     
@@ -219,57 +214,21 @@ static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg) {
     self->callback = callback;
     self->arg = arg;
     
-    // 创建异步上下文
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)g_memory->alloc(g_memory, sizeof(InfraxAsyncContext));
-    if (!ctx) {
-        g_memory->dealloc(g_memory, self);
-        return NULL;
-    }
-    
-    // 分配任务栈
-    ctx->stack_size = 64 * 1024;  // 64KB stack
-    ctx->stack = g_memory->alloc(g_memory, ctx->stack_size);
-    if (!ctx->stack) {
-        g_memory->dealloc(g_memory, ctx);
-        g_memory->dealloc(g_memory, self);
-        return NULL;
-    }
-    
-    ctx->yield_count = 0;
-    self->private_data = ctx;
-    
     return self;
 }
 
 // Free InfraxAsync instance
 static void infrax_async_free(InfraxAsync* self) {
     if (!self) return;
-    
-    if (self->private_data) {
-        InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->private_data;
-        if (ctx->stack) {
-            g_memory->dealloc(g_memory, ctx->stack);
-        }
-        g_memory->dealloc(g_memory, ctx);
-    }
-    
     g_memory->dealloc(g_memory, self);
 }
 
 // Start async task
 static bool infrax_async_start(InfraxAsync* self) {
-    if (!self || !self->callback || !self->private_data) return false;
-    
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->private_data;
+    if (!self || !self->callback) return false;
     
     if (self->state == INFRAX_ASYNC_PENDING) {
-        // 保存调度器上下文并切换到任务上下文
-        if (setjmp(scheduler_env) == 0) {
-            self->callback(self, self->arg);
-            // 如果回调返回，说明任务完成
-            self->state = INFRAX_ASYNC_FULFILLED;
-            longjmp(scheduler_env, 1);
-        }
+        self->callback(self, self->arg);
         return true;
     }
     
@@ -288,19 +247,6 @@ static bool infrax_async_is_done(InfraxAsync* self) {
     return self->state == INFRAX_ASYNC_FULFILLED || self->state == INFRAX_ASYNC_REJECTED;
 }
 
-// Yield control
-static void infrax_async_yield(InfraxAsync* self) {
-    if (!self || !self->private_data) return;
-    
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->private_data;
-    ctx->yield_count++;
-    
-    // 保存当前上下文并跳回调度器
-    if (setjmp(ctx->env) == 0) {
-        longjmp(scheduler_env, 1);
-    }
-}
-
 // Global class instance
 InfraxAsyncClassType InfraxAsyncClass = {
     .new = infrax_async_new,
@@ -308,7 +254,6 @@ InfraxAsyncClassType InfraxAsyncClass = {
     .start = infrax_async_start,
     .cancel = infrax_async_cancel,
     .is_done = infrax_async_is_done,
-    .yield = infrax_async_yield,
     .pollset_add_fd = infrax_async_pollset_add_fd,
     .pollset_remove_fd = infrax_async_pollset_remove_fd,
     .pollset_poll = infrax_async_pollset_poll

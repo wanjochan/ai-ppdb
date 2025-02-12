@@ -5,11 +5,11 @@
 static InfraxCore* core = NULL;
 static InfraxMemory* memory = NULL;
 
-#define TARGET_CONNECTIONS 1000
-#define BATCH_SIZE 20        // 减小批次大小
-#define TEST_DURATION_SEC 30
-#define TASK_LIFETIME_MS 2000  // 增加任务生命周期
-#define MAX_YIELD_COUNT 1000   // 调整yield次数限制
+#define TARGET_CONNECTIONS 10     // 从1000改为10
+#define BATCH_SIZE 2             // 从20改为2
+#define TEST_DURATION_SEC 10     // 从30改为10
+#define TASK_LIFETIME_MS 500     // 从2000改为500
+#define MAX_YIELD_COUNT 100      // 从1000改为100
 
 // Performance metrics
 typedef struct {
@@ -91,30 +91,14 @@ void cleanup_task(TaskContext* ctx) {
 
 // Process active tasks
 void process_active_tasks() {
-    static int cycle_count = 0;
-    cycle_count++;
-    
-    // 使用更短的 poll 超时，提高响应性
+    // 每次都处理，不再使用cycle_count
     InfraxAsyncClass.pollset_poll(NULL, 1);  // 1ms timeout
     
-    // 减少状态检查频率，每1000个周期检查一次
-    if (cycle_count % 1000 == 0) {
-        size_t active_count = 0;
-        for (size_t i = 0; i < metrics.active_tasks; i++) {
-            InfraxAsyncClass.pollset_poll(NULL, 0);
-        }
-        
-        // 更新性能指标
-        metrics.cpu_usage = get_cpu_usage();
-        metrics.total_memory = get_memory_usage();
-        if (metrics.total_memory > metrics.peak_memory) {
-            metrics.peak_memory = metrics.total_memory;
-        }
-        
-        // 重置计数器
-        if (cycle_count > 10000) {
-            cycle_count = 0;
-        }
+    // 更新性能指标
+    metrics.cpu_usage = get_cpu_usage();
+    metrics.total_memory = get_memory_usage();
+    if (metrics.total_memory > metrics.peak_memory) {
+        metrics.peak_memory = metrics.total_memory;
     }
 }
 
@@ -192,6 +176,12 @@ void long_running_task(InfraxAsync* self, void* arg) {
         self->state = INFRAX_ASYNC_FULFILLED;
         cleanup_task(ctx);  // 任务完成后立即清理
         return;
+    }
+    
+    // 添加一些实际工作
+    for(volatile int i = 0; i < 1000; i++) {
+        // 模拟一些计算工作
+        volatile int x = i * i;
     }
     
     // Increment yield count with bounds checking

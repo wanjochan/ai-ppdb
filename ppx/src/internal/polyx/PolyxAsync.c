@@ -673,46 +673,49 @@ static void timer_heap_remove_min(TimerHeap* heap) {
     heap->size--;
 }
 
-// 异步间隔执行回调
+// Interval task structure
+typedef struct {
+    struct timespec last_time;  // Last execution time
+    uint32_t interval_ms;       // Interval in milliseconds
+    void (*callback)(void*);    // Callback function
+    void* arg;                  // Callback argument
+} PolyxAsyncInterval;
+
+// Async interval function implementation
 void async_interval_fn(InfraxAsync* async, void* arg) {
-    if (!async || !arg) return;
-    
-    IntervalTask* task = (IntervalTask*)arg;
-    TimerHeap* timer_heap = timer_heap_create();
-    
-    if (!timer_heap) return;
-    
-    uint64_t current_time = g_core->time_monotonic_ms(g_core);  // 使用单调时钟
-    uint64_t next_run = current_time;
-    
-    // Set up initial timer
-    timer_heap_insert(timer_heap, next_run + task->ms, NULL, task);
-    
-    while (task->current < task->count && async->state != INFRAX_ASYNC_REJECTED) {
-        TimerHeapNode* min = timer_heap_min(timer_heap);
-        if (!min) break;
-        
-        current_time = g_core->time_monotonic_ms(g_core);  // 使用单调时钟
-        
-        if (current_time >= min->due_time) {
-            task->current++;
-            next_run = current_time + task->ms;
-            timer_heap_remove_min(timer_heap);
-            
-            if (task->current < task->count) {
-                timer_heap_insert(timer_heap, next_run, NULL, task);
-            }
+    PolyxAsyncInterval* interval = (PolyxAsyncInterval*)arg;
+    if (!interval) return;
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+
+    while (async->state == INFRAX_ASYNC_PENDING) {
+        // Check if interval has elapsed
+        struct timespec next_time = interval->last_time;
+        next_time.tv_sec += interval->interval_ms / 1000;
+        next_time.tv_nsec += (interval->interval_ms % 1000) * 1000000;
+        if (next_time.tv_nsec >= 1000000000) {
+            next_time.tv_sec += 1;
+            next_time.tv_nsec -= 1000000000;
         }
+
+        if (now.tv_sec < next_time.tv_sec || 
+            (now.tv_sec == next_time.tv_sec && now.tv_nsec < next_time.tv_nsec)) {
+            // Not time yet, return and let pollset handle other events
+            return;
+        }
+
+        // Execute callback
+        if (interval->callback) {
+            interval->callback(interval->arg);
+        }
+
+        // Update last execution time
+        interval->last_time = now;
         
-        // 让出CPU而不是睡眠
-        InfraxAsyncClass.yield(async);
+        // Get current time for next iteration
+        clock_gettime(CLOCK_MONOTONIC, &now);
     }
-    
-    // Cleanup
-    while (timer_heap->root) {
-        timer_heap_remove_min(timer_heap);
-    }
-    free(timer_heap);
 }
 
 // Global class instance

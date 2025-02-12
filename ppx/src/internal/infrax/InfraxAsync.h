@@ -5,7 +5,7 @@
 /** DESIGN NOTES
 
 //design pattern: factory
-//main idea: mux of (setjmp/longjmp + poll)
+//main idea: mux of (callback + poll). setjmp/longjmp is replaced by callback.
 
 poll() 基本原理
 poll() 是一个多路复用 I/O 机制
@@ -29,7 +29,6 @@ c) 其他
 inotify fd (文件系统事件监控)
  */
 
-#include <setjmp.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -40,7 +39,6 @@ inotify fd (文件系统事件监控)
 typedef struct InfraxAsync InfraxAsync;
 typedef struct InfraxPollset InfraxPollset;
 typedef struct InfraxPollInfo InfraxPollInfo;
-typedef struct InfraxAsyncContext InfraxAsyncContext;
 
 // Async states
 typedef enum {
@@ -81,14 +79,6 @@ struct InfraxPollset {
 // Thread-local pollset
 extern __thread struct InfraxPollset* g_pollset;
 
-// Async context structure
-struct InfraxAsyncContext {
-    jmp_buf env;
-    void* stack;
-    size_t stack_size;
-    int yield_count;
-};
-
 // Async structure
 struct InfraxAsync {
     InfraxAsyncState state;
@@ -104,7 +94,6 @@ typedef struct {
     bool (*start)(InfraxAsync* self);
     void (*cancel)(InfraxAsync* self);
     bool (*is_done)(InfraxAsync* self);
-    void (*yield)(InfraxAsync* self);
     int (*pollset_add_fd)(InfraxAsync* self, int fd, short events, InfraxPollCallback callback, void* arg);
     void (*pollset_remove_fd)(InfraxAsync* self, int fd);
     int (*pollset_poll)(InfraxAsync* self, int timeout_ms);

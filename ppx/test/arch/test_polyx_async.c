@@ -3,9 +3,21 @@
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
 #include "internal/polyx/PolyxAsync.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <assert.h>
 
 // Test timeout control
 #define TEST_TIMEOUT_MS 2000  // 2 seconds timeout for each test
+
+// Test file operations
+#define TEST_FILE "test.txt"
+#define TEST_DATA "Hello, Async World!"
+#define TEST_DATA_LEN 18
 
 // Test context structures
 typedef struct {
@@ -17,204 +29,135 @@ typedef struct {
     int yield_count;    // Count how many times yield is called
 } AsyncFileContext;
 
-// Test async read file function
+// Forward declarations
+static void test_polyx_async_read_file(void);
+static void test_polyx_async_write_file(void);
+
+// Async read file implementation
 static void async_read_file(InfraxAsync* self, void* arg) {
-    AsyncFileContext* ctx = (AsyncFileContext*)arg;
-    InfraxCore* core = InfraxCoreClass.singleton();
-    InfraxLog* log = InfraxLogClass.singleton();
+    if (!self || !arg) return;
     
-    if (!ctx) {
-        log->debug(log, "async_read_file: ctx is NULL");
+    int fd = open(TEST_FILE, O_RDONLY);
+    if (fd < 0) {
         self->state = INFRAX_ASYNC_REJECTED;
         return;
     }
     
-    // Open file if not already open
-    if (ctx->fd == 0) {  // Changed from < 0 to == 0 since InfraxHandle is unsigned
-        log->debug(log, "async_read_file: opening file %s", ctx->filename);
-        InfraxError err = core->file_open(core, ctx->filename, INFRAX_FILE_RDONLY, 0, &ctx->fd);
-        if (!INFRAX_ERROR_IS_OK(err) || ctx->fd == 0) {
-            log->debug(log, "async_read_file: failed to open file");
-            self->state = INFRAX_ASYNC_REJECTED;
-            return;
-        }
-    }
+    char* buffer = (char*)arg;
+    ssize_t total_read = 0;
     
-    // Try to read
-    size_t bytes_read = 0;
-    InfraxError err = core->file_read(core, ctx->fd, 
-                                     ctx->buffer + ctx->bytes_processed,
-                                     ctx->size - ctx->bytes_processed,
-                                     &bytes_read);
-    
-    log->debug(log, "async_read_file: read returned %zu bytes", bytes_read);
-    
-    if (INFRAX_ERROR_IS_OK(err)) {
-        if (bytes_read > 0) {
-            ctx->bytes_processed += bytes_read;
-            log->debug(log, "async_read_file: total bytes read: %zu/%zu", 
-                   ctx->bytes_processed, ctx->size);
-            if (ctx->bytes_processed < ctx->size) {
-                ctx->yield_count++;
-                log->debug(log, "async_read_file: yielding after successful read");
-                InfraxAsyncClass.yield(self);
-            } else {
-                core->file_close(core, ctx->fd);
-                ctx->fd = 0;  // Changed from -1 to 0
-                self->state = INFRAX_ASYNC_FULFILLED;
+    while (total_read < TEST_DATA_LEN && self->state == INFRAX_ASYNC_PENDING) {
+        ssize_t bytes_read = read(fd, buffer + total_read, TEST_DATA_LEN - total_read);
+        if (bytes_read < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Would block, return and let pollset handle other events
+                return;
             }
-        } else {
-            // End of file
-            log->debug(log, "async_read_file: reached EOF");
-            core->file_close(core, ctx->fd);
-            ctx->fd = 0;  // Changed from -1 to 0
-            self->state = INFRAX_ASYNC_FULFILLED;
-        }
-    } else {
-        // Error occurred
-        log->debug(log, "async_read_file: read error");
-        core->file_close(core, ctx->fd);
-        ctx->fd = 0;  // Changed from -1 to 0
-        self->state = INFRAX_ASYNC_REJECTED;
-    }
-}
-
-// Async write file function
-static void async_write_file(InfraxAsync* self, void* arg) {
-    AsyncFileContext* ctx = (AsyncFileContext*)arg;
-    InfraxCore* core = InfraxCoreClass.singleton();
-    InfraxLog* log = InfraxLogClass.singleton();
-    
-    if (!ctx) {
-        log->debug(log, "async_write_file: ctx is NULL");
-        return;
-    }
-    
-    // Open file if not already open
-    if (ctx->fd == 0) {  // Changed from < 0 to == 0
-        log->debug(log, "async_write_file: opening file %s", ctx->filename);
-        InfraxError err = core->file_open(core, ctx->filename, 
-                                 INFRAX_FILE_CREATE | INFRAX_FILE_WRONLY | INFRAX_FILE_TRUNC,
-                                 0644, &ctx->fd);
-        if (!INFRAX_ERROR_IS_OK(err) || ctx->fd == 0) {
-            log->debug(log, "async_write_file: failed to open file");
             self->state = INFRAX_ASYNC_REJECTED;
-            return;
-        }
-    }
-    
-    // Try to write
-    size_t bytes_written = 0;
-    InfraxError err = core->file_write(core, ctx->fd,
-                                      ctx->buffer + ctx->bytes_processed,
-                                      ctx->size - ctx->bytes_processed,
-                                      &bytes_written);
-    
-    log->debug(log, "async_write_file: write returned %zu bytes", bytes_written);
-    
-    if (INFRAX_ERROR_IS_OK(err)) {
-        if (bytes_written > 0) {
-            ctx->bytes_processed += bytes_written;
-            log->debug(log, "async_write_file: total bytes written: %zu/%zu", 
-                   ctx->bytes_processed, ctx->size);
-            if (ctx->bytes_processed < ctx->size) {
-                ctx->yield_count++;
-                log->debug(log, "async_write_file: yielding after successful write");
-                InfraxAsyncClass.yield(self);
-            } else {
-                core->file_close(core, ctx->fd);
-                ctx->fd = 0;  // Changed from -1 to 0
-                self->state = INFRAX_ASYNC_FULFILLED;
-            }
-        } else {
-            // Error occurred
-            log->debug(log, "async_write_file: write error");
-            core->file_close(core, ctx->fd);
-            ctx->fd = 0;  // Changed from -1 to 0
-            self->state = INFRAX_ASYNC_REJECTED;
-        }
-    }
-}
-
-// Test async file operations
-void test_polyx_async_read_file(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
-    InfraxLog* log = InfraxLogClass.singleton();
-    log->info(log, "test_polyx_async_read_file: starting");
-    
-    const char* test_file = "test.txt";
-    const char* test_data = "Hello, World!";
-    
-    // Create a test file
-    InfraxHandle fp;
-    InfraxError err = core->file_open(core, test_file, 
-                                     INFRAX_FILE_CREATE | INFRAX_FILE_WRONLY | INFRAX_FILE_TRUNC,
-                                     0644, &fp);
-    INFRAX_ASSERT(core, INFRAX_ERROR_IS_OK(err));
-    INFRAX_ASSERT(core, fp != 0);
-    
-    size_t bytes_written = 0;
-    err = core->file_write(core, fp, test_data, core->strlen(core, test_data), &bytes_written);
-    INFRAX_ASSERT(core, INFRAX_ERROR_IS_OK(err));
-    core->file_close(core, fp);
-    
-    log->debug(log, "test_polyx_async_read_file: test file created");
-    
-    // Prepare read context
-    char buffer[128] = {0};
-    AsyncFileContext ctx = {
-        .fd = 0,  // Changed from -1 to 0
-        .buffer = buffer,
-        .size = sizeof(buffer),
-        .bytes_processed = 0,
-        .filename = test_file,
-        .yield_count = 0
-    };
-    
-    // Create and start async task
-    log->debug(log, "test_polyx_async_read_file: creating async task");
-    InfraxAsync* async = InfraxAsyncClass.new(async_read_file, &ctx);
-    INFRAX_ASSERT(core, async != NULL);
-    
-    log->debug(log, "test_polyx_async_read_file: starting async task");
-    InfraxAsyncClass.start(async);
-    
-    // Wait for completion with timeout
-    log->debug(log, "test_polyx_async_read_file: waiting for completion");
-    InfraxTime last_status = 0;
-    InfraxTime start_time = core->time_monotonic_ms(core);
-    
-    while (!InfraxAsyncClass.is_done(async)) {
-        // Check timeout
-        if (core->time_monotonic_ms(core) - start_time > TEST_TIMEOUT_MS) {
-            log->error(log, "test_polyx_async_read_file: timeout after %d ms", TEST_TIMEOUT_MS);
-            InfraxAsyncClass.cancel(async);
+            break;
+        } else if (bytes_read == 0) {
+            // EOF
             break;
         }
-        
-        if (async->state == INFRAX_ASYNC_PENDING) {
-            InfraxAsyncClass.start(async);
-        }
-        InfraxAsyncClass.yield(async);
-        InfraxTime now = core->time_monotonic_ms(core);
-        if (now - last_status >= 1000) {  // Log status every second
-            log->debug(log, "test_polyx_async_read_file: waiting... (yield count: %d)", 
-                        ctx.yield_count);
-            last_status = now;
-        }
+        total_read += bytes_read;
     }
     
-    log->info(log, "test_polyx_async_read_file: task completed");
+    close(fd);
+    
+    if (self->state == INFRAX_ASYNC_PENDING) {
+        self->state = INFRAX_ASYNC_FULFILLED;
+    }
+}
+
+// Async write file implementation
+static void async_write_file(InfraxAsync* self, void* arg) {
+    if (!self || !arg) return;
+    
+    int fd = open(TEST_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        self->state = INFRAX_ASYNC_REJECTED;
+        return;
+    }
+    
+    const char* data = (const char*)arg;
+    ssize_t total_written = 0;
+    
+    while (total_written < TEST_DATA_LEN && self->state == INFRAX_ASYNC_PENDING) {
+        ssize_t bytes_written = write(fd, data + total_written, TEST_DATA_LEN - total_written);
+        if (bytes_written < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Would block, return and let pollset handle other events
+                return;
+            }
+            self->state = INFRAX_ASYNC_REJECTED;
+            break;
+        }
+        total_written += bytes_written;
+    }
+    
+    close(fd);
+    
+    if (self->state == INFRAX_ASYNC_PENDING) {
+        self->state = INFRAX_ASYNC_FULFILLED;
+    }
+}
+
+// Test async write file
+static void test_polyx_async_write_file(void) {
+    printf("Testing async write file...\n");
+    
+    // Create async task
+    InfraxAsync* async = InfraxAsyncClass.new(async_write_file, (void*)TEST_DATA);
+    assert(async != NULL);
+    
+    // Start task
+    bool started = InfraxAsyncClass.start(async);
+    assert(started);
+    
+    // Poll until done
+    while (!InfraxAsyncClass.is_done(async)) {
+        int ret = InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
+        assert(ret >= 0);
+    }
     
     // Check result
-    INFRAX_ASSERT(core, async->state == INFRAX_ASYNC_FULFILLED);
-    INFRAX_ASSERT(core, core->strcmp(core, test_data, buffer) == 0);
+    assert(async->state == INFRAX_ASYNC_FULFILLED);
     
     // Cleanup
-    log->debug(log, "test_polyx_async_read_file: cleaning up");
     InfraxAsyncClass.free(async);
-    core->file_remove(core, test_file);
-    log->debug(log, "test_polyx_async_read_file: cleanup complete");
+    
+    printf("Async write file test passed\n");
+}
+
+// Test async read file
+static void test_polyx_async_read_file(void) {
+    printf("Testing async read file...\n");
+    
+    // Create buffer for read data
+    char buffer[TEST_DATA_LEN + 1] = {0};
+    
+    // Create async task
+    InfraxAsync* async = InfraxAsyncClass.new(async_read_file, buffer);
+    assert(async != NULL);
+    
+    // Start task
+    bool started = InfraxAsyncClass.start(async);
+    assert(started);
+    
+    // Poll until done
+    while (!InfraxAsyncClass.is_done(async)) {
+        int ret = InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
+        assert(ret >= 0);
+    }
+    
+    // Check result
+    assert(async->state == INFRAX_ASYNC_FULFILLED);
+    assert(strcmp(buffer, TEST_DATA) == 0);
+    
+    // Cleanup
+    InfraxAsyncClass.free(async);
+    
+    printf("Async read file test passed\n");
 }
 
 // Timer callback
