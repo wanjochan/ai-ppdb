@@ -65,6 +65,9 @@ struct InfraxSocket {
     InfraxError (*set_timeout)(InfraxSocket* self, uint32_t send_timeout_ms, uint32_t recv_timeout_ms);
     InfraxError (*get_local_addr)(InfraxSocket* self, InfraxNetAddr* addr);
     InfraxError (*get_peer_addr)(InfraxSocket* self, InfraxNetAddr* addr);
+
+    InfraxError (*close)(InfraxSocket* self);
+    InfraxError (*shutdown)(InfraxSocket* self, int how);
 };
 
 // The "static" interface instance
@@ -79,6 +82,11 @@ extern InfraxSocketClassType InfraxSocketClass;
 #define INFRAX_SO_RCVBUF       6
 #define INFRAX_SO_SNDBUF       7
 #define INFRAX_SO_ERROR        8
+
+// Shutdown modes
+#define INFRAX_SHUT_RD         0
+#define INFRAX_SHUT_WR         1
+#define INFRAX_SHUT_RDWR       2
 
 //-----------------------------------------------------------------------------
 // Error codes

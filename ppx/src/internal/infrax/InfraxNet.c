@@ -18,6 +18,7 @@ static InfraxError get_socket_option(intptr_t handle, int level, int option, voi
 static InfraxError set_socket_nonblocking(intptr_t handle, bool nonblock);
 static InfraxSocket* socket_new(const InfraxSocketConfig* config);
 static void socket_free(InfraxSocket* self);
+static InfraxError socket_shutdown(InfraxSocket* self, int how);
 
 // Forward declarations
 static InfraxMemory* get_memory_manager(void);
@@ -98,6 +99,56 @@ static InfraxError socket_listen(InfraxSocket* self, int backlog) {
         return INFRAX_ERROR_NET_LISTEN_FAILED;
     }
 
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError socket_shutdown(InfraxSocket* self, int how) {
+    if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (self->native_handle < 0) return INFRAX_ERROR_OK_STRUCT;  // 已经关闭
+    
+    // 映射 shutdown 模式
+    int sys_how;
+    switch (how) {
+        case INFRAX_SHUT_RD:
+            sys_how = SHUT_RD;
+            break;
+        case INFRAX_SHUT_WR:
+            sys_how = SHUT_WR;
+            break;
+        case INFRAX_SHUT_RDWR:
+            sys_how = SHUT_RDWR;
+            break;
+        default:
+            return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid shutdown mode");
+    }
+    
+    if (shutdown(self->native_handle, sys_how) < 0) {
+        // 忽略某些特定的错误
+        if (errno == ENOTCONN) {
+            // socket未连接，这是可以接受的
+            return INFRAX_ERROR_OK_STRUCT;
+        }
+        
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Shutdown failed: %s (errno=%d)", strerror(errno), errno);
+        return make_error(INFRAX_ERROR_NET_SOCKET_FAILED_CODE, err_msg);
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError socket_close(InfraxSocket* self) {
+    if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (self->native_handle < 0) return INFRAX_ERROR_OK_STRUCT;  // 已经关闭
+    
+    // 关闭socket
+    if (close(self->native_handle) < 0) {
+        char err_msg[256];
+        snprintf(err_msg, sizeof(err_msg), "Close failed: %s (errno=%d)", strerror(errno), errno);
+        return make_error(INFRAX_ERROR_NET_SOCKET_FAILED_CODE, err_msg);
+    }
+    
+    self->native_handle = -1;
+    self->is_connected = false;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
@@ -460,6 +511,9 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
         return NULL;
     }
     
+    // 清零所有内存
+    memset(self, 0, sizeof(InfraxSocket));
+    
     self->self = self;
     self->klass = &InfraxSocketClass;
 
@@ -467,6 +521,10 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     self->config = *config;
     self->native_handle = fd;
     self->is_connected = false;
+    
+    // Initialize addresses
+    memset(&self->local_addr, 0, sizeof(self->local_addr));
+    memset(&self->peer_addr, 0, sizeof(self->peer_addr));
     
     // Set instance methods
     self->bind = socket_bind;
@@ -483,6 +541,8 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     self->set_timeout = socket_set_timeout;
     self->get_local_addr = socket_get_local_addr;
     self->get_peer_addr = socket_get_peer_addr;
+    self->close = socket_close;
+    self->shutdown = socket_shutdown;
     
     // Set socket options
     if (config->reuse_addr) {
@@ -535,8 +595,11 @@ static void socket_free(InfraxSocket* self) {
     if (!self) return;
     
     if (self->native_handle >= 0) {
-        close(self->native_handle);
-        self->native_handle = -1;
+        // 使用socket_close来优雅地关闭socket
+        InfraxError err = socket_close(self);
+        if (INFRAX_ERROR_IS_ERR(err)) {
+            fprintf(stderr, "Warning: socket_close failed during free: %s\n", err.message);
+        }
     }
     
     get_memory_manager()->dealloc(get_memory_manager(), self);
