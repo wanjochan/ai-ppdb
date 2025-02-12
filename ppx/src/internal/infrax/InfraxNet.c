@@ -393,6 +393,9 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
         return NULL;
     }
     
+    self->self = self;
+    self->klass = &InfraxSocketClass;
+
     // Initialize socket
     self->config = *config;
     self->native_handle = fd;

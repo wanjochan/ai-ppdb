@@ -210,6 +210,8 @@ static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg) {
     if (!self) return NULL;
     
     memset(self, 0, sizeof(InfraxAsync));
+    //self->self = self;//??
+    self->klass = &InfraxAsyncClass;
     self->state = INFRAX_ASYNC_PENDING;
     self->callback = callback;
     self->arg = arg;

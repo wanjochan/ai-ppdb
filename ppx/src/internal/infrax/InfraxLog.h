@@ -21,6 +21,9 @@ struct InfraxLogClassType {
 
 // The instance structure
 struct InfraxLog {
+    InfraxLog* self;
+    InfraxLogClassType* klass;//InfraxLogClass
+
     // Properties
     LogLevel min_log_level;  // Minimum log level to output
     

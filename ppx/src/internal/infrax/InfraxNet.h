@@ -10,7 +10,8 @@
 
 #include <stdbool.h>
 #include "internal/infrax/InfraxCore.h"
-// #include "cosmopolitan.h"
+
+//TODO rename to InfraxNet...
 
 // Forward declarations
 typedef struct InfraxSocket InfraxSocket;
@@ -39,7 +40,9 @@ struct InfraxSocketClassType {
 
 // The instance structure
 struct InfraxSocket {
-    
+    InfraxSocket* self;
+    InfraxSocketClassType* klass;//InfraxSocketClass
+
     // Socket data
     InfraxSocketConfig config;
     intptr_t native_handle;

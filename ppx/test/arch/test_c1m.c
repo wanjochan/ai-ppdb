@@ -78,16 +78,17 @@ double get_cpu_usage() {
 
 // Task cleanup function
 void cleanup_task(TaskContext* ctx) {
-    if (ctx) {
-        if (ctx->async) {
-            if (!InfraxAsyncClass.is_done(ctx->async)) {
-                InfraxAsyncClass.cancel(ctx->async);  // 先取消任务
-            }
-            InfraxAsyncClass.free(ctx->async);
+    if (!ctx) return;
+    
+    if (ctx->async) {
+        if (!InfraxAsyncClass.is_done(ctx->async)) {
+            InfraxAsyncClass.cancel(ctx->async);
         }
-        memory->dealloc(memory, ctx);
-        __atomic_fetch_sub(&metrics.active_tasks, 1, __ATOMIC_SEQ_CST);
+        InfraxAsyncClass.free(ctx->async);
+        ctx->async = NULL;  // 防止重复释放
     }
+    
+    memory->dealloc(memory, ctx);
 }
 
 // Process active tasks
@@ -101,39 +102,34 @@ void process_active_tasks() {
     }
     last_process_time = now;
     
-    // 遍历所有活跃任务
+    size_t active_count = 0;  // 实时计算活跃任务数
+    
+    // 遍历所有任务
     for (size_t i = 0; i < tasks_capacity; i++) {
-        if (tasks[i] && !InfraxAsyncClass.is_done(tasks[i])) {
-            // 轮询事件
+        if (!tasks[i]) continue;  // 跳过空槽位
+        
+        if (InfraxAsyncClass.is_done(tasks[i])) {
+            // 任务已完成，进行清理
+            TaskContext* ctx = (TaskContext*)tasks[i]->arg;
+            if (tasks[i]->state == INFRAX_ASYNC_FULFILLED) {
+                __atomic_fetch_add(&metrics.completed_tasks, 1, __ATOMIC_SEQ_CST);
+            } else {
+                __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
+            }
+            cleanup_task(ctx);
+            tasks[i] = NULL;
+        } else {
+            // 任务仍在运行
+            active_count++;
             InfraxAsyncClass.pollset_poll(tasks[i], 1);
-            
-            // 如果任务还在pending状态,继续执行
             if (tasks[i]->state == INFRAX_ASYNC_PENDING) {
                 InfraxAsyncClass.start(tasks[i]);
             }
         }
-        
-        // 清理已完成的任务
-        if (tasks[i] && InfraxAsyncClass.is_done(tasks[i])) {
-            TaskContext* ctx = (TaskContext*)tasks[i]->arg;
-            if (tasks[i]->state == INFRAX_ASYNC_FULFILLED) {
-                __atomic_fetch_add(&metrics.completed_tasks, 1, __ATOMIC_SEQ_CST);
-                core->printf(core, "Task completed successfully\n");
-            } else {
-                __atomic_fetch_add(&metrics.failed_tasks, 1, __ATOMIC_SEQ_CST);
-                core->printf(core, "Task failed\n");
-            }
-            cleanup_task(ctx);
-            tasks[i] = NULL;
-        }
     }
     
-    // 更新性能指标
-    metrics.cpu_usage = get_cpu_usage();
-    metrics.total_memory = get_memory_usage();
-    if (metrics.total_memory > metrics.peak_memory) {
-        metrics.peak_memory = metrics.total_memory;
-    }
+    // 原子更新活跃任务数
+    __atomic_store_n(&metrics.active_tasks, active_count, __ATOMIC_SEQ_CST);
 }
 
 // Create a batch of tasks with rate limiting
@@ -357,10 +353,30 @@ int main() {
     // Cleanup
     printf("\nTest completed. Cleaning up...\n");
     
-    // Cancel all active tasks
-    while (metrics.active_tasks > 0) {
+    // 确保所有任务都被处理
+    InfraxTime cleanup_start = core->time_monotonic_ms(core);
+    while (1) {
         process_active_tasks();
-        InfraxAsyncClass.pollset_poll(NULL, 1);
+        
+        // 检查是否所有任务都已清理
+        bool all_slots_empty = true;
+        for (size_t i = 0; i < tasks_capacity; i++) {
+            if (tasks[i] != NULL) {
+                all_slots_empty = false;
+                break;
+            }
+        }
+        
+        if (all_slots_empty) break;
+        
+        // 防止清理死循环
+        InfraxTime current = core->time_monotonic_ms(core);
+        if (current - cleanup_start > 5000) {  // 5秒超时保护
+            printf("Cleanup timeout, forcing exit...\n");
+            break;
+        }
+        
+        InfraxAsyncClass.pollset_poll(NULL, 10);
     }
     
     if (memory) {

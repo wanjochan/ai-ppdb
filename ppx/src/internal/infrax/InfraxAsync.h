@@ -39,6 +39,7 @@ inotify fd (文件系统事件监控)
 typedef struct InfraxAsync InfraxAsync;
 typedef struct InfraxPollset InfraxPollset;
 typedef struct InfraxPollInfo InfraxPollInfo;
+typedef struct InfraxAsyncClassType InfraxAsyncClassType;
 
 // Async states
 typedef enum {
@@ -81,6 +82,9 @@ extern __thread struct InfraxPollset* g_pollset;
 
 // Async structure
 struct InfraxAsync {
+    InfraxAsync* self;
+    InfraxAsyncClassType* klass;//InfraxAsyncClass
+
     InfraxAsyncState state;
     InfraxAsyncCallback callback;
     void* arg;
@@ -88,7 +92,7 @@ struct InfraxAsync {
 };
 
 // Class interface
-typedef struct {
+typedef struct InfraxAsyncClassType {
     InfraxAsync* (*new)(InfraxAsyncCallback callback, void* arg);
     void (*free)(InfraxAsync* self);
     bool (*start)(InfraxAsync* self);

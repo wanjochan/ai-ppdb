@@ -42,6 +42,9 @@ struct InfraxSyncClassType {
 
 // The instance structure
 struct InfraxSync {
+    InfraxSync* self;
+    InfraxSyncClassType* klass;//InfraxSyncClass
+
     bool is_initialized;
     InfraxSyncType type;
 

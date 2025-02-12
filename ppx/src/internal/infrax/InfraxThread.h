@@ -39,6 +39,8 @@ typedef void* (*InfraxThreadFunc)(void*);
 
 // 线程ID类型
 typedef uint64_t InfraxThreadId;
+typedef struct InfraxThread InfraxThread;
+typedef struct InfraxThreadClassType InfraxThreadClassType;
 
 // 线程配置
 typedef struct {
@@ -51,6 +53,9 @@ typedef struct {
 
 // 线程结构体
 typedef struct InfraxThread {
+    InfraxThread* self;
+    InfraxThreadClassType* klass;//InfraxThreadClass
+
     void* native_handle;       // 底层线程句柄
     void* private_data;        // 私有数据
     InfraxThreadConfig config; // 线程配置
@@ -65,7 +70,7 @@ typedef struct InfraxThread {
 } InfraxThread;
 
 // 线程类型
-typedef struct {
+typedef struct InfraxThreadClassType {
     InfraxThread* (*new)(InfraxThreadConfig* config);
     void (*free)(InfraxThread* self);
     InfraxError (*start)(InfraxThread* self, InfraxThreadFunc func, void* arg);

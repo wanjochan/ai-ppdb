@@ -160,6 +160,7 @@ typedef struct {
 struct InfraxCore {
     // Instance pointer
     InfraxCore* self;
+    InfraxCoreClassType* klass;//InfraxCoreClass
 
     // Core functions
     void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);

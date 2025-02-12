@@ -117,6 +117,8 @@ static void infrax_log_error(InfraxLog* self, const char* format, ...) {
 // Private initialization function
 static void infrax_log_init(InfraxLog* self) {
     if (!self) return;
+    self->self = self;
+    self->klass = &InfraxLogClass;
     
     // Initialize data
     self->min_log_level = LOG_LEVEL_INFO;  // Default log level

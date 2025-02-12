@@ -70,7 +70,9 @@ static InfraxThread* thread_new(InfraxThreadConfig* config) {
 
     // Initialize thread object
     memset(self, 0, sizeof(InfraxThread));
-    
+    self->self = self;
+    self->klass = &InfraxThreadClass;
+
     // Copy configuration
     size_t name_len = strlen(config->name) + 1;
     char* name_copy = (char*)memory->alloc(memory, name_len);

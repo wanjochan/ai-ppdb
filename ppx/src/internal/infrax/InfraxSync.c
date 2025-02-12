@@ -142,6 +142,8 @@ static InfraxSync* infrax_sync_new(InfraxSyncType type) {
     }
 
     sync->type = type;
+    sync->self = sync;
+    sync->klass = &InfraxSyncClass;
     return sync;
 }
 

@@ -43,6 +43,9 @@ struct InfraxMemoryClassType {
 
 // The instance structure
 struct InfraxMemory {
+    InfraxMemory* self;
+    InfraxMemoryClassType* klass;//InfraxMemoryClass
+
     // Configuration
     InfraxMemoryConfig config;
     InfraxMemoryStats stats;

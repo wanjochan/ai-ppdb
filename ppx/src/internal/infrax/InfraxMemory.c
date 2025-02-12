@@ -17,6 +17,9 @@ static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
     InfraxMemory* self = malloc(sizeof(InfraxMemory));
     if (!self) return NULL;
 
+    self->self = self;
+    self->klass = &InfraxMemoryClass;
+
     // Initialize instance methods
     self->alloc = infrax_memory_alloc;
     self->dealloc = infrax_memory_dealloc;

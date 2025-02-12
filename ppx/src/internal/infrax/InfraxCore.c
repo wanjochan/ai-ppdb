@@ -678,7 +678,7 @@ static size_t infrax_core_get_memory_usage(InfraxCore *self) {
 // Initialize singleton instance
 static InfraxCore singleton = {
     .self = &singleton,  // Self pointer to the static instance
-    
+    .klass = &InfraxCoreClass,
     // Core functions
     .forward_call = infrax_core_forward_call,
     .printf = infrax_core_printf,
