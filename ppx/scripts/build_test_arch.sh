@@ -14,6 +14,7 @@ clean_build() {
     rm -f "${TEST_DIR}/arch/test_infrax_thread"
     rm -f "${TEST_DIR}/arch/test_infrax_sync"
     rm -f "${TEST_DIR}/arch/test_infrax_net"
+    rm -f "${TEST_DIR}/arch/test_infrax_net_async"
     rm -f "${TEST_DIR}/arch/test_infrax_async"
     rm -f "${TEST_DIR}/arch/test_polyx_async"
     rm -f "${TEST_DIR}/arch/test_c1m"  # 添加新测试
@@ -42,6 +43,7 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_infrax_error.c"
     "${TEST_DIR}/arch/test_infrax_sync.c"
     "${TEST_DIR}/arch/test_infrax_net.c"
+    "${TEST_DIR}/arch/test_infrax_net_async.c"
     "${TEST_DIR}/arch/test_infrax_thread.c"
     "${TEST_DIR}/arch/test_infrax_async.c"
     "${TEST_DIR}/arch/test_polyx_async.c"

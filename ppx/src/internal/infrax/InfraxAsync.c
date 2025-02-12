@@ -236,6 +236,12 @@ static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg) {
     self->state = INFRAX_ASYNC_PENDING;
     self->callback = callback;
     self->arg = arg;
+
+    // Initialize pollset
+    if (ensure_pollset() < 0) {
+        g_memory->dealloc(g_memory, self);
+        return NULL;
+    }
     
     return self;
 }
@@ -243,6 +249,14 @@ static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg) {
 // Free InfraxAsync instance
 static void infrax_async_free(InfraxAsync* self) {
     if (!self) return;
+    
+    // Clean up pollset
+    if (g_pollset) {
+        pollset_cleanup(g_pollset);
+        g_memory->dealloc(g_memory, g_pollset);
+        g_pollset = NULL;
+    }
+    
     g_memory->dealloc(g_memory, self);
 }
 
@@ -251,14 +265,17 @@ static bool infrax_async_start(InfraxAsync* self) {
     if (!self || !self->callback) return false;
     if (self->state != INFRAX_ASYNC_PENDING) return false;
     
-    // 设置开始标志
+    // Set state to running
     self->state = INFRAX_ASYNC_RUNNING;
+    
+    // Call callback
     self->callback(self, self->arg);
     
-    // 如果回调没有设置状态，默认设为完成
+    // If callback didn't set state, set to fulfilled
     if (self->state == INFRAX_ASYNC_RUNNING) {
         self->state = INFRAX_ASYNC_FULFILLED;
     }
+    
     return true;
 }
 

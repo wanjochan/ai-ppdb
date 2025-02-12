@@ -163,9 +163,16 @@ static InfraxError socket_connect(InfraxSocket* self, const InfraxNetAddr* addr)
         return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     }
 
+    // 尝试连接
     if (connect(self->native_handle, (struct sockaddr*)&connect_addr, sizeof(connect_addr)) < 0) {
-        if (errno != EINPROGRESS) {
-            return INFRAX_ERROR_NET_CONNECT_FAILED;
+        if (errno == EINPROGRESS && self->config.is_nonblocking) {
+            // 对于非阻塞模式，直接返回WOULD_BLOCK
+            // 让调用者自己处理后续的select/poll
+            return INFRAX_ERROR_NET_WOULD_BLOCK;
+        } else if (errno == ETIMEDOUT || errno == EINPROGRESS) {
+            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, "Connection timed out");
+        } else {
+            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, strerror(errno));
         }
     }
 
@@ -518,11 +525,19 @@ static InfraxError set_socket_nonblocking(intptr_t handle, bool nonblock) {
 
 // Utility functions implementations
 InfraxError infrax_net_addr_from_string(const char* ip, uint16_t port, InfraxNetAddr* addr) {
-    if (!ip || !addr) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (!ip || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid arguments: NULL pointer");
     
     struct in_addr inaddr;
     if (inet_pton(AF_INET, ip, &inaddr) <= 0) {
-        return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid IP address format");
+    }
+
+    // Validate port number (0 is invalid, 1-1023 are reserved)
+    if (port == 0) {
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid port: Port 0 is not allowed");
+    }
+    if (port <= 1023) {
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid port: Ports 1-1023 are reserved");
     }
 
     strncpy(addr->ip, ip, sizeof(addr->ip) - 1);

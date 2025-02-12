@@ -5,7 +5,7 @@
 /** DESIGN NOTES
 
 //design pattern: factory
-//main idea: mux of (callback + poll). setjmp/longjmp is replaced by callback.
+//main idea: mux of (callback + poll)
 
 poll() 基本原理
 poll() 是一个多路复用 I/O 机制

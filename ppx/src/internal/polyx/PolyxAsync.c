@@ -305,9 +305,16 @@ static PolyxAsync* polyx_async_new(void) {
     
     memset(self, 0, sizeof(PolyxAsync));
     
-    // Create InfraxAsync instance with a dummy function
-    self->infrax = InfraxAsyncClass.new(dummy_fn, NULL);
+    // Create InfraxAsync instance
+    self->infrax = InfraxAsyncClass.new(dummy_fn, self);
     if (!self->infrax) {
+        g_memory->dealloc(g_memory, self);
+        return NULL;
+    }
+
+    // Start InfraxAsync instance
+    if (!InfraxAsyncClass.start(self->infrax)) {
+        InfraxAsyncClass.free(self->infrax);
         g_memory->dealloc(g_memory, self);
         return NULL;
     }

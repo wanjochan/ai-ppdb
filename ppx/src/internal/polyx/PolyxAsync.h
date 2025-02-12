@@ -92,14 +92,15 @@ struct PolyxAsync {
     PolyxEvent* (*create_event)(struct PolyxAsync* self, PolyxEventConfig* config);
     PolyxEvent* (*create_timer)(struct PolyxAsync* self, PolyxTimerConfig* config);
     void (*destroy_event)(struct PolyxAsync* self, PolyxEvent* event);
-    
+      // 对象方法 - 事件触发
+    void (*trigger_event)(struct PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
+     
     // 对象方法 - 定时器控制
     void (*start_timer)(struct PolyxAsync* self, PolyxEvent* timer);
     void (*stop_timer)(struct PolyxAsync* self, PolyxEvent* timer);
     
-    // 对象方法 - 事件触发
-    void (*trigger_event)(struct PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
-    
+    //TODO 网络相关；
+ 
     // 对象方法 - 轮询
     int (*poll)(struct PolyxAsync* self, int timeout_ms);
 };

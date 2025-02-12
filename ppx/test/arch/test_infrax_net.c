@@ -3,237 +3,607 @@
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxSync.h"
 #include <string.h>
-
-// Error codes
-#define INFRAX_ERROR_CORE_INIT_FAILED -1001
-#define INFRAX_ERROR_SYNC_CREATE_FAILED -1002
+#include <stdlib.h>
+#include <fcntl.h>
+#include <errno.h>
+// #include <sys/select.h>
 
 // Test parameters
-#define TEST_PORT_TCP 22345
-#define TEST_PORT_UDP 22346
+#define TEST_PORT_BASE 22345
 #define TEST_TIMEOUT_MS 5000
 #define TEST_BUFFER_SIZE 4096
+#define TEST_RETRY_COUNT 5
+#define TEST_RETRY_DELAY_MS 500
+
+// Test logging
+typedef enum {
+    LOG_ERROR,
+    LOG_WARN,
+    LOG_INFO,
+    LOG_DEBUG
+} LogLevel;
+
+static void test_log(LogLevel level, const char* file, int line, const char* func, const char* fmt, ...) {
+    static const char* level_str[] = {"ERROR", "WARN", "INFO", "DEBUG"};
+    va_list args;
+    char message[256];
+    
+    va_start(args, fmt);
+    vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+    
+    printf("[%s] %s:%d %s: %s\n", level_str[level], file, line, func, message);
+}
+
+#define TEST_LOG_ERROR(...) test_log(LOG_ERROR, __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define TEST_LOG_WARN(...) test_log(LOG_WARN, __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define TEST_LOG_INFO(...) test_log(LOG_INFO, __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define TEST_LOG_DEBUG(...) test_log(LOG_DEBUG, __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+// Server context
+typedef struct {
+    InfraxSocket* socket;
+    InfraxThread* thread;
+    InfraxSync* ready_mutex;
+    InfraxSync* ready_cond;
+    volatile bool is_ready;
+    volatile bool is_running;
+    struct {
+        uint32_t total_bytes;
+        uint32_t total_packets;
+        uint32_t errors;
+    } stats;
+    uint16_t port;
+    bool is_udp;
+} ServerContext;
+
+// Test case structure
+typedef struct {
+    const char* name;
+    bool (*setup)(void* arg);
+    bool (*run)(void* arg);
+    void (*cleanup)(void* arg);
+    int timeout_ms;
+    void* arg;
+} TestCase;
+
+// Test suite structure
+typedef struct {
+    const char* name;
+    TestCase* cases;
+    size_t case_count;
+    bool (*before_all)(void);
+    void (*after_all)(void);
+} TestSuite;
+
+// Test result structure
+typedef struct {
+    const char* suite_name;
+    const char* case_name;
+    bool passed;
+    char message[256];
+    uint64_t duration_ms;
+} TestResult;
 
 // Global variables
 static InfraxCore* core = NULL;
-static InfraxSync* server_mutex = NULL;
-static InfraxSync* server_cond = NULL;
-static bool tcp_server_ready = false;
-static bool tcp_server_running = false;
-static bool udp_server_ready = false;
-static bool udp_server_running = false;
+static TestResult* results = NULL;
+static size_t result_count = 0;
 
-// Initialize core and addresses
-static InfraxError init_test_env(void) {
-    // Initialize core
-    core = InfraxCoreClass.singleton();
-    if (!core) {
-        printf("Failed to initialize core!\n");
-        return make_error(INFRAX_ERROR_CORE_INIT_FAILED, "Failed to initialize core");
+// Server context management
+static ServerContext* create_server_context(bool is_udp, uint16_t port) {
+    ServerContext* ctx = calloc(1, sizeof(ServerContext));
+    if (!ctx) {
+        TEST_LOG_ERROR("Failed to allocate server context");
+        return NULL;
     }
-
-    // Create synchronization primitives
-    server_mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
-    server_cond = InfraxSyncClass.new(INFRAX_SYNC_TYPE_CONDITION);
     
-    if (!server_mutex || !server_cond) {
-        if (server_mutex) InfraxSyncClass.free(server_mutex);
-        if (server_cond) InfraxSyncClass.free(server_cond);
-        return make_error(INFRAX_ERROR_SYNC_CREATE_FAILED, "Failed to create sync primitives");
+    ctx->ready_mutex = InfraxSyncClass.new(INFRAX_SYNC_TYPE_MUTEX);
+    ctx->ready_cond = InfraxSyncClass.new(INFRAX_SYNC_TYPE_CONDITION);
+    
+    if (!ctx->ready_mutex || !ctx->ready_cond) {
+        TEST_LOG_ERROR("Failed to create synchronization primitives");
+        goto error;
     }
-
-    return INFRAX_ERROR_OK_STRUCT;
-}
-
-// TCP server thread function
-static void* tcp_server_thread(void* arg) {
-    (void)arg;
-    InfraxError err;
-    InfraxSocket* server = NULL;
-    InfraxSocket* client = NULL;
-    char buffer[TEST_BUFFER_SIZE];
-
-    // Create server socket
+    
     InfraxSocketConfig config = {
-        .is_udp = false,
+        .is_udp = is_udp,
         .is_nonblocking = false,
         .send_timeout_ms = TEST_TIMEOUT_MS,
         .recv_timeout_ms = TEST_TIMEOUT_MS,
         .reuse_addr = true
     };
+    
+    ctx->socket = InfraxSocketClass.new(&config);
+    if (!ctx->socket) {
+        TEST_LOG_ERROR("Failed to create socket");
+        goto error;
+    }
+    
+    ctx->is_udp = is_udp;
+    ctx->port = port;
+    return ctx;
 
-    server = InfraxSocketClass.new(&config);
-    if (!server) {
-        core->printf(core, "TCP server: Failed to create socket\n");
+error:
+    if (ctx->ready_mutex) InfraxSyncClass.free(ctx->ready_mutex);
+    if (ctx->ready_cond) InfraxSyncClass.free(ctx->ready_cond);
+    if (ctx->socket) InfraxSocketClass.free(ctx->socket);
+    free(ctx);
+    return NULL;
+}
+
+static void destroy_server_context(ServerContext* ctx) {
+    if (!ctx) return;
+    
+    ctx->is_running = false;
+    
+    if (ctx->thread) {
+        void* thread_result;
+        ctx->thread->join(ctx->thread, &thread_result);
+        InfraxThreadClass.free(ctx->thread);
+    }
+    
+    if (ctx->socket) InfraxSocketClass.free(ctx->socket);
+    if (ctx->ready_mutex) InfraxSyncClass.free(ctx->ready_mutex);
+    if (ctx->ready_cond) InfraxSyncClass.free(ctx->ready_cond);
+    
+    free(ctx);
+}
+
+// TCP server implementation
+static void* tcp_server_thread(void* arg) {
+    ServerContext* ctx = (ServerContext*)arg;
+    InfraxError err;
+    InfraxSocket* client = NULL;
+    char buffer[TEST_BUFFER_SIZE];
+    
+    // Bind and listen
+    InfraxNetAddr addr;
+    err = infrax_net_addr_from_string("127.0.0.1", ctx->port, &addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to create address: %s", err.message);
         return NULL;
     }
-
-    // Bind server
-    InfraxNetAddr addr;
-    err = infrax_net_addr_from_string("127.0.0.1", TEST_PORT_TCP, &addr);
+    
+    err = ctx->socket->bind(ctx->socket, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "TCP server: Failed to create address: %s\n", err.message);
-        goto cleanup;
+        TEST_LOG_ERROR("Failed to bind: %s", err.message);
+        return NULL;
     }
-
-    err = server->bind(server, &addr);
+    
+    err = ctx->socket->listen(ctx->socket, 5);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "TCP server: Failed to bind: %s\n", err.message);
-        goto cleanup;
+        TEST_LOG_ERROR("Failed to listen: %s", err.message);
+        return NULL;
     }
-
-    err = server->listen(server, 5);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "TCP server: Failed to listen: %s\n", err.message);
-        goto cleanup;
-    }
-
+    
     // Signal ready
-    server_mutex->mutex_lock(server_mutex);
-    tcp_server_ready = true;
-    server_cond->cond_signal(server_cond);
-    server_mutex->mutex_unlock(server_mutex);
-
-    core->printf(core, "TCP server: Ready and listening\n");
-
-    // Main server loop
-    while (tcp_server_running) {
+    ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
+    ctx->is_ready = true;
+    ctx->ready_cond->cond_signal(ctx->ready_cond);
+    ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
+    
+    TEST_LOG_INFO("TCP server ready on port %d", ctx->port);
+    
+    // Main loop
+    while (ctx->is_running) {
         InfraxNetAddr client_addr;
-        err = server->accept(server, &client, &client_addr);
+        err = ctx->socket->accept(ctx->socket, &client, &client_addr);
         if (INFRAX_ERROR_IS_ERR(err)) {
-            if (!tcp_server_running) break;
-            core->printf(core, "TCP server: Accept failed: %s\n", err.message);
+            if (!ctx->is_running) break;
+            TEST_LOG_ERROR("Accept failed: %s", err.message);
             continue;
         }
-
-        core->printf(core, "TCP server: Client connected from %s:%d\n", 
-                    client_addr.ip, client_addr.port);
-
+        
+        TEST_LOG_INFO("Client connected from %s:%d", client_addr.ip, client_addr.port);
+        
         // Echo loop
-        while (tcp_server_running) {
+        while (ctx->is_running) {
             size_t received;
             err = client->recv(client, buffer, sizeof(buffer), &received);
             if (INFRAX_ERROR_IS_ERR(err)) {
-                core->printf(core, "TCP server: Receive error: %s\n", err.message);
+                TEST_LOG_ERROR("Receive error: %s", err.message);
                 break;
             }
-
+            
             if (received == 0) {
-                core->printf(core, "TCP server: Client disconnected\n");
+                TEST_LOG_INFO("Client disconnected");
                 break;
             }
-
+            
             size_t sent;
             err = client->send(client, buffer, received, &sent);
             if (INFRAX_ERROR_IS_ERR(err)) {
-                core->printf(core, "TCP server: Send error: %s\n", err.message);
+                TEST_LOG_ERROR("Send error: %s", err.message);
                 break;
             }
-
-            core->printf(core, "TCP server: Echoed %zu bytes\n", sent);
+            
+            ctx->stats.total_bytes += sent;
+            ctx->stats.total_packets++;
         }
-
+        
         if (client) {
             InfraxSocketClass.free(client);
             client = NULL;
         }
     }
-
-cleanup:
-    if (client) InfraxSocketClass.free(client);
-    if (server) InfraxSocketClass.free(server);
+    
     return NULL;
 }
 
-// UDP server thread function
+// UDP server implementation
 static void* udp_server_thread(void* arg) {
-    (void)arg;
+    ServerContext* ctx = (ServerContext*)arg;
     InfraxError err;
-    InfraxSocket* server = NULL;
     char buffer[TEST_BUFFER_SIZE];
-
-    // Create server socket
-    InfraxSocketConfig config = {
-        .is_udp = true,
-        .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS,
-        .reuse_addr = true
-    };
-
-    server = InfraxSocketClass.new(&config);
-    if (!server) {
-        core->printf(core, "UDP server: Failed to create socket\n");
+    
+    // Bind
+    InfraxNetAddr addr;
+    err = infrax_net_addr_from_string("127.0.0.1", ctx->port, &addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to create address: %s", err.message);
         return NULL;
     }
-
-    // Bind server
-    InfraxNetAddr addr;
-    err = infrax_net_addr_from_string("127.0.0.1", TEST_PORT_UDP, &addr);
+    
+    err = ctx->socket->bind(ctx->socket, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "UDP server: Failed to create address: %s\n", err.message);
-        goto cleanup;
+        TEST_LOG_ERROR("Failed to bind: %s", err.message);
+        return NULL;
     }
-
-    err = server->bind(server, &addr);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "UDP server: Failed to bind: %s\n", err.message);
-        goto cleanup;
-    }
-
+    
     // Signal ready
-    server_mutex->mutex_lock(server_mutex);
-    udp_server_ready = true;
-    server_cond->cond_signal(server_cond);
-    server_mutex->mutex_unlock(server_mutex);
-
-    core->printf(core, "UDP server: Ready and listening\n");
-
-    // Main server loop
-    while (udp_server_running) {
+    ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
+    ctx->is_ready = true;
+    ctx->ready_cond->cond_signal(ctx->ready_cond);
+    ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
+    
+    TEST_LOG_INFO("UDP server ready on port %d", ctx->port);
+    
+    // Main loop
+    while (ctx->is_running) {
         InfraxNetAddr client_addr;
         size_t received;
-        err = server->recvfrom(server, buffer, sizeof(buffer), &received, &client_addr);
+        err = ctx->socket->recvfrom(ctx->socket, buffer, sizeof(buffer), &received, &client_addr);
         
         if (INFRAX_ERROR_IS_ERR(err)) {
             if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
                 continue;
             }
-            core->printf(core, "UDP server: Receive error: %s\n", err.message);
+            TEST_LOG_ERROR("Receive error: %s", err.message);
+            ctx->stats.errors++;
             continue;
         }
-
+        
         if (received == 0) continue;
-
-        core->printf(core, "UDP server: Received %zu bytes from %s:%d\n",
-                    received, client_addr.ip, client_addr.port);
-
+        
+        TEST_LOG_DEBUG("Received %zu bytes from %s:%d", 
+                      received, client_addr.ip, client_addr.port);
+        
         size_t sent;
-        err = server->sendto(server, buffer, received, &sent, &client_addr);
+        err = ctx->socket->sendto(ctx->socket, buffer, received, &sent, &client_addr);
         if (INFRAX_ERROR_IS_ERR(err)) {
-            core->printf(core, "UDP server: Send error: %s\n", err.message);
+            TEST_LOG_ERROR("Send error: %s", err.message);
+            ctx->stats.errors++;
             continue;
         }
-
-        core->printf(core, "UDP server: Sent %zu bytes back\n", sent);
+        
+        ctx->stats.total_bytes += sent;
+        ctx->stats.total_packets++;
     }
-
-cleanup:
-    if (server) InfraxSocketClass.free(server);
+    
     return NULL;
 }
 
-// Test TCP functionality
-static int test_tcp(void) {
+// Basic test implementations
+static bool test_tcp_basic(void* arg) {
+    ServerContext* server = (ServerContext*)arg;
     InfraxError err;
     InfraxSocket* client = NULL;
     const char* test_data = "Hello, TCP!";
     char buffer[TEST_BUFFER_SIZE];
-    int ret = -1;
+    bool success = false;
+    
+    // Create client
+    InfraxSocketConfig config = {
+        .is_udp = false,
+        .is_nonblocking = false,
+        .send_timeout_ms = TEST_TIMEOUT_MS,
+        .recv_timeout_ms = TEST_TIMEOUT_MS
+    };
+    
+    client = InfraxSocketClass.new(&config);
+    if (!client) {
+        TEST_LOG_ERROR("Failed to create client socket");
+        return false;
+    }
+    
+    // Connect
+    InfraxNetAddr server_addr;
+    err = infrax_net_addr_from_string("127.0.0.1", server->port, &server_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to create server address: %s", err.message);
+        goto cleanup;
+    }
+    
+    err = client->connect(client, &server_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to connect: %s", err.message);
+        goto cleanup;
+    }
+    
+    // Send data
+    size_t data_len = strlen(test_data);
+    size_t sent;
+    err = client->send(client, test_data, data_len, &sent);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to send: %s", err.message);
+        goto cleanup;
+    }
+    
+    // Receive echo
+    size_t received;
+    err = client->recv(client, buffer, sizeof(buffer), &received);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to receive: %s", err.message);
+        goto cleanup;
+    }
+    
+    // Verify
+    if (received != data_len || memcmp(test_data, buffer, data_len) != 0) {
+        TEST_LOG_ERROR("Data verification failed");
+        goto cleanup;
+    }
+    
+    success = true;
 
-    core->printf(core, "Testing TCP...\n");
+cleanup:
+    if (client) InfraxSocketClass.free(client);
+    return success;
+}
 
-    // Create client socket
+static bool test_udp_basic(void* arg) {
+    ServerContext* server = (ServerContext*)arg;
+    InfraxError err;
+    InfraxSocket* client = NULL;
+    const char* test_data = "Hello, UDP!";
+    char buffer[TEST_BUFFER_SIZE];
+    bool success = false;
+    
+    // Create client
+    InfraxSocketConfig config = {
+        .is_udp = true,
+        .is_nonblocking = false,
+        .send_timeout_ms = TEST_TIMEOUT_MS,
+        .recv_timeout_ms = TEST_TIMEOUT_MS
+    };
+    
+    client = InfraxSocketClass.new(&config);
+    if (!client) {
+        TEST_LOG_ERROR("Failed to create client socket");
+        return false;
+    }
+    
+    // Send data
+    InfraxNetAddr server_addr;
+    err = infrax_net_addr_from_string("127.0.0.1", server->port, &server_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to create server address: %s", err.message);
+        goto cleanup;
+    }
+    
+    size_t data_len = strlen(test_data);
+    size_t sent;
+    err = client->sendto(client, test_data, data_len, &sent, &server_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to send: %s", err.message);
+        goto cleanup;
+    }
+    
+    // Receive echo
+    InfraxNetAddr recv_addr;
+    size_t received;
+    err = client->recvfrom(client, buffer, sizeof(buffer), &received, &recv_addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to receive: %s", err.message);
+        goto cleanup;
+    }
+    
+    // Verify
+    if (received != data_len || memcmp(test_data, buffer, data_len) != 0) {
+        TEST_LOG_ERROR("Data verification failed");
+        goto cleanup;
+    }
+    
+    success = true;
+
+cleanup:
+    if (client) InfraxSocketClass.free(client);
+    return success;
+}
+
+// Server setup and cleanup
+static bool setup_tcp_server(void* arg) {
+    ServerContext* ctx = (ServerContext*)arg;
+    InfraxError err;
+    
+    // Create thread
+    InfraxThreadConfig config = {
+        .name = "tcp_server",
+        .func = tcp_server_thread,
+        .arg = ctx
+    };
+    
+    ctx->thread = InfraxThreadClass.new(&config);
+    if (!ctx->thread) {
+        TEST_LOG_ERROR("Failed to create server thread");
+        return false;
+    }
+    
+    ctx->is_running = true;
+    err = ctx->thread->start(ctx->thread, tcp_server_thread, ctx);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to start server thread: %s", err.message);
+        return false;
+    }
+    
+    // Wait for ready
+    int retry = TEST_RETRY_COUNT;
+    while (retry > 0 && !ctx->is_ready) {
+        ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
+        err = ctx->ready_cond->cond_timedwait(ctx->ready_cond, 
+                                            ctx->ready_mutex, 
+                                            TEST_TIMEOUT_MS);
+        ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
+        
+        if (INFRAX_ERROR_IS_ERR(err)) {
+            TEST_LOG_WARN("Waiting for server (%d retries left)", retry);
+            core->sleep_ms(core, TEST_RETRY_DELAY_MS);
+            retry--;
+            continue;
+        }
+        break;
+    }
+    
+    return ctx->is_ready;
+}
+
+static bool setup_udp_server(void* arg) {
+    ServerContext* ctx = (ServerContext*)arg;
+    InfraxError err;
+    
+    // Create thread
+    InfraxThreadConfig config = {
+        .name = "udp_server",
+        .func = udp_server_thread,
+        .arg = ctx
+    };
+    
+    ctx->thread = InfraxThreadClass.new(&config);
+    if (!ctx->thread) {
+        TEST_LOG_ERROR("Failed to create server thread");
+        return false;
+    }
+    
+    ctx->is_running = true;
+    err = ctx->thread->start(ctx->thread, udp_server_thread, ctx);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to start server thread: %s", err.message);
+        return false;
+    }
+    
+    // Wait for ready
+    int retry = TEST_RETRY_COUNT;
+    while (retry > 0 && !ctx->is_ready) {
+        ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
+        err = ctx->ready_cond->cond_timedwait(ctx->ready_cond, 
+                                            ctx->ready_mutex, 
+                                            TEST_TIMEOUT_MS);
+        ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
+        
+        if (INFRAX_ERROR_IS_ERR(err)) {
+            TEST_LOG_WARN("Waiting for server (%d retries left)", retry);
+            core->sleep_ms(core, TEST_RETRY_DELAY_MS);
+            retry--;
+            continue;
+        }
+        break;
+    }
+    
+    return ctx->is_ready;
+}
+
+// Test suites
+static TestCase basic_cases[] = {
+    {
+        .name = "tcp_basic",
+        .setup = setup_tcp_server,
+        .run = test_tcp_basic,
+        .cleanup = NULL,
+        .timeout_ms = TEST_TIMEOUT_MS
+    },
+    {
+        .name = "udp_basic",
+        .setup = setup_udp_server,
+        .run = test_udp_basic,
+        .cleanup = NULL,
+        .timeout_ms = TEST_TIMEOUT_MS
+    }
+};
+
+static TestSuite basic_suite = {
+    .name = "basic",
+    .cases = basic_cases,
+    .case_count = sizeof(basic_cases) / sizeof(basic_cases[0])
+};
+
+// Error handling test implementations
+static bool test_invalid_address(void* arg) {
+    (void)arg;
+    InfraxError err;
+    InfraxSocket* socket = NULL;
+    bool success = false;
+    
+    // Create socket
+    InfraxSocketConfig config = {
+        .is_udp = false,
+        .is_nonblocking = false,
+        .send_timeout_ms = TEST_TIMEOUT_MS,
+        .recv_timeout_ms = TEST_TIMEOUT_MS
+    };
+    
+    socket = InfraxSocketClass.new(&config);
+    if (!socket) {
+        TEST_LOG_ERROR("Failed to create socket");
+        return false;
+    }
+    
+    // Test invalid IP address
+    InfraxNetAddr invalid_addr;
+    err = infrax_net_addr_from_string("256.256.256.256", TEST_PORT_BASE + 100, &invalid_addr);
+    if (!INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Invalid IP address was accepted");
+        goto cleanup;
+    }
+    TEST_LOG_INFO("Invalid IP address test passed");
+    
+    // Test empty IP address
+    err = infrax_net_addr_from_string("", TEST_PORT_BASE + 100, &invalid_addr);
+    if (!INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Empty IP address was accepted");
+        goto cleanup;
+    }
+    TEST_LOG_INFO("Empty IP address test passed");
+    
+    // Test reserved ports (0 and 1-1023)
+    err = infrax_net_addr_from_string("127.0.0.1", 0, &invalid_addr);
+    if (!INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Port 0 was accepted");
+        goto cleanup;
+    }
+    TEST_LOG_INFO("Port 0 test passed");
+    
+    err = infrax_net_addr_from_string("127.0.0.1", 22, &invalid_addr);
+    if (!INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Reserved port 22 was accepted");
+        goto cleanup;
+    }
+    TEST_LOG_INFO("Reserved port test passed");
+    
+    success = true;
+
+cleanup:
+    if (socket) InfraxSocketClass.free(socket);
+    return success;
+}
+
+static bool test_port_in_use(void* arg) {
+    (void)arg;
+    InfraxError err;
+    InfraxSocket* first = NULL;
+    InfraxSocket* second = NULL;
+    bool success = false;
+    
+    // Create first socket
     InfraxSocketConfig config = {
         .is_udp = false,
         .is_nonblocking = false,
@@ -241,245 +611,421 @@ static int test_tcp(void) {
         .recv_timeout_ms = TEST_TIMEOUT_MS,
         .reuse_addr = false
     };
+    
+    first = InfraxSocketClass.new(&config);
+    if (!first) {
+        TEST_LOG_ERROR("Failed to create first socket");
+        return false;
+    }
+    
+    // Bind first socket
+    InfraxNetAddr addr;
+    err = infrax_net_addr_from_string("127.0.0.1", TEST_PORT_BASE + 101, &addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to create address: %s", err.message);
+        goto cleanup;
+    }
+    
+    err = first->bind(first, &addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to bind first socket: %s", err.message);
+        goto cleanup;
+    }
+    
+    // Try to bind second socket to same port
+    second = InfraxSocketClass.new(&config);
+    if (!second) {
+        TEST_LOG_ERROR("Failed to create second socket");
+        goto cleanup;
+    }
+    
+    err = second->bind(second, &addr);
+    if (!INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Second bind succeeded when it should have failed");
+        goto cleanup;
+    }
+    
+    success = true;
 
+cleanup:
+    if (first) InfraxSocketClass.free(first);
+    if (second) InfraxSocketClass.free(second);
+    return success;
+}
+
+static bool test_connection_timeout(void* arg) {
+    (void)arg;
+    InfraxSocket* client_socket = NULL;
+    InfraxError err;
+    InfraxTime start_time, end_time;
+    bool success = false;
+    InfraxNetAddr addr;
+
+    TEST_LOG_INFO("Starting connection timeout test");
+
+    // 创建客户端socket，使用非阻塞模式
+    client_socket = InfraxSocketClass.new(&(InfraxSocketConfig){
+        .is_udp = false,
+        .is_nonblocking = true,  // 使用非阻塞模式
+        .send_timeout_ms = 500,
+        .recv_timeout_ms = 500
+    });
+    if (!client_socket) {
+        TEST_LOG_ERROR("Failed to create client socket");
+        goto cleanup;
+    }
+
+    TEST_LOG_INFO("Creating client socket with timeout: 500 ms");
+
+    // 创建一个不存在的服务器地址 (使用一个不可达的IP地址)
+    err = infrax_net_addr_from_string("192.168.255.255", 54321, &addr);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Failed to create address: %s", err.message);
+        goto cleanup;
+    }
+
+    // 记录开始时间
+    start_time = core->time_monotonic_ms(core);
+    TEST_LOG_INFO("Starting connection attempt at: %lu ms", start_time);
+
+    // 尝试连接 - 这里应该返回EINPROGRESS
+    err = client_socket->connect(client_socket, &addr);
+    if (!INFRAX_ERROR_IS_ERR(err)) {
+        TEST_LOG_ERROR("Connection unexpectedly succeeded immediately");
+        goto cleanup;
+    }
+
+    // 等待连接完成或超时
+    fd_set write_fds;
+    struct timeval tv = {
+        .tv_sec = 0,
+        .tv_usec = 500000  // 500ms
+    };
+    
+    FD_ZERO(&write_fds);
+    FD_SET(client_socket->native_handle, &write_fds);
+    
+    int ret = select(client_socket->native_handle + 1, NULL, &write_fds, NULL, &tv);
+
+    // 记录结束时间
+    end_time = core->time_monotonic_ms(core);
+    TEST_LOG_INFO("Connection attempt ended at: %lu ms", end_time);
+
+    // 计算经过的时间
+    InfraxTime elapsed = end_time - start_time;
+    TEST_LOG_INFO("Connection attempt took %lu ms", elapsed);
+
+    // 检查select结果
+    if (ret > 0) {
+        // 检查连接是否真的成功
+        int error;
+        socklen_t len = sizeof(error);
+        if (getsockopt(client_socket->native_handle, SOL_SOCKET, SO_ERROR, &error, &len) < 0 || error != 0) {
+            // 连接失败，这是我们期望的结果
+            TEST_LOG_INFO("Connection failed as expected");
+        } else {
+            TEST_LOG_ERROR("Connection unexpectedly succeeded");
+            goto cleanup;
+        }
+    } else if (ret == 0) {
+        // select超时，这也是一个可接受的结果
+        TEST_LOG_INFO("Select timed out as expected");
+    } else {
+        TEST_LOG_ERROR("Select failed");
+        goto cleanup;
+    }
+
+    // 检查经过的时间是否在合理范围内 (500ms +/- 100ms)
+    if (elapsed < 400 || elapsed > 600) {
+        TEST_LOG_ERROR("Connection timeout took %lu ms, expected ~500 ms", elapsed);
+        goto cleanup;
+    }
+
+    TEST_LOG_INFO("Connection timeout test passed");
+    success = true;
+
+cleanup:
+    if (client_socket) {
+        TEST_LOG_INFO("Cleaning up client socket");
+        InfraxSocketClass.free(client_socket);
+    }
+    return success;
+}
+
+// Boundary condition tests
+static bool test_tcp_boundary(void* arg) {
+    ServerContext* server = (ServerContext*)arg;
+    InfraxError err;
+    InfraxSocket* client = NULL;
+    bool success = false;
+    
+    // Create client
+    InfraxSocketConfig config = {
+        .is_udp = false,
+        .is_nonblocking = false,
+        .send_timeout_ms = TEST_TIMEOUT_MS,
+        .recv_timeout_ms = TEST_TIMEOUT_MS
+    };
+    
     client = InfraxSocketClass.new(&config);
     if (!client) {
-        core->printf(core, "TCP test: Failed to create client socket\n");
-        return -1;
+        TEST_LOG_ERROR("Failed to create client socket");
+        return false;
     }
-
+    
     // Connect to server
     InfraxNetAddr server_addr;
-    err = infrax_net_addr_from_string("127.0.0.1", TEST_PORT_TCP, &server_addr);
+    err = infrax_net_addr_from_string("127.0.0.1", server->port, &server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "TCP test: Failed to create server address: %s\n", err.message);
+        TEST_LOG_ERROR("Failed to create server address: %s", err.message);
         goto cleanup;
     }
-
+    
     err = client->connect(client, &server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "TCP test: Failed to connect: %s\n", err.message);
+        TEST_LOG_ERROR("Failed to connect: %s", err.message);
         goto cleanup;
     }
-
-    // Send data
-    size_t data_len = strlen(test_data);
+    
+    // Test 1: Send zero bytes
     size_t sent;
-    err = client->send(client, test_data, data_len, &sent);
+    err = client->send(client, "x", 0, &sent);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "TCP test: Failed to send: %s\n", err.message);
+        TEST_LOG_ERROR("Failed to send zero bytes: %s", err.message);
         goto cleanup;
     }
-
-    core->printf(core, "TCP test: Sent %zu bytes\n", sent);
-
-    // Receive echo
-    size_t received;
-    err = client->recv(client, buffer, sizeof(buffer), &received);
+    if (sent != 0) {
+        TEST_LOG_ERROR("Expected to send 0 bytes, but sent %zu", sent);
+        goto cleanup;
+    }
+    TEST_LOG_INFO("Zero bytes send test passed");
+    
+    // Test 2: Send maximum size packet
+    char* large_buffer = malloc(TEST_BUFFER_SIZE);
+    if (!large_buffer) {
+        TEST_LOG_ERROR("Failed to allocate large buffer");
+        goto cleanup;
+    }
+    memset(large_buffer, 'A', TEST_BUFFER_SIZE);
+    
+    err = client->send(client, large_buffer, TEST_BUFFER_SIZE, &sent);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "TCP test: Failed to receive: %s\n", err.message);
+        TEST_LOG_ERROR("Failed to send large buffer: %s", err.message);
+        free(large_buffer);
         goto cleanup;
     }
-
-    core->printf(core, "TCP test: Received %zu bytes\n", received);
-
-    // Verify data
-    if (received != data_len || memcmp(test_data, buffer, data_len) != 0) {
-        core->printf(core, "TCP test: Data verification failed\n");
+    if (sent != TEST_BUFFER_SIZE) {
+        TEST_LOG_ERROR("Failed to send entire large buffer: sent %zu of %zu", sent, TEST_BUFFER_SIZE);
+        free(large_buffer);
         goto cleanup;
     }
-
-    core->printf(core, "TCP test passed\n");
-    ret = 0;
+    free(large_buffer);
+    TEST_LOG_INFO("Large buffer send test passed");
+    
+    success = true;
 
 cleanup:
     if (client) InfraxSocketClass.free(client);
-    return ret;
+    return success;
 }
 
-// Test UDP functionality
-static int test_udp(void) {
+static bool test_udp_boundary(void* arg) {
+    ServerContext* server = (ServerContext*)arg;
     InfraxError err;
     InfraxSocket* client = NULL;
-    const char* test_data = "Hello, UDP!";
-    char buffer[TEST_BUFFER_SIZE];
-    int ret = -1;
-
-    core->printf(core, "Testing UDP...\n");
-
-    // Create client socket
+    bool success = false;
+    
+    // Create client
     InfraxSocketConfig config = {
         .is_udp = true,
         .is_nonblocking = false,
         .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS,
-        .reuse_addr = false
+        .recv_timeout_ms = TEST_TIMEOUT_MS
     };
-
+    
     client = InfraxSocketClass.new(&config);
     if (!client) {
-        core->printf(core, "UDP test: Failed to create client socket\n");
-        return -1;
+        TEST_LOG_ERROR("Failed to create client socket");
+        return false;
     }
-
-    // Send data to server
+    
+    // Test 1: Send zero bytes
     InfraxNetAddr server_addr;
-    err = infrax_net_addr_from_string("127.0.0.1", TEST_PORT_UDP, &server_addr);
+    err = infrax_net_addr_from_string("127.0.0.1", server->port, &server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "UDP test: Failed to create server address: %s\n", err.message);
+        TEST_LOG_ERROR("Failed to create server address: %s", err.message);
         goto cleanup;
     }
-
-    size_t data_len = strlen(test_data);
+    
     size_t sent;
-    err = client->sendto(client, test_data, data_len, &sent, &server_addr);
+    err = client->sendto(client, "x", 0, &sent, &server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "UDP test: Failed to send: %s\n", err.message);
+        TEST_LOG_ERROR("Failed to send zero bytes: %s", err.message);
         goto cleanup;
     }
-
-    core->printf(core, "UDP test: Sent %zu bytes\n", sent);
-
-    // Receive echo
-    InfraxNetAddr recv_addr;
-    size_t received;
-    err = client->recvfrom(client, buffer, sizeof(buffer), &received, &recv_addr);
+    if (sent != 0) {
+        TEST_LOG_ERROR("Expected to send 0 bytes, but sent %zu", sent);
+        goto cleanup;
+    }
+    TEST_LOG_INFO("Zero bytes send test passed");
+    
+    // Test 2: Send maximum size packet
+    char* large_buffer = malloc(TEST_BUFFER_SIZE);
+    if (!large_buffer) {
+        TEST_LOG_ERROR("Failed to allocate large buffer");
+        goto cleanup;
+    }
+    memset(large_buffer, 'A', TEST_BUFFER_SIZE);
+    
+    err = client->sendto(client, large_buffer, TEST_BUFFER_SIZE, &sent, &server_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "UDP test: Failed to receive: %s\n", err.message);
+        TEST_LOG_ERROR("Failed to send large buffer: %s", err.message);
+        free(large_buffer);
         goto cleanup;
     }
-
-    core->printf(core, "UDP test: Received %zu bytes from %s:%d\n",
-                received, recv_addr.ip, recv_addr.port);
-
-    // Verify data
-    if (received != data_len || memcmp(test_data, buffer, data_len) != 0) {
-        core->printf(core, "UDP test: Data verification failed\n");
+    if (sent != TEST_BUFFER_SIZE) {
+        TEST_LOG_ERROR("Failed to send entire large buffer: sent %zu of %zu", sent, TEST_BUFFER_SIZE);
+        free(large_buffer);
         goto cleanup;
     }
-
-    core->printf(core, "UDP test passed\n");
-    ret = 0;
+    free(large_buffer);
+    TEST_LOG_INFO("Large buffer send test passed");
+    
+    success = true;
 
 cleanup:
     if (client) InfraxSocketClass.free(client);
-    return ret;
+    return success;
 }
 
-int main(void) {
-    InfraxError err;
-    InfraxThread* tcp_thread = NULL;
-    InfraxThread* udp_thread = NULL;
-    int ret = 1;
+// Test runner
+static bool run_test_suite(TestSuite* suite) {
+    bool all_passed = true;
+    
+    TEST_LOG_INFO("Running test suite: %s", suite->name);
+    
+    for (size_t i = 0; i < suite->case_count; i++) {
+        TestCase* test = &suite->cases[i];
+        TEST_LOG_INFO("Running test case: %s", test->name);
+        
+        // Create server context if needed
+        ServerContext* ctx = NULL;
+        if (test->setup) {
+            ctx = create_server_context(strstr(test->name, "udp") != NULL,
+                                      TEST_PORT_BASE + i);
+            if (!ctx) {
+                TEST_LOG_ERROR("Failed to create server context");
+                all_passed = false;
+                continue;
+            }
+            test->arg = ctx;
+        }
+        
+        // Setup
+        if (test->setup && !test->setup(test->arg)) {
+            TEST_LOG_ERROR("Test setup failed");
+            destroy_server_context(ctx);
+            all_passed = false;
+            continue;
+        }
+        
+        // Run test
+        bool passed = test->run(test->arg);
+        
+        // Cleanup
+        if (test->cleanup) {
+            test->cleanup(test->arg);
+        }
+        
+        if (ctx) {
+            destroy_server_context(ctx);
+        }
+        
+        if (!passed) {
+            TEST_LOG_ERROR("Test case failed: %s", test->name);
+            all_passed = false;
+        } else {
+            TEST_LOG_INFO("Test case passed: %s", test->name);
+        }
+    }
+    TEST_LOG_INFO("return all_passed: %s", all_passed ? "true" : "false");
+    
+    return all_passed;
+}
 
-    // Initialize test environment
-    err = init_test_env();
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        printf("Failed to initialize test environment: %s\n", err.message);
+int main(int argc, char* argv[]) {
+    (void)argc;
+    (void)argv;
+    
+    // 初始化core
+    core = InfraxCoreClass.singleton();
+    if (!core) {
+        TEST_LOG_ERROR("Failed to initialize core");
         return 1;
     }
-
-    core->printf(core, "Starting network tests...\n");
-
-    // Start TCP server
-    tcp_server_running = true;
-    InfraxThreadConfig tcp_config = {
-        .name = "tcp_server",
-        .func = tcp_server_thread,
-        .arg = NULL
+    
+    // Initialize test suites
+    TestSuite suites[] = {
+        {
+            .name = "error_handling",
+            .cases = (TestCase[]){
+                {"invalid_address", NULL, test_invalid_address, NULL, TEST_TIMEOUT_MS, NULL},
+                {"port_in_use", NULL, test_port_in_use, NULL, TEST_TIMEOUT_MS, NULL},
+                {"connection_timeout", NULL, test_connection_timeout, NULL, TEST_TIMEOUT_MS, NULL},
+                {NULL, NULL, NULL, NULL, 0, NULL}
+            },
+            .case_count = 3,
+            .before_all = NULL,
+            .after_all = NULL
+        },
+        {
+            .name = "boundary_conditions",
+            .cases = (TestCase[]){
+                {"tcp_boundary", setup_tcp_server, test_tcp_boundary, NULL, TEST_TIMEOUT_MS, NULL},
+                {NULL, NULL, NULL, NULL, 0, NULL}
+            },
+            .case_count = 1,
+            .before_all = NULL,
+            .after_all = NULL
+        },
+        {
+            .name = "udp_boundary",
+            .cases = (TestCase[]){
+                {"udp_boundary", setup_udp_server, test_udp_boundary, NULL, TEST_TIMEOUT_MS, NULL},
+                {NULL, NULL, NULL, NULL, 0, NULL}
+            },
+            .case_count = 1,
+            .before_all = NULL,
+            .after_all = NULL
+        },
+        {
+            .name = "basic_functionality",
+            .cases = (TestCase[]){
+                {"tcp_basic", setup_tcp_server, test_tcp_basic, NULL, TEST_TIMEOUT_MS, NULL},
+                {NULL, NULL, NULL, NULL, 0, NULL}
+            },
+            .case_count = 1,
+            .before_all = NULL,
+            .after_all = NULL
+        },
+        {
+            .name = "udp_functionality",
+            .cases = (TestCase[]){
+                {"udp_basic", setup_udp_server, test_udp_basic, NULL, TEST_TIMEOUT_MS, NULL},
+                {NULL, NULL, NULL, NULL, 0, NULL}
+            },
+            .case_count = 1,
+            .before_all = NULL,
+            .after_all = NULL
+        },
+        {NULL, NULL, 0, NULL, NULL}  // 结束标记
     };
-
-    tcp_thread = InfraxThreadClass.new(&tcp_config);
-    if (!tcp_thread) {
-        core->printf(core, "Failed to create TCP server thread\n");
-        goto cleanup;
+    
+    // Run all test suites
+    bool all_passed = true;
+    for (TestSuite* suite = suites; suite->name != NULL; suite++) {
+        all_passed &= run_test_suite(suite);
     }
-
-    err = tcp_thread->start(tcp_thread, tcp_server_thread, NULL);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "Failed to start TCP server thread: %s\n", err.message);
-        goto cleanup;
-    }
-
-    // Wait for TCP server to be ready
-    server_mutex->mutex_lock(server_mutex);
-    while (!tcp_server_ready) {
-        err = server_cond->cond_timedwait(server_cond, server_mutex, TEST_TIMEOUT_MS);
-        if (INFRAX_ERROR_IS_ERR(err)) {
-            core->printf(core, "Timeout waiting for TCP server\n");
-            server_mutex->mutex_unlock(server_mutex);
-            goto cleanup;
-        }
-    }
-    server_mutex->mutex_unlock(server_mutex);
-
-    // Start UDP server
-    udp_server_running = true;
-    InfraxThreadConfig udp_config = {
-        .name = "udp_server",
-        .func = udp_server_thread,
-        .arg = NULL
-    };
-
-    udp_thread = InfraxThreadClass.new(&udp_config);
-    if (!udp_thread) {
-        core->printf(core, "Failed to create UDP server thread\n");
-        goto cleanup;
-    }
-
-    err = udp_thread->start(udp_thread, udp_server_thread, NULL);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        core->printf(core, "Failed to start UDP server thread: %s\n", err.message);
-        goto cleanup;
-    }
-
-    // Wait for UDP server to be ready
-    server_mutex->mutex_lock(server_mutex);
-    while (!udp_server_ready) {
-        err = server_cond->cond_timedwait(server_cond, server_mutex, TEST_TIMEOUT_MS);
-        if (INFRAX_ERROR_IS_ERR(err)) {
-            core->printf(core, "Timeout waiting for UDP server\n");
-            server_mutex->mutex_unlock(server_mutex);
-            goto cleanup;
-        }
-    }
-    server_mutex->mutex_unlock(server_mutex);
-
-    // Run tests
-    if (test_tcp() != 0) {
-        core->printf(core, "TCP test failed\n");
-        goto cleanup;
-    }
-
-    if (test_udp() != 0) {
-        core->printf(core, "UDP test failed\n");
-        goto cleanup;
-    }
-
-    core->printf(core, "All tests passed!\n");
-    ret = 0;
-
-cleanup:
-    // Stop servers
-    tcp_server_running = false;
-    udp_server_running = false;
-
-    // Wait for server threads to finish
-    if (tcp_thread) {
-        void* thread_result;
-        tcp_thread->join(tcp_thread, &thread_result);
-        InfraxThreadClass.free(tcp_thread);
-    }
-
-    if (udp_thread) {
-        void* thread_result;
-        udp_thread->join(udp_thread, &thread_result);
-        InfraxThreadClass.free(udp_thread);
-    }
-
-    // Free synchronization primitives
-    if (server_mutex) InfraxSyncClass.free(server_mutex);
-    if (server_cond) InfraxSyncClass.free(server_cond);
-
-    return ret;
+    
+    return all_passed ? 0 : 1;
 }
