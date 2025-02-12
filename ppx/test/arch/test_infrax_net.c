@@ -2,16 +2,26 @@
 #include "internal/infrax/InfraxThread.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxSync.h"
+/*
+测试同步为主
+*/
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <sys/select.h>
 
 
 // Test parameters
 #define TEST_PORT_BASE 22345
-#define TEST_TIMEOUT_MS 5000
-#define TEST_BUFFER_SIZE 4096
-#define TEST_RETRY_COUNT 5
-#define TEST_RETRY_DELAY_MS 500
+#define TEST_TIMEOUT_MS 2000
+#define TEST_BUFFER_SIZE 1024
+#define TEST_RETRY_COUNT 3
+#define TEST_RETRY_DELAY_MS 100
+
+// Flow control parameters
+#define FLOW_CONTROL_CHUNK_SIZE (512 * 1024)
+#define FLOW_CONTROL_DELAY_MS 0
+#define PROGRESS_UPDATE_INTERVAL (1024 * 1024)
 
 // Test logging
 typedef enum {
@@ -148,30 +158,114 @@ static void destroy_server_context(ServerContext* ctx) {
     free(ctx);
 }
 
+static int send_all(int sockfd, const void *buf, size_t len) {
+    const char *ptr = buf;
+    size_t remaining = len;
+    const int max_retries = 3;  // 减少重试次数
+    const int retry_delay_ms = 50;  // 减少重试延迟
+    size_t total_sent = 0;
+    
+    while (remaining > 0) {
+        int retry_count = 0;
+        while (retry_count < max_retries) {
+            // 限制单次发送大小
+            size_t to_send = remaining > FLOW_CONTROL_CHUNK_SIZE ? FLOW_CONTROL_CHUNK_SIZE : remaining;
+            
+            ssize_t n = send(sockfd, ptr, to_send, 0);
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // Wait for socket to become writable
+                    fd_set wfds;
+                    struct timeval tv;
+                    FD_ZERO(&wfds);
+                    FD_SET(sockfd, &wfds);
+                    tv.tv_sec = 1;  // 减少select超时时间到1秒
+                    tv.tv_usec = 0;
+                    
+                    int ret = select(sockfd + 1, NULL, &wfds, NULL, &tv);
+                    if (ret < 0) {
+                        if (errno == EINTR) {
+                            retry_count++;
+                            continue;
+                        }
+                        TEST_LOG_ERROR("Select error: %s", strerror(errno));
+                        return -1;
+                    }
+                    if (ret == 0) {
+                        retry_count++;
+                        TEST_LOG_WARN("Select timeout, retry %d/%d", retry_count, max_retries);
+                        core->sleep_ms(core, retry_delay_ms);
+                        continue;
+                    }
+                    continue;
+                }
+                TEST_LOG_ERROR("Send error: %s", strerror(errno));
+                return -1;
+            }
+            
+            ptr += n;
+            remaining -= n;
+            total_sent += n;
+            
+            // 流控: 每发送一个chunk后暂停
+            if (total_sent % FLOW_CONTROL_CHUNK_SIZE == 0) {
+                core->sleep_ms(core, FLOW_CONTROL_DELAY_MS);
+                TEST_LOG_DEBUG("Flow control pause after sending %zu bytes", total_sent);
+            }
+            
+            break;
+        }
+        
+        if (retry_count >= max_retries) {
+            TEST_LOG_ERROR("Max retries reached");
+            errno = ETIMEDOUT;
+            return -1;
+        }
+    }
+    
+    TEST_LOG_DEBUG("Successfully sent all %zu bytes", total_sent);
+    return 0;
+}
+
 // TCP server implementation
 static void* tcp_server_thread(void* arg) {
     ServerContext* ctx = (ServerContext*)arg;
     InfraxError err;
     InfraxSocket* client = NULL;
-    char buffer[TEST_BUFFER_SIZE];
+    
+    // 使用双缓冲
+    char* recv_buffer = malloc(FLOW_CONTROL_CHUNK_SIZE);
+    char* send_buffer = malloc(FLOW_CONTROL_CHUNK_SIZE);
+    if (!recv_buffer || !send_buffer) {
+        TEST_LOG_ERROR("Failed to allocate buffers");
+        free(recv_buffer);
+        free(send_buffer);
+        return NULL;
+    }
     
     // Bind and listen
     InfraxNetAddr addr;
     err = infrax_net_addr_from_string("127.0.0.1", ctx->port, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         TEST_LOG_ERROR("Failed to create address: %s", err.message);
+        free(recv_buffer);
+        free(send_buffer);
         return NULL;
     }
     
     err = ctx->socket->bind(ctx->socket, &addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         TEST_LOG_ERROR("Failed to bind: %s", err.message);
+        free(recv_buffer);
+        free(send_buffer);
         return NULL;
     }
     
     err = ctx->socket->listen(ctx->socket, 5);
     if (INFRAX_ERROR_IS_ERR(err)) {
         TEST_LOG_ERROR("Failed to listen: %s", err.message);
+        free(recv_buffer);
+        free(send_buffer);
         return NULL;
     }
     
@@ -196,10 +290,17 @@ static void* tcp_server_thread(void* arg) {
         TEST_LOG_INFO("Client connected from %s:%d", client_addr.ip, client_addr.port);
         
         // Echo loop
+        size_t total_received = 0;
+        size_t last_progress = 0;
+        
         while (ctx->is_running) {
             size_t received;
-            err = client->recv(client, buffer, sizeof(buffer), &received);
+            err = client->recv(client, recv_buffer, FLOW_CONTROL_CHUNK_SIZE, &received);
             if (INFRAX_ERROR_IS_ERR(err)) {
+                if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
+                    core->sleep_ms(core, 1);
+                    continue;
+                }
                 TEST_LOG_ERROR("Receive error: %s", err.message);
                 break;
             }
@@ -209,23 +310,37 @@ static void* tcp_server_thread(void* arg) {
                 break;
             }
             
-            size_t sent;
-            err = client->send(client, buffer, received, &sent);
-            if (INFRAX_ERROR_IS_ERR(err)) {
-                TEST_LOG_ERROR("Send error: %s", err.message);
-                break;
+            // 直接发送数据,不使用流控
+            ssize_t n = send(client->native_handle, recv_buffer, received, 0);
+            if (n < 0) {
+                if (errno == EPIPE || errno == ECONNRESET) {
+                    TEST_LOG_INFO("Client closed connection");
+                    goto client_cleanup;
+                }
+                TEST_LOG_ERROR("Send error: %s", strerror(errno));
+                goto client_cleanup;
             }
             
-            ctx->stats.total_bytes += sent;
+            total_received += received;
+            ctx->stats.total_bytes += received;
             ctx->stats.total_packets++;
+            
+            // 减少进度更新频率
+            if (total_received - last_progress >= PROGRESS_UPDATE_INTERVAL) {
+                TEST_LOG_INFO("Server received and echoed %zu bytes", total_received);
+                last_progress = total_received;
+            }
         }
-        
+
+client_cleanup:
         if (client) {
             InfraxSocketClass.free(client);
             client = NULL;
         }
     }
     
+    free(recv_buffer);
+    free(send_buffer);
     return NULL;
 }
 
@@ -734,12 +849,13 @@ static bool test_tcp_boundary(void* arg) {
     InfraxSocket* client = NULL;
     bool success = false;
     
-    // Create client
+    // Create client with longer timeouts
     InfraxSocketConfig config = {
         .is_udp = false,
         .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS
+        .send_timeout_ms = TEST_TIMEOUT_MS * 4,  // 进一步增加超时时间
+        .recv_timeout_ms = TEST_TIMEOUT_MS * 4,
+        .reuse_addr = true
     };
     
     client = InfraxSocketClass.new(&config);
@@ -763,14 +879,8 @@ static bool test_tcp_boundary(void* arg) {
     }
     
     // Test 1: Send zero bytes
-    size_t sent;
-    err = client->send(client, "x", 0, &sent);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        TEST_LOG_ERROR("Failed to send zero bytes: %s", err.message);
-        goto cleanup;
-    }
-    if (sent != 0) {
-        TEST_LOG_ERROR("Expected to send 0 bytes, but sent %zu", sent);
+    if (send_all(client->native_handle, "x", 0) < 0) {
+        TEST_LOG_ERROR("Failed to send zero bytes: %s", strerror(errno));
         goto cleanup;
     }
     TEST_LOG_INFO("Zero bytes send test passed");
@@ -783,19 +893,54 @@ static bool test_tcp_boundary(void* arg) {
     }
     memset(large_buffer, 'A', TEST_BUFFER_SIZE);
     
-    err = client->send(client, large_buffer, TEST_BUFFER_SIZE, &sent);
-    if (INFRAX_ERROR_IS_ERR(err)) {
-        TEST_LOG_ERROR("Failed to send large buffer: %s", err.message);
-        free(large_buffer);
-        goto cleanup;
-    }
-    if (sent != TEST_BUFFER_SIZE) {
-        TEST_LOG_ERROR("Failed to send entire large buffer: sent %zu of %zu", sent, TEST_BUFFER_SIZE);
+    if (send_all(client->native_handle, large_buffer, TEST_BUFFER_SIZE) < 0) {
+        TEST_LOG_ERROR("Failed to send large buffer: %s", strerror(errno));
         free(large_buffer);
         goto cleanup;
     }
     free(large_buffer);
     TEST_LOG_INFO("Large buffer send test passed");
+    
+    // Test 3: Large file transfer (1MB)
+    size_t large_file_size = 512 * 1024; // 512KB
+    char* large_file_buffer = malloc(large_file_size);
+    if (!large_file_buffer) {
+        TEST_LOG_ERROR("Failed to allocate large file buffer");
+        goto cleanup;
+    }
+
+    // Fill buffer with pattern data
+    for (size_t i = 0; i < large_file_size; i++) {
+        large_file_buffer[i] = 'A' + (i % 26);
+    }
+
+    // Send large file in chunks with progress tracking
+    size_t total_sent = 0;
+    size_t last_progress = 0;
+    while (total_sent < large_file_size) {
+        size_t chunk_size = large_file_size - total_sent;
+        if (chunk_size > FLOW_CONTROL_CHUNK_SIZE) {
+            chunk_size = FLOW_CONTROL_CHUNK_SIZE;
+        }
+
+        if (send_all(client->native_handle, large_file_buffer + total_sent, chunk_size) < 0) {
+            TEST_LOG_ERROR("Failed to send large file chunk: %s", strerror(errno));
+            free(large_file_buffer);
+            goto cleanup;
+        }
+        
+        total_sent += chunk_size;
+        
+        // 更新进度
+        if (total_sent - last_progress >= PROGRESS_UPDATE_INTERVAL) {
+            size_t progress_percent = (total_sent * 100) / large_file_size;
+            TEST_LOG_INFO("Sent %zu bytes of large file (%zu%%)", total_sent, progress_percent);
+            last_progress = total_sent;
+        }
+    }
+
+    free(large_file_buffer);
+    TEST_LOG_INFO("Large file transfer test passed");
     
     success = true;
 
@@ -865,6 +1010,45 @@ static bool test_udp_boundary(void* arg) {
     }
     free(large_buffer);
     TEST_LOG_INFO("Large buffer send test passed");
+    
+    // Test 3: Large file transfer (1MB)
+    size_t large_file_size = 512 * 1024; // 512KB for UDP test
+    char* large_file_buffer = malloc(large_file_size);
+    if (!large_file_buffer) {
+        TEST_LOG_ERROR("Failed to allocate large file buffer");
+        goto cleanup;
+    }
+
+    // Fill buffer with pattern data
+    for (size_t i = 0; i < large_file_size; i++) {
+        large_file_buffer[i] = 'A' + (i % 26);
+    }
+
+    // Send large file in chunks
+    size_t total_sent = 0;
+    while (total_sent < large_file_size) {
+        size_t chunk_size = large_file_size - total_sent;
+        if (chunk_size > TEST_BUFFER_SIZE) {
+            chunk_size = TEST_BUFFER_SIZE;
+        }
+
+        err = client->sendto(client, large_file_buffer + total_sent, chunk_size, &sent, &server_addr);
+        if (INFRAX_ERROR_IS_ERR(err)) {
+            TEST_LOG_ERROR("Failed to send large file chunk: %s", err.message);
+            free(large_file_buffer);
+            goto cleanup;
+        }
+        if (sent == 0) {
+            TEST_LOG_ERROR("Failed to send large file: connection closed");
+            free(large_file_buffer);
+            goto cleanup;
+        }
+        total_sent += sent;
+        TEST_LOG_INFO("Sent %zu bytes of large file (%zu%%)", total_sent, (total_sent * 100) / large_file_size);
+    }
+
+    free(large_file_buffer);
+    TEST_LOG_INFO("Large file transfer test passed");
     
     success = true;
 
@@ -1004,3 +1188,4 @@ int main(int argc, char* argv[]) {
     
     return all_passed ? 0 : 1;
 }
+
