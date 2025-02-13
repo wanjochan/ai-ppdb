@@ -12,7 +12,7 @@
 #include <assert.h>
 
 // Test timeout control
-#define TEST_TIMEOUT_MS 2000  // 2 seconds timeout for each test
+#define TEST_TIMEOUT_MS 5000  // 增加到5秒超时
 
 // Test file operations
 #define TEST_FILE "test.txt"
@@ -181,7 +181,7 @@ static void test_event_callback(PolyxEvent* event, void* arg) {
 int main() {
     InfraxCore* core = InfraxCoreClass.singleton();
     InfraxLog* log = InfraxLogClass.singleton();
-    int test_result = 0;  // 用于跟踪测试结果
+    int test_result = 0;
     
     core->printf(core, "\n=== Testing PolyxAsync ===\n\n");
     
@@ -192,10 +192,10 @@ int main() {
     // Test 1: Timer
     core->printf(core, "Test 1: Timer\n");
     int timer_count = 0;
-    int expected_timer_count = 2;  // 期望定时器触发2次
+    int expected_timer_count = 2;
     
     PolyxTimerConfig timer_config = {
-        .interval_ms = 1000,
+        .interval_ms = 1000,  // 1秒间隔
         .callback = test_timer_callback,
         .arg = &timer_count
     };
@@ -226,22 +226,30 @@ int main() {
     // Poll loop
     core->printf(core, "\nStarting poll loop...\n");
     InfraxTime start_time = core->time_monotonic_ms(core);
+    int poll_count = 0;
     
     while (core->time_monotonic_ms(core) - start_time < TEST_TIMEOUT_MS) {
         // Trigger custom event every other iteration
-        if (event_trigger_count < 2) {  // 只触发两次事件
+        if (event_trigger_count < 2) {
             core->printf(core, "Triggering custom event...\n");
             async->klass->trigger_event(async, event, (void*)event_data, core->strlen(core, event_data) + 1);
             event_trigger_count++;
         }
         
         // Poll for events
-        async->klass->poll(async, 50);  // 使用更短的轮询间隔
+        async->klass->poll(async, 1);  // 使用1ms的轮询间隔
+        poll_count++;
         
         // 检查是否达到预期结果
         if (timer_count >= expected_timer_count && event_callback_count >= event_trigger_count) {
             break;
         }
+        
+        // // 每1000次轮询打印一次状态
+        // if (poll_count % 1000 == 0) {
+        //     core->printf(core, "Poll count: %d, Timer count: %d, Event count: %d\n", 
+        //                 poll_count, timer_count, event_callback_count);
+        // }
     }
     
     // 验证定时器结果

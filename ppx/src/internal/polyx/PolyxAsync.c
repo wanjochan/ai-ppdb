@@ -449,7 +449,7 @@ static void polyx_async_destroy_event(PolyxAsync* self, PolyxEvent* event) {
 
 // Create timer
 static PolyxEvent* polyx_async_create_timer(PolyxAsync* self, PolyxTimerConfig* config) {
-    if (!self || !config) return NULL;
+    if (!self || !config || config->interval_ms == 0) return NULL;
     
     PolyxEventConfig event_config = {
         .type = POLYX_EVENT_TIMER,
@@ -466,6 +466,7 @@ static PolyxEvent* polyx_async_create_timer(PolyxAsync* self, PolyxTimerConfig* 
         return NULL;
     }
     
+    // Initialize timer data
     timer_data->interval_ms = config->interval_ms;
     timer_data->next_trigger = 0;  // Will be set when timer starts
     timer_data->is_periodic = true;
@@ -486,7 +487,17 @@ static void polyx_async_start_timer(PolyxAsync* self, PolyxEvent* timer) {
     TimerData* timer_data = (TimerData*)internal->data;
     if (!timer_data) return;
     
-    timer_data->next_trigger = g_core->time_monotonic_ms(g_core) + timer_data->interval_ms;
+    // Get current time with high precision
+    uint64_t now = g_core->time_monotonic_ms(g_core);
+    
+    // Set initial trigger time, ensuring it's in the future
+    timer_data->next_trigger = now + timer_data->interval_ms;
+    
+    // Immediately trigger if we've already passed the first interval
+    if (now >= timer_data->next_trigger) {
+        timer_data->callback(timer_data->arg);
+        timer_data->next_trigger = now + timer_data->interval_ms;
+    }
 }
 
 // Stop timer
@@ -506,6 +517,7 @@ static int polyx_async_poll(PolyxAsync* self, int timeout_ms) {
     
     uint64_t now = g_core->time_monotonic_ms(g_core);
     int min_timeout = timeout_ms;
+    bool has_active_timer = false;
     
     // Check timers
     for (size_t i = 0; i < self->event_count; i++) {
@@ -515,13 +527,15 @@ static int polyx_async_poll(PolyxAsync* self, int timeout_ms) {
             TimerData* timer_data = (TimerData*)internal->data;
             
             if (timer_data && timer_data->next_trigger > 0) {
+                has_active_timer = true;
                 if (now >= timer_data->next_trigger) {
                     // Timer expired, trigger callback
                     timer_data->callback(timer_data->arg);
                     
                     if (timer_data->is_periodic) {
-                        // Schedule next trigger
-                        timer_data->next_trigger = now + timer_data->interval_ms;
+                        // Schedule next trigger with drift compensation
+                        uint64_t missed_triggers = (now - timer_data->next_trigger) / timer_data->interval_ms;
+                        timer_data->next_trigger += (missed_triggers + 1) * timer_data->interval_ms;
                     } else {
                         timer_data->next_trigger = 0;  // Disable timer
                     }
@@ -534,6 +548,15 @@ static int polyx_async_poll(PolyxAsync* self, int timeout_ms) {
                 }
             }
         }
+    }
+    
+    // Optimize poll interval based on timer state
+    if (has_active_timer) {
+        // Use shorter poll interval for active timers (1ms)
+        min_timeout = min_timeout > 1 ? 1 : min_timeout;
+    } else {
+        // Use longer poll interval when no active timers (50ms)
+        min_timeout = min_timeout > 50 ? 50 : min_timeout;
     }
     
     // Poll for events using InfraxAsync
