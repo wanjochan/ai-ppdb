@@ -37,7 +37,18 @@ typedef enum {
     POLYX_EVENT_NONE = 0,
     POLYX_EVENT_IO,
     POLYX_EVENT_TIMER,
-    POLYX_EVENT_SIGNAL
+    POLYX_EVENT_SIGNAL,
+    // Network related
+    POLYX_EVENT_TCP,
+    POLYX_EVENT_UDP,
+    POLYX_EVENT_UNIX,
+    // Standard IO
+    POLYX_EVENT_PIPE,
+    POLYX_EVENT_FIFO,
+    POLYX_EVENT_TTY,
+    // Others
+    POLYX_EVENT_INOTIFY,
+    POLYX_EVENT_CHAR_DEV
 } PolyxEventType;
 
 // Timer callback type
@@ -60,9 +71,54 @@ typedef struct {
     void* arg;
 } PolyxEventConfig;
 
+// Network event configurations
+typedef struct {
+    int socket_fd;
+    int events;     // POLLIN, POLLOUT etc.
+    EventCallback callback;
+    void* arg;
+} PolyxNetworkConfig;
+
+// IO event configurations
+typedef struct {
+    int fd;
+    int events;     // POLLIN, POLLOUT etc.
+    EventCallback callback;
+    void* arg;
+} PolyxIOConfig;
+
+// File monitor configuration
+typedef struct {
+    const char* path;
+    int watch_mask;  // IN_CREATE, IN_DELETE etc.
+    EventCallback callback;
+    void* arg;
+} PolyxInotifyConfig;
+
 // Event structure
 struct PolyxEvent {
     PolyxEventType type;
+    union {
+        struct {
+            int fd;
+            int events;
+        } io;
+        struct {
+            int socket_fd;
+            int events;
+            int protocol;  // IPPROTO_TCP, IPPROTO_UDP etc.
+        } network;
+        struct {
+            int watch_fd;
+            char* path;
+        } inotify;
+        struct {
+            uint64_t due_time;
+            TimerCallback callback;
+        } timer;
+    } data;
+    EventCallback callback;
+    void* arg;
     void* private_data;  // Internal use only
 };
 
@@ -110,14 +166,42 @@ struct PolyxAsyncClassType {
     void (*start_timer)(PolyxAsync* self, PolyxEvent* timer);
     void (*stop_timer)(PolyxAsync* self, PolyxEvent* timer);
     
-    //TODO 网络相关；
- 
+    // Network related methods
+    PolyxEvent* (*create_tcp_event)(PolyxAsync* self, PolyxNetworkConfig* config);
+    PolyxEvent* (*create_udp_event)(PolyxAsync* self, PolyxNetworkConfig* config);
+    PolyxEvent* (*create_unix_event)(PolyxAsync* self, PolyxNetworkConfig* config);
+    
+    // IO related methods
+    PolyxEvent* (*create_pipe_event)(PolyxAsync* self, PolyxIOConfig* config);
+    PolyxEvent* (*create_fifo_event)(PolyxAsync* self, PolyxIOConfig* config);
+    PolyxEvent* (*create_tty_event)(PolyxAsync* self, PolyxIOConfig* config);
+    
+    // File monitoring methods
+    PolyxEvent* (*create_inotify_event)(PolyxAsync* self, PolyxInotifyConfig* config);
+    
     // 对象方法 - 轮询
     int (*poll)(PolyxAsync* self, int timeout_ms);
 };
 
 // 全局类实例
 extern const PolyxAsyncClassType PolyxAsyncClass;
+
+// Helper macros for event handling
+#define POLYX_EVENT_IS_NETWORK(e) ((e)->type >= POLYX_EVENT_TCP && (e)->type <= POLYX_EVENT_UNIX)
+#define POLYX_EVENT_IS_IO(e) ((e)->type >= POLYX_EVENT_PIPE && (e)->type <= POLYX_EVENT_TTY)
+#define POLYX_EVENT_IS_MONITOR(e) ((e)->type == POLYX_EVENT_INOTIFY)
+
+// Helper functions
+static inline int polyx_event_get_fd(PolyxEvent* event) {
+    if (POLYX_EVENT_IS_NETWORK(event)) {
+        return event->data.network.socket_fd;
+    } else if (POLYX_EVENT_IS_IO(event)) {
+        return event->data.io.fd;
+    } else if (POLYX_EVENT_IS_MONITOR(event)) {
+        return event->data.inotify.watch_fd;
+    }
+    return -1;
+}
 
 #endif // POLYX_ASYNC_H
 
