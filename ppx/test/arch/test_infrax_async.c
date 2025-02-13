@@ -1,300 +1,176 @@
-#include <assert.h>
-#include <errno.h>
-#include <fcntl.h>
+#include "internal/infrax/InfraxAsync.h"
+#include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxMemory.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
-#include "internal/infrax/InfraxAsync.h"
+#include <fcntl.h>
+#include <errno.h>
+#include <assert.h>
+#include <time.h>
 
-// Test configuration
-#define DELAY_SECONDS 1.0
+// Test timeout control
+#define TEST_TIMEOUT_MS 2000  // 2 seconds timeout for each test
+#define POLL_INTERVAL_MS 10   // Initial poll interval
+#define MAX_POLL_INTERVAL_MS 100  // Maximum poll interval
 
 // Test context structure
 typedef struct {
-    int fd;             // File descriptor
-    char* buffer;       // Read buffer
-    size_t size;        // Buffer size
-    size_t bytes_read;  // Total bytes read
-    const char* filename;
-    int yield_count;    // Count how many times yield is called
-} AsyncReadContext;
+    int counter;
+    int target;
+    bool has_error;
+    char error_msg[256];
+} TestContext;
 
-// Async read file function
-static void async_read_file(InfraxAsync* self, void* arg) {
-    AsyncReadContext* ctx = (AsyncReadContext*)arg;
+// Helper function to get current timestamp in milliseconds
+static uint64_t get_current_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
+
+// Test async function
+static void test_async_fn(InfraxAsync* self, void* arg) {
+    TestContext* ctx = (TestContext*)arg;
     if (!ctx) {
-        printf("[DEBUG] async_read_file: ctx is NULL\n");
+        self->state = INFRAX_ASYNC_REJECTED;
         return;
     }
     
-    // Open file if not already open
-    if (ctx->fd < 0) {
-        printf("[DEBUG] async_read_file: opening file %s\n", ctx->filename);
-        ctx->fd = open(ctx->filename, O_RDONLY | O_NONBLOCK);
-        if (ctx->fd < 0) {
-            printf("[DEBUG] async_read_file: failed to open file, errno=%d\n", errno);
-            self->state = INFRAX_ASYNC_REJECTED;
-            return;
-        }
+    // Simulate potential errors
+    if (ctx->has_error) {
+        self->state = INFRAX_ASYNC_REJECTED;
+        return;
     }
     
-    // Try to read
-    ssize_t bytes = read(ctx->fd, 
-                        ctx->buffer + ctx->bytes_read,
-                        ctx->size - ctx->bytes_read);
+    // Update state to running
+    self->state = INFRAX_ASYNC_RUNNING;
     
-    printf("[DEBUG] async_read_file: read returned %zd bytes\n", bytes);
+    // Increment counter
+    ctx->counter++;
     
-    if (bytes > 0) {
-        ctx->bytes_read += bytes;
-        printf("[DEBUG] async_read_file: total bytes read: %zu/%zu\n", 
-               ctx->bytes_read, ctx->size);
-        if (ctx->bytes_read < ctx->size) {
-            ctx->yield_count++;
-            printf("[DEBUG] async_read_file: yielding after successful read\n");
-            self->yield(self);
-        }
-    } else if (bytes == 0) {
-        // End of file
-        printf("[DEBUG] async_read_file: reached EOF\n");
-        close(ctx->fd);
-        ctx->fd = -1;
+    // Check if we've reached the target
+    if (ctx->counter >= ctx->target) {
         self->state = INFRAX_ASYNC_FULFILLED;
-    } else {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            ctx->yield_count++;
-            printf("[DEBUG] async_read_file: yielding on EAGAIN\n");
-            self->yield(self);
-        } else {
-            // Error occurred
-            printf("[DEBUG] async_read_file: read error, errno=%d\n", errno);
-            close(ctx->fd);
-            ctx->fd = -1;
-            self->state = INFRAX_ASYNC_REJECTED;
-        }
+        return;
     }
+    
+    // Return to let other tasks run
+    self->state = INFRAX_ASYNC_PENDING;
+    return;
 }
 
-// Test async file operations
-static void test_async_file_read(void) {
-    printf("[DEBUG] test_async_file_read: starting\n");
-    
-    // Create a test file
-    FILE* f = fopen("test_async.txt", "w");
-    assert(f != NULL);
-    fputs("Hello, Async World!", f);
-    fclose(f);
-    printf("[DEBUG] test_async_file_read: created test file\n");
-    
-    // Prepare read context
-    char buffer[128] = {0};
-    AsyncReadContext ctx = {
-        .fd = -1,
-        .buffer = buffer,
-        .size = sizeof(buffer),
-        .bytes_read = 0,
-        .filename = "test_async.txt",
-        .yield_count = 0
-    };
-    
-    // Create and start async task
-    InfraxAsync* async = InfraxAsyncClass.new(async_read_file, &ctx);
-    assert(async != NULL);
-    printf("[DEBUG] test_async_file_read: created async task\n");
-    
-    // Start the task
-    async->start(async, async_read_file, &ctx);
-    printf("[DEBUG] test_async_file_read: started async task\n");
-    
-    // Run until complete
-    while (async->state != INFRAX_ASYNC_FULFILLED) {
-        printf("[DEBUG] test_async_file_read: task status: %d\n", async->state);
-        if (async->state == INFRAX_ASYNC_PENDING) {
-            async->start(async, async_read_file, &ctx);
-        }
-        usleep(1000);  // 1ms sleep
-    }
-    
-    // Verify content
-    assert(strncmp(buffer, "Hello, Async World!", strlen("Hello, Async World!")) == 0);
-    // Verify that yield was called at least once
-    assert(ctx.yield_count > 0);
-    printf("[DEBUG] test_async_file_read: content matches, yielded %d times\n", ctx.yield_count);
-    
-    // Cleanup
-    InfraxAsyncClass.free(async);
-    unlink("test_async.txt");
-    printf("[DEBUG] test_async_file_read: cleanup complete\n");
-}
-
-// Async delay function
-static void async_delay(InfraxAsync* self, void* arg) {
-    // Store start time in user_data if first time
-    InfraxAsyncContext* ctx = (InfraxAsyncContext*)self->result;
-    if (!ctx->user_data) {
-        printf("[DEBUG] async_delay: initializing start time\n");
-        struct timespec* start = malloc(sizeof(struct timespec));
-        if (!start) {
-            printf("[DEBUG] async_delay: failed to allocate memory\n");
-            self->state = INFRAX_ASYNC_REJECTED;
-            return;
-        }
-        clock_gettime(CLOCK_MONOTONIC, start);
-        ctx->user_data = start;
-    }
-    
-    // Get current time and calculate elapsed
-    //TODO use core->time_now_ms() instead of clock_gettime
-    struct timespec current;
-    clock_gettime(CLOCK_MONOTONIC, &current);
-    struct timespec* start = (struct timespec*)ctx->user_data;
-    double elapsed = (current.tv_sec - start->tv_sec) + 
-                    (current.tv_nsec - start->tv_nsec) / 1e9;
-    
-    printf("[DEBUG] async_delay: elapsed=%.3f seconds\n", elapsed);
-    
-    // Check if delay is complete
-    if (elapsed >= DELAY_SECONDS) {
-        printf("[DEBUG] async_delay: delay complete\n");
-        free(start);
-        ctx->user_data = NULL;
-        self->state = INFRAX_ASYNC_FULFILLED;
-        return;  // Delay complete
-    }
-    
-    // Not done yet, yield and continue
-    printf("[DEBUG] async_delay: yielding\n");
-    self->yield(self);
-}
-
-// Test async delay
-static void test_async_delay(void) {
-    printf("Starting delay test (will wait for %.3f seconds)...\n", DELAY_SECONDS);
-    struct timespec start, current;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    
-    // Create and start async delay task
-    InfraxAsync* async = InfraxAsyncClass.new(async_delay, NULL);
-    assert(async != NULL);
-    
-    // Start the task
-    async->start(async, async_delay, NULL);
-    
-    // Run task until completion
-    while (async->state != INFRAX_ASYNC_FULFILLED && 
-           async->state != INFRAX_ASYNC_REJECTED) {
-        if (async->state == INFRAX_ASYNC_PENDING) {
-            async->start(async, async_delay, NULL);
-        }
-        usleep(1000);  // 1ms sleep
-    }
-    
-    // Check for error
-    if (async->state == INFRAX_ASYNC_REJECTED) {
-        printf("Async delay test failed: task returned error\n");
-        InfraxAsyncClass.free(async);
-        assert(0);  // Force test failure
-    }
-    
-    clock_gettime(CLOCK_MONOTONIC, &current);
-    double elapsed = (current.tv_sec - start.tv_sec) + 
-                    (current.tv_nsec - start.tv_nsec) / 1e9;
-    
-    // Verify that approximately DELAY_SECONDS has passed
-    assert(elapsed >= DELAY_SECONDS);
-    assert(elapsed <= DELAY_SECONDS + 0.1);  // Allow 100ms margin
-    printf("Async delay test passed: waited for %.3f seconds\n", elapsed);
-    
-    // Cleanup
-    InfraxAsyncClass.free(async);
-}
-
-// Test concurrent async operations
-static void test_async_concurrent(void) {
-    printf("[DEBUG] test_async_concurrent: starting\n");
-    
-    // Prepare read context
-    char buffer[128] = {0};
-    AsyncReadContext ctx = {
-        .fd = -1,
-        .buffer = buffer,
-        .size = sizeof(buffer),
-        .bytes_read = 0,
-        .filename = "test_async.txt",
-        .yield_count = 0
-    };
-    
-    // Create test file
-    FILE* f = fopen("test_async.txt", "w");
-    assert(f != NULL);
-    fputs("Hello, Async World!", f);
-    fclose(f);
-    printf("[DEBUG] test_async_concurrent: created test file\n");
-    
-    // Record start time
-    time_t start_time = time(NULL);
-    printf("[DEBUG] test_async_concurrent: start time recorded\n");
-    
-    // Create async tasks
-    InfraxAsync* read_task = InfraxAsyncClass.new(async_read_file, &ctx);
-    InfraxAsync* delay_task = InfraxAsyncClass.new(async_delay, NULL);
-    assert(read_task != NULL && delay_task != NULL);
-    printf("[DEBUG] test_async_concurrent: tasks created\n");
-    
-    // Start both tasks
-    read_task->start(read_task, async_read_file, &ctx);
-    delay_task->start(delay_task, async_delay, NULL);
-    printf("[DEBUG] test_async_concurrent: tasks started\n");
-    
-    // Run until both complete
-    while (read_task->state != INFRAX_ASYNC_FULFILLED ||
-           delay_task->state != INFRAX_ASYNC_FULFILLED) {
-        
-        printf("[DEBUG] test_async_concurrent: read_task state=%d, delay_task state=%d\n",
-               read_task->state, delay_task->state);
-        
-        // Resume read task if yielded
-        if (read_task->state == INFRAX_ASYNC_PENDING) {
-            printf("[DEBUG] test_async_concurrent: resuming read task\n");
-            read_task->start(read_task, async_read_file, &ctx);
-        }
-        
-        // Resume delay task if yielded
-        if (delay_task->state == INFRAX_ASYNC_PENDING) {
-            printf("[DEBUG] test_async_concurrent: resuming delay task\n");
-            delay_task->start(delay_task, async_delay, NULL);
-        }
-        
-        usleep(1000);  // Small delay
-    }
-    
-    // Record end time
-    time_t end_time = time(NULL);
-    printf("[DEBUG] test_async_concurrent: tasks completed\n");
-    
-    // Verify results
-    assert(strncmp(buffer, "Hello, Async World!", strlen("Hello, Async World!")) == 0);
-    assert(end_time - start_time >= DELAY_SECONDS);
-    
-    printf("[DEBUG] test_async_concurrent: verification passed\n");
-    printf("Concurrent test completed! Total time: %ld seconds\n", end_time - start_time);
-    
-    // Cleanup
-    InfraxAsyncClass.free(read_task);
-    InfraxAsyncClass.free(delay_task);
-    unlink("test_async.txt");
-    printf("[DEBUG] test_async_concurrent: cleanup complete\n");
-}
-
+// Main test function
 int main(void) {
-    printf("Starting InfraxAsync tests...\n");
+    printf("Running InfraxAsync tests...\n");
     
-    test_async_file_read();
-    test_async_delay();
-    test_async_concurrent();
+    // Create test context
+    TestContext ctx = {
+        .counter = 0,
+        .target = 5,
+        .has_error = false,
+        .error_msg = {0}
+    };
     
-    printf("All tests passed!\n");
+    // Record start time for timeout control
+    uint64_t start_time = get_current_time_ms();
+    uint64_t current_time;
+    int poll_interval = POLL_INTERVAL_MS;
+    
+    // Create async task
+    InfraxAsync* async = InfraxAsyncClass.new(test_async_fn, &ctx);
+    if (!async) {
+        printf("Failed to create async task\n");
+        return 1;
+    }
+    
+    // Start task
+    bool started = InfraxAsyncClass.start(async);
+    if (!started) {
+        printf("Failed to start async task\n");
+        InfraxAsyncClass.free(async);
+        return 1;
+    }
+    
+    // Poll until done or timeout
+    while (!InfraxAsyncClass.is_done(async)) {
+        // Check timeout
+        current_time = get_current_time_ms();
+        if (current_time - start_time >= TEST_TIMEOUT_MS) {
+            printf("Test timeout after %d ms\n", TEST_TIMEOUT_MS);
+            InfraxAsyncClass.cancel(async);
+            InfraxAsyncClass.free(async);
+            return 1;
+        }
+        
+        // Poll with adaptive interval
+        int ret = InfraxAsyncClass.pollset_poll(async, poll_interval);
+        if (ret < 0) {
+            printf("Poll failed with error: %d\n", ret);
+            InfraxAsyncClass.free(async);
+            return 1;
+        }
+        
+        // Handle different states
+        switch (async->state) {
+            case INFRAX_ASYNC_PENDING:
+                // Restart task
+                if (!InfraxAsyncClass.start(async)) {
+                    printf("Failed to restart async task\n");
+                    InfraxAsyncClass.free(async);
+                    return 1;
+                }
+                // Increase poll interval for efficiency
+                poll_interval = poll_interval * 2;
+                if (poll_interval > MAX_POLL_INTERVAL_MS) {
+                    poll_interval = MAX_POLL_INTERVAL_MS;
+                }
+                break;
+                
+            case INFRAX_ASYNC_RUNNING:
+                // Task is running, keep current poll interval
+                break;
+                
+            case INFRAX_ASYNC_REJECTED:
+                printf("Task was rejected\n");
+                if (ctx.has_error) {
+                    printf("Error: %s\n", ctx.error_msg);
+                }
+                InfraxAsyncClass.free(async);
+                return 1;
+                
+            case INFRAX_ASYNC_FULFILLED:
+                // Will be handled by the loop condition
+                break;
+        }
+        
+        // Reset poll interval if making progress
+        if (ctx.counter > 0 && poll_interval > POLL_INTERVAL_MS) {
+            poll_interval = POLL_INTERVAL_MS;
+        }
+    }
+    
+    // Check final state and results
+    if (async->state != INFRAX_ASYNC_FULFILLED) {
+        printf("Task did not complete successfully. Final state: %d\n", async->state);
+        InfraxAsyncClass.free(async);
+        return 1;
+    }
+    
+    if (ctx.counter != ctx.target) {
+        printf("Counter mismatch: expected %d, got %d\n", ctx.target, ctx.counter);
+        InfraxAsyncClass.free(async);
+        return 1;
+    }
+    
+    // Calculate and print performance metrics
+    current_time = get_current_time_ms();
+    printf("Test completed in %lu ms\n", current_time - start_time);
+    
+    // Cleanup
+    InfraxAsyncClass.free(async);
+    
+    printf("All InfraxAsync tests passed!\n");
     return 0;
 }

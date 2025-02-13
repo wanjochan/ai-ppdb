@@ -2,14 +2,20 @@
 
 [![Last Update](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/wanjochan/ai-ppdb/main/.github/badges/last-commit.json)](https://github.com/wanjochan/ai-ppdb/commits/main)
 
-[ppdb](ppdb/docs/ARCH.md)
+[ARCH](docs/ARCH.md)
+[ppdb](ppdb/) v0.1 (PoC, module of rinetd,sqlite3,memkv is PoC)
+[ppx](ppx/) new OOP design, refactoring infrax layer
 
-AI编写的分布式数据库，欢迎使用，风险自担。A distributed database written by artificial intelligence. Use freely at your own risk.
+AI编写的分布式数据库，欢迎使用，风险自担。
+
+A distributed database written by artificial intelligence. Use freely at your own risk.
 
 
 # 许可证
 
 本项目采用 MIT 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
+
+This project is licensed under the MIT License. For details, see the [LICENSE](LICENSE) file.
 
 ```
 MIT License

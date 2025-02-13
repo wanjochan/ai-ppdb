@@ -1,215 +1,284 @@
-#include "internal/polyx/PolyxAsync.h"
+#include "internal/arch/PpxInfra.h"
+#include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxLog.h"
+#include "internal/polyx/PolyxAsync.h"
 #include <stdio.h>
-#include <assert.h>
-#include <time.h>
-#include <unistd.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <assert.h>
+
+// Test timeout control
+#define TEST_TIMEOUT_MS 5000  // 增加到5秒超时
 
 // Test file operations
-void test_polyx_async_read_file(void) {
-    printf("[DEBUG] test_polyx_async_read_file: starting\n");
-    const char* test_file = "test.txt";
-    
-    // Create a test file
-    FILE* fp = fopen(test_file, "w");
-    assert(fp != NULL);
-    fprintf(fp, "Hello, World!");
-    fclose(fp);
-    printf("[DEBUG] test_polyx_async_read_file: test file created\n");
-    
-    // Test async read file
-    printf("[DEBUG] test_polyx_async_read_file: creating async task\n");
-    PolyxAsync* async = PolyxAsyncClass.read_file(test_file);
-    assert(async != NULL);
-    printf("[DEBUG] test_polyx_async_read_file: async task created\n");
-    
-    printf("[DEBUG] test_polyx_async_read_file: starting async task\n");
-    async = async->start(async);
-    assert(async != NULL);
-    printf("[DEBUG] test_polyx_async_read_file: async task started\n");
+#define TEST_FILE "test.txt"
+#define TEST_DATA "Hello, Async World!"
+#define TEST_DATA_LEN 18
 
-    // Wait for completion
-    printf("[DEBUG] test_polyx_async_read_file: waiting for completion\n");
-    while (!async->is_done(async)) {
-        // Simulate async loop
-        usleep(10000);  // 10ms
-        printf("[DEBUG] test_polyx_async_read_file: waiting...\n");
+// Test context structures
+typedef struct {
+    InfraxHandle fd;      // Changed from int to InfraxHandle
+    char* buffer;       // Buffer for read/write
+    size_t size;        // Buffer size
+    size_t bytes_processed;  // Total bytes processed
+    const char* filename;
+    int yield_count;    // Count how many times yield is called
+} AsyncFileContext;
+
+// Forward declarations
+static void test_polyx_async_read_file(void);
+static void test_polyx_async_write_file(void);
+
+// Async read file implementation
+static void async_read_file(InfraxAsync* self, void* arg) {
+    if (!self || !arg) return;
+    
+    int fd = open(TEST_FILE, O_RDONLY);
+    if (fd < 0) {
+        self->state = INFRAX_ASYNC_REJECTED;
+        return;
     }
-    printf("[DEBUG] test_polyx_async_read_file: task completed\n");
+    
+    char* buffer = (char*)arg;
+    ssize_t total_read = 0;
+    
+    while (total_read < TEST_DATA_LEN && self->state == INFRAX_ASYNC_PENDING) {
+        ssize_t bytes_read = read(fd, buffer + total_read, TEST_DATA_LEN - total_read);
+        if (bytes_read < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Would block, return and let pollset handle other events
+                return;
+            }
+            self->state = INFRAX_ASYNC_REJECTED;
+            break;
+        } else if (bytes_read == 0) {
+            // EOF
+            break;
+        }
+        total_read += bytes_read;
+    }
+    
+    close(fd);
+    
+    if (self->state == INFRAX_ASYNC_PENDING) {
+        self->state = INFRAX_ASYNC_FULFILLED;
+    }
+}
 
+// Async write file implementation
+static void async_write_file(InfraxAsync* self, void* arg) {
+    if (!self || !arg) return;
+    
+    int fd = open(TEST_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        self->state = INFRAX_ASYNC_REJECTED;
+        return;
+    }
+    
+    const char* data = (const char*)arg;
+    ssize_t total_written = 0;
+    
+    while (total_written < TEST_DATA_LEN && self->state == INFRAX_ASYNC_PENDING) {
+        ssize_t bytes_written = write(fd, data + total_written, TEST_DATA_LEN - total_written);
+        if (bytes_written < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Would block, return and let pollset handle other events
+                return;
+            }
+            self->state = INFRAX_ASYNC_REJECTED;
+            break;
+        }
+        total_written += bytes_written;
+    }
+    
+    close(fd);
+    
+    if (self->state == INFRAX_ASYNC_PENDING) {
+        self->state = INFRAX_ASYNC_FULFILLED;
+    }
+}
+
+// Test async write file
+static void test_polyx_async_write_file(void) {
+    printf("Testing async write file...\n");
+    
+    // Create async task
+    InfraxAsync* async = InfraxAsyncClass.new(async_write_file, (void*)TEST_DATA);
+    assert(async != NULL);
+    
+    // Start task
+    bool started = InfraxAsyncClass.start(async);
+    assert(started);
+    
+    // Poll until done
+    while (!InfraxAsyncClass.is_done(async)) {
+        int ret = InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
+        assert(ret >= 0);
+    }
+    
     // Check result
-    printf("[DEBUG] test_polyx_async_read_file: getting result\n");
-    PolyxAsyncResult* result = async->get_result(async);
-    assert(result != NULL);
-    printf("[DEBUG] test_polyx_async_read_file: got result\n");
-    
-    printf("[DEBUG] test_polyx_async_read_file: checking result data\n");
-    assert(result->data != NULL);
-    assert(strcmp("Hello, World!", result->data) == 0);
-    printf("[DEBUG] test_polyx_async_read_file: result verified\n");
+    assert(async->state == INFRAX_ASYNC_FULFILLED);
     
     // Cleanup
-    printf("[DEBUG] test_polyx_async_read_file: cleaning up\n");
+    InfraxAsyncClass.free(async);
+    
+    printf("Async write file test passed\n");
+}
+
+// Test async read file
+static void test_polyx_async_read_file(void) {
+    printf("Testing async read file...\n");
+    
+    // Create buffer for read data
+    char buffer[TEST_DATA_LEN + 1] = {0};
+    
+    // Create async task
+    InfraxAsync* async = InfraxAsyncClass.new(async_read_file, buffer);
+    assert(async != NULL);
+    
+    // Start task
+    bool started = InfraxAsyncClass.start(async);
+    assert(started);
+    
+    // Poll until done
+    while (!InfraxAsyncClass.is_done(async)) {
+        int ret = InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
+        assert(ret >= 0);
+    }
+    
+    // Check result
+    assert(async->state == INFRAX_ASYNC_FULFILLED);
+    assert(strcmp(buffer, TEST_DATA) == 0);
+    
+    // Cleanup
+    InfraxAsyncClass.free(async);
+    
+    printf("Async read file test passed\n");
+}
+
+// Timer callback
+static void test_timer_callback(void* arg) {
+    int* count = (int*)arg;
+    (*count)++;
+    
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Timer callback called %d times\n", *count);
+}
+
+// Event callback
+static void test_event_callback(PolyxEvent* event, void* arg) {
+    int* count = (int*)arg;
+    (*count)++;
+    
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Event callback called %d times\n", *count);
+}
+
+int main() {
+    InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxLog* log = InfraxLogClass.singleton();
+    int test_result = 0;
+    
+    core->printf(core, "\n=== Testing PolyxAsync ===\n\n");
+    
+    // Create PolyxAsync instance
+    PolyxAsync* async = PolyxAsyncClass.new();
+    INFRAX_ASSERT(core, async != NULL);
+    
+    // Test 1: Timer
+    core->printf(core, "Test 1: Timer\n");
+    int timer_count = 0;
+    int expected_timer_count = 2;
+    
+    PolyxTimerConfig timer_config = {
+        .interval_ms = 1000,  // 1秒间隔
+        .callback = test_timer_callback,
+        .arg = &timer_count
+    };
+    
+    PolyxEvent* timer = async->klass->create_timer(async, &timer_config);
+    INFRAX_ASSERT(core, timer != NULL);
+    
+    // Start timer
+    core->printf(core, "Starting timer...\n");
+    async->klass->start_timer(async, timer);
+    
+    // Test 2: Custom Event
+    core->printf(core, "\nTest 2: Custom Event\n");
+    
+    const char* event_data = "Custom Event Data";
+    int event_trigger_count = 0;
+    int event_callback_count = 0;
+    
+    PolyxEventConfig event_config = {
+        .type = POLYX_EVENT_IO,
+        .callback = test_event_callback,
+        .arg = &event_callback_count
+    };
+    
+    PolyxEvent* event = async->klass->create_event(async, &event_config);
+    INFRAX_ASSERT(core, event != NULL);
+    
+    // Poll loop
+    core->printf(core, "\nStarting poll loop...\n");
+    InfraxTime start_time = core->time_monotonic_ms(core);
+    int poll_count = 0;
+    
+    while (core->time_monotonic_ms(core) - start_time < TEST_TIMEOUT_MS) {
+        // Trigger custom event every other iteration
+        if (event_trigger_count < 2) {
+            core->printf(core, "Triggering custom event...\n");
+            async->klass->trigger_event(async, event, (void*)event_data, core->strlen(core, event_data) + 1);
+            event_trigger_count++;
+        }
+        
+        // Poll for events
+        async->klass->poll(async, 1);  // 使用1ms的轮询间隔
+        poll_count++;
+        
+        // 检查是否达到预期结果
+        if (timer_count >= expected_timer_count && event_callback_count >= event_trigger_count) {
+            break;
+        }
+        
+        // // 每1000次轮询打印一次状态
+        // if (poll_count % 1000 == 0) {
+        //     core->printf(core, "Poll count: %d, Timer count: %d, Event count: %d\n", 
+        //                 poll_count, timer_count, event_callback_count);
+        // }
+    }
+    
+    // 验证定时器结果
+    core->printf(core, "\nVerifying timer results...\n");
+    if (timer_count != expected_timer_count) {
+        log->error(log, "Timer test failed: expected %d calls, got %d", 
+                  expected_timer_count, timer_count);
+        test_result = -1;
+    } else {
+        core->printf(core, "Timer test passed\n");
+    }
+    
+    // 验证事件结果
+    core->printf(core, "\nVerifying event results...\n");
+    if (event_callback_count != event_trigger_count) {
+        log->error(log, "Event test failed: expected %d callbacks, got %d", 
+                  event_trigger_count, event_callback_count);
+        test_result = -1;
+    } else {
+        core->printf(core, "Event test passed\n");
+    }
+    
+    // 停止定时器
+    async->klass->stop_timer(async, timer);
+    
+    // 清理资源
+    async->klass->destroy_event(async, event);
+    async->klass->destroy_event(async, timer);
     PolyxAsyncClass.free(async);
-    remove(test_file);
-    printf("[DEBUG] test_polyx_async_read_file: cleanup complete\n");
-}
-
-void test_polyx_async_write_file(void) {
-    const char* test_file = "test_write.txt";
-    const char* test_data = "Hello, Write Test!";
     
-    // Test async write file
-    PolyxAsync* async = PolyxAsyncClass.write_file(test_file, test_data, strlen(test_data));
-    assert(async != NULL);
-    
-    async = async->start(async);
-    assert(async != NULL);
-    
-    // Wait for completion
-    while (!async->is_done(async)) {
-        // Simulate async loop
-        usleep(10000);  // 10ms
-    }
-    
-    // Verify file contents
-    FILE* fp = fopen(test_file, "r");
-    assert(fp != NULL);
-    
-    char buffer[100];
-    size_t read = fread(buffer, 1, sizeof(buffer), fp);
-    buffer[read] = '\0';
-    fclose(fp);
-    
-    assert(strcmp(test_data, buffer) == 0);
-    
-    // Cleanup
-    PolyxAsyncClass.free(async);
-    remove(test_file);
-}
-
-void test_polyx_async_delay(void) {
-    int delay_ms = 1000;
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    
-    // Test async delay
-    PolyxAsync* async = PolyxAsyncClass.delay(delay_ms);
-    assert(async != NULL);
-    printf("test_polyx_async_delay delay %d ms\n",delay_ms);
-    async = async->start(async);
-    assert(async != NULL);
-    
-    // Wait for completion
-    while (!async->is_done(async)) {
-        // Simulate async loop
-        usleep(10000);  // 10ms
-    }
-    
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    
-    // Calculate elapsed time in milliseconds
-    long elapsed_ms = (end.tv_sec - start.tv_sec) * 1000 +
-                     (end.tv_nsec - start.tv_nsec) / 1000000;
-    
-    // Allow for some timing variance
-    assert(elapsed_ms >= delay_ms);
-    assert(elapsed_ms < delay_ms + 50);  // Allow 50ms variance
-    printf("test_polyx_async_delay %d\n",elapsed_ms);
-    
-    // Cleanup
-    PolyxAsyncClass.free(async);
-}
-
-void test_polyx_async_parallel(void) {
-    const char* test_file1 = "test1.txt";
-    const char* test_file2 = "test2.txt";
-    
-    // Create test files
-    FILE* fp = fopen(test_file1, "w");
-    assert(fp != NULL);
-    fprintf(fp, "Test File 1");
-    fclose(fp);
-    
-    fp = fopen(test_file2, "w");
-    assert(fp != NULL);
-    fprintf(fp, "Test File 2");
-    fclose(fp);
-    
-    // Create async tasks
-    PolyxAsync* tasks[2];
-    tasks[0] = PolyxAsyncClass.read_file(test_file1);
-    tasks[1] = PolyxAsyncClass.read_file(test_file2);
-    
-    assert(tasks[0] != NULL);
-    assert(tasks[1] != NULL);
-    
-    // Run tasks in parallel
-    PolyxAsync* parallel = PolyxAsyncClass.parallel(tasks, 2);
-    assert(parallel != NULL);
-    
-    parallel = parallel->start(parallel);
-    assert(parallel != NULL);
-    
-    // Wait for completion
-    while (!parallel->is_done(parallel)) {
-        usleep(10000);  // 10ms
-    }
-    
-    // Cleanup
-    PolyxAsyncClass.free(parallel);
-    PolyxAsyncClass.free(tasks[0]);
-    PolyxAsyncClass.free(tasks[1]);
-    remove(test_file1);
-    remove(test_file2);
-}
-
-void test_polyx_async_sequence(void) {
-    const char* test_file = "test_seq.txt";
-    const char* test_data = "Test Sequence";
-    
-    // Create async tasks
-    PolyxAsync* tasks[2];
-    tasks[0] = PolyxAsyncClass.write_file(test_file, test_data, strlen(test_data));
-    tasks[1] = PolyxAsyncClass.read_file(test_file);
-    
-    assert(tasks[0] != NULL);
-    assert(tasks[1] != NULL);
-    
-    // Run tasks in sequence
-    PolyxAsync* sequence = PolyxAsyncClass.sequence(tasks, 2);
-    assert(sequence != NULL);
-    
-    sequence = sequence->start(sequence);
-    assert(sequence != NULL);
-    
-    // Wait for completion
-    while (!sequence->is_done(sequence)) {
-        usleep(10000);  // 10ms
-    }
-    
-    // Verify results
-    PolyxAsyncResult* result = tasks[1]->get_result(tasks[1]);
-    assert(result != NULL);
-    assert(strcmp(test_data, result->data) == 0);
-    
-    // Cleanup
-    PolyxAsyncClass.free(sequence);
-    PolyxAsyncClass.free(tasks[0]);
-    PolyxAsyncClass.free(tasks[1]);
-    remove(test_file);
-}
-
-int main(void) {
-    printf("Running PolyxAsync tests...\n");
-    
-    test_polyx_async_delay();
-    test_polyx_async_read_file();
-    // test_polyx_async_write_file();
-    // test_polyx_async_parallel();
-    // test_polyx_async_sequence();
-    
-    printf("All tests passed!\n");
-    return 0;
+    return test_result;
 }

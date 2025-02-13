@@ -3,17 +3,17 @@
 
 #include "internal/arch/PpxInfra.h"
 
-//TODO 这个文件是给未来插件、脚本做为架构来调用的
+//这个文件是给未来插件、脚本做为架构来调用的
 
 // 统一架构入口
 typedef struct {
-    const PpxInfra* infra;      // 基础设施
+    PpxInfra* infra;      // 基础设施
     void* poly;                 // 配置系统
     void* peer;                 // 服务系统
 } PpxArch;
 
 // 全局单例
-const PpxArch* ppx_arch(void);
+PpxArch* ppx_arch(void);
 
 // 初始化配置系统
 infra_error_t ppx_arch_init_poly(const char* config_path);

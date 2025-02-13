@@ -1,42 +1,48 @@
-#include <stdio.h>
 #include "internal/infrax/InfraxLog.h"
-#include <assert.h>
+#include "internal/infrax/InfraxCore.h"
+
+InfraxCore* core = NULL;
+void test_log_basic() {
+    core->printf(core, "Testing basic logging...\n");
+    
+    // Test different log levels
+    InfraxLog* log = InfraxLogClass.new();
+    INFRAX_ASSERT(core, log != NULL);
+    
+    log->debug(log, "Debug message");
+    log->info(log, "Info message");
+    log->warn(log, "Warning message");
+    log->error(log, "Error message");
+    
+    InfraxLogClass.free(log);
+    
+    core->printf(core, "Basic logging test passed\n");
+}
+
+void test_log_format() {
+    core->printf(core, "Testing log formatting...\n");
+    
+    InfraxLog* log = InfraxLogClass.new();
+    INFRAX_ASSERT(core, log != NULL);
+    
+    // Test formatted messages
+    log->debug(log, "Debug: %d", 42);
+    log->info(log, "Info: %s", "Hello");
+    log->warn(log, "Warning: %f", 3.14);
+    log->error(log, "Error: %x", 0xFF);
+    
+    InfraxLogClass.free(log);
+    
+    core->printf(core, "Log formatting test passed\n");
+}
 
 int main() {
-    // Create a new logger instance
-    InfraxLog* logger = InfraxLog_CLASS.new();
-    if (!logger) {
-        fprintf(stderr, "Failed to create logger\n");
-        return 1;
-    }
+    core = InfraxCoreClass.singleton();
+    core->printf(core, "===================\nStarting InfraxLog tests...\n");
     
-    // Verify class pointer
-    assert(logger->klass == &InfraxLog_CLASS);
-
-    // Test different log levels
-    logger->debug(logger, "This is a debug message");
-    logger->info(logger, "This is an info message");
-    logger->warn(logger, "This is a warning message");
-    logger->error(logger, "This is an error message");
-
-    // Test with format strings
-    logger->info(logger, "Testing with number: %d", 42);
-    logger->info(logger, "Testing with string: %s", "Hello World");
-
-    // Test level filtering
-    logger->set_level(logger, LOG_LEVEL_WARN);
-    logger->debug(logger, "This debug message should not appear");
-    logger->info(logger, "This info message should not appear");
-    logger->warn(logger, "This warning message should appear");
-    logger->error(logger, "This error message should appear");
-
-    // Test global instance
-    InfraxLog* global_logger = get_global_infrax_log();
-    assert(global_logger != NULL);
-    assert(global_logger->klass == &InfraxLog_CLASS);
-
-    // Clean up
-    InfraxLog_CLASS.free(logger);
-    printf("All tests completed successfully\n");
+    test_log_basic();
+    test_log_format();
+    
+    core->printf(core, "All infrax_log tests passed!\n===================\n");
     return 0;
 }

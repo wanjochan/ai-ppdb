@@ -1,14 +1,8 @@
-// #include <stdarg.h>
-// #include <stdio.h>
-// #include <stdlib.h>
-#include "cosmopolitan.h"
 #include "internal/infrax/InfraxCore.h"
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/resource.h>
 
-// Forward declarations of internal functions
-// static void infrax_core_init(InfraxCore* self);
-// static void infrax_core_print(InfraxCore* self);
-
-// Printf forwarding implementation
 int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     va_list args;
     va_start(args, format);
@@ -17,6 +11,12 @@ int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     return result;
 }
 
+int infrax_core_snprintf(InfraxCore *self, char* str, size_t size, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    int result = vsnprintf(str, size, format, args);
+    va_end(args);
+}
 // Parameter forwarding function implementation
 void* infrax_core_forward_call(InfraxCore *self,void* (*target_func)(va_list), ...) {
     va_list args;
@@ -26,8 +26,8 @@ void* infrax_core_forward_call(InfraxCore *self,void* (*target_func)(va_list), .
     return result;
 }
 
-static void infrax_core_yield(InfraxCore *self) {
-    sched_yield();
+static void infrax_core_hint_yield(InfraxCore *self) {
+    sched_yield();//在多线程情况下，提示当前线程放弃CPU，让其他线程运行，但并不是一定成功的
 }
 
 int infrax_core_pid(InfraxCore *self) {
@@ -292,6 +292,13 @@ static InfraxError infrax_core_buffer_reserve(InfraxCore *self, InfraxBuffer* bu
     buf->capacity = capacity;
     return INFRAX_ERROR_OK_STRUCT;
 }
+static int infrax_core_memcmp(InfraxCore *self, const void* ptr1, const void* ptr2, size_t num) {
+    if (!ptr1 || !ptr2) {
+        return 0;
+    }
+    return memcmp(ptr1, ptr2, num);
+}
+
 
 static InfraxError infrax_core_buffer_write(InfraxCore *self, InfraxBuffer* buf, const void* data, size_t size) {
     if (!buf || !buf->data || !data || size == 0) {
@@ -583,143 +590,99 @@ static InfraxError infrax_core_file_exists(InfraxCore *self, const char* path, b
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-/* TODO
-//-----------------------------------------------------------------------------
-// File Operations
-//-----------------------------------------------------------------------------
+// Default assert handler
+static InfraxAssertHandler g_assert_handler = NULL;
 
-#define INFRA_FILE_CREATE  (1 << 0)
-#define INFRA_FILE_RDONLY  (1 << 1)
-#define INFRA_FILE_WRONLY  (1 << 2)
-#define INFRA_FILE_RDWR    (INFRA_FILE_RDONLY | INFRA_FILE_WRONLY)
-#define INFRA_FILE_APPEND  (1 << 3)
-#define INFRA_FILE_TRUNC   (1 << 4)
+static void default_assert_handler(const char* file, int line, const char* func, const char* expr, const char* msg) {
+    fprintf(stderr, "Assertion failed at %s:%d in %s\n", file, line, func);
+    fprintf(stderr, "Expression: %s\n", expr);
+    if (msg) {
+        fprintf(stderr, "Message: %s\n", msg);
+    }
+    abort();
+}
 
-#define INFRA_SEEK_SET 0
-#define INFRA_SEEK_CUR 1
-#define INFRA_SEEK_END 2
+static void infrax_core_assert_failed(InfraxCore *self, const char* file, int line, const char* func, const char* expr, const char* msg) {
+    if (g_assert_handler) {
+        g_assert_handler(file, line, func, expr, msg);
+    } else {
+        default_assert_handler(file, line, func, expr, msg);
+    }
+}
 
-infra_error_t infra_file_open(const char* path, infra_flags_t flags, int mode, INFRA_CORE_Handle_t* handle);
-infra_error_t infra_file_close(INFRA_CORE_Handle_t handle);
-infra_error_t infra_file_read(INFRA_CORE_Handle_t handle, void* buffer, size_t size, size_t* bytes_read);
-infra_error_t infra_file_write(INFRA_CORE_Handle_t handle, const void* buffer, size_t size, size_t* bytes_written);
-infra_error_t infra_file_seek(INFRA_CORE_Handle_t handle, int64_t offset, int whence);
-infra_error_t infra_file_size(INFRA_CORE_Handle_t handle, size_t* size);
-infra_error_t infra_file_remove(const char* path);
-infra_error_t infra_file_rename(const char* old_path, const char* new_path);
-infra_error_t infra_file_exists(const char* path, bool* exists);
-*/
+static void infrax_core_set_assert_handler(InfraxCore *self, InfraxAssertHandler handler) {
+    g_assert_handler = handler;
+}
 
-// static InfraxError infrax_core_mutex_create(InfraxCore *self, InfraxMutex* mutex) {
-//     pthread_mutex_t* pmutex = malloc(sizeof(pthread_mutex_t));
-//     if (!pmutex) {
-//         return INFRAX_ERROR_OUT_OF_MEMORY;
-//     }
-    
-//     if (pthread_mutex_init(pmutex, NULL) != 0) {
-//         free(pmutex);
-//         return INFRAX_ERROR_MUTEX_CREATE;
-//     }
-    
-//     *mutex = pmutex;
-//     return INFRAX_OK;
-// }
+// File descriptor operations
+static ssize_t infrax_core_read_fd(InfraxCore *self, int fd, void* buf, size_t count) {
+    return read(fd, buf, count);
+}
 
-// static void infrax_core_mutex_destroy(InfraxCore *self, InfraxMutex mutex) {
-//     pthread_mutex_t* pmutex = mutex;
-//     pthread_mutex_destroy(pmutex);
-//     free(pmutex);
-// }
+static ssize_t infrax_core_write_fd(InfraxCore *self, int fd, const void* buf, size_t count) {
+    return write(fd, buf, count);
+}
 
-// static InfraxError infrax_core_mutex_lock(InfraxCore *self, InfraxMutex mutex) {
-//     pthread_mutex_t* pmutex = mutex;
-//     if (pthread_mutex_lock(pmutex) != 0) {
-//         return INFRAX_ERROR_MUTEX_LOCK;
-//     }
-//     return INFRAX_OK;
-// }
+static int infrax_core_create_pipe(InfraxCore *self, int pipefd[2]) {
+    return pipe(pipefd);
+}
 
-// static InfraxError infrax_core_mutex_unlock(InfraxCore *self, InfraxMutex mutex) {
-//     pthread_mutex_t* pmutex = mutex;
-//     if (pthread_mutex_unlock(pmutex) != 0) {
-//         return INFRAX_ERROR_MUTEX_UNLOCK;
-//     }
-//     return INFRAX_OK;
-// }
+static int infrax_core_set_nonblocking(InfraxCore *self, int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
 
-// static InfraxError infrax_core_cond_init(InfraxCore *self, InfraxCond* cond) {
-//     pthread_cond_t* pcond = malloc(sizeof(pthread_cond_t));
-//     if (!pcond) {
-//         return INFRAX_ERROR_OUT_OF_MEMORY;
-//     }
-    
-//     if (pthread_cond_init(pcond, NULL) != 0) {
-//         free(pcond);
-//         return INFRAX_ERROR_COND_CREATE;
-//     }
-    
-//     *cond = pcond;
-//     return INFRAX_OK;
-// }
+static int infrax_core_close_fd(InfraxCore *self, int fd) {
+    return close(fd);
+}
 
-// static void infrax_core_cond_destroy(InfraxCore *self, InfraxCond cond) {
-//     pthread_cond_t* pcond = cond;
-//     pthread_cond_destroy(pcond);
-//     free(pcond);
-// }
+// Time operations
+static InfraxClock infrax_core_clock(InfraxCore *self) {
+    return clock();
+}
 
-// static InfraxError infrax_core_cond_wait(InfraxCore *self, InfraxCond cond, InfraxMutex mutex) {
-//     pthread_cond_t* pcond = cond;
-//     pthread_mutex_t* pmutex = mutex;
-//     if (pthread_cond_wait(pcond, pmutex) != 0) {
-//         return INFRAX_ERROR_COND_WAIT;
-//     }
-//     return INFRAX_OK;
-// }
+static int infrax_core_clock_gettime(InfraxCore *self, int clk_id, InfraxTimeSpec* tp) {
+    struct timespec ts;
+    int result = clock_gettime(clk_id == INFRAX_CLOCK_REALTIME ? CLOCK_REALTIME : CLOCK_MONOTONIC, &ts);
+    if (result == 0) {
+        tp->tv_sec = ts.tv_sec;
+        tp->tv_nsec = ts.tv_nsec;
+    }
+    return result;
+}
 
-// static InfraxError infrax_core_cond_timedwait(InfraxCore *self, InfraxCond cond, InfraxMutex mutex, uint32_t timeout_ms) {
-//     pthread_cond_t* pcond = cond;
-//     pthread_mutex_t* pmutex = mutex;
-    
-//     struct timespec ts;
-//     clock_gettime(CLOCK_REALTIME, &ts);
-//     ts.tv_sec += timeout_ms / 1000;
-//     ts.tv_nsec += (timeout_ms % 1000) * 1000000;
-//     if (ts.tv_nsec >= 1000000000) {
-//         ts.tv_sec++;
-//         ts.tv_nsec -= 1000000000;
-//     }
-    
-//     int ret = pthread_cond_timedwait(pcond, pmutex, &ts);
-//     if (ret == ETIMEDOUT) {
-//         return INFRAX_ERROR_TIMEOUT;
-//     } else if (ret != 0) {
-//         return INFRAX_ERROR_COND_WAIT;
-//     }
-//     return INFRAX_OK;
-// }
+static time_t infrax_core_time(InfraxCore *self, time_t* tloc) {
+    return time(tloc);
+}
 
-// static InfraxError infrax_core_cond_signal(InfraxCore *self, InfraxCond cond) {
-//     pthread_cond_t* pcond = cond;
-//     if (pthread_cond_signal(pcond) != 0) {
-//         return INFRAX_ERROR_COND_SIGNAL;
-//     }
-//     return INFRAX_OK;
-// }
+static int infrax_core_clocks_per_sec(InfraxCore *self) {
+    return CLOCKS_PER_SEC;
+}
 
-// static InfraxError infrax_core_cond_broadcast(InfraxCore *self, InfraxCond cond) {
-//     pthread_cond_t* pcond = cond;
-//     if (pthread_cond_broadcast(pcond) != 0) {
-//         return INFRAX_ERROR_COND_SIGNAL;
-//     }
-//     return INFRAX_OK;
-// }
+static void infrax_core_sleep(InfraxCore *self, unsigned int seconds) {
+    sleep(seconds);
+}
+
+static void infrax_core_sleep_us(InfraxCore *self, unsigned int microseconds) {
+    usleep(microseconds);
+}
+
+static size_t infrax_core_get_memory_usage(InfraxCore *self) {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+}
 
 
-// Global instance
-InfraxCore g_infrax_core = {
-    .printf = infrax_core_printf,
+// Initialize singleton instance
+static InfraxCore singleton = {
+    .self = &singleton,  // Self pointer to the static instance
+    .klass = &InfraxCoreClass,
+    // Core functions
     .forward_call = infrax_core_forward_call,
+    .printf = infrax_core_printf,
+    .snprintf = infrax_core_snprintf,
     
     // String operations
     .strlen = infrax_core_strlen,
@@ -739,7 +702,10 @@ InfraxCore g_infrax_core = {
     .time_now_ms = infrax_core_time_now_ms,
     .time_monotonic_ms = infrax_core_time_monotonic_ms,
     .sleep_ms = infrax_core_sleep_ms,
-    .yield = infrax_core_yield,
+
+    // Misc operations
+    .memcmp = infrax_core_memcmp,
+    .hint_yield = infrax_core_hint_yield,
     .pid = infrax_core_pid,
     
     // Random number operations
@@ -782,12 +748,33 @@ InfraxCore g_infrax_core = {
     .file_size = infrax_core_file_size,
     .file_remove = infrax_core_file_remove,
     .file_rename = infrax_core_file_rename,
-    .file_exists = infrax_core_file_exists
-
-    //TODO mutex, cond...
+    .file_exists = infrax_core_file_exists,
+    .assert_failed = infrax_core_assert_failed,
+    .set_assert_handler = infrax_core_set_assert_handler,
+    
+    // File descriptor operations
+    .read_fd = infrax_core_read_fd,
+    .write_fd = infrax_core_write_fd,
+    .create_pipe = infrax_core_create_pipe,
+    .set_nonblocking = infrax_core_set_nonblocking,
+    .close_fd = infrax_core_close_fd,
+    
+    // Time operations
+    .clock = infrax_core_clock,
+    .clock_gettime = infrax_core_clock_gettime,
+    .time = infrax_core_time,
+    .clocks_per_sec = infrax_core_clocks_per_sec,
+    .sleep = infrax_core_sleep,
+    .sleep_us = infrax_core_sleep_us,
+    .get_memory_usage = infrax_core_get_memory_usage,
+    
 };
 
-// Return global instance
-InfraxCore* get_global_infrax_core(void) {
-    return &g_infrax_core;
-}
+// Simple singleton getter
+InfraxCore* infrax_core_singleton(void) {
+    return &singleton;
+};
+
+InfraxCoreClassType InfraxCoreClass = {
+    .singleton = infrax_core_singleton
+};

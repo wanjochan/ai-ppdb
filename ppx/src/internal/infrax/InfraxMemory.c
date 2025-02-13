@@ -2,10 +2,6 @@
 #include <string.h>
 #include "InfraxMemory.h"
 
-// Forward declarations of internal functions
-static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config);
-static void infrax_memory_free(InfraxMemory* self);
-
 // Forward declarations of instance methods
 static void* infrax_memory_alloc(InfraxMemory* self, size_t size);
 static void infrax_memory_dealloc(InfraxMemory* self, void* ptr);
@@ -13,8 +9,68 @@ static void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size);
 static void infrax_memory_get_stats(const InfraxMemory* self, InfraxMemoryStats* stats);
 static void infrax_memory_collect(InfraxMemory* self);
 
+// Constructor implementation
+static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
+    if (!config) return NULL;
+
+    // Allocate memory manager
+    InfraxMemory* self = malloc(sizeof(InfraxMemory));
+    if (!self) return NULL;
+
+    self->self = self;
+    // self->klass = &InfraxMemoryClass;
+
+    // Initialize instance methods
+    self->alloc = infrax_memory_alloc;
+    self->dealloc = infrax_memory_dealloc;
+    self->realloc = infrax_memory_realloc;
+    self->get_stats = infrax_memory_get_stats;
+    self->collect = infrax_memory_collect;
+
+    // Copy configuration
+    self->config = *config;
+
+    // Initialize memory pool
+    if (self->config.use_pool) {
+        self->pool_start = malloc(self->config.initial_size);
+        if (self->pool_start) {
+            self->pool_size = self->config.initial_size;
+            self->free_list = self->pool_start;
+            self->free_list->size = self->config.initial_size - sizeof(MemoryBlock);
+            self->free_list->is_used = false;
+            self->free_list->is_gc_root = false;
+            self->free_list->next = NULL;
+        }
+    }
+
+    // Initialize stats
+    memset(&self->stats, 0, sizeof(InfraxMemoryStats));
+
+    return self;
+}
+
+// Destructor implementation
+static void infrax_memory_free(InfraxMemory* self) {
+    if (!self) return;
+    
+    // Free memory pool
+    if (self->pool_start) {
+        free(self->pool_start);
+    }
+    
+    // Free GC objects
+    MemoryBlock* obj = self->gc_objects;
+    while (obj) {
+        MemoryBlock* next = obj->next;
+        free(obj);
+        obj = next;
+    }
+    
+    free(self);
+}
+
 // The "static" interface implementation
-const InfraxMemoryClass InfraxMemory_CLASS = {
+InfraxMemoryClassType InfraxMemoryClass = {
     .new = infrax_memory_new,
     .free = infrax_memory_free
 };
@@ -94,59 +150,6 @@ static void sweep_unused(InfraxMemory* self) {
 }
 
 // Core functions implementation
-static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
-    InfraxMemory* self = (InfraxMemory*)malloc(sizeof(InfraxMemory));
-    if (!self) return NULL;
-
-    memset(self, 0, sizeof(InfraxMemory));
-    memcpy(&self->config, config, sizeof(InfraxMemoryConfig));
-    
-    // Set the class pointer
-    self->klass = &InfraxMemory_CLASS;
-
-    // Initialize instance methods
-    self->alloc = infrax_memory_alloc;
-    self->dealloc = infrax_memory_dealloc;
-    self->realloc = infrax_memory_realloc;
-    self->get_stats = infrax_memory_get_stats;
-    self->collect = infrax_memory_collect;
-
-    if (config->use_pool) {
-        self->pool_start = malloc(config->initial_size);
-        if (!self->pool_start) {
-            free(self);
-            return NULL;
-        }
-        
-        self->pool_size = config->initial_size;
-        self->free_list = self->pool_start;
-        self->free_list->size = config->initial_size - sizeof(MemoryBlock);
-        self->free_list->is_used = false;
-        self->free_list->is_gc_root = false;
-        self->free_list->next = NULL;
-    }
-
-    return self;
-}
-
-static void infrax_memory_free(InfraxMemory* self) {
-    if (!self) return;
-    
-    if (self->pool_start) {
-        free(self->pool_start);
-    }
-    
-    // Free GC objects
-    MemoryBlock* obj = self->gc_objects;
-    while (obj) {
-        MemoryBlock* next = obj->next;
-        free(obj);
-        obj = next;
-    }
-    
-    free(self);
-}
-
 static void* infrax_memory_alloc(InfraxMemory* self, size_t size) {
     if (!self || size == 0) return NULL;
     
@@ -239,9 +242,48 @@ static void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
         return NULL;
     }
     
-    MemoryBlock* block = (MemoryBlock*)((char*)ptr - sizeof(MemoryBlock));
-    if (block->size >= size) return ptr;
+    // Align size to 8 bytes
+    size = (size + 7) & ~7;
     
+    MemoryBlock* block = (MemoryBlock*)((char*)ptr - sizeof(MemoryBlock));
+    
+    // 如果新的大小小于或等于当前大小,直接返回
+    if (size <= block->size) {
+        return ptr;
+    }
+    
+    // 检查是否在内存池中
+    bool is_pool_block = (self->config.use_pool && 
+                         (char*)ptr >= (char*)self->pool_start && 
+                         (char*)ptr < (char*)self->pool_start + self->pool_size);
+    
+    if (is_pool_block) {
+        // 尝试合并后面的空闲块
+        size_t needed_size = size - block->size;
+        MemoryBlock* next = block->next;
+        
+        if (next && !next->is_used && 
+            (sizeof(MemoryBlock) + next->size) >= needed_size) {
+            // 可以直接扩展当前块
+            size_t remaining = next->size - needed_size;
+            if (remaining >= sizeof(MemoryBlock) + 8) {
+                // 分割剩余空间
+                MemoryBlock* new_next = (MemoryBlock*)((char*)next + needed_size);
+                new_next->size = remaining - sizeof(MemoryBlock);
+                new_next->is_used = false;
+                new_next->is_gc_root = false;
+                new_next->next = next->next;
+                block->next = new_next;
+            } else {
+                // 全部使用
+                block->next = next->next;
+            }
+            block->size = size;
+            return ptr;
+        }
+    }
+    
+    // 分配新内存并复制数据
     void* new_ptr = infrax_memory_alloc(self, size);
     if (!new_ptr) return NULL;
     

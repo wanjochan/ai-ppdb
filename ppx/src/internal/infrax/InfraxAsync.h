@@ -1,70 +1,110 @@
 #ifndef INFRAX_ASYNC_H
 #define INFRAX_ASYNC_H
+#include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxMemory.h"
+/** DESIGN NOTES
 
-//async with setjmp/longjmp
+//design pattern: factory
+//main idea: mux of (callback + poll)
 
-#include <setjmp.h>
+poll() 基本原理
+poll() 是一个多路复用 I/O 机制
+可以同时监控多个文件描述符的状态变化
+主要监控读、写、异常三种事件
+可被 poll() 监控的主要 fd 类型:
+a) 网络相关
+TCP sockets
+UDP sockets
+Unix domain sockets
+b) 标准 I/O
+管道(pipes)
+FIFO
+终端设备(/dev/tty)
+标准输入输出(stdin/stdout/stderr)
+c) 其他
+字符设备
+事件fd (eventfd)
+定时器fd (timerfd)
+信号fd (signalfd)
+inotify fd (文件系统事件监控)
+ */
+
+#include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
+#include <time.h>
+#include <poll.h>
 
-// Forward declaration
+// Forward declarations
 typedef struct InfraxAsync InfraxAsync;
-typedef struct InfraxAsyncContext InfraxAsyncContext;
+typedef struct InfraxPollset InfraxPollset;
+typedef struct InfraxPollInfo InfraxPollInfo;
+typedef struct InfraxAsyncClassType InfraxAsyncClassType;
 
-// Function type for async operations
-typedef void (*AsyncFn)(InfraxAsync* self, void* arg);
-
-// Async task states
+// Async states
 typedef enum {
-    INFRAX_ASYNC_PENDING,    //INIT,RUNNING,YIELD
-    INFRAX_ASYNC_FULFILLED,  // from DONE
-    INFRAX_ASYNC_REJECTED    // from ERROR
-} InfraxAsyncStatus;
+    INFRAX_ASYNC_PENDING = 0,
+    INFRAX_ASYNC_RUNNING,     // 新增运行中状态
+    INFRAX_ASYNC_FULFILLED,
+    INFRAX_ASYNC_REJECTED
+} InfraxAsyncState;
 
-// Result structure for async operations
-typedef struct {
-    InfraxAsyncStatus status;  // Current status
-    int error_code;           // Error code if any
-    int yield_count;          // Number of yields
-} InfraxAsyncResult;
+// Async callback type
+typedef void (*InfraxAsyncCallback)(InfraxAsync* self, void* arg);
 
-// Internal context structure
-struct InfraxAsyncContext {
-    jmp_buf env;           // Saved execution context
-    int yield_count;       // Number of yields for debug
-    void* user_data;       // User data for async operation
+// Poll callback type
+typedef void (*InfraxPollCallback)(InfraxAsync* self, int fd, short events, void* arg);
+
+// Poll events
+#define INFRAX_POLLIN  0x001
+#define INFRAX_POLLOUT 0x004
+#define INFRAX_POLLERR 0x008
+#define INFRAX_POLLHUP 0x010
+
+// Poll info structure
+struct InfraxPollInfo {
+    int fd;
+    short events;
+    InfraxPollCallback callback;
+    void* arg;
+    struct InfraxPollInfo* next;
 };
 
-// Instance structure
+// Poll structure
+struct InfraxPollset {
+    struct pollfd* fds;
+    struct InfraxPollInfo** infos;
+    size_t size;
+    size_t capacity;
+};
+
+// Thread-local pollset
+extern __thread struct InfraxPollset* g_pollset;
+
+// Async structure
 struct InfraxAsync {
-    // const InfraxAsyncClass* klass;  // Class method table
-    InfraxAsync* self;              // Instance pointer
-    
-    // Internal state
-    AsyncFn fn;                     // Async function
-    void* arg;                      // Function argument
-    InfraxAsyncStatus state;        // Current state
-    void* result;                   // Operation result
+    InfraxAsync* self;
+    InfraxAsyncClassType* klass;//InfraxAsyncClass
 
-    //TODO change to InfraxError later
-    int error;                      // Error code
-    char message[128];              // Error message
-
-    // Instance methods
-    InfraxAsync* (*start)(InfraxAsync* self, AsyncFn fn, void* arg);
-    void (*yield)(InfraxAsync* self);
+    InfraxAsyncState state;
+    InfraxAsyncCallback callback;
+    void* arg;
+    void* private_data;
 };
 
-//NOTES: interal use
-InfraxAsync* infrax_async_new(AsyncFn fn, void* arg);
-void infrax_async_free(InfraxAsync* self);
-
-// "Class" for static methods(not using 'self'):
-static struct InfraxAsyncClassType {
-    InfraxAsync* (*new)(AsyncFn fn, void* arg);
+// Class interface
+typedef struct InfraxAsyncClassType {
+    InfraxAsync* (*new)(InfraxAsyncCallback callback, void* arg);
     void (*free)(InfraxAsync* self);
-} InfraxAsyncClass = {
-    .new = infrax_async_new,
-    .free = infrax_async_free
-};
+    bool (*start)(InfraxAsync* self);
+    void (*cancel)(InfraxAsync* self);
+    bool (*is_done)(InfraxAsync* self);
+    int (*pollset_add_fd)(InfraxAsync* self, int fd, short events, InfraxPollCallback callback, void* arg);
+    void (*pollset_remove_fd)(InfraxAsync* self, int fd);
+    int (*pollset_poll)(InfraxAsync* self, int timeout_ms);
+} InfraxAsyncClassType;
+
+// Global class instance
+extern InfraxAsyncClassType InfraxAsyncClass;
 
 #endif // INFRAX_ASYNC_H

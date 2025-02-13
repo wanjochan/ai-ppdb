@@ -4,7 +4,7 @@
 static PpxArch g_arch = {0};
 static bool g_initialized = false;
 
-const PpxArch* ppx_arch(void) {
+PpxArch* ppx_arch(void) {
     if (!g_initialized) {
         // 初始化基础设施
         g_arch.infra = ppx_infra();

@@ -1,4 +1,5 @@
 #!/bin/bash
+# timeout 60s ./ppx/scripts/build_test_arch.sh
 
 # Import common functions and environment variables
 source "$(dirname "$0")/build_env.sh"
@@ -13,12 +14,14 @@ clean_build() {
     rm -f "${TEST_DIR}/arch/test_infrax_thread"
     rm -f "${TEST_DIR}/arch/test_infrax_sync"
     rm -f "${TEST_DIR}/arch/test_infrax_net"
+    # rm -f "${TEST_DIR}/arch/test_infrax_net_async"
     rm -f "${TEST_DIR}/arch/test_infrax_async"
     rm -f "${TEST_DIR}/arch/test_polyx_async"
+    rm -f "${TEST_DIR}/arch/test_c1m"  # 添加新测试
 }
 
 # Set compile flags with all necessary include paths
-CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR}"
+CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR} -I${ROOT_DIR}/repos/cosmocc/include"
 
 # Define source files
 ARCH_SOURCES=(
@@ -26,9 +29,9 @@ ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxLog.c"
     "${SRC_DIR}/internal/arch/PpxInfra.c"
     "${SRC_DIR}/internal/infrax/InfraxMemory.c"
-    "${SRC_DIR}/internal/infrax/InfraxThread.c"
     "${SRC_DIR}/internal/infrax/InfraxSync.c"
     "${SRC_DIR}/internal/infrax/InfraxNet.c"
+    "${SRC_DIR}/internal/infrax/InfraxThread.c"
     "${SRC_DIR}/internal/infrax/InfraxAsync.c"
     "${SRC_DIR}/internal/polyx/PolyxAsync.c"
 )
@@ -38,11 +41,14 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_arch.c"
     "${TEST_DIR}/arch/test_infrax_memory.c"
     "${TEST_DIR}/arch/test_infrax_error.c"
-    "${TEST_DIR}/arch/test_infrax_thread.c"
     "${TEST_DIR}/arch/test_infrax_sync.c"
     "${TEST_DIR}/arch/test_infrax_net.c"
+    # "${TEST_DIR}/arch/test_infrax_net_async.c"
+    "${TEST_DIR}/arch/test_infrax_thread.c"
     "${TEST_DIR}/arch/test_infrax_async.c"
     "${TEST_DIR}/arch/test_polyx_async.c"
+    "${TEST_DIR}/arch/test_c1m.c"  # 添加新测试
+    "${TEST_DIR}/arch/test_cosmopolitan.c"  # 添加新测试
 )
 
 # Build the new architecture library
@@ -85,6 +91,7 @@ build_arch() {
 build_tests() {
     local build_dir="${BUILD_DIR}/arch"
     local test_dir="${build_dir}/tests"
+    local target_test="$1"
     
     mkdir -p "${test_dir}"
 
@@ -93,27 +100,54 @@ build_tests() {
     local tests=()
     for src in "${TEST_SOURCES[@]}"; do
         local test_name="$(basename "${src}" .c)"
-        local test_bin="${test_dir}/${test_name}"
+        local test_bin="${test_dir}/${test_name}.exe"
+        
+        # Skip if target test is specified and doesn't match
+        if [ -n "${target_test}" ] && [ "${test_name}" != "${target_test}" ]; then
+            continue
+        fi
         
         echo "Building test: ${test_name}"
         "${CC}" ${CFLAGS} "${src}" -L"${build_dir}" -larch -o "${test_bin}"
-        
-        if [ -x "${test_bin}" ]; then
-            tests+=("${test_name}")
-        else
-            echo "Error: Failed to build test ${test_name}"
+        if [ $? -ne 0 ]; then
+            echo "Failed to build test: ${test_name}"
             exit 1
         fi
-    done
-
-    # Run tests
-    for test in "${tests[@]}"; do
-        echo "Running test: ${test}"
-        test_bin="${BUILD_DIR}/arch/tests/${test}"
-        "${test_bin}"
-        if [ $? -ne 0 ]; then
-            echo "Test ${test} failed. Stopping all tests."
-            exit 1
+        ls -al "${test_bin}"
+        
+        # 如果没有指定测试名称，则跳过 test_c1m 的自动运行
+        if [ -z "${target_test}" ]; then
+            if [ "${test_name}" != "test_c1m" ]; then
+                echo "Running test: ${test_name}"
+                "${test_bin}"
+                if [ $? -ne 0 ]; then
+                    echo "Test failed: ${test_name}"
+                    exit 1
+                fi
+            else
+                echo "Skipping auto-run for ${test_name} (manual run required)"
+                echo "bin=${test_bin}"
+            fi
+        else
+            # 指定了测试名称时直接运行
+            echo "Running test: ${test_name}"
+            "${test_bin}"
+            if [ $? -ne 0 ]; then
+                echo "Test failed: ${test_name}"
+                exit 1
+            fi
+        fi
+        # 对于C1M测试，我们不自动运行它
+        if [ "${test_name}" != "test_c1m" ]; then
+            echo "Running test: ${test_name}"
+            "${test_bin}"
+            if [ $? -ne 0 ]; then
+                echo "Test failed: ${test_name}"
+                exit 1
+            fi
+        else
+            echo "Skipping auto-run for ${test_name} (manual run required)"
+            echo "bin=${test_bin}"
         fi
     done
 }
@@ -122,5 +156,5 @@ build_tests() {
 clean_build
 build_arch
 if [ $? -eq 0 ]; then
-    build_tests
+    build_tests "$1"
 fi
