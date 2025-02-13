@@ -1,4 +1,4 @@
-﻿# PPDB 架构设计
+# PPDB 架构设计
 
 ## 项目目标
 
@@ -7,126 +7,130 @@
 - DisKV （持久化存储，兼容 Redis基本协议）
 - Distributed Cluster 分布式集群
 
-## 目录结构
+## 目录结构与架构演进
 
+### 传统 PPDB 架构（ppdb/）
 ```
-
-以下指【项目根目录/ppdb】：
-* 命名模式：src/internal/{layer}/{layer}_{module}.[ch]
-
 src/
 │  ├──/internal/
-│     ├── infra/                 # 基础设施层（基于cosmopolitan底层），未经许可不可修改 infra 层任何代码！！！
-│     │   ├── infra_{module}.[ch]         
+│     ├── infra/                 # 基础设施层
+│     ├── poly/                  # 工具组件层
+│     ├── peer/                  # 产品组件层
+└── ppdb/                        # 产品层
+```
+
+### 新架构 PPX（ppx/）：面向对象的模块化设计
+
+```
+ppx/
+│  ├──/src/internal/
+│     ├── infrax/                # 基础设施层（跨平台支持）
+│     │   ├── InfraxCore         # 核心功能模块
+│     │   ├── InfraxMemory       # 内存管理
+│     │   ├── InfraxAsync        # 异步事件处理
+│     │   └── InfraxNet          # 网络抽象
 │     │
-│     ├── poly/                  # 工具组件 （调用 infra层，不允许调用cosmopolitan或libc）
-│     │   ├── poly_{module}.[ch]
+│     ├── polyx/                 # 工具组件层
+│     │   ├── PolyxAsync         # 高级异步事件管理
+│     │   ├── PolyxCmdline       # 命令行接口
+│     │   └── PolyxService       # 服务管理
 │     │
-│     ├── peer/                  # 产品组件 （调用 工具组件 和 infra 层，不允许调用cosmopolitan或libc）
-│     │   ├── peer_{module}.[ch]
-│      
-└── ppdb/                  # 产品层（调用 产品组件 和 工具组件 和 infra层，不允许调用cosmopolitan或libc）
-    ├── ppdb.c             # 服务端主程序 ppdb.exe 能跨平台运作
-    └── libppdb.c          # libppdb.a（静态库） and libppdb.lib（动态库）
-
-include/                   # 公共头文件目录
-└── ppdb.h                    # 唯一对外头文件
-
+│     ├── peerx/                 # 服务层
+│     │   ├── PeerxService       # 服务基类
+│     │   ├── PeerxRinetd        # 网络转发服务
+│     │   └── PeerxMemKV         # 内存 KV 存储服务
+│     │
+│     └── arch/                  # 架构工具
+│         └── PpxArch.h          # 架构定义
 ```
 
-## 分层细节展开
+## 架构设计原则
 
-I 基础设施层 Infra 模块
+### 1. 分层解耦
+- **Infrax 层**：提供底层系统抽象
+  - 跨平台支持（基于 Cosmopolitan）
+  - 内存管理
+  - 错误处理
+  - 同步原语
+  - 网络基础设施
 
-core: 核心基础或未分类模块功能
-platform: 平台抽象（跨平台基本在cosmopolitan已经封装好，但会稍微有些调整来细微的平台差异）
-memory: 内存管理（含系统模式和内存池模式）
-error: 错误处理
-ds: 基本数据结构
-sync: 同步（互斥、锁、条件变量、信号量、无锁lockfree、线程池等）
-mux：多路复用（windows自动使用IOCP，linux使用epoll）
-net：网络
+- **Polyx 层**：构建可重用工具组件
+  - 异步事件处理
+  - 命令行接口
+  - 服务管理
+  - 仅允许调用 Infrax 层接口
 
-II Poly 可重用工具组件层
+- **Peerx 层**：具体服务实现
+  - 网络转发服务
+  - 内存 KV 存储
+  - 持久化存储
+  - 调用 Polyx 和 Infrax 层
 
-brev.
+### 2. 事件驱动设计
+- 使用 `poll()` 多路复用机制
+- 支持多种事件类型
+  - I/O 事件
+  - 定时器事件
+  - 网络事件
+  - 信号事件
 
-III 产品层 Peers
+### 3. 面向对象的 C 编程
+- 通过结构体和函数指针模拟类
+- 单例模式
+- 方法继承和多态
 
-. 客户端工具
-fetcher (wget+curl+fetch)
-cdper (cdp web client helper)
-proxier (proxy client helper)
+### 4. 高度可扩展性
+- 模块化设计
+- 低耦合
+- 支持动态服务注册
 
-.Rinetd
+## 模块功能
 
-网络转发服务器（平替 rinetd），顺便测试infra层的多路复用和网络模块
+### Infrax 层核心功能
+- 内存管理（系统模式和内存池）
+- 错误处理（支持堆栈跟踪）
+- 同步原语
+- 网络抽象
+- 基本数据结构
 
-. MemKV
-   - 实现内存 KV 存储
-   - 兼容 Memcached 协议
-   - 兼容 ppdb binary 流数据协议（待设计）
+### Polyx 层工具组件
+- 异步事件管理
+- 命令行接口
+- 服务生命周期管理
+- 调试和日志支持
 
-. DiskV
-   - 实现持久化存储
-   - 自带 WAL 日志且支持数据自恢复
-   - 兼容 Redis 协议
-   - 兼容 ppdb binary 流数据协议（待设计）
+### Peerx 层服务
+- 网络转发服务（Rinetd）
+- 内存 KV 存储（MemKV）
+- 持久化存储（DiskV）
+- 分布式集群（未来计划）
 
-. 集群
-   - 实现分布式部署
-   - 实现最终一致性保证（暂不支持交易属性）
+## 性能与可靠性
 
-- 其他
-   - 计划实现 IPFS 星际协议
-   - 计划支持 mysql 协议
-   - 计划支持 GraphQL 查询
-   - 计划支持自然语言模糊查询
+- 跨平台支持
+- 低延迟事件处理
+- 灵活的错误处理机制
+- 高效的内存管理
+- 可扩展的服务架构
 
-## 测试结构
+## 未来路线图
 
-- 单元测试结构
+- 实现 IPFS 星际协议支持
+- 支持 MySQL 协议
+- 支持 GraphQL 查询
+- 自然语言模糊查询
+- 分布式一致性优化
 
-```
-test/white/
-├── framework/             # 测试框架
-│   └── test_framework.h   # 测试框架
-│
-└── infra/                 # infra层的测试实现
-```
+## 测试策略
 
-- 测试流程
+- 单元测试覆盖每个模块
+- 集成测试验证层间交互
+- 性能基准测试
+- 故障注入测试
 
-``` 
-# 用于确定 infra 层运作正常
-rm -rf ppdb/build && sh ./ppdb/scripts/build_test_infra_all.sh
-sh ppdb/scripts/build_test_infra.sh [module] 
-  - 不带参数：会触发帮助
-  - module参数：指定要测试的模块，当前支持的测试模块包括：
-      - memory：内存管理测试
-      - log：日志功能测试
-      - sync：同步机制测试
-      - error：错误处理测试
-      - struct：数据结构测试
-      - memory_pool：内存池测试
-  - norun参数：只构建不运行测试
+## 开发建议
 
-# 构建 ppdb 产品
-rm -rf ppdb/build
-sh ppdb/scripts/build_ppdb.sh
-
-## rinetd
-  .\ppdb\ppdb_latest.exe --log-level=5 rinetd --start
-  .\ppdb\ppdb_latest.exe --log-level=5 rinetd --config ./ppdb/rinetd2.conf --start
-
-  ppdb/ppdb_latest.exe --log-level=5 rinetd --config ppdb/rinetd2.conf --start
-
-
-##tccrun (paused dev)
-.\ppdb\ppdb_latest.exe --log-level=4 tccrun --source .\ppdb\test2.c -I.\repos\cosmopolitan_pub -L .\repos\cosmopolitan_pub -lcosmopolitan.a
-.\ppdb\ppdb_latest.exe --log-level=1 tccrun --source ppdb/test2.c -I repos\cosmopolitan_pub -L repos\cosmopolitan_pub -l cosmopolitan.a
-.\ppdb\ppdb_latest.exe --log-level=5 tccrun --source .\ppdb\test.c
-
-## memkv
-
-./ppdb/ppdb_latest.exe --log-level=5 memkv --start
+- 严格遵守分层依赖原则
+- 保持模块低耦合
+- 详细的文档和注释
+- 持续重构和优化
