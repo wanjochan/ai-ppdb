@@ -1,14 +1,8 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <assert.h>
-#include <time.h>
+
+InfraxCore* core = NULL;
 
 // Test timeout control
 #define TEST_TIMEOUT_MS 2000  // 2 seconds timeout for each test
@@ -25,9 +19,7 @@ typedef struct {
 
 // Helper function to get current timestamp in milliseconds
 static uint64_t get_current_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+    return core->time_monotonic_ms(core);
 }
 
 // Test async function
@@ -63,7 +55,10 @@ static void test_async_fn(InfraxAsync* self, void* arg) {
 
 // Main test function
 int main(void) {
-    printf("Running InfraxAsync tests...\n");
+    core = InfraxCoreClass.singleton();
+    INFRAX_ASSERT(core, core != NULL);
+    
+    core->printf(core, "Running InfraxAsync tests...\n");
     
     // Create test context
     TestContext ctx = {
@@ -81,14 +76,14 @@ int main(void) {
     // Create async task
     InfraxAsync* async = InfraxAsyncClass.new(test_async_fn, &ctx);
     if (!async) {
-        printf("Failed to create async task\n");
+        core->printf(core, "Failed to create async task\n");
         return 1;
     }
     
     // Start task
     bool started = InfraxAsyncClass.start(async);
     if (!started) {
-        printf("Failed to start async task\n");
+        core->printf(core, "Failed to start async task\n");
         InfraxAsyncClass.free(async);
         return 1;
     }
@@ -98,7 +93,7 @@ int main(void) {
         // Check timeout
         current_time = get_current_time_ms();
         if (current_time - start_time >= TEST_TIMEOUT_MS) {
-            printf("Test timeout after %d ms\n", TEST_TIMEOUT_MS);
+            core->printf(core, "Test timeout after %d ms\n", TEST_TIMEOUT_MS);
             InfraxAsyncClass.cancel(async);
             InfraxAsyncClass.free(async);
             return 1;
@@ -107,7 +102,7 @@ int main(void) {
         // Poll with adaptive interval
         int ret = InfraxAsyncClass.pollset_poll(async, poll_interval);
         if (ret < 0) {
-            printf("Poll failed with error: %d\n", ret);
+            core->printf(core, "Poll failed with error: %d\n", ret);
             InfraxAsyncClass.free(async);
             return 1;
         }
@@ -117,7 +112,7 @@ int main(void) {
             case INFRAX_ASYNC_PENDING:
                 // Restart task
                 if (!InfraxAsyncClass.start(async)) {
-                    printf("Failed to restart async task\n");
+                    core->printf(core, "Failed to restart async task\n");
                     InfraxAsyncClass.free(async);
                     return 1;
                 }
@@ -133,9 +128,9 @@ int main(void) {
                 break;
                 
             case INFRAX_ASYNC_REJECTED:
-                printf("Task was rejected\n");
+                core->printf(core, "Task was rejected\n");
                 if (ctx.has_error) {
-                    printf("Error: %s\n", ctx.error_msg);
+                    core->printf(core, "Error: %s\n", ctx.error_msg);
                 }
                 InfraxAsyncClass.free(async);
                 return 1;
@@ -153,24 +148,24 @@ int main(void) {
     
     // Check final state and results
     if (async->state != INFRAX_ASYNC_FULFILLED) {
-        printf("Task did not complete successfully. Final state: %d\n", async->state);
+        core->printf(core, "Task did not complete successfully. Final state: %d\n", async->state);
         InfraxAsyncClass.free(async);
         return 1;
     }
     
     if (ctx.counter != ctx.target) {
-        printf("Counter mismatch: expected %d, got %d\n", ctx.target, ctx.counter);
+        core->printf(core, "Counter mismatch: expected %d, got %d\n", ctx.target, ctx.counter);
         InfraxAsyncClass.free(async);
         return 1;
     }
     
     // Calculate and print performance metrics
     current_time = get_current_time_ms();
-    printf("Test completed in %lu ms\n", current_time - start_time);
+    core->printf(core, "Test completed in %lu ms\n", current_time - start_time);
     
     // Cleanup
     InfraxAsyncClass.free(async);
     
-    printf("All InfraxAsync tests passed!\n");
+    core->printf(core, "All InfraxAsync tests passed!\n");
     return 0;
 }

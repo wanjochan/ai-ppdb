@@ -176,6 +176,20 @@ typedef struct {
     size_t size;
 } TimerHeap;
 
+// Timer wheel configuration
+typedef struct {
+    uint32_t ms_slots;      // Millisecond wheel slots (default: 1000)
+    uint32_t sec_slots;     // Second wheel slots (default: 60)
+    uint32_t min_slots;     // Minute wheel slots (default: 60)
+    uint32_t granularity;   // Timer granularity in milliseconds
+} PolyxTimerWheelConfig;
+
+// Timer storage type
+typedef enum {
+    TIMER_STORAGE_WHEEL,    // Store in time wheel
+    TIMER_STORAGE_HEAP      // Store in heap
+} TimerStorageType;
+
 // Event statistics
 typedef struct {
     size_t total_events;
@@ -361,5 +375,52 @@ static inline const char* polyx_error_str(PolyxError error) {
 #define POLYX_DEBUG_MSG(self, fmt, ...) POLYX_DEBUG(self, POLYX_DEBUG_DEBUG, fmt, ##__VA_ARGS__)
 #define POLYX_TRACE(self, fmt, ...) POLYX_DEBUG(self, POLYX_DEBUG_TRACE, fmt, ##__VA_ARGS__)
 
-#endif // POLYX_ASYNC_H
+// Timer data structures
+typedef struct TimerData {
+    uint64_t expire_time;
+    int64_t interval_ms;
+    bool is_periodic;
+    void (*callback)(void*);
+    void* arg;
+    struct TimerData* next;
+} TimerData;
 
+typedef struct TimerSlot {
+    TimerData* head;
+} TimerSlot;
+
+typedef struct TimerWheel {
+    TimerSlot* ms_wheel[1000];  // 毫秒级时间轮
+    uint64_t current_ms;        // 当前时间戳（毫秒）
+} TimerWheel;
+
+// Timer wheel operations
+TimerWheel* create_timer_wheel(void);
+void destroy_timer_wheel(TimerWheel* wheel);
+void add_timer_to_wheel(TimerWheel* wheel, TimerData* timer);
+void tick_timer_wheel(TimerWheel* wheel);
+uint64_t get_current_time_ms(void);
+
+// Event group structure
+typedef struct {
+    int id;
+    PolyxEvent** events;
+    size_t count;
+    size_t capacity;
+} EventGroup;
+
+// Private data structure
+typedef struct {
+    InfraxMemory* memory;
+    InfraxAsync* infra;
+    TimerWheel* timer_wheel;
+    TimerData** timer_heap;  // 用于长期定时器的最小堆
+    size_t heap_size;
+    size_t heap_capacity;
+    EventGroup* groups;
+    size_t group_count;
+    size_t group_capacity;
+    void (*cleanup_fn)(void*);
+} PolyxAsyncPrivate;
+
+#endif // POLYX_ASYNC_H

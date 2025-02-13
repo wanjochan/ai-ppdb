@@ -23,18 +23,6 @@ extern InfraxMemoryClassType InfraxMemoryClass;
 // 全局 Core 实例
 static InfraxCore* g_core = NULL;
 
-// 建议的重构方向：
-// PolyxAsync 应该只保留最基础的异步原语
-// 把 file_* 相关移到 PolyxIO
-// 把 http_* 相关移到 PolyxNet
-// 每个模块都可以基于 PolyxAsync 的基础设施来实现自己的异步操作
-
-// TODO: InfraxAsync 性能优化完成后再实现这些函数
-// 目前主要问题：
-// 1. 底层 InfraxAsync 的性能问题需要先解决
-// 2. 异步任务的调度和执行效率需要提升
-// 3. 完成底层优化后再考虑具体实现或重构方案
-
 // Internal callback functions for InfraxAsync
 // These functions are intended to be the actual implementations of async operations
 // but implementation is pending InfraxAsync performance optimization
@@ -115,21 +103,15 @@ typedef struct {
 typedef void (*TimerCallback)(void* arg);
 typedef void (*EventCallback)(PolyxEvent* event, void* arg);
 
-// Timer data structure
-typedef struct {
-    int64_t interval_ms;    // Timer interval
-    int64_t next_trigger;   // Next trigger time
-    bool is_periodic;       // Whether timer repeats
-    TimerCallback callback; // Timer callback
-    void* arg;             // Callback argument
-} TimerData;
-
 // Event structure extension
 typedef struct {
     PolyxEvent base;
     int read_fd;
     int write_fd;
-    void* callback;  // TimerCallback or EventCallback
+    union {
+        TimerCallback timer_callback;
+        EventCallback event_callback;
+    } callback;  // TimerCallback or EventCallback
     void* arg;
     void* data;
     size_t data_size;
@@ -144,308 +126,89 @@ typedef struct {
     struct pollfd* fds;
     size_t fds_count;
     size_t fds_capacity;
-    TimerData** timers;
-    size_t timers_count;
-    size_t timers_capacity;
+    TimerWheel* timer_wheel;        // Timer wheel instance
+    TimerData** timer_heap;         // Timer heap array
+    size_t heap_size;               // Current heap size
+    size_t heap_capacity;           // Current heap capacity
+    EventGroup* groups;             // Event groups array
+    size_t group_count;             // Number of event groups
+    size_t group_capacity;          // Capacity of event groups array
 } PolyxAsyncContext;
 
-// 清理函数定义
-static void file_read_task_cleanup(void* private_data) {
-    FileReadTask* task = (FileReadTask*)private_data;
-    if (!task) return;
-    if (task->path) {
-        g_memory->dealloc(g_memory, task->path);
-    }
-    g_memory->dealloc(g_memory, task);
-}
-
-static void file_write_task_cleanup(void* private_data) {
-    FileWriteTask* task = (FileWriteTask*)private_data;
-    if (!task) return;
-    if (task->path) {
-        g_memory->dealloc(g_memory, task->path);
-    }
-    if (task->data) {
-        g_memory->dealloc(g_memory, task->data);
-    }
-    g_memory->dealloc(g_memory, task);
-}
-
-static void http_get_task_cleanup(void* private_data) {
-    HttpGetTask* task = (HttpGetTask*)private_data;
-    if (!task) return;
-    if (task->url) {
-        g_memory->dealloc(g_memory, task->url);
-    }
-    g_memory->dealloc(g_memory, task);
-}
-
-static void http_post_task_cleanup(void* private_data) {
-    HttpPostTask* task = (HttpPostTask*)private_data;
-    if (!task) return;
-    if (task->url) {
-        g_memory->dealloc(g_memory, task->url);
-    }
-    if (task->data) {
-        g_memory->dealloc(g_memory, task->data);
-    }
-    g_memory->dealloc(g_memory, task);
-}
-
-static void delay_task_cleanup(void* private_data) {
-    DelayTask* task = (DelayTask*)private_data;
-    if (!task) return;
-    g_memory->dealloc(g_memory, task);
-}
-
-static void interval_task_cleanup(void* private_data) {
-    IntervalTask* task = (IntervalTask*)private_data;
-    if (!task) return;
-    g_memory->dealloc(g_memory, task);
-}
-
-static void parallel_sequence_task_cleanup(void* private_data) {
-    ParallelSequenceData* data = (ParallelSequenceData*)private_data;
-    if (!data) return;
-    if (data->tasks) {
-        g_memory->dealloc(g_memory, data->tasks);
-    }
-    g_memory->dealloc(g_memory, data);
-}
-
-// 异步操作结构体
-bool init_memory() {
-    if (g_memory) return true;
-    
-    InfraxMemoryConfig config = {
-        .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
-        .gc_threshold = 0
-    };
-    
-    g_memory = InfraxMemoryClass.new(&config);
-    g_core = InfraxCoreClass.singleton();
-    
-    if (!g_memory || !g_core) {
-        if (g_memory) {
-            InfraxMemoryClass.free(g_memory);
-            g_memory = NULL;
-        }
-        return false;
-    }
-    
-    return true;
-}
-
-// Forward declarations of internal functions
+// Forward declarations
+static void destroy_private_data(PolyxAsyncPrivate* private);
 static PolyxAsync* polyx_async_new(void);
 static void polyx_async_free(PolyxAsync* self);
 static PolyxEvent* polyx_async_create_event(PolyxAsync* self, PolyxEventConfig* config);
-static void polyx_async_trigger_event(PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
 static void polyx_async_destroy_event(PolyxAsync* self, PolyxEvent* event);
+static void polyx_async_trigger_event(PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
 static PolyxEvent* polyx_async_create_timer(PolyxAsync* self, PolyxTimerConfig* config);
 static void polyx_async_start_timer(PolyxAsync* self, PolyxEvent* timer);
 static void polyx_async_stop_timer(PolyxAsync* self, PolyxEvent* timer);
 static int polyx_async_poll(PolyxAsync* self, int timeout_ms);
-
-// Network related functions
-static PolyxEvent* polyx_async_create_tcp_event(PolyxAsync* self, PolyxNetworkConfig* config);
-static PolyxEvent* polyx_async_create_udp_event(PolyxAsync* self, PolyxNetworkConfig* config);
-static PolyxEvent* polyx_async_create_unix_event(PolyxAsync* self, PolyxNetworkConfig* config);
-
-// IO related functions
-static PolyxEvent* polyx_async_create_pipe_event(PolyxAsync* self, PolyxIOConfig* config);
-static PolyxEvent* polyx_async_create_fifo_event(PolyxAsync* self, PolyxIOConfig* config);
-static PolyxEvent* polyx_async_create_tty_event(PolyxAsync* self, PolyxIOConfig* config);
-
-// File monitoring functions
-static PolyxEvent* polyx_async_create_inotify_event(PolyxAsync* self, PolyxInotifyConfig* config);
-
-// Statistics functions
 static void polyx_async_get_stats(PolyxAsync* self, PolyxEventStats* stats);
 static void polyx_async_reset_stats(PolyxAsync* self);
-
-// Debug functions
 static void polyx_async_set_debug_level(PolyxAsync* self, PolyxDebugLevel level);
 static void polyx_async_set_debug_callback(PolyxAsync* self, PolyxDebugCallback callback, void* context);
-
-// Event group functions
 static int polyx_async_create_event_group(PolyxAsync* self, PolyxEvent** events, size_t count);
 static int polyx_async_wait_event_group(PolyxAsync* self, int group_id, int timeout_ms);
 static void polyx_async_destroy_event_group(PolyxAsync* self, int group_id);
-
-// Timer callback wrapper
-static void timer_callback_wrapper(InfraxAsync* async, int fd, short events, void* arg) {
-    PolyxEventInternal* timer = (PolyxEventInternal*)arg;
-    if (!timer || !timer->callback) return;
-    
-    TimerData* timer_data = (TimerData*)timer->data;
-    if (!timer_data) return;
-    
-    // Clear the pipe
-    char dummy;
-    read(fd, &dummy, 1);
-    
-    // Call the callback
-    TimerCallback callback = (TimerCallback)timer->callback;
-    callback(timer->arg);
-    
-    // If periodic, schedule next trigger
-    if (timer_data->is_periodic) {
-        timer_data->next_trigger += timer_data->interval_ms;
-        // Write to pipe to trigger next callback
-        write(timer->write_fd, &dummy, 1);
-    }
-}
-
-// Event callback wrapper
-static void event_callback_wrapper(InfraxAsync* async, int fd, short events, void* arg) {
-    PolyxEventInternal* event = (PolyxEventInternal*)arg;
-    if (!event || !event->callback) return;
-    
-    // 每次只读取一个事件的数据
-    char buffer[1024];
-    ssize_t bytes_read = read(fd, buffer, sizeof(buffer));
-    if (bytes_read <= 0) return;
-    
-    // 调用用户回调
-    EventCallback callback = (EventCallback)event->callback;
-    callback((PolyxEvent*)event, event->arg);
-}
-
-// Dummy function for InfraxAsync instance
-static void dummy_fn(InfraxAsync* async, void* arg) {
-    // Do nothing
-}
-
-// 全局类实例
-const PolyxAsyncClassType PolyxAsyncClass = {
-    .new = polyx_async_new,
-    .free = polyx_async_free,
-    .create_event = polyx_async_create_event,
-    .create_timer = polyx_async_create_timer,
-    .destroy_event = polyx_async_destroy_event,
-    .trigger_event = polyx_async_trigger_event,
-    .start_timer = polyx_async_start_timer,
-    .stop_timer = polyx_async_stop_timer,
-    .poll = polyx_async_poll,
-    
-    // Network related methods
-    .create_tcp_event = polyx_async_create_tcp_event,
-    .create_udp_event = polyx_async_create_udp_event,
-    .create_unix_event = polyx_async_create_unix_event,
-    
-    // IO related methods
-    .create_pipe_event = polyx_async_create_pipe_event,
-    .create_fifo_event = polyx_async_create_fifo_event,
-    .create_tty_event = polyx_async_create_tty_event,
-    
-    // File monitoring methods
-    .create_inotify_event = polyx_async_create_inotify_event,
-    
-    // Statistics methods
-    .get_stats = polyx_async_get_stats,
-    .reset_stats = polyx_async_reset_stats,
-    
-    // Debug methods
-    .set_debug_level = polyx_async_set_debug_level,
-    .set_debug_callback = polyx_async_set_debug_callback,
-    
-    // Event group methods
-    .create_event_group = polyx_async_create_event_group,
-    .wait_event_group = polyx_async_wait_event_group,
-    .destroy_event_group = polyx_async_destroy_event_group
-};
-
-// Private event group structure
-typedef struct {
-    int id;
-    PolyxEvent** events;
-    size_t count;
-} EventGroup;
-
-// Private data for PolyxAsync
-typedef struct {
-    EventGroup* groups;
-    size_t group_count;
-    size_t group_capacity;
-    InfraxMemory* memory;  // Memory manager instance
-} PolyxAsyncPrivate;
+static void file_read_task_cleanup(void* private_data);
+static void file_write_task_cleanup(void* private_data);
+static void http_get_task_cleanup(void* private_data);
+static void http_post_task_cleanup(void* private_data);
+static void delay_task_cleanup(void* private_data);
+static void interval_task_cleanup(void* private_data);
+static void parallel_sequence_task_cleanup(void* private_data);
+static bool init_memory(void);
 
 // Helper functions
 static PolyxAsyncPrivate* create_private_data(void) {
-    printf("Enter create_private_data\n");
-    
-    // Create memory manager
-    InfraxMemoryConfig config = {
-        .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
-        .gc_threshold = 0
-    };
-    
-    printf("Creating memory manager\n");
-    InfraxMemory* memory = InfraxMemoryClass.new(&config);
+    InfraxMemory* memory = g_memory;
     if (!memory) {
-        printf("Failed to create memory manager\n");
-        return NULL;
+        if (!init_memory()) {
+            return NULL;
+        }
+        memory = g_memory;
     }
-    
-    // Allocate private data structure
-    printf("Allocating private data structure\n");
+
     PolyxAsyncPrivate* private = memory->alloc(memory, sizeof(PolyxAsyncPrivate));
     if (!private) {
-        printf("Failed to allocate private data structure\n");
-        InfraxMemoryClass.free(memory);
+        return NULL;
+    }
+
+    memset(private, 0, sizeof(PolyxAsyncPrivate));
+    private->memory = memory;
+    private->infra = NULL;
+    
+    // Create timer wheel
+    private->timer_wheel = create_timer_wheel();
+    if (!private->timer_wheel) {
+        memory->dealloc(memory, private);
         return NULL;
     }
     
-    // Initialize private data
-    printf("Initializing private data\n");
-    memset(private, 0, sizeof(PolyxAsyncPrivate));
-    private->memory = memory;  // Store memory manager for later use
-    
-    // Initialize event groups array
-    printf("Initializing event groups array\n");
-    private->group_capacity = 8;  // Initial capacity
+    // Initialize timer heap
+    private->heap_capacity = 8;  // Initial capacity
+    private->timer_heap = memory->alloc(memory, private->heap_capacity * sizeof(TimerData*));
+    if (!private->timer_heap) {
+        destroy_timer_wheel(private->timer_wheel);
+        memory->dealloc(memory, private);
+        return NULL;
+    }
+
+    private->heap_size = 0;
+    private->group_capacity = 8;
     private->groups = memory->alloc(memory, private->group_capacity * sizeof(EventGroup));
     if (!private->groups) {
-        printf("Failed to allocate event groups array\n");
+        destroy_timer_wheel(private->timer_wheel);
+        memory->dealloc(memory, private->timer_heap);
         memory->dealloc(memory, private);
-        InfraxMemoryClass.free(memory);
         return NULL;
     }
-    
-    // Initialize each event group
-    printf("Initializing event groups\n");
-    for (size_t i = 0; i < private->group_capacity; i++) {
-        private->groups[i].id = -1;  // Invalid ID
-        private->groups[i].events = NULL;
-        private->groups[i].count = 0;
-    }
-    
-    printf("Private data created successfully\n");
-    return private;
-}
+    private->group_count = 0;
 
-static void destroy_private_data(PolyxAsyncPrivate* private) {
-    if (!private) return;
-    
-    InfraxMemory* memory = private->memory;
-    if (!memory) return;
-    
-    if (private->groups) {
-        for (size_t i = 0; i < private->group_count; i++) {
-            if (private->groups[i].events) {
-                memory->dealloc(memory, private->groups[i].events);
-            }
-        }
-        memory->dealloc(memory, private->groups);
-    }
-    
-    memory->dealloc(memory, private);
-    InfraxMemoryClass.free(memory);
+    return private;
 }
 
 // Callback functions
@@ -531,39 +294,13 @@ static PolyxAsync* polyx_async_new(void) {
     }
     
     printf("Creating private data\n");
-    PolyxAsyncPrivate* private = memory->alloc(memory, sizeof(PolyxAsyncPrivate));
+    PolyxAsyncPrivate* private = create_private_data();
     if (!private) {
-        printf("Failed to allocate private data\n");
+        printf("Failed to create private data\n");
         InfraxAsyncClass.free(self->infrax);
         memory->dealloc(memory, self);
         InfraxMemoryClass.free(memory);
         return NULL;
-    }
-    
-    // Initialize private data
-    printf("Initializing private data\n");
-    memset(private, 0, sizeof(PolyxAsyncPrivate));
-    private->memory = memory;  // Store memory manager for later use
-    
-    // Initialize event groups array
-    printf("Initializing event groups array\n");
-    private->group_capacity = 8;  // Initial capacity
-    private->groups = memory->alloc(memory, private->group_capacity * sizeof(EventGroup));
-    if (!private->groups) {
-        printf("Failed to allocate event groups array\n");
-        memory->dealloc(memory, private);
-        InfraxAsyncClass.free(self->infrax);
-        memory->dealloc(memory, self);
-        InfraxMemoryClass.free(memory);
-        return NULL;
-    }
-    
-    // Initialize each event group
-    printf("Initializing event groups\n");
-    for (size_t i = 0; i < private->group_capacity; i++) {
-        private->groups[i].id = -1;  // Invalid ID
-        private->groups[i].events = NULL;
-        private->groups[i].count = 0;
     }
     
     self->private_data = private;
@@ -629,7 +366,7 @@ static void polyx_async_free(PolyxAsync* self) {
     
     printf("Freeing private data\n");
     // Free private data
-    memory->dealloc(memory, private);
+    destroy_private_data(private);
     self->private_data = NULL;
     
     printf("Freeing self\n");
@@ -803,21 +540,51 @@ static void polyx_async_trigger_event(PolyxAsync* self, PolyxEvent* event, void*
 }
 
 static PolyxEvent* polyx_async_create_timer(PolyxAsync* self, PolyxTimerConfig* config) {
-    if (!self || !config) return NULL;
-    
-    PolyxEventConfig event_config = {
-        .type = POLYX_EVENT_TIMER,
-        .callback = NULL,
-        .arg = config->arg
-    };
-    
-    PolyxEvent* event = polyx_async_create_event(self, &event_config);
-    if (!event) return NULL;
-    
-    event->data.timer.due_time = 0;  // Will be set when timer starts
-    event->data.timer.callback = config->callback;
-    
-    return event;
+    if (!self || !config || !config->callback) {
+        return NULL;
+    }
+
+    PolyxAsyncPrivate* private = self->private_data;
+    if (!private) {
+        return NULL;
+    }
+
+    TimerData* timer = private->memory->alloc(private->memory, sizeof(TimerData));
+    if (!timer) {
+        return NULL;
+    }
+
+    // Initialize timer data
+    timer->interval_ms = config->interval_ms;
+    timer->callback = config->callback;
+    timer->arg = config->arg;
+    timer->is_periodic = (config->interval_ms > 0);
+    timer->expire_time = get_current_time_ms() + config->interval_ms;
+    timer->next = NULL;
+
+    // Add timer to appropriate storage
+    if (config->interval_ms <= 3600000) {  // ≤ 1 hour
+        add_timer_to_wheel(private->timer_wheel, timer);
+    } else {
+        // Add to heap for long-term timers
+        if (private->heap_size >= private->heap_capacity) {
+            size_t new_capacity = private->heap_capacity * 2;
+            TimerData** new_heap = private->memory->alloc(private->memory, 
+                new_capacity * sizeof(TimerData*));
+            if (!new_heap) {
+                private->memory->dealloc(private->memory, timer);
+                return NULL;
+            }
+            memcpy(new_heap, private->timer_heap, 
+                private->heap_size * sizeof(TimerData*));
+            private->memory->dealloc(private->memory, private->timer_heap);
+            private->timer_heap = new_heap;
+            private->heap_capacity = new_capacity;
+        }
+        private->timer_heap[private->heap_size++] = timer;
+    }
+
+    return (PolyxEvent*)timer;
 }
 
 static void polyx_async_start_timer(PolyxAsync* self, PolyxEvent* timer) {
@@ -941,6 +708,106 @@ static void polyx_async_destroy_event_group(PolyxAsync* self, int group_id) {
     }
 }
 
+// Get current time in milliseconds
+uint64_t get_current_time_ms(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
+}
+
+// Timer wheel operations
+TimerWheel* create_timer_wheel(void) {
+    TimerWheel* wheel = (TimerWheel*)malloc(sizeof(TimerWheel));
+    if (!wheel) return NULL;
+    
+    memset(wheel, 0, sizeof(TimerWheel));
+    for (int i = 0; i < 1000; i++) {
+        wheel->ms_wheel[i] = (TimerSlot*)malloc(sizeof(TimerSlot));
+        if (!wheel->ms_wheel[i]) {
+            // Cleanup on failure
+            for (int j = 0; j < i; j++) {
+                free(wheel->ms_wheel[j]);
+            }
+            free(wheel);
+            return NULL;
+        }
+        wheel->ms_wheel[i]->head = NULL;
+    }
+    wheel->current_ms = 0;
+    return wheel;
+}
+
+void destroy_timer_wheel(TimerWheel* wheel) {
+    if (!wheel) return;
+    
+    // Free all timers in each slot
+    for (int i = 0; i < 1000; i++) {
+        if (wheel->ms_wheel[i]) {
+            TimerData* timer = wheel->ms_wheel[i]->head;
+            while (timer) {
+                TimerData* next = timer->next;
+                free(timer);
+                timer = next;
+            }
+            free(wheel->ms_wheel[i]);
+        }
+    }
+    free(wheel);
+}
+
+void add_timer_to_wheel(TimerWheel* wheel, TimerData* timer) {
+    if (!wheel || !timer) return;
+    
+    // Calculate slot based on expiration time
+    uint64_t relative_ms = timer->expire_time - wheel->current_ms;
+    if (relative_ms >= 1000) {
+        // Timer too far in future, add to heap instead
+        return;
+    }
+    
+    int slot = relative_ms % 1000;
+    
+    // Add to front of list in slot
+    timer->next = wheel->ms_wheel[slot]->head;
+    wheel->ms_wheel[slot]->head = timer;
+}
+
+void tick_timer_wheel(TimerWheel* wheel) {
+    if (!wheel) return;
+    
+    // Get current slot
+    int current_slot = wheel->current_ms % 1000;
+    TimerSlot* slot = wheel->ms_wheel[current_slot];
+    
+    // Process all timers in current slot
+    TimerData* timer = slot->head;
+    TimerData* prev = NULL;
+    
+    while (timer) {
+        if (timer->expire_time <= wheel->current_ms) {
+            // Timer expired, remove from list and execute
+            if (prev) {
+                prev->next = timer->next;
+            } else {
+                slot->head = timer->next;
+            }
+            
+            if (timer->callback) {
+                timer->callback(timer->arg);
+            }
+            
+            TimerData* to_free = timer;
+            timer = timer->next;
+            free(to_free);
+        } else {
+            prev = timer;
+            timer = timer->next;
+        }
+    }
+    
+    wheel->current_ms++;
+}
+
 // Network event creation
 static PolyxEvent* polyx_async_create_tcp_event(PolyxAsync* self, PolyxNetworkConfig* config) {
     if (!self || !config) return NULL;
@@ -986,3 +853,82 @@ static PolyxEvent* polyx_async_create_tty_event(PolyxAsync* self, PolyxIOConfig*
 static PolyxEvent* polyx_async_create_inotify_event(PolyxAsync* self, PolyxInotifyConfig* config) {
     return NULL;  // Not implemented yet
 }
+
+static void destroy_private_data(PolyxAsyncPrivate* private) {
+    if (!private) return;
+    
+    InfraxMemory* memory = private->memory;
+    if (!memory) return;
+    
+    // Free timer wheel
+    if (private->timer_wheel) {
+        destroy_timer_wheel(private->timer_wheel);
+    }
+    
+    // Free timer heap
+    if (private->timer_heap) {
+        for (size_t i = 0; i < private->heap_size; i++) {
+            if (private->timer_heap[i]) {
+                memory->dealloc(memory, private->timer_heap[i]);
+            }
+        }
+        memory->dealloc(memory, private->timer_heap);
+    }
+    
+    // Free event groups
+    if (private->groups) {
+        for (size_t i = 0; i < private->group_count; i++) {
+            if (private->groups[i].events) {
+                memory->dealloc(memory, private->groups[i].events);
+            }
+        }
+        memory->dealloc(memory, private->groups);
+    }
+    
+    memory->dealloc(memory, private);
+}
+
+// Initialize memory
+static bool init_memory(void) {
+    if (g_memory) return true;
+    
+    InfraxMemoryConfig config = {
+        .initial_size = 1024 * 1024,  // 1MB
+        .use_gc = false,
+        .use_pool = true,
+        .gc_threshold = 0
+    };
+    
+    g_memory = InfraxMemoryClass.new(&config);
+    g_core = InfraxCoreClass.singleton();
+    
+    if (!g_memory || !g_core) {
+        if (g_memory) {
+            InfraxMemoryClass.free(g_memory);
+            g_memory = NULL;
+        }
+        return false;
+    }
+    
+    return true;
+}
+
+// Class definition
+const PolyxAsyncClassType PolyxAsyncClass = {
+    .new = polyx_async_new,
+    .free = polyx_async_free,
+    .create_event = polyx_async_create_event,
+    .destroy_event = polyx_async_destroy_event,
+    .trigger_event = polyx_async_trigger_event,
+    .create_timer = polyx_async_create_timer,
+    .start_timer = polyx_async_start_timer,
+    .stop_timer = polyx_async_stop_timer,
+    .poll = polyx_async_poll,
+    .get_stats = polyx_async_get_stats,
+    .reset_stats = polyx_async_reset_stats,
+    .set_debug_level = polyx_async_set_debug_level,
+    .set_debug_callback = polyx_async_set_debug_callback,
+    .create_event_group = polyx_async_create_event_group,
+    .wait_event_group = polyx_async_wait_event_group,
+    .destroy_event_group = polyx_async_destroy_event_group
+};

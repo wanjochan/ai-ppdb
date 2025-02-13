@@ -2,14 +2,8 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
+#include "internal/infrax/InfraxMemory.h"
 #include "internal/polyx/PolyxAsync.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <assert.h>
 
 // Test timeout control
 #define TEST_TIMEOUT_MS 5000  // 增加到5秒超时
@@ -37,22 +31,21 @@ static void test_polyx_async_write_file(void);
 static void async_read_file(InfraxAsync* self, void* arg) {
     if (!self || !arg) return;
     
-    int fd = open(TEST_FILE, O_RDONLY);
-    if (fd < 0) {
+    InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxHandle fd;
+    InfraxError err = core->file_open(core, TEST_FILE, INFRAX_FILE_RDONLY, 0644, &fd);
+    if (INFRAX_ERROR_IS_ERR(err)) {
         self->state = INFRAX_ASYNC_REJECTED;
         return;
     }
     
     char* buffer = (char*)arg;
-    ssize_t total_read = 0;
+    size_t total_read = 0;
+    size_t bytes_read = 0;
     
     while (total_read < TEST_DATA_LEN && self->state == INFRAX_ASYNC_PENDING) {
-        ssize_t bytes_read = read(fd, buffer + total_read, TEST_DATA_LEN - total_read);
-        if (bytes_read < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Would block, return and let pollset handle other events
-                return;
-            }
+        err = core->file_read(core, fd, buffer + total_read, TEST_DATA_LEN - total_read, &bytes_read);
+        if (INFRAX_ERROR_IS_ERR(err)) {
             self->state = INFRAX_ASYNC_REJECTED;
             break;
         } else if (bytes_read == 0) {
@@ -62,7 +55,7 @@ static void async_read_file(InfraxAsync* self, void* arg) {
         total_read += bytes_read;
     }
     
-    close(fd);
+    core->file_close(core, fd);
     
     if (self->state == INFRAX_ASYNC_PENDING) {
         self->state = INFRAX_ASYNC_FULFILLED;
@@ -73,29 +66,28 @@ static void async_read_file(InfraxAsync* self, void* arg) {
 static void async_write_file(InfraxAsync* self, void* arg) {
     if (!self || !arg) return;
     
-    int fd = open(TEST_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
+    InfraxCore* core = InfraxCoreClass.singleton();
+    InfraxHandle fd;
+    InfraxError err = core->file_open(core, TEST_FILE, INFRAX_FILE_CREATE | INFRAX_FILE_WRONLY | INFRAX_FILE_TRUNC, 0644, &fd);
+    if (INFRAX_ERROR_IS_ERR(err)) {
         self->state = INFRAX_ASYNC_REJECTED;
         return;
     }
     
     const char* data = (const char*)arg;
-    ssize_t total_written = 0;
+    size_t total_written = 0;
+    size_t bytes_written = 0;
     
     while (total_written < TEST_DATA_LEN && self->state == INFRAX_ASYNC_PENDING) {
-        ssize_t bytes_written = write(fd, data + total_written, TEST_DATA_LEN - total_written);
-        if (bytes_written < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Would block, return and let pollset handle other events
-                return;
-            }
+        err = core->file_write(core, fd, data + total_written, TEST_DATA_LEN - total_written, &bytes_written);
+        if (INFRAX_ERROR_IS_ERR(err)) {
             self->state = INFRAX_ASYNC_REJECTED;
             break;
         }
         total_written += bytes_written;
     }
     
-    close(fd);
+    core->file_close(core, fd);
     
     if (self->state == INFRAX_ASYNC_PENDING) {
         self->state = INFRAX_ASYNC_FULFILLED;
@@ -104,60 +96,62 @@ static void async_write_file(InfraxAsync* self, void* arg) {
 
 // Test async write file
 static void test_polyx_async_write_file(void) {
-    printf("Testing async write file...\n");
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Testing async write file...\n");
     
     // Create async task
     InfraxAsync* async = InfraxAsyncClass.new(async_write_file, (void*)TEST_DATA);
-    assert(async != NULL);
+    INFRAX_ASSERT(core, async != NULL);
     
     // Start task
     bool started = InfraxAsyncClass.start(async);
-    assert(started);
+    INFRAX_ASSERT(core, started);
     
     // Poll until done
     while (!InfraxAsyncClass.is_done(async)) {
         int ret = InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
-        assert(ret >= 0);
+        INFRAX_ASSERT(core, ret >= 0);
     }
     
     // Check result
-    assert(async->state == INFRAX_ASYNC_FULFILLED);
+    INFRAX_ASSERT(core, async->state == INFRAX_ASYNC_FULFILLED);
     
     // Cleanup
     InfraxAsyncClass.free(async);
     
-    printf("Async write file test passed\n");
+    core->printf(core, "Async write file test passed\n");
 }
 
 // Test async read file
 static void test_polyx_async_read_file(void) {
-    printf("Testing async read file...\n");
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Testing async read file...\n");
     
     // Create buffer for read data
     char buffer[TEST_DATA_LEN + 1] = {0};
     
     // Create async task
     InfraxAsync* async = InfraxAsyncClass.new(async_read_file, buffer);
-    assert(async != NULL);
+    INFRAX_ASSERT(core, async != NULL);
     
     // Start task
     bool started = InfraxAsyncClass.start(async);
-    assert(started);
+    INFRAX_ASSERT(core, started);
     
     // Poll until done
     while (!InfraxAsyncClass.is_done(async)) {
         int ret = InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
-        assert(ret >= 0);
+        INFRAX_ASSERT(core, ret >= 0);
     }
     
     // Check result
-    assert(async->state == INFRAX_ASYNC_FULFILLED);
-    assert(strcmp(buffer, TEST_DATA) == 0);
+    INFRAX_ASSERT(core, async->state == INFRAX_ASYNC_FULFILLED);
+    INFRAX_ASSERT(core, core->strcmp(core, buffer, TEST_DATA) == 0);
     
     // Cleanup
     InfraxAsyncClass.free(async);
     
-    printf("Async read file test passed\n");
+    core->printf(core, "Async read file test passed\n");
 }
 
 // Timer callback
@@ -181,54 +175,57 @@ static void test_event_callback(PolyxEvent* event, void* arg) {
 // Debug callback for testing
 static void test_debug_callback(PolyxDebugLevel level, const char* file, int line, 
                               const char* func, const char* msg) {
-    printf("[%s:%d] %s: %s\n", file, line, func, msg);
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "[%s:%d] %s: %s\n", file, line, func, msg);
 }
 
 // Basic functionality tests
 void test_polyx_async_basic(void) {
-    printf("Creating new PolyxAsync instance...\n");
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Creating new PolyxAsync instance...\n");
     PolyxAsync* async = PolyxAsyncClass.new();
-    assert(async != NULL);
-    printf("PolyxAsync instance created successfully\n");
+    INFRAX_ASSERT(core, async != NULL);
+    core->printf(core, "PolyxAsync instance created successfully\n");
     
     // Test event creation
-    printf("Creating event configuration...\n");
+    core->printf(core, "Creating event configuration...\n");
     PolyxEventConfig config = {
         .type = POLYX_EVENT_IO,
         .callback = NULL,
         .arg = NULL
     };
     
-    printf("Creating event...\n");
+    core->printf(core, "Creating event...\n");
     PolyxEvent* event = PolyxAsyncClass.create_event(async, &config);
-    assert(event != NULL);
-    printf("Event created successfully\n");
+    INFRAX_ASSERT(core, event != NULL);
+    core->printf(core, "Event created successfully\n");
     
-    printf("Checking event properties...\n");
-    assert(event->type == POLYX_EVENT_IO);
-    assert(event->status == POLYX_EVENT_STATUS_INIT);
-    printf("Event properties verified\n");
+    core->printf(core, "Checking event properties...\n");
+    INFRAX_ASSERT(core, event->type == POLYX_EVENT_IO);
+    INFRAX_ASSERT(core, event->status == POLYX_EVENT_STATUS_INIT);
+    core->printf(core, "Event properties verified\n");
     
-    printf("Destroying event...\n");
+    core->printf(core, "Destroying event...\n");
     PolyxAsyncClass.destroy_event(async, event);
-    printf("Event destroyed successfully\n");
+    core->printf(core, "Event destroyed successfully\n");
     
-    printf("Freeing PolyxAsync instance...\n");
+    core->printf(core, "Freeing PolyxAsync instance...\n");
     PolyxAsyncClass.free(async);
-    printf("PolyxAsync instance freed successfully\n");
+    core->printf(core, "PolyxAsync instance freed successfully\n");
 }
 
 // Network event tests
 void test_polyx_async_network(void) {
-    printf("\nStarting network tests...\n");
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "\nStarting network tests...\n");
     
-    printf("Creating new PolyxAsync instance...\n");
+    core->printf(core, "Creating new PolyxAsync instance...\n");
     PolyxAsync* async = PolyxAsyncClass.new();
-    assert(async != NULL);
-    printf("PolyxAsync instance created successfully\n");
+    INFRAX_ASSERT(core, async != NULL);
+    core->printf(core, "PolyxAsync instance created successfully\n");
     
     // Test TCP event
-    printf("Creating TCP event configuration...\n");
+    core->printf(core, "Creating TCP event configuration...\n");
     PolyxNetworkConfig tcp_config = {
         .socket_fd = -1,
         .events = POLLIN | POLLOUT,
@@ -238,65 +235,67 @@ void test_polyx_async_network(void) {
         }
     };
     
-    printf("Creating TCP event...\n");
+    core->printf(core, "Creating TCP event...\n");
     PolyxEvent* tcp_event = PolyxAsyncClass.create_tcp_event(async, &tcp_config);
-    assert(tcp_event != NULL);
-    printf("TCP event created successfully\n");
+    INFRAX_ASSERT(core, tcp_event != NULL);
+    core->printf(core, "TCP event created successfully\n");
     
-    printf("Checking TCP event properties...\n");
-    assert(POLYX_EVENT_IS_NETWORK(tcp_event));
-    printf("TCP event properties verified\n");
+    core->printf(core, "Checking TCP event properties...\n");
+    INFRAX_ASSERT(core, POLYX_EVENT_IS_NETWORK(tcp_event));
+    core->printf(core, "TCP event properties verified\n");
     
-    printf("Destroying TCP event...\n");
+    core->printf(core, "Destroying TCP event...\n");
     PolyxAsyncClass.destroy_event(async, tcp_event);
-    printf("TCP event destroyed successfully\n");
+    core->printf(core, "TCP event destroyed successfully\n");
     
-    printf("Freeing PolyxAsync instance...\n");
+    core->printf(core, "Freeing PolyxAsync instance...\n");
     PolyxAsyncClass.free(async);
-    printf("PolyxAsync instance freed successfully\n");
+    core->printf(core, "PolyxAsync instance freed successfully\n");
 }
 
 // Debug functionality tests
 void test_polyx_async_debug(void) {
-    printf("\nStarting debug tests...\n");
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "\nStarting debug tests...\n");
     
-    printf("Creating new PolyxAsync instance...\n");
+    core->printf(core, "Creating new PolyxAsync instance...\n");
     PolyxAsync* async = PolyxAsyncClass.new();
-    assert(async != NULL);
-    printf("PolyxAsync instance created successfully\n");
+    INFRAX_ASSERT(core, async != NULL);
+    core->printf(core, "PolyxAsync instance created successfully\n");
     
-    printf("Setting debug level and callback...\n");
+    core->printf(core, "Setting debug level and callback...\n");
     PolyxAsyncClass.set_debug_level(async, POLYX_DEBUG_INFO);
     PolyxAsyncClass.set_debug_callback(async, test_debug_callback, NULL);
-    printf("Debug settings configured\n");
+    core->printf(core, "Debug settings configured\n");
     
-    printf("Testing debug message...\n");
+    core->printf(core, "Testing debug message...\n");
     POLYX_INFO(async, "Debug test message");
-    printf("Debug message sent\n");
+    core->printf(core, "Debug message sent\n");
     
-    printf("Freeing PolyxAsync instance...\n");
+    core->printf(core, "Freeing PolyxAsync instance...\n");
     PolyxAsyncClass.free(async);
-    printf("PolyxAsync instance freed successfully\n");
+    core->printf(core, "PolyxAsync instance freed successfully\n");
 }
 
 // Event statistics tests
 void test_polyx_async_stats(void) {
-    printf("\nStarting statistics tests...\n");
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "\nStarting statistics tests...\n");
     
-    printf("Creating new PolyxAsync instance...\n");
+    core->printf(core, "Creating new PolyxAsync instance...\n");
     PolyxAsync* async = PolyxAsyncClass.new();
-    assert(async != NULL);
-    printf("PolyxAsync instance created successfully\n");
+    INFRAX_ASSERT(core, async != NULL);
+    core->printf(core, "PolyxAsync instance created successfully\n");
     
-    printf("Getting initial statistics...\n");
+    core->printf(core, "Getting initial statistics...\n");
     PolyxEventStats stats;
     PolyxAsyncClass.get_stats(async, &stats);
-    assert(stats.total_events == 0);
-    assert(stats.active_events == 0);
-    printf("Initial statistics verified\n");
+    INFRAX_ASSERT(core, stats.total_events == 0);
+    INFRAX_ASSERT(core, stats.active_events == 0);
+    core->printf(core, "Initial statistics verified\n");
     
     // Create some events
-    printf("Creating test events...\n");
+    core->printf(core, "Creating test events...\n");
     PolyxEventConfig config = {
         .type = POLYX_EVENT_IO,
         .callback = NULL,
@@ -304,35 +303,36 @@ void test_polyx_async_stats(void) {
     };
     PolyxEvent* event1 = PolyxAsyncClass.create_event(async, &config);
     PolyxEvent* event2 = PolyxAsyncClass.create_event(async, &config);
-    assert(event1 != NULL && event2 != NULL);
-    printf("Test events created successfully\n");
+    INFRAX_ASSERT(core, event1 != NULL && event2 != NULL);
+    core->printf(core, "Test events created successfully\n");
     
-    printf("Getting updated statistics...\n");
+    core->printf(core, "Getting updated statistics...\n");
     PolyxAsyncClass.get_stats(async, &stats);
-    assert(stats.total_events == 2);
-    printf("Updated statistics verified\n");
+    INFRAX_ASSERT(core, stats.total_events == 2);
+    core->printf(core, "Updated statistics verified\n");
     
-    printf("Cleaning up events...\n");
+    core->printf(core, "Cleaning up events...\n");
     PolyxAsyncClass.destroy_event(async, event1);
     PolyxAsyncClass.destroy_event(async, event2);
-    printf("Events cleaned up successfully\n");
+    core->printf(core, "Events cleaned up successfully\n");
     
-    printf("Freeing PolyxAsync instance...\n");
+    core->printf(core, "Freeing PolyxAsync instance...\n");
     PolyxAsyncClass.free(async);
-    printf("PolyxAsync instance freed successfully\n");
+    core->printf(core, "PolyxAsync instance freed successfully\n");
 }
 
 // Event group tests
 void test_polyx_async_group(void) {
-    printf("\nStarting event group tests...\n");
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "\nStarting event group tests...\n");
     
-    printf("Creating new PolyxAsync instance...\n");
+    core->printf(core, "Creating new PolyxAsync instance...\n");
     PolyxAsync* async = PolyxAsyncClass.new();
-    assert(async != NULL);
-    printf("PolyxAsync instance created successfully\n");
+    INFRAX_ASSERT(core, async != NULL);
+    core->printf(core, "PolyxAsync instance created successfully\n");
     
     // Create events
-    printf("Creating test events...\n");
+    core->printf(core, "Creating test events...\n");
     PolyxEventConfig config = {
         .type = POLYX_EVENT_IO,
         .callback = NULL,
@@ -341,57 +341,58 @@ void test_polyx_async_group(void) {
     PolyxEvent* events[2];
     events[0] = PolyxAsyncClass.create_event(async, &config);
     events[1] = PolyxAsyncClass.create_event(async, &config);
-    assert(events[0] != NULL && events[1] != NULL);
-    printf("Test events created successfully\n");
+    INFRAX_ASSERT(core, events[0] != NULL && events[1] != NULL);
+    core->printf(core, "Test events created successfully\n");
     
     // Create event group
-    printf("Creating event group...\n");
+    core->printf(core, "Creating event group...\n");
     int group_id = PolyxAsyncClass.create_event_group(async, events, 2);
-    assert(group_id >= 0);
-    printf("Event group created successfully\n");
+    INFRAX_ASSERT(core, group_id >= 0);
+    core->printf(core, "Event group created successfully\n");
     
     // Test wait
-    printf("Testing event group wait...\n");
+    core->printf(core, "Testing event group wait...\n");
     int ret = PolyxAsyncClass.wait_event_group(async, group_id, 0);
-    assert(ret == POLYX_ERROR_TIMEOUT);
-    printf("Event group wait test passed\n");
+    INFRAX_ASSERT(core, ret == POLYX_ERROR_TIMEOUT);
+    core->printf(core, "Event group wait test passed\n");
     
-    printf("Cleaning up...\n");
+    core->printf(core, "Cleaning up...\n");
     PolyxAsyncClass.destroy_event_group(async, group_id);
     PolyxAsyncClass.destroy_event(async, events[0]);
     PolyxAsyncClass.destroy_event(async, events[1]);
-    printf("Event group and events cleaned up successfully\n");
+    core->printf(core, "Event group and events cleaned up successfully\n");
     
-    printf("Freeing PolyxAsync instance...\n");
+    core->printf(core, "Freeing PolyxAsync instance...\n");
     PolyxAsyncClass.free(async);
-    printf("PolyxAsync instance freed successfully\n");
+    core->printf(core, "PolyxAsync instance freed successfully\n");
 }
 
 int main(void) {
-    printf("\n=== Running PolyxAsync tests ===\n\n");
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "\n=== Running PolyxAsync tests ===\n\n");
     
-    printf("Running basic tests...\n");
+    core->printf(core, "Running basic tests...\n");
     test_polyx_async_basic();
-    printf("Basic tests passed\n\n");
+    core->printf(core, "Basic tests passed\n\n");
     
     /*
-    printf("Running network tests...\n");
+    core->printf(core, "Running network tests...\n");
     test_polyx_async_network();
-    printf("Network tests passed\n\n");
+    core->printf(core, "Network tests passed\n\n");
     
-    printf("Running debug tests...\n");
+    core->printf(core, "Running debug tests...\n");
     test_polyx_async_debug();
-    printf("Debug tests passed\n\n");
+    core->printf(core, "Debug tests passed\n\n");
     
-    printf("Running statistics tests...\n");
+    core->printf(core, "Running statistics tests...\n");
     test_polyx_async_stats();
-    printf("Statistics tests passed\n\n");
+    core->printf(core, "Statistics tests passed\n\n");
     
-    printf("Running event group tests...\n");
+    core->printf(core, "Running event group tests...\n");
     test_polyx_async_group();
-    printf("Event group tests passed\n\n");
+    core->printf(core, "Event group tests passed\n\n");
     */
     
-    printf("=== All tests passed! ===\n\n");
+    core->printf(core, "=== All tests passed! ===\n\n");
     return 0;
 }
