@@ -14,8 +14,8 @@
 //TODO rename to InfraxNet...
 
 // Forward declarations
-typedef struct InfraxSocket InfraxSocket;
-typedef struct InfraxSocketClassType InfraxSocketClassType;
+typedef struct InfraxNet InfraxNet;
+typedef struct InfraxNetClassType InfraxNetClassType;
 
 // Network address structure
 typedef struct {
@@ -23,55 +23,54 @@ typedef struct {
     uint16_t port;
 } InfraxNetAddr;
 
-// Socket configuration
+// Network configuration
 typedef struct {
     bool is_udp;           // true for UDP, false for TCP
     bool is_nonblocking;   // true for non-blocking mode
     bool reuse_addr;       // true to enable SO_REUSEADDR
     uint32_t send_timeout_ms;
     uint32_t recv_timeout_ms;
-} InfraxSocketConfig;
+} InfraxNetConfig;
 
 // The "static" interface (like static methods in OOP)
-struct InfraxSocketClassType {
-    InfraxSocket* (*new)(const InfraxSocketConfig* config);
-    void (*free)(InfraxSocket* self);
+struct InfraxNetClassType {
+    InfraxNet* (*new)(const InfraxNetConfig* config);
+    void (*free)(InfraxNet* self);
+
+    // Instance methods
+    InfraxError (*bind)(InfraxNet* self, const InfraxNetAddr* addr);
+    InfraxError (*listen)(InfraxNet* self, int backlog);
+    InfraxError (*accept)(InfraxNet* self, InfraxNet** client_socket, InfraxNetAddr* client_addr);
+    InfraxError (*connect)(InfraxNet* self, const InfraxNetAddr* addr);
+    InfraxError (*send)(InfraxNet* self, const void* data, size_t size, size_t* sent);
+    InfraxError (*recv)(InfraxNet* self, void* buffer, size_t size, size_t* received);
+    InfraxError (*sendto)(InfraxNet* self, const void* data, size_t size, size_t* sent, const InfraxNetAddr* addr);
+    InfraxError (*recvfrom)(InfraxNet* self, void* buffer, size_t size, size_t* received, InfraxNetAddr* addr);
+    InfraxError (*set_option)(InfraxNet* self, int level, int option, const void* value, size_t len);
+    InfraxError (*get_option)(InfraxNet* self, int level, int option, void* value, size_t* len);
+    InfraxError (*set_nonblock)(InfraxNet* self, bool nonblock);
+    InfraxError (*set_timeout)(InfraxNet* self, uint32_t send_timeout_ms, uint32_t recv_timeout_ms);
+    InfraxError (*get_local_addr)(InfraxNet* self, InfraxNetAddr* addr);
+    InfraxError (*get_peer_addr)(InfraxNet* self, InfraxNetAddr* addr);
+    InfraxError (*close)(InfraxNet* self);
+    InfraxError (*shutdown)(InfraxNet* self, int how);
 };
 
 // The instance structure
-struct InfraxSocket {
-    InfraxSocket* self;
-    InfraxSocketClassType* klass;//InfraxSocketClass
+struct InfraxNet {
+    InfraxNet* self;
+    InfraxNetClassType* klass;
 
-    // Socket data
-    InfraxSocketConfig config;
+    // Network data
+    InfraxNetConfig config;
     intptr_t native_handle;
     bool is_connected;
     InfraxNetAddr local_addr;
     InfraxNetAddr peer_addr;
-
-    // Instance methods
-    InfraxError (*bind)(InfraxSocket* self, const InfraxNetAddr* addr);
-    InfraxError (*listen)(InfraxSocket* self, int backlog);
-    InfraxError (*accept)(InfraxSocket* self, InfraxSocket** client_socket, InfraxNetAddr* client_addr);
-    InfraxError (*connect)(InfraxSocket* self, const InfraxNetAddr* addr);
-    InfraxError (*send)(InfraxSocket* self, const void* data, size_t size, size_t* sent);
-    InfraxError (*recv)(InfraxSocket* self, void* buffer, size_t size, size_t* received);
-    InfraxError (*sendto)(InfraxSocket* self, const void* data, size_t size, size_t* sent, const InfraxNetAddr* addr);
-    InfraxError (*recvfrom)(InfraxSocket* self, void* buffer, size_t size, size_t* received, InfraxNetAddr* addr);
-    InfraxError (*set_option)(InfraxSocket* self, int level, int option, const void* value, size_t len);
-    InfraxError (*get_option)(InfraxSocket* self, int level, int option, void* value, size_t* len);
-    InfraxError (*set_nonblock)(InfraxSocket* self, bool nonblock);
-    InfraxError (*set_timeout)(InfraxSocket* self, uint32_t send_timeout_ms, uint32_t recv_timeout_ms);
-    InfraxError (*get_local_addr)(InfraxSocket* self, InfraxNetAddr* addr);
-    InfraxError (*get_peer_addr)(InfraxSocket* self, InfraxNetAddr* addr);
-
-    InfraxError (*close)(InfraxSocket* self);
-    InfraxError (*shutdown)(InfraxSocket* self, int how);
 };
 
 // The "static" interface instance
-extern InfraxSocketClassType InfraxSocketClass;
+extern InfraxNetClassType InfraxNetClass;
 
 // Socket level options (compatible with system socket options)
 #define INFRAX_SOL_SOCKET      1

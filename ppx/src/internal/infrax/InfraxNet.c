@@ -16,9 +16,9 @@
 static InfraxError set_socket_option(intptr_t handle, int level, int option, const void* value, size_t len);
 static InfraxError get_socket_option(intptr_t handle, int level, int option, void* value, size_t* len);
 static InfraxError set_socket_nonblocking(intptr_t handle, bool nonblock);
-static InfraxSocket* socket_new(const InfraxSocketConfig* config);
-static void socket_free(InfraxSocket* self);
-static InfraxError socket_shutdown(InfraxSocket* self, int how);
+static InfraxNet* net_new(const InfraxNetConfig* config);
+static void net_free(InfraxNet* self);
+static InfraxError net_shutdown(InfraxNet* self, int how);
 
 // Forward declarations
 static InfraxMemory* get_memory_manager(void);
@@ -70,16 +70,23 @@ static InfraxMemory* get_memory_manager(void) {
 }
 
 // Instance methods implementations
-static InfraxError socket_bind(InfraxSocket* self, const InfraxNetAddr* addr) {
+static InfraxError net_bind(InfraxNet* self, const InfraxNetAddr* addr) {
     if (!self || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket or address");
+
+    // 验证端口号
+    if (addr->port == 0) {
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid port number: 0 is not allowed");
+    }
 
     struct sockaddr_in bind_addr;
     memset(&bind_addr, 0, sizeof(bind_addr));
     bind_addr.sin_family = AF_INET;
     bind_addr.sin_port = htons(addr->port);
     
-    // 直接使用inet_pton，因为在infrax_net_addr_from_string中已经验证过了
-    inet_pton(AF_INET, addr->ip, &bind_addr.sin_addr);
+    // 验证 IP 地址格式
+    if (inet_pton(AF_INET, addr->ip, &bind_addr.sin_addr) <= 0) {
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid IP address format");
+    }
 
     if (bind(self->native_handle, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
         char err_msg[256];
@@ -91,7 +98,7 @@ static InfraxError socket_bind(InfraxSocket* self, const InfraxNetAddr* addr) {
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_listen(InfraxSocket* self, int backlog) {
+static InfraxError net_listen(InfraxNet* self, int backlog) {
     if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     if (self->config.is_udp) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
 
@@ -102,7 +109,7 @@ static InfraxError socket_listen(InfraxSocket* self, int backlog) {
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_shutdown(InfraxSocket* self, int how) {
+static InfraxError net_shutdown(InfraxNet* self, int how) {
     if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     if (self->native_handle < 0) return INFRAX_ERROR_OK_STRUCT;  // 已经关闭
     
@@ -136,7 +143,7 @@ static InfraxError socket_shutdown(InfraxSocket* self, int how) {
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_close(InfraxSocket* self) {
+static InfraxError net_close(InfraxNet* self) {
     if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     if (self->native_handle < 0) return INFRAX_ERROR_OK_STRUCT;  // 已经关闭
     
@@ -152,7 +159,7 @@ static InfraxError socket_close(InfraxSocket* self) {
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_accept(InfraxSocket* self, InfraxSocket** client_socket, InfraxNetAddr* client_addr) {
+static InfraxError net_accept(InfraxNet* self, InfraxNet** client_socket, InfraxNetAddr* client_addr) {
     if (!self || !client_socket) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     if (self->config.is_udp) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
 
@@ -168,7 +175,7 @@ static InfraxError socket_accept(InfraxSocket* self, InfraxSocket** client_socke
     }
 
     // Create new socket configuration for client
-    InfraxSocketConfig config = {
+    InfraxNetConfig config = {
         .is_udp = false,
         .is_nonblocking = self->config.is_nonblocking,
         .send_timeout_ms = self->config.send_timeout_ms,
@@ -177,13 +184,13 @@ static InfraxError socket_accept(InfraxSocket* self, InfraxSocket** client_socke
     };
 
     // Create new socket instance
-    InfraxSocket* new_socket = socket_new(&config);
+    InfraxNet* new_socket = net_new(&config);
     if (!new_socket) {
         close(client_fd);
         return INFRAX_ERROR_NET_SOCKET_FAILED;
     }
 
-    // Close the original socket created by socket_new
+    // Close the original socket created by net_new
     if (new_socket->native_handle >= 0) {
         close(new_socket->native_handle);
     }
@@ -203,7 +210,7 @@ static InfraxError socket_accept(InfraxSocket* self, InfraxSocket** client_socke
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_connect(InfraxSocket* self, const InfraxNetAddr* addr) {
+static InfraxError net_connect(InfraxNet* self, const InfraxNetAddr* addr) {
     if (!self || !addr) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     if (self->is_connected) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
 
@@ -292,7 +299,7 @@ static InfraxError socket_connect(InfraxSocket* self, const InfraxNetAddr* addr)
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_send(InfraxSocket* self, const void* data, size_t size, size_t* sent) {
+static InfraxError net_send(InfraxNet* self, const void* data, size_t size, size_t* sent) {
     if (!self || !data || !sent) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     if (!self->is_connected && !self->config.is_udp) return INFRAX_ERROR_NET_NOT_CONNECTED;
 
@@ -322,7 +329,7 @@ static InfraxError socket_send(InfraxSocket* self, const void* data, size_t size
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_recv(InfraxSocket* self, void* buffer, size_t size, size_t* received) {
+static InfraxError net_recv(InfraxNet* self, void* buffer, size_t size, size_t* received) {
     if (!self || !buffer || !received) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     if (!self->is_connected && !self->config.is_udp) return INFRAX_ERROR_NET_NOT_CONNECTED;
 
@@ -354,7 +361,7 @@ static InfraxError socket_recv(InfraxSocket* self, void* buffer, size_t size, si
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_sendto(InfraxSocket* self, const void* data, size_t size, size_t* sent, const InfraxNetAddr* addr) {
+static InfraxError net_sendto(InfraxNet* self, const void* data, size_t size, size_t* sent, const InfraxNetAddr* addr) {
     if (!self || !data || !sent || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid arguments");
 
     struct sockaddr_in dest_addr;
@@ -382,7 +389,7 @@ static InfraxError socket_sendto(InfraxSocket* self, const void* data, size_t si
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_recvfrom(InfraxSocket* self, void* buffer, size_t size, size_t* received, InfraxNetAddr* addr) {
+static InfraxError net_recvfrom(InfraxNet* self, void* buffer, size_t size, size_t* received, InfraxNetAddr* addr) {
     if (!self || !buffer || !received || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid arguments");
 
     struct sockaddr_in src_addr;
@@ -415,17 +422,17 @@ static InfraxError socket_recvfrom(InfraxSocket* self, void* buffer, size_t size
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_set_option(InfraxSocket* self, int level, int option, const void* value, size_t len) {
+static InfraxError net_set_option(InfraxNet* self, int level, int option, const void* value, size_t len) {
     if (!self || !value) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     return set_socket_option(self->native_handle, level, option, value, len);
 }
 
-static InfraxError socket_get_option(InfraxSocket* self, int level, int option, void* value, size_t* len) {
+static InfraxError net_get_option(InfraxNet* self, int level, int option, void* value, size_t* len) {
     if (!self || !value || !len) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     return get_socket_option(self->native_handle, level, option, value, len);
 }
 
-static InfraxError socket_set_nonblock(InfraxSocket* self, bool nonblock) {
+static InfraxError net_set_nonblock(InfraxNet* self, bool nonblock) {
     if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     
     InfraxError err = set_socket_nonblocking(self->native_handle, nonblock);
@@ -435,7 +442,7 @@ static InfraxError socket_set_nonblock(InfraxSocket* self, bool nonblock) {
     return err;
 }
 
-static InfraxError socket_set_timeout(InfraxSocket* self, uint32_t send_timeout_ms, uint32_t recv_timeout_ms) {
+static InfraxError net_set_timeout(InfraxNet* self, uint32_t send_timeout_ms, uint32_t recv_timeout_ms) {
     if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
 
     struct timeval send_tv = {
@@ -459,7 +466,7 @@ static InfraxError socket_set_timeout(InfraxSocket* self, uint32_t send_timeout_
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_get_local_addr(InfraxSocket* self, InfraxNetAddr* addr) {
+static InfraxError net_get_local_addr(InfraxNet* self, InfraxNetAddr* addr) {
     if (!self || !addr) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     
     struct sockaddr_in local_addr;
@@ -474,7 +481,7 @@ static InfraxError socket_get_local_addr(InfraxSocket* self, InfraxNetAddr* addr
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError socket_get_peer_addr(InfraxSocket* self, InfraxNetAddr* addr) {
+static InfraxError net_get_peer_addr(InfraxNet* self, InfraxNetAddr* addr) {
     if (!self || !addr) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     if (!self->is_connected) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     
@@ -491,7 +498,7 @@ static InfraxError socket_get_peer_addr(InfraxSocket* self, InfraxNetAddr* addr)
 }
 
 // Constructor and destructor
-static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
+static InfraxNet* net_new(const InfraxNetConfig* config) {
     if (!config) return NULL;
     
     // Create socket
@@ -505,17 +512,17 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     }
     
     // Create socket instance
-    InfraxSocket* self = get_memory_manager()->alloc(get_memory_manager(), sizeof(InfraxSocket));
+    InfraxNet* self = get_memory_manager()->alloc(get_memory_manager(), sizeof(InfraxNet));
     if (!self) {
         close(fd);
         return NULL;
     }
     
     // 清零所有内存
-    memset(self, 0, sizeof(InfraxSocket));
+    memset(self, 0, sizeof(InfraxNet));
     
     self->self = self;
-    self->klass = &InfraxSocketClass;
+    self->klass = &InfraxNetClass;
 
     // Initialize socket
     self->config = *config;
@@ -526,29 +533,11 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     memset(&self->local_addr, 0, sizeof(self->local_addr));
     memset(&self->peer_addr, 0, sizeof(self->peer_addr));
     
-    // Set instance methods
-    self->bind = socket_bind;
-    self->listen = socket_listen;
-    self->accept = socket_accept;
-    self->connect = socket_connect;
-    self->send = socket_send;
-    self->recv = socket_recv;
-    self->sendto = socket_sendto;
-    self->recvfrom = socket_recvfrom;
-    self->set_option = socket_set_option;
-    self->get_option = socket_get_option;
-    self->set_nonblock = socket_set_nonblock;
-    self->set_timeout = socket_set_timeout;
-    self->get_local_addr = socket_get_local_addr;
-    self->get_peer_addr = socket_get_peer_addr;
-    self->close = socket_close;
-    self->shutdown = socket_shutdown;
-    
     // Set socket options
     if (config->reuse_addr) {
         int reuse = 1;
         if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
-            socket_free(self);
+            net_free(self);
             return NULL;
         }
     }
@@ -557,7 +546,7 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     if (config->is_nonblocking) {
         int flags = fcntl(fd, F_GETFL, 0);
         if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-            socket_free(self);
+            net_free(self);
             return NULL;
         }
     }
@@ -575,14 +564,14 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
         
         if (config->send_timeout_ms > 0) {
             if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &send_timeout, sizeof(send_timeout)) < 0) {
-                socket_free(self);
+                net_free(self);
                 return NULL;
             }
         }
         
         if (config->recv_timeout_ms > 0) {
             if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout)) < 0) {
-                socket_free(self);
+                net_free(self);
                 return NULL;
             }
         }
@@ -591,24 +580,40 @@ static InfraxSocket* socket_new(const InfraxSocketConfig* config) {
     return self;
 }
 
-static void socket_free(InfraxSocket* self) {
+static void net_free(InfraxNet* self) {
     if (!self) return;
     
     if (self->native_handle >= 0) {
-        // 使用socket_close来优雅地关闭socket
-        InfraxError err = socket_close(self);
+        // 使用net_close来优雅地关闭socket
+        InfraxError err = net_close(self);
         if (INFRAX_ERROR_IS_ERR(err)) {
-            fprintf(stderr, "Warning: socket_close failed during free: %s\n", err.message);
+            fprintf(stderr, "Warning: net_close failed during free: %s\n", err.message);
         }
     }
     
     get_memory_manager()->dealloc(get_memory_manager(), self);
 }
 
-// Socket class instance
-InfraxSocketClassType InfraxSocketClass = {
-    .new = socket_new,
-    .free = socket_free
+// Network class instance
+InfraxNetClassType InfraxNetClass = {
+    .new = net_new,
+    .free = net_free,
+    .bind = net_bind,
+    .listen = net_listen,
+    .accept = net_accept,
+    .connect = net_connect,
+    .send = net_send,
+    .recv = net_recv,
+    .sendto = net_sendto,
+    .recvfrom = net_recvfrom,
+    .set_option = net_set_option,
+    .get_option = net_get_option,
+    .set_nonblock = net_set_nonblock,
+    .set_timeout = net_set_timeout,
+    .get_local_addr = net_get_local_addr,
+    .get_peer_addr = net_get_peer_addr,
+    .close = net_close,
+    .shutdown = net_shutdown
 };
 
 // Private helper functions implementations
@@ -653,14 +658,6 @@ InfraxError infrax_net_addr_from_string(const char* ip, uint16_t port, InfraxNet
     struct in_addr inaddr;
     if (inet_pton(AF_INET, ip, &inaddr) <= 0) {
         return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid IP address format");
-    }
-
-    // Validate port number (0 is invalid, 1-1023 are reserved)
-    if (port == 0) {
-        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid port: Port 0 is not allowed");
-    }
-    if (port <= 1023) {
-        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid port: Ports 1-1023 are reserved");
     }
 
     strncpy(addr->ip, ip, sizeof(addr->ip) - 1);

@@ -17,7 +17,7 @@ typedef struct {
     InfraxCoreClassType* coreClass;
     InfraxMemoryClassType* memoryClass;
     InfraxThreadClassType* threadClass;
-    InfraxSocketClassType* socketClass;
+    InfraxNetClassType* netClass;
     InfraxSyncClassType* syncClass;
     InfraxAsyncClassType* asyncClass;
 } PpxInfra;
