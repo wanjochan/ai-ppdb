@@ -86,7 +86,7 @@ void test_thread_basic(void) {
     }
     
     // Start thread
-    InfraxError err = thread->start(thread, test_thread_func, &test_value);
+    InfraxError err = InfraxThreadClass.start(thread, test_thread_func, &test_value);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -97,14 +97,14 @@ void test_thread_basic(void) {
     }
     
     // Get thread ID
-    InfraxThreadId tid = thread->tid(thread);
+    InfraxThreadId tid = InfraxThreadClass.tid(thread);
     if (tid == 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "tid != 0", "Failed to get thread ID");
     }
     
     // Join thread
     void* result;
-    err = thread->join(thread, &result);
+    err = InfraxThreadClass.join(thread, &result);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -155,7 +155,7 @@ void test_thread_multiple(void) {
             core->assert_failed(core, __FILE__, __LINE__, __func__, "threads[i] != NULL", "Failed to create thread");
         }
         
-        InfraxError err = threads[i]->start(threads[i], test_thread_func, &test_values[i]);
+        InfraxError err = InfraxThreadClass.start(threads[i], test_thread_func, &test_values[i]);
         if (err.code != 0) {
             core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
         }
@@ -164,7 +164,7 @@ void test_thread_multiple(void) {
     // Join threads and verify results
     for (int i = 0; i < NUM_THREADS; i++) {
         void* result;
-        InfraxError err = threads[i]->join(threads[i], &result);
+        InfraxError err = InfraxThreadClass.join(threads[i], &result);
         if (err.code != 0) {
             core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
         }
@@ -215,7 +215,7 @@ void test_thread_error_handling(void) {
     }
     
     // 尝试启动没有函数的线程应该失败
-    InfraxError err = thread->start(thread, NULL, NULL);
+    InfraxError err = InfraxThreadClass.start(thread, NULL, NULL);
     if (err.code == 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code != 0", "Starting thread with NULL function should fail");
     }
@@ -238,20 +238,20 @@ void test_thread_error_handling(void) {
     }
     
     // Start the thread
-    err = thread->start(thread, test_thread_func, NULL);
+    err = InfraxThreadClass.start(thread, test_thread_func, NULL);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", "Thread start should succeed");
     }
     
     // Try to start it again (should fail)
-    err = thread->start(thread, test_thread_func, NULL);
+    err = InfraxThreadClass.start(thread, test_thread_func, NULL);
     if (err.code == 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code != 0", "Starting thread twice should fail");
     }
     
     // Clean up
     void* result;
-    err = thread->join(thread, &result);
+    err = InfraxThreadClass.join(thread, &result);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", "Join should succeed");
     }
@@ -468,7 +468,7 @@ void test_thread_stress(void) {
             continue;
         }
         
-        InfraxError err = threads[i]->start(threads[i], stress_thread_func, &iterations[i]);
+        InfraxError err = InfraxThreadClass.start(threads[i], stress_thread_func, &iterations[i]);
         if (err.code != 0) {
             core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
         }
@@ -478,7 +478,7 @@ void test_thread_stress(void) {
     for(int i = 0; i < STRESS_THREAD_COUNT; i++) {
         if (threads[i]) {
             void* result;
-            InfraxError err = threads[i]->join(threads[i], &result);
+            InfraxError err = InfraxThreadClass.join(threads[i], &result);
             if (err.code != 0) {
                 core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
             }
@@ -546,24 +546,24 @@ void test_thread_sync_complex(void) {
     }
     
     // 启动线程
-    InfraxError err = producer->start(producer, producer_func, &items_to_produce);
+    InfraxError err = InfraxThreadClass.start(producer, producer_func, &items_to_produce);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
     
-    err = consumer->start(consumer, consumer_func, &items_to_produce);
+    err = InfraxThreadClass.start(consumer, consumer_func, &items_to_produce);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
     
     // 等待线程完成
     void* result;
-    err = producer->join(producer, &result);
+    err = InfraxThreadClass.join(producer, &result);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
     
-    err = consumer->join(consumer, &result);
+    err = InfraxThreadClass.join(consumer, &result);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }

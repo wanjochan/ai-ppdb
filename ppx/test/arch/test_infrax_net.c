@@ -172,7 +172,7 @@ static void destroy_server_context(ServerContext* ctx) {
     // Then wait for the thread to exit
     if (ctx->thread) {
         void* thread_result;
-        ctx->thread->join(ctx->thread, &thread_result);
+        InfraxThreadClass.join(ctx->thread, &thread_result);
         InfraxThreadClass.free(ctx->thread);
     }
     
@@ -594,7 +594,7 @@ static bool setup_tcp_server(void* arg) {
     }
     
     ctx->is_running = true;
-    err = ctx->thread->start(ctx->thread, tcp_server_thread, ctx);
+    err = InfraxThreadClass.start(ctx->thread, tcp_server_thread, ctx);
     if (INFRAX_ERROR_IS_ERR(err)) {
         TEST_LOG_ERROR("Failed to start server thread: %s", err.message);
         return false;
@@ -639,7 +639,7 @@ static bool setup_udp_server(void* arg) {
     }
     
     ctx->is_running = true;
-    err = ctx->thread->start(ctx->thread, udp_server_thread, ctx);
+    err = InfraxThreadClass.start(ctx->thread, udp_server_thread, ctx);
     if (INFRAX_ERROR_IS_ERR(err)) {
         TEST_LOG_ERROR("Failed to start server thread: %s", err.message);
         return false;

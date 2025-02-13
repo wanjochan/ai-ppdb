@@ -62,11 +62,6 @@ typedef struct InfraxThread {
     bool is_running;          // 运行状态
     void* result;             // 线程返回值
     InfraxSync* mutex;        // 状态保护
-    
-    // 实例方法
-    InfraxError (*start)(struct InfraxThread* self, InfraxThreadFunc func, void* arg);
-    InfraxError (*join)(struct InfraxThread* self, void** result);
-    InfraxThreadId (*tid)(struct InfraxThread* self);
 } InfraxThread;
 
 // 线程类型

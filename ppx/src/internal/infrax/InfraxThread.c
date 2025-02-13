@@ -93,11 +93,6 @@ static InfraxThread* thread_new(InfraxThreadConfig* config) {
         return NULL;
     }
     
-    // Set instance methods
-    self->start = thread_start;
-    self->join = thread_join;
-    self->tid = thread_tid;
-    
     return self;
 }
 
@@ -125,7 +120,7 @@ static void thread_free(InfraxThread* self) {
     memory->dealloc(memory, self);
 }
 
-// The "static" interface implementation
+// Initialize the class object
 InfraxThreadClassType InfraxThreadClass = {
     .new = thread_new,
     .free = thread_free,
@@ -372,7 +367,7 @@ InfraxError infrax_thread_pool_create(InfraxThread* self, InfraxThreadPoolConfig
         }
         
         pool->workers[i]->private_data = pool;
-        InfraxError err = pool->workers[i]->start(pool->workers[i], worker_thread, pool->workers[i]);
+        InfraxError err = InfraxThreadClass.start(pool->workers[i], worker_thread, pool->workers[i]);
         if (INFRAX_ERROR_IS_ERR(err)) {
             memory->dealloc(memory, worker_name);
             for (int j = 0; j <= i; j++) {
@@ -420,7 +415,7 @@ InfraxError infrax_thread_pool_destroy(InfraxThread* self) {
     // 等待所有工作线程结束
     for (int i = 0; i < pool->num_workers; i++) {
         void* result;
-        InfraxError err = pool->workers[i]->join(pool->workers[i], &result);
+        InfraxError err = InfraxThreadClass.join(pool->workers[i], &result);
         if (INFRAX_ERROR_IS_ERR(err)) {
             // 继续清理，但返回第一个错误
             continue;
