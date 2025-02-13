@@ -4,10 +4,9 @@
 #include "internal/infrax/InfraxMemory.h"
 /** DESIGN NOTES
 
-//design pattern: factory
-//main idea: mux of (callback + poll)
+design pattern: factory
+main idea: mux (poll + callback)
 
-poll() 基本原理
 poll() 是一个多路复用 I/O 机制
 可以同时监控多个文件描述符的状态变化
 主要监控读、写、异常三种事件
@@ -23,8 +22,8 @@ FIFO
 标准输入输出(stdin/stdout/stderr)
 c) 其他
 字符设备
-事件fd (eventfd)
-定时器fd (timerfd)
+事件fd (eventfd) linux
+定时器fd (timerfd) linux
 信号fd (signalfd)
 inotify fd (文件系统事件监控)
  */
