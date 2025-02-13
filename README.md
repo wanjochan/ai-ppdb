@@ -2,9 +2,9 @@
 
 [![Last Update](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/wanjochan/ai-ppdb/main/.github/badges/last-commit.json)](https://github.com/wanjochan/ai-ppdb/commits/main)
 
-[ARCH](docs/ARCH.md)
-[ppdb](ppdb/) v0.1 (PoC, module of rinetd,sqlite3,memkv is PoC)
-[ppx](ppx/) new OOP design, refactoring infrax layer
+- [架构设计](docs/ARCH.md)
+- [ppdb](ppdb/) - PoC and deprecated, module of rinetd+sqlite3+memkv
+- [ppx](ppx/) -new OOP design, WIP
 
 AI编写的分布式数据库，欢迎使用，风险自担。
 
