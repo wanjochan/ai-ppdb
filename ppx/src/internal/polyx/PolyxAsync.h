@@ -30,6 +30,7 @@ inotify fd (文件系统事件监控)
 // Forward declarations
 typedef struct PolyxAsync PolyxAsync;
 typedef struct PolyxEvent PolyxEvent;
+typedef struct PolyxAsyncClassType PolyxAsyncClassType;
 
 // Event types
 typedef enum {
@@ -83,37 +84,40 @@ typedef struct {
 
 // Async structure
 struct PolyxAsync {
+    PolyxAsync* self;
+    const PolyxAsyncClassType* klass;
+
     InfraxAsync* infrax;
     PolyxEvent** events;
     size_t event_count;
     size_t event_capacity;
-    
+};
+
+// 类接口
+struct PolyxAsyncClassType {
+    PolyxAsync* (*new)(void);
+    void (*free)(PolyxAsync* self);
+
     // 对象方法 - 事件管理
-    PolyxEvent* (*create_event)(struct PolyxAsync* self, PolyxEventConfig* config);
-    PolyxEvent* (*create_timer)(struct PolyxAsync* self, PolyxTimerConfig* config);
-    void (*destroy_event)(struct PolyxAsync* self, PolyxEvent* event);
-      // 对象方法 - 事件触发
-    void (*trigger_event)(struct PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
+    PolyxEvent* (*create_event)(PolyxAsync* self, PolyxEventConfig* config);
+    PolyxEvent* (*create_timer)(PolyxAsync* self, PolyxTimerConfig* config);
+    void (*destroy_event)(PolyxAsync* self, PolyxEvent* event);
+    
+    // 对象方法 - 事件触发
+    void (*trigger_event)(PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
      
     // 对象方法 - 定时器控制
-    void (*start_timer)(struct PolyxAsync* self, PolyxEvent* timer);
-    void (*stop_timer)(struct PolyxAsync* self, PolyxEvent* timer);
+    void (*start_timer)(PolyxAsync* self, PolyxEvent* timer);
+    void (*stop_timer)(PolyxAsync* self, PolyxEvent* timer);
     
     //TODO 网络相关；
  
     // 对象方法 - 轮询
-    int (*poll)(struct PolyxAsync* self, int timeout_ms);
+    int (*poll)(PolyxAsync* self, int timeout_ms);
 };
-
-// 类接口
-typedef struct {
-    PolyxAsync* (*new)(void);
-    void (*free)(PolyxAsync* self);
-
-    //有没有线程相关的处理需要搬过来？可能后面有一些工具方法，针对 poll 的类型做的便捷函数！
-} PolyxAsyncClassType;
 
 // 全局类实例
 extern const PolyxAsyncClassType PolyxAsyncClass;
 
 #endif // POLYX_ASYNC_H
+

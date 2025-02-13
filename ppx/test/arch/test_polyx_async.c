@@ -200,12 +200,12 @@ int main() {
         .arg = &timer_count
     };
     
-    PolyxEvent* timer = async->create_timer(async, &timer_config);
+    PolyxEvent* timer = async->klass->create_timer(async, &timer_config);
     INFRAX_ASSERT(core, timer != NULL);
     
     // Start timer
     core->printf(core, "Starting timer...\n");
-    async->start_timer(async, timer);
+    async->klass->start_timer(async, timer);
     
     // Test 2: Custom Event
     core->printf(core, "\nTest 2: Custom Event\n");
@@ -220,7 +220,7 @@ int main() {
         .arg = &event_callback_count
     };
     
-    PolyxEvent* event = async->create_event(async, &event_config);
+    PolyxEvent* event = async->klass->create_event(async, &event_config);
     INFRAX_ASSERT(core, event != NULL);
     
     // Poll loop
@@ -231,12 +231,12 @@ int main() {
         // Trigger custom event every other iteration
         if (event_trigger_count < 2) {  // 只触发两次事件
             core->printf(core, "Triggering custom event...\n");
-            async->trigger_event(async, event, (void*)event_data, core->strlen(core, event_data) + 1);
+            async->klass->trigger_event(async, event, (void*)event_data, core->strlen(core, event_data) + 1);
             event_trigger_count++;
         }
         
         // Poll for events
-        async->poll(async, 50);  // 使用更短的轮询间隔
+        async->klass->poll(async, 50);  // 使用更短的轮询间隔
         
         // 检查是否达到预期结果
         if (timer_count >= expected_timer_count && event_callback_count >= event_trigger_count) {
@@ -249,30 +249,28 @@ int main() {
     if (timer_count != expected_timer_count) {
         log->error(log, "Timer test failed: expected %d calls, got %d", 
                   expected_timer_count, timer_count);
-        test_result = 1;
+        test_result = -1;
+    } else {
+        core->printf(core, "Timer test passed\n");
     }
     
     // 验证事件结果
-    core->printf(core, "Verifying event results...\n");
+    core->printf(core, "\nVerifying event results...\n");
     if (event_callback_count != event_trigger_count) {
-        log->error(log, "Event test failed: triggered %d times, callback called %d times",
+        log->error(log, "Event test failed: expected %d callbacks, got %d", 
                   event_trigger_count, event_callback_count);
-        test_result = 1;
+        test_result = -1;
+    } else {
+        core->printf(core, "Event test passed\n");
     }
     
-    // Stop timer
-    core->printf(core, "\nStopping timer...\n");
-    async->stop_timer(async, timer);
+    // 停止定时器
+    async->klass->stop_timer(async, timer);
     
-    // Cleanup
-    async->destroy_event(async, event);
-    async->destroy_event(async, timer);
+    // 清理资源
+    async->klass->destroy_event(async, event);
+    async->klass->destroy_event(async, timer);
     PolyxAsyncClass.free(async);
     
-    if (test_result == 0) {
-        core->printf(core, "\n=== All polyx_async tests PASSED ===\n");
-    } else {
-        core->printf(core, "\n=== Some polyx_async tests FAILED ===\n");
-    }
     return test_result;
 }

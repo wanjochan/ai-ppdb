@@ -239,6 +239,7 @@ bool init_memory() {
 }
 
 // Forward declarations of internal functions
+static PolyxAsync* polyx_async_new(void);
 static void polyx_async_free(PolyxAsync* self);
 static PolyxEvent* polyx_async_create_event(PolyxAsync* self, PolyxEventConfig* config);
 static void polyx_async_trigger_event(PolyxAsync* self, PolyxEvent* event, void* data, size_t size);
@@ -293,17 +294,28 @@ static void dummy_fn(InfraxAsync* async, void* arg) {
     // Do nothing
 }
 
-// Create new PolyxAsync instance
+// 全局类实例
+const PolyxAsyncClassType PolyxAsyncClass = {
+    .new = polyx_async_new,
+    .free = polyx_async_free,
+    .create_event = polyx_async_create_event,
+    .create_timer = polyx_async_create_timer,
+    .destroy_event = polyx_async_destroy_event,
+    .trigger_event = polyx_async_trigger_event,
+    .start_timer = polyx_async_start_timer,
+    .stop_timer = polyx_async_stop_timer,
+    .poll = polyx_async_poll
+};
+
 static PolyxAsync* polyx_async_new(void) {
-    // Initialize memory first
-    if (!init_memory()) {
-        return NULL;
-    }
+    if (!init_memory()) return NULL;
     
-    PolyxAsync* self = (PolyxAsync*)g_memory->alloc(g_memory, sizeof(PolyxAsync));
+    PolyxAsync* self = g_memory->alloc(g_memory, sizeof(PolyxAsync));
     if (!self) return NULL;
     
-    memset(self, 0, sizeof(PolyxAsync));
+    // Initialize self and klass
+    self->self = self;
+    self->klass = (PolyxAsyncClassType*)&PolyxAsyncClass;
     
     // Create InfraxAsync instance
     self->infrax = InfraxAsyncClass.new(dummy_fn, self);
@@ -329,15 +341,6 @@ static PolyxAsync* polyx_async_new(void) {
     }
     self->event_count = 0;
     
-    // Initialize instance methods
-    self->create_event = polyx_async_create_event;
-    self->create_timer = polyx_async_create_timer;
-    self->destroy_event = polyx_async_destroy_event;
-    self->start_timer = polyx_async_start_timer;
-    self->stop_timer = polyx_async_stop_timer;
-    self->trigger_event = polyx_async_trigger_event;
-    self->poll = polyx_async_poll;
-    
     return self;
 }
 
@@ -345,13 +348,13 @@ static PolyxAsync* polyx_async_new(void) {
 static void polyx_async_free(PolyxAsync* self) {
     if (!self) return;
     
-    // Clean up events
-    for (size_t i = 0; i < self->event_count; i++) {
-        polyx_async_destroy_event(self, self->events[i]);
-    }
-    
-    // Free events array
+    // Free events
     if (self->events) {
+        for (size_t i = 0; i < self->event_count; i++) {
+            if (self->events[i]) {
+                self->klass->destroy_event(self, self->events[i]);
+            }
+        }
         g_memory->dealloc(g_memory, self->events);
     }
     
@@ -360,6 +363,7 @@ static void polyx_async_free(PolyxAsync* self) {
         InfraxAsyncClass.free(self->infrax);
     }
     
+    // Free self
     g_memory->dealloc(g_memory, self);
 }
 
@@ -367,43 +371,20 @@ static void polyx_async_free(PolyxAsync* self) {
 static PolyxEvent* polyx_async_create_event(PolyxAsync* self, PolyxEventConfig* config) {
     if (!self || !config) return NULL;
     
-    PolyxEventInternal* event = (PolyxEventInternal*)g_memory->alloc(g_memory, sizeof(PolyxEventInternal));
+    PolyxEventInternal* event = g_memory->alloc(g_memory, sizeof(PolyxEventInternal));
     if (!event) return NULL;
     
-    memset(event, 0, sizeof(PolyxEventInternal));
-    
-    // Create pipe for event communication
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        g_memory->dealloc(g_memory, event);
-        return NULL;
-    }
-    
-    // Set non-blocking mode
-    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
-    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
-    
     event->base.type = config->type;
-    event->read_fd = pipefd[0];
-    event->write_fd = pipefd[1];
     event->callback = config->callback;
     event->arg = config->arg;
-    
-    // Add read end to pollset
-    if (InfraxAsyncClass.pollset_add_fd(self->infrax, event->read_fd, INFRAX_POLLIN, event_callback_wrapper, event) < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        g_memory->dealloc(g_memory, event);
-        return NULL;
-    }
+    event->data = NULL;
+    event->data_size = 0;
     
     // Add to events array
     if (self->event_count >= self->event_capacity) {
         size_t new_capacity = self->event_capacity * 2;
-        PolyxEvent** new_events = (PolyxEvent**)g_memory->alloc(g_memory, sizeof(PolyxEvent*) * new_capacity);
+        PolyxEvent** new_events = g_memory->alloc(g_memory, sizeof(PolyxEvent*) * new_capacity);
         if (!new_events) {
-            close(pipefd[0]);
-            close(pipefd[1]);
             g_memory->dealloc(g_memory, event);
             return NULL;
         }
@@ -414,7 +395,6 @@ static PolyxEvent* polyx_async_create_event(PolyxAsync* self, PolyxEventConfig* 
     }
     
     self->events[self->event_count++] = (PolyxEvent*)event;
-    
     return (PolyxEvent*)event;
 }
 
@@ -423,19 +403,21 @@ static void polyx_async_trigger_event(PolyxAsync* self, PolyxEvent* event, void*
     if (!self || !event) return;
     
     PolyxEventInternal* internal = (PolyxEventInternal*)event;
-    
-    // 清空pipe中可能存在的旧数据
-    char buffer[1024];
-    while (read(internal->read_fd, buffer, sizeof(buffer)) > 0) {
-        // 丢弃旧数据
+    if (internal->callback) {
+        EventCallback callback = (EventCallback)internal->callback;
+        callback(event, internal->arg);
     }
     
-    // Write event data to pipe
-    ssize_t written = write(internal->write_fd, data, size);
-    if (written < 0) {
-        // 写入失败，记录错误
-        InfraxLog* log = InfraxLogClass.singleton();
-        log->error(log, "Failed to write event data: %s", strerror(errno));
+    // Store event data
+    if (data && size > 0) {
+        if (internal->data) {
+            g_memory->dealloc(g_memory, internal->data);
+        }
+        internal->data = g_memory->alloc(g_memory, size);
+        if (internal->data) {
+            memcpy(internal->data, data, size);
+            internal->data_size = size;
+        }
     }
 }
 
@@ -445,106 +427,55 @@ static void polyx_async_destroy_event(PolyxAsync* self, PolyxEvent* event) {
     
     PolyxEventInternal* internal = (PolyxEventInternal*)event;
     
-    // Remove from pollset
-    InfraxAsyncClass.pollset_remove_fd(self->infrax, internal->read_fd);
-    
-    // Close file descriptors
-    close(internal->read_fd);
-    close(internal->write_fd);
-    
-    // Free timer data if it's a timer
-    if (event->type == POLYX_EVENT_TIMER && internal->data) {
+    // Free event data
+    if (internal->data) {
         g_memory->dealloc(g_memory, internal->data);
     }
-    
-    // Free the event structure
-    g_memory->dealloc(g_memory, internal);
     
     // Remove from events array
     for (size_t i = 0; i < self->event_count; i++) {
         if (self->events[i] == event) {
             if (i < self->event_count - 1) {
                 memmove(&self->events[i], &self->events[i + 1], 
-                       (self->event_count - i - 1) * sizeof(PolyxEvent*));
+                       sizeof(PolyxEvent*) * (self->event_count - i - 1));
             }
             self->event_count--;
             break;
         }
     }
+    
+    g_memory->dealloc(g_memory, internal);
 }
 
 // Create timer
 static PolyxEvent* polyx_async_create_timer(PolyxAsync* self, PolyxTimerConfig* config) {
     if (!self || !config) return NULL;
     
-    PolyxEventInternal* timer = (PolyxEventInternal*)g_memory->alloc(g_memory, sizeof(PolyxEventInternal));
-    if (!timer) return NULL;
+    PolyxEventConfig event_config = {
+        .type = POLYX_EVENT_TIMER,
+        .callback = (EventCallback)config->callback,
+        .arg = config->arg
+    };
     
-    memset(timer, 0, sizeof(PolyxEventInternal));
+    PolyxEventInternal* event = (PolyxEventInternal*)self->klass->create_event(self, &event_config);
+    if (!event) return NULL;
     
-    // Create pipe for timer communication
-    int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        g_memory->dealloc(g_memory, timer);
-        return NULL;
-    }
-    
-    // Set non-blocking mode
-    fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
-    fcntl(pipefd[1], F_SETFL, O_NONBLOCK);
-    
-    timer->base.type = POLYX_EVENT_TIMER;
-    timer->read_fd = pipefd[0];
-    timer->write_fd = pipefd[1];
-    timer->callback = config->callback;
-    timer->arg = config->arg;
-    
-    // Create timer data
-    TimerData* timer_data = (TimerData*)g_memory->alloc(g_memory, sizeof(TimerData));
+    TimerData* timer_data = g_memory->alloc(g_memory, sizeof(TimerData));
     if (!timer_data) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        g_memory->dealloc(g_memory, timer);
+        self->klass->destroy_event(self, (PolyxEvent*)event);
         return NULL;
     }
     
     timer_data->interval_ms = config->interval_ms;
-    timer_data->next_trigger = g_core->time_monotonic_ms(g_core) + config->interval_ms;
+    timer_data->next_trigger = 0;  // Will be set when timer starts
     timer_data->is_periodic = true;
     timer_data->callback = config->callback;
     timer_data->arg = config->arg;
-    timer->data = timer_data;
     
-    // Add to events array
-    if (self->event_count >= self->event_capacity) {
-        size_t new_capacity = self->event_capacity * 2;
-        PolyxEvent** new_events = (PolyxEvent**)g_memory->alloc(g_memory, sizeof(PolyxEvent*) * new_capacity);
-        if (!new_events) {
-            g_memory->dealloc(g_memory, timer_data);
-            close(pipefd[0]);
-            close(pipefd[1]);
-            g_memory->dealloc(g_memory, timer);
-            return NULL;
-        }
-        memcpy(new_events, self->events, sizeof(PolyxEvent*) * self->event_count);
-        g_memory->dealloc(g_memory, self->events);
-        self->events = new_events;
-        self->event_capacity = new_capacity;
-    }
+    event->data = timer_data;
+    event->data_size = sizeof(TimerData);
     
-    self->events[self->event_count++] = (PolyxEvent*)timer;
-    
-    // Add read end to pollset
-    if (InfraxAsyncClass.pollset_add_fd(self->infrax, timer->read_fd, INFRAX_POLLIN, timer_callback_wrapper, timer) < 0) {
-        self->event_count--;
-        g_memory->dealloc(g_memory, timer_data);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        g_memory->dealloc(g_memory, timer);
-        return NULL;
-    }
-    
-    return (PolyxEvent*)timer;
+    return (PolyxEvent*)event;
 }
 
 // Start timer
@@ -555,7 +486,6 @@ static void polyx_async_start_timer(PolyxAsync* self, PolyxEvent* timer) {
     TimerData* timer_data = (TimerData*)internal->data;
     if (!timer_data) return;
     
-    // Update next trigger time
     timer_data->next_trigger = g_core->time_monotonic_ms(g_core) + timer_data->interval_ms;
 }
 
@@ -567,35 +497,47 @@ static void polyx_async_stop_timer(PolyxAsync* self, PolyxEvent* timer) {
     TimerData* timer_data = (TimerData*)internal->data;
     if (!timer_data) return;
     
-    // Free timer data
-    g_memory->dealloc(g_memory, timer_data);
-    internal->data = NULL;
+    timer_data->next_trigger = 0;  // Disable timer
 }
 
 // Poll events
 static int polyx_async_poll(PolyxAsync* self, int timeout_ms) {
     if (!self) return -1;
     
+    uint64_t now = g_core->time_monotonic_ms(g_core);
+    int min_timeout = timeout_ms;
+    
     // Check timers
-    int64_t now = g_core->time_monotonic_ms(g_core);
     for (size_t i = 0; i < self->event_count; i++) {
         PolyxEvent* event = self->events[i];
-        if (!event) continue;
-        
         if (event->type == POLYX_EVENT_TIMER) {
             PolyxEventInternal* internal = (PolyxEventInternal*)event;
-            TimerData* timer = (TimerData*)internal->data;
-            if (timer && timer->callback && now >= timer->next_trigger) {
-                // Write to pipe to trigger callback
-                char dummy = 1;
-                write(internal->write_fd, &dummy, 1);
+            TimerData* timer_data = (TimerData*)internal->data;
+            
+            if (timer_data && timer_data->next_trigger > 0) {
+                if (now >= timer_data->next_trigger) {
+                    // Timer expired, trigger callback
+                    timer_data->callback(timer_data->arg);
+                    
+                    if (timer_data->is_periodic) {
+                        // Schedule next trigger
+                        timer_data->next_trigger = now + timer_data->interval_ms;
+                    } else {
+                        timer_data->next_trigger = 0;  // Disable timer
+                    }
+                } else {
+                    // Calculate remaining time
+                    int remaining = (int)(timer_data->next_trigger - now);
+                    if (remaining < min_timeout) {
+                        min_timeout = remaining;
+                    }
+                }
             }
-            //g_core->hint_yield(g_core);
         }
     }
     
-    // Process pollset events with minimal timeout
-    return InfraxAsyncClass.pollset_poll(self->infrax, timeout_ms);
+    // Poll for events using InfraxAsync
+    return InfraxAsyncClass.pollset_poll(self->infrax, min_timeout);
 }
 
 // Timer heap operations
@@ -724,9 +666,3 @@ void async_interval_fn(InfraxAsync* async, void* arg) {
         clock_gettime(CLOCK_MONOTONIC, &now);
     }
 }
-
-// Global class instance
-const PolyxAsyncClassType PolyxAsyncClass = {
-    .new = polyx_async_new,
-    .free = polyx_async_free
-};

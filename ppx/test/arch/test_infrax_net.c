@@ -10,23 +10,22 @@
 #include <errno.h>
 #include <sys/select.h>
 
-
 // Test parameters
 #define TEST_PORT_BASE 22345
-#define TEST_TIMEOUT_MS 10000  // 增加到10秒
-#define TEST_BUFFER_SIZE (256 * 1024)  // 增加到256KB
+#define TEST_TIMEOUT_SEC 5  // 增加到5秒
+#define TEST_BUFFER_SIZE (128 * 1024)  // 增加到128KB
 #define UDP_MAX_PACKET_SIZE 8192      // UDP包最大8KB
 #define TEST_RETRY_COUNT 3
 #define TEST_RETRY_DELAY_MS 100
 
 // Flow control parameters
-#define FLOW_CONTROL_CHUNK_SIZE (128 * 1024)  // 增加到128KB
-#define FLOW_CONTROL_DELAY_MS 10  // 增加到10ms
+#define FLOW_CONTROL_CHUNK_SIZE (64 * 1024)  // 增加到64KB
+#define FLOW_CONTROL_DELAY_MS 5  // 增加到5ms
 #define PROGRESS_UPDATE_INTERVAL (256 * 1024)  // 256KB更新一次进度
 
 // Socket buffer sizes
-#define SOCKET_RCVBUF_SIZE (4 * 1024 * 1024)  // 增加到4MB
-#define SOCKET_SNDBUF_SIZE (4 * 1024 * 1024)  // 增加到4MB
+#define SOCKET_RCVBUF_SIZE (1 * 1024 * 1024)  // 增加到1MB
+#define SOCKET_SNDBUF_SIZE (1 * 1024 * 1024)  // 增加到1MB
 
 // Test logging
 typedef enum {
@@ -122,8 +121,8 @@ static ServerContext* create_server_context(bool is_udp, uint16_t port) {
     InfraxSocketConfig config = {
         .is_udp = is_udp,
         .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS,
+        .send_timeout_ms = TEST_TIMEOUT_SEC * 1000,
+        .recv_timeout_ms = TEST_TIMEOUT_SEC * 1000,
         .reuse_addr = true
     };
     
@@ -163,13 +162,20 @@ static void destroy_server_context(ServerContext* ctx) {
     
     ctx->is_running = false;
     
+    // First close the socket to unblock any pending operations
+    if (ctx->socket) {
+        ctx->socket->shutdown(ctx->socket, INFRAX_SHUT_RDWR);
+        InfraxSocketClass.free(ctx->socket);
+        ctx->socket = NULL;
+    }
+    
+    // Then wait for the thread to exit
     if (ctx->thread) {
         void* thread_result;
         ctx->thread->join(ctx->thread, &thread_result);
         InfraxThreadClass.free(ctx->thread);
     }
     
-    if (ctx->socket) InfraxSocketClass.free(ctx->socket);
     if (ctx->ready_mutex) InfraxSyncClass.free(ctx->ready_mutex);
     if (ctx->ready_cond) InfraxSyncClass.free(ctx->ready_cond);
     
@@ -336,56 +342,32 @@ static void* tcp_server_thread(void* arg) {
                 goto client_cleanup;
             }
             
-            size_t received;
-            err = client->recv(client, recv_buffer + buffer_pos, available, &received);
-            if (INFRAX_ERROR_IS_ERR(err)) {
-                if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
-                    core->sleep_ms(core, 1);
-                    continue;
+            ssize_t bytes_received = recv(client->native_handle, 
+                              recv_buffer + buffer_pos,
+                              available,  // 尽可能多地接收数据
+                              0);
+            
+            if (bytes_received <= 0) {
+                if (bytes_received == 0) {
+                    TEST_LOG_INFO("Client closed connection normally");
+                } else {
+                    TEST_LOG_ERROR("Receive error: Failed to receive data");
                 }
-                TEST_LOG_ERROR("Receive error: %s", err.message);
-                break;
+                goto client_cleanup;
             }
             
-            if (received == 0) {
-                TEST_LOG_INFO("Client disconnected");
-                break;
-            }
+            buffer_pos += bytes_received;
+            total_received += bytes_received;
             
-            buffer_pos += received;
-            total_received += received;
-            
-            // 当缓冲区达到一定大小或收到完整数据时发送
-            if (buffer_pos >= FLOW_CONTROL_CHUNK_SIZE || received < available) {
-                ssize_t n = send(client->native_handle, recv_buffer, buffer_pos, 0);
-                if (n < 0) {
-                    if (errno == EPIPE || errno == ECONNRESET) {
-                        TEST_LOG_INFO("Client closed connection");
-                        goto client_cleanup;
-                    }
-                    TEST_LOG_ERROR("Send error: %s", strerror(errno));
-                    goto client_cleanup;
-                }
-                
-                // 更新缓冲区
-                if (n > 0) {
-                    memmove(recv_buffer, recv_buffer + n, buffer_pos - n);
-                    buffer_pos -= n;
-                }
-                
-                // 流控
-                if (n >= FLOW_CONTROL_CHUNK_SIZE) {
-                    core->sleep_ms(core, FLOW_CONTROL_DELAY_MS);
-                }
+            // 立即回复数据
+            if (send_all(client->native_handle, recv_buffer, buffer_pos) < 0) {
+                TEST_LOG_ERROR("Failed to echo data back to client");
+                goto client_cleanup;
             }
-            
-            // 更新进度
-            if (total_received - last_progress >= PROGRESS_UPDATE_INTERVAL) {
-                TEST_LOG_INFO("Server received and echoed %zu bytes", total_received);
-                last_progress = total_received;
-            }
+            TEST_LOG_INFO("Server received and echoed %zu bytes", buffer_pos);
+            buffer_pos = 0;
         }
-
+        
 client_cleanup:
         if (client) {
             InfraxSocketClass.free(client);
@@ -433,8 +415,13 @@ static void* udp_server_thread(void* arg) {
         err = ctx->socket->recvfrom(ctx->socket, buffer, sizeof(buffer), &received, &client_addr);
         
         if (INFRAX_ERROR_IS_ERR(err)) {
+            if (!ctx->is_running) break;  // Exit if server is shutting down
             if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
                 continue;
+            }
+            if (err.code == INFRAX_ERROR_NET_RECV_FAILED_CODE && strstr(err.message, "Bad file descriptor")) {
+                // Socket has been closed
+                break;
             }
             TEST_LOG_ERROR("Receive error: %s", err.message);
             ctx->stats.errors++;
@@ -474,8 +461,8 @@ static bool test_tcp_basic(void* arg) {
     InfraxSocketConfig config = {
         .is_udp = false,
         .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS
+        .send_timeout_ms = TEST_TIMEOUT_SEC * 1000,
+        .recv_timeout_ms = TEST_TIMEOUT_SEC * 1000
     };
     
     client = InfraxSocketClass.new(&config);
@@ -540,8 +527,8 @@ static bool test_udp_basic(void* arg) {
     InfraxSocketConfig config = {
         .is_udp = true,
         .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS
+        .send_timeout_ms = TEST_TIMEOUT_SEC * 1000,
+        .recv_timeout_ms = TEST_TIMEOUT_SEC * 1000
     };
     
     client = InfraxSocketClass.new(&config);
@@ -619,7 +606,7 @@ static bool setup_tcp_server(void* arg) {
         ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
         err = ctx->ready_cond->cond_timedwait(ctx->ready_cond, 
                                             ctx->ready_mutex, 
-                                            TEST_TIMEOUT_MS);
+                                            TEST_TIMEOUT_SEC * 1000);
         ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
         
         if (INFRAX_ERROR_IS_ERR(err)) {
@@ -664,7 +651,7 @@ static bool setup_udp_server(void* arg) {
         ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
         err = ctx->ready_cond->cond_timedwait(ctx->ready_cond, 
                                             ctx->ready_mutex, 
-                                            TEST_TIMEOUT_MS);
+                                            TEST_TIMEOUT_SEC * 1000);
         ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
         
         if (INFRAX_ERROR_IS_ERR(err)) {
@@ -686,14 +673,14 @@ static TestCase basic_cases[] = {
         .setup = setup_tcp_server,
         .run = test_tcp_basic,
         .cleanup = NULL,
-        .timeout_ms = TEST_TIMEOUT_MS
+        .timeout_ms = TEST_TIMEOUT_SEC * 1000
     },
     {
         .name = "udp_basic",
         .setup = setup_udp_server,
         .run = test_udp_basic,
         .cleanup = NULL,
-        .timeout_ms = TEST_TIMEOUT_MS
+        .timeout_ms = TEST_TIMEOUT_SEC * 1000
     }
 };
 
@@ -714,8 +701,8 @@ static bool test_invalid_address(void* arg) {
     InfraxSocketConfig config = {
         .is_udp = false,
         .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS
+        .send_timeout_ms = TEST_TIMEOUT_SEC * 1000,
+        .recv_timeout_ms = TEST_TIMEOUT_SEC * 1000
     };
     
     socket = InfraxSocketClass.new(&config);
@@ -774,8 +761,8 @@ static bool test_port_in_use(void* arg) {
     InfraxSocketConfig config = {
         .is_udp = false,
         .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS,
+        .send_timeout_ms = TEST_TIMEOUT_SEC * 1000,
+        .recv_timeout_ms = TEST_TIMEOUT_SEC * 1000,
         .reuse_addr = false
     };
     
@@ -907,8 +894,8 @@ static bool test_tcp_boundary(void* arg) {
     InfraxSocketConfig config = {
         .is_udp = false,
         .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS * 4,  // 进一步增加超时时间
-        .recv_timeout_ms = TEST_TIMEOUT_MS * 4,
+        .send_timeout_ms = TEST_TIMEOUT_SEC * 1000 * 4,  // 进一步增加超时时间
+        .recv_timeout_ms = TEST_TIMEOUT_SEC * 1000 * 4,
         .reuse_addr = true
     };
     
@@ -996,6 +983,19 @@ static bool test_tcp_boundary(void* arg) {
     free(large_file_buffer);
     TEST_LOG_INFO("Large file transfer test passed");
     
+    // Properly close the connection
+    TEST_LOG_INFO("Closing client connection");
+    if (shutdown(client->native_handle, SHUT_WR) < 0) {
+        TEST_LOG_ERROR("Failed to shutdown client socket: %s", strerror(errno));
+    }
+    
+    // Wait for server to process remaining data
+    usleep(100000); // 100ms
+    
+    // Close the socket
+    client->close(client);
+    TEST_LOG_INFO("Client connection closed");
+    
     success = true;
 
 cleanup:
@@ -1013,8 +1013,8 @@ static bool test_udp_boundary(void* arg) {
     InfraxSocketConfig config = {
         .is_udp = true,
         .is_nonblocking = false,
-        .send_timeout_ms = TEST_TIMEOUT_MS,
-        .recv_timeout_ms = TEST_TIMEOUT_MS
+        .send_timeout_ms = TEST_TIMEOUT_SEC * 1000,
+        .recv_timeout_ms = TEST_TIMEOUT_SEC * 1000
     };
     
     client = InfraxSocketClass.new(&config);
@@ -1194,9 +1194,9 @@ int main(int argc, char* argv[]) {
         {
             .name = "error_handling",
             .cases = (TestCase[]){
-                {"invalid_address", NULL, test_invalid_address, NULL, TEST_TIMEOUT_MS, NULL},
-                {"port_in_use", NULL, test_port_in_use, NULL, TEST_TIMEOUT_MS, NULL},
-                {"connection_timeout", NULL, test_connection_timeout, NULL, TEST_TIMEOUT_MS, NULL},
+                {"invalid_address", NULL, test_invalid_address, NULL, TEST_TIMEOUT_SEC * 1000, NULL},
+                {"port_in_use", NULL, test_port_in_use, NULL, TEST_TIMEOUT_SEC * 1000, NULL},
+                {"connection_timeout", NULL, test_connection_timeout, NULL, TEST_TIMEOUT_SEC * 1000, NULL},
                 {NULL, NULL, NULL, NULL, 0, NULL}
             },
             .case_count = 3,
@@ -1206,7 +1206,7 @@ int main(int argc, char* argv[]) {
         {
             .name = "boundary_conditions",
             .cases = (TestCase[]){
-                {"tcp_boundary", setup_tcp_server, test_tcp_boundary, NULL, TEST_TIMEOUT_MS, NULL},
+                {"tcp_boundary", setup_tcp_server, test_tcp_boundary, NULL, TEST_TIMEOUT_SEC * 1000, NULL},
                 {NULL, NULL, NULL, NULL, 0, NULL}
             },
             .case_count = 1,
@@ -1216,7 +1216,7 @@ int main(int argc, char* argv[]) {
         {
             .name = "udp_boundary",
             .cases = (TestCase[]){
-                {"udp_boundary", setup_udp_server, test_udp_boundary, NULL, TEST_TIMEOUT_MS, NULL},
+                {"udp_boundary", setup_udp_server, test_udp_boundary, NULL, TEST_TIMEOUT_SEC * 1000, NULL},
                 {NULL, NULL, NULL, NULL, 0, NULL}
             },
             .case_count = 1,
@@ -1226,7 +1226,7 @@ int main(int argc, char* argv[]) {
         {
             .name = "basic_functionality",
             .cases = (TestCase[]){
-                {"tcp_basic", setup_tcp_server, test_tcp_basic, NULL, TEST_TIMEOUT_MS, NULL},
+                {"tcp_basic", setup_tcp_server, test_tcp_basic, NULL, TEST_TIMEOUT_SEC * 1000, NULL},
                 {NULL, NULL, NULL, NULL, 0, NULL}
             },
             .case_count = 1,
@@ -1236,7 +1236,7 @@ int main(int argc, char* argv[]) {
         {
             .name = "udp_functionality",
             .cases = (TestCase[]){
-                {"udp_basic", setup_udp_server, test_udp_basic, NULL, TEST_TIMEOUT_MS, NULL},
+                {"udp_basic", setup_udp_server, test_udp_basic, NULL, TEST_TIMEOUT_SEC * 1000, NULL},
                 {NULL, NULL, NULL, NULL, 0, NULL}
             },
             .case_count = 1,
@@ -1251,6 +1251,9 @@ int main(int argc, char* argv[]) {
     for (TestSuite* suite = suites; suite->name != NULL; suite++) {
         all_passed &= run_test_suite(suite);
     }
+    
+    // Reset core instance
+    core = NULL;
     
     return all_passed ? 0 : 1;
 }
