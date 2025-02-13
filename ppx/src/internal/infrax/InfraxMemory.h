@@ -44,7 +44,7 @@ struct InfraxMemoryClassType {
 // The instance structure
 struct InfraxMemory {
     InfraxMemory* self;
-    InfraxMemoryClassType* klass;//InfraxMemoryClass
+    //InfraxMemoryClassType* klass;//InfraxMemoryClass
 
     // Configuration
     InfraxMemoryConfig config;
@@ -59,7 +59,7 @@ struct InfraxMemory {
     MemoryBlock* gc_objects;
     void* stack_bottom;
 
-    // Instance methods
+    // Instance methods (WARNING: don't move to InfraxMemoryClassType)
     void* (*alloc)(InfraxMemory* self, size_t size);
     void (*dealloc)(InfraxMemory* self, void* ptr); 
     void* (*realloc)(InfraxMemory* self, void* ptr, size_t size);
