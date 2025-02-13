@@ -238,14 +238,14 @@ static void* worker_thread(void* arg) {
     ThreadPool* pool = (ThreadPool*)self->private_data;
     
     while (true) {
-        pool->mutex->mutex_lock(pool->mutex);
+        pool->mutex->klass->mutex_lock(pool->mutex);
         
         while (pool->queue_head == pool->queue_tail && !pool->shutdown) {
-            pool->not_empty->cond_wait(pool->not_empty, pool->mutex);
+            pool->not_empty->klass->cond_wait(pool->not_empty, pool->mutex);
         }
         
         if (pool->shutdown && pool->queue_head == pool->queue_tail) {
-            pool->mutex->mutex_unlock(pool->mutex);
+            pool->mutex->klass->mutex_unlock(pool->mutex);
             break;
         }
         
@@ -257,17 +257,17 @@ static void* worker_thread(void* arg) {
         pool->stats.idle_threads--;
         pool->stats.pending_tasks--;
         
-        pool->mutex->mutex_unlock(pool->mutex);
-        pool->not_full->cond_signal(pool->not_full);
+        pool->mutex->klass->mutex_unlock(pool->mutex);
+        pool->not_full->klass->cond_signal(pool->not_full);
         
         // 执行任务
         task.func(task.arg);
         
-        pool->mutex->mutex_lock(pool->mutex);
+        pool->mutex->klass->mutex_lock(pool->mutex);
         pool->stats.active_threads--;
         pool->stats.idle_threads++;
         pool->stats.completed_tasks++;
-        pool->mutex->mutex_unlock(pool->mutex);
+        pool->mutex->klass->mutex_unlock(pool->mutex);
     }
     
     return NULL;
@@ -405,12 +405,12 @@ InfraxError infrax_thread_pool_destroy(InfraxThread* self) {
     }
     
     // 设置关闭标志
-    pool->mutex->mutex_lock(pool->mutex);
+    pool->mutex->klass->mutex_lock(pool->mutex);
     pool->shutdown = true;
-    pool->mutex->mutex_unlock(pool->mutex);
+    pool->mutex->klass->mutex_unlock(pool->mutex);
     
     // 唤醒所有等待的线程
-    pool->not_empty->cond_broadcast(pool->not_empty);
+    pool->not_empty->klass->cond_broadcast(pool->not_empty);
     
     // 等待所有工作线程结束
     for (int i = 0; i < pool->num_workers; i++) {
@@ -441,18 +441,18 @@ InfraxError infrax_thread_pool_submit(InfraxThread* self, InfraxThreadFunc func,
     
     ThreadPool* pool = (ThreadPool*)self->private_data;
     
-    pool->mutex->mutex_lock(pool->mutex);
+    pool->mutex->klass->mutex_lock(pool->mutex);
     
     while (((pool->queue_tail + 1) % pool->queue_size) == pool->queue_head) {
         if (pool->shutdown) {
-            pool->mutex->mutex_unlock(pool->mutex);
+            pool->mutex->klass->mutex_unlock(pool->mutex);
             return make_error(INFRAX_ERROR_THREAD_NOT_RUNNING, "Thread pool is shutting down");
         }
-        pool->not_full->cond_wait(pool->not_full, pool->mutex);
+        pool->not_full->klass->cond_wait(pool->not_full, pool->mutex);
     }
     
     if (pool->shutdown) {
-        pool->mutex->mutex_unlock(pool->mutex);
+        pool->mutex->klass->mutex_unlock(pool->mutex);
         return make_error(INFRAX_ERROR_THREAD_NOT_RUNNING, "Thread pool is shutting down");
     }
     
@@ -462,8 +462,8 @@ InfraxError infrax_thread_pool_submit(InfraxThread* self, InfraxThreadFunc func,
     pool->queue_tail = (pool->queue_tail + 1) % pool->queue_size;
     pool->stats.pending_tasks++;
     
-    pool->mutex->mutex_unlock(pool->mutex);
-    pool->not_empty->cond_signal(pool->not_empty);
+    pool->mutex->klass->mutex_unlock(pool->mutex);
+    pool->not_empty->klass->cond_signal(pool->not_empty);
     
     return INFRAX_ERROR_OK_STRUCT;
 }
@@ -475,9 +475,9 @@ InfraxError infrax_thread_pool_get_stats(InfraxThread* self, InfraxThreadPoolSta
     
     ThreadPool* pool = (ThreadPool*)self->private_data;
     
-    pool->mutex->mutex_lock(pool->mutex);
+    pool->mutex->klass->mutex_lock(pool->mutex);
     *stats = pool->stats;
-    pool->mutex->mutex_unlock(pool->mutex);
+    pool->mutex->klass->mutex_unlock(pool->mutex);
     
     return INFRAX_ERROR_OK_STRUCT;
 }

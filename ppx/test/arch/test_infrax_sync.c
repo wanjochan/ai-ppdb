@@ -29,24 +29,24 @@ static void test_mutex(void) {
     }
 
     // Test basic locking
-    InfraxError err = mutex->mutex_lock(mutex);
+    InfraxError err = mutex->klass->mutex_lock(mutex);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
     // Test unlocking
-    err = mutex->mutex_unlock(mutex);
+    err = mutex->klass->mutex_unlock(mutex);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
     // Test try_lock
-    err = mutex->mutex_try_lock(mutex);
+    err = mutex->klass->mutex_try_lock(mutex);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
-    err = mutex->mutex_unlock(mutex);
+    err = mutex->klass->mutex_unlock(mutex);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -65,30 +65,30 @@ static void test_cond(void) {
     }
 
     // First lock the mutex
-    InfraxError err = mutex->mutex_lock(mutex);
+    InfraxError err = mutex->klass->mutex_lock(mutex);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
     // Test signal and broadcast
-    err = cond->cond_signal(cond);
+    err = cond->klass->cond_signal(cond);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
-    err = cond->cond_broadcast(cond);
+    err = cond->klass->cond_broadcast(cond);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
     // Test wait with timeout
-    err = cond->cond_timedwait(cond, mutex, 100);
+    err = cond->klass->cond_timedwait(cond, mutex, 100);
     if (err.code != INFRAX_ERROR_SYNC_TIMEOUT) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == INFRAX_ERROR_SYNC_TIMEOUT", err.message);
     }
 
     // Unlock the mutex
-    err = mutex->mutex_unlock(mutex);
+    err = mutex->klass->mutex_unlock(mutex);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -106,23 +106,23 @@ static void test_rwlock(void) {
     }
 
     // Test read locking
-    InfraxError err = rwlock->rwlock_read_lock(rwlock);
+    InfraxError err = rwlock->klass->rwlock_read_lock(rwlock);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
-    err = rwlock->rwlock_read_unlock(rwlock);
+    err = rwlock->klass->rwlock_read_unlock(rwlock);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
     // Test write locking
-    err = rwlock->rwlock_write_lock(rwlock);
+    err = rwlock->klass->rwlock_write_lock(rwlock);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
-    err = rwlock->rwlock_write_unlock(rwlock);
+    err = rwlock->klass->rwlock_write_unlock(rwlock);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -139,12 +139,12 @@ static void test_spinlock(void) {
     }
 
     // Test basic locking
-    InfraxError err = spinlock->spinlock_lock(spinlock);
+    InfraxError err = spinlock->klass->spinlock_lock(spinlock);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
-    err = spinlock->spinlock_unlock(spinlock);
+    err = spinlock->klass->spinlock_unlock(spinlock);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -163,7 +163,7 @@ static void test_semaphore(void) {
     int value;
     
     // Test get value
-    InfraxError err = sem->semaphore_get_value(sem, &value);
+    InfraxError err = sem->klass->semaphore_get_value(sem, &value);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -172,13 +172,13 @@ static void test_semaphore(void) {
     }
 
     // Test post
-    err = sem->semaphore_post(sem);
+    err = sem->klass->semaphore_post(sem);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
 
     // Test get value after post
-    err = sem->semaphore_get_value(sem, &value);
+    err = sem->klass->semaphore_get_value(sem, &value);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -187,7 +187,7 @@ static void test_semaphore(void) {
     }
 
     // Test wait
-    err = sem->semaphore_wait(sem);
+    err = sem->klass->semaphore_wait(sem);
     if (err.code != 0) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "err.code == 0", err.message);
     }
@@ -286,16 +286,16 @@ void test_sync_stress() {
     // 1. 互斥锁压力测试
     for(int i = 0; i < NUM_ITERATIONS; i++) {
         // 模拟两个线程交替访问
-        InfraxError err = mutex->mutex_lock(mutex);
+        InfraxError err = mutex->klass->mutex_lock(mutex);
         INFRAX_ASSERT(core, err.code == 0);
         shared_value++;
-        err = mutex->mutex_unlock(mutex);
+        err = mutex->klass->mutex_unlock(mutex);
         INFRAX_ASSERT(core, err.code == 0);
         
-        err = mutex->mutex_lock(mutex);
+        err = mutex->klass->mutex_lock(mutex);
         INFRAX_ASSERT(core, err.code == 0);
         shared_value++;
-        err = mutex->mutex_unlock(mutex);
+        err = mutex->klass->mutex_unlock(mutex);
         INFRAX_ASSERT(core, err.code == 0);
     }
     
@@ -324,16 +324,16 @@ void test_deadlock_detection() {
     INFRAX_ASSERT(core, mutex1 != NULL && mutex2 != NULL);
     
     // 测试嵌套锁定（应该检测到潜在死锁）
-    InfraxError err = mutex1->mutex_lock(mutex1);
+    InfraxError err = mutex1->klass->mutex_lock(mutex1);
     INFRAX_ASSERT(core, err.code == 0);
     
     // 尝试锁定第二个互斥锁，应该超时而不是死锁
-    err = mutex2->mutex_try_lock(mutex2);
+    err = mutex2->klass->mutex_try_lock(mutex2);
     if(err.code == 0) {
-        mutex2->mutex_unlock(mutex2);
+        mutex2->klass->mutex_unlock(mutex2);
     }
     
-    mutex1->mutex_unlock(mutex1);
+    mutex1->klass->mutex_unlock(mutex1);
     
     InfraxSyncClass.free(mutex1);
     InfraxSyncClass.free(mutex2);
@@ -349,34 +349,34 @@ void test_condition_variable_detailed() {
     INFRAX_ASSERT(core, mutex != NULL && cond != NULL);
     
     // 1. 测试不同的超时值
-    InfraxError err = mutex->mutex_lock(mutex);
+    InfraxError err = mutex->klass->mutex_lock(mutex);
     INFRAX_ASSERT(core, err.code == 0);
     
     // 短超时
-    err = cond->cond_timedwait(cond, mutex, 1);  // 1ms
+    err = cond->klass->cond_timedwait(cond, mutex, 1);  // 1ms
     INFRAX_ASSERT(core, err.code == INFRAX_ERROR_SYNC_TIMEOUT);
     
     // 长超时
-    err = cond->cond_timedwait(cond, mutex, 100);  // 100ms
+    err = cond->klass->cond_timedwait(cond, mutex, 100);  // 100ms
     INFRAX_ASSERT(core, err.code == INFRAX_ERROR_SYNC_TIMEOUT);
     
-    mutex->mutex_unlock(mutex);
+    mutex->klass->mutex_unlock(mutex);
     
     // 2. 测试虚假唤醒处理
     bool condition_met = false;
     int spurious_wakeup_count = 0;
     
-    err = mutex->mutex_lock(mutex);
+    err = mutex->klass->mutex_lock(mutex);
     INFRAX_ASSERT(core, err.code == 0);
     
     while(!condition_met && spurious_wakeup_count < 3) {
-        err = cond->cond_timedwait(cond, mutex, 10);
+        err = cond->klass->cond_timedwait(cond, mutex, 10);
         if(err.code == INFRAX_ERROR_SYNC_TIMEOUT) {
             spurious_wakeup_count++;
         }
     }
     
-    mutex->mutex_unlock(mutex);
+    mutex->klass->mutex_unlock(mutex);
     
     InfraxSyncClass.free(mutex);
     InfraxSyncClass.free(cond);
@@ -392,44 +392,44 @@ void test_rwlock_fairness() {
     
     // 1. 测试读优先
     for(int i = 0; i < 100; i++) {
-        InfraxError err = rwlock->rwlock_read_lock(rwlock);
+        InfraxError err = rwlock->klass->rwlock_read_lock(rwlock);
         INFRAX_ASSERT(core, err.code == 0);
         
         // 模拟读操作
         core->sleep_ms(core, 1);
         
-        err = rwlock->rwlock_read_unlock(rwlock);
+        err = rwlock->klass->rwlock_read_unlock(rwlock);
         INFRAX_ASSERT(core, err.code == 0);
     }
     
     // 2. 测试写优先
     for(int i = 0; i < 10; i++) {
-        InfraxError err = rwlock->rwlock_write_lock(rwlock);
+        InfraxError err = rwlock->klass->rwlock_write_lock(rwlock);
         INFRAX_ASSERT(core, err.code == 0);
         
         // 模拟写操作
         core->sleep_ms(core, 5);
         
-        err = rwlock->rwlock_write_unlock(rwlock);
+        err = rwlock->klass->rwlock_write_unlock(rwlock);
         INFRAX_ASSERT(core, err.code == 0);
     }
     
     // 3. 测试读写交替
     for(int i = 0; i < 10; i++) {
-        InfraxError err = rwlock->rwlock_read_lock(rwlock);
+        InfraxError err = rwlock->klass->rwlock_read_lock(rwlock);
         INFRAX_ASSERT(core, err.code == 0);
         
         core->sleep_ms(core, 1);
         
-        err = rwlock->rwlock_read_unlock(rwlock);
+        err = rwlock->klass->rwlock_read_unlock(rwlock);
         INFRAX_ASSERT(core, err.code == 0);
         
-        err = rwlock->rwlock_write_lock(rwlock);
+        err = rwlock->klass->rwlock_write_lock(rwlock);
         INFRAX_ASSERT(core, err.code == 0);
         
         core->sleep_ms(core, 1);
         
-        err = rwlock->rwlock_write_unlock(rwlock);
+        err = rwlock->klass->rwlock_write_unlock(rwlock);
         INFRAX_ASSERT(core, err.code == 0);
     }
     
@@ -448,26 +448,26 @@ void test_semaphore_edge_cases() {
     
     // 1. 测试最大值
     for(int i = 0; i < 1000; i++) {
-        InfraxError err = sem->semaphore_post(sem);
+        InfraxError err = sem->klass->semaphore_post(sem);
         INFRAX_ASSERT(core, err.code == 0);
     }
     
-    InfraxError err = sem->semaphore_get_value(sem, &value);
+    InfraxError err = sem->klass->semaphore_get_value(sem, &value);
     INFRAX_ASSERT(core, err.code == 0);
     INFRAX_ASSERT(core, value == 1000);
     
     // 2. 测试快速post/wait
     for(int i = 0; i < 1000; i++) {
-        err = sem->semaphore_wait(sem);
+        err = sem->klass->semaphore_wait(sem);
         INFRAX_ASSERT(core, err.code == 0);
     }
     
-    err = sem->semaphore_get_value(sem, &value);
+    err = sem->klass->semaphore_get_value(sem, &value);
     INFRAX_ASSERT(core, err.code == 0);
     INFRAX_ASSERT(core, value == 0);
     
     // 3. 测试超时等待
-    err = sem->semaphore_try_wait(sem);  // 尝试等待
+    err = sem->klass->semaphore_try_wait(sem);  // 尝试等待
     INFRAX_ASSERT(core, err.code == INFRAX_ERROR_SYNC_WOULD_BLOCK);
     
     InfraxSyncClass.free(sem);

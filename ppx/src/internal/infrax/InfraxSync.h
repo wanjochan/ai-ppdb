@@ -38,26 +38,8 @@ typedef enum {
 struct InfraxSyncClassType {
     InfraxSync* (*new)(InfraxSyncType type);
     void (*free)(InfraxSync* sync);
-};
 
-// The instance structure
-struct InfraxSync {
-    InfraxSync* self;
-    InfraxSyncClassType* klass;//InfraxSyncClass
-
-    bool is_initialized;
-    InfraxSyncType type;
-
-    // Native handles for different synchronization primitives
-    union {
-        pthread_mutex_t mutex;
-        pthread_rwlock_t rwlock;
-        pthread_spinlock_t spin;
-        sem_t sem;
-        pthread_cond_t cond;
-    } native_handle;
-
-    // Instance methods
+    // Instance methods moved from InfraxSync
     InfraxError (*mutex_lock)(InfraxSync* self);
     InfraxError (*mutex_try_lock)(InfraxSync* self);
     InfraxError (*mutex_unlock)(InfraxSync* self);
@@ -90,7 +72,6 @@ struct InfraxSync {
     InfraxError (*cond_fetch_or)(InfraxSync* self, int64_t value);
     InfraxError (*cond_fetch_xor)(InfraxSync* self, int64_t value);
     
-    _Atomic int64_t value;
     int64_t (*atomic_load)(InfraxSync* self);
     void (*atomic_store)(InfraxSync* self, int64_t value);
     int64_t (*atomic_exchange)(InfraxSync* self, int64_t value);
@@ -100,6 +81,26 @@ struct InfraxSync {
     int64_t (*atomic_fetch_and)(InfraxSync* self, int64_t value);
     int64_t (*atomic_fetch_or)(InfraxSync* self, int64_t value);
     int64_t (*atomic_fetch_xor)(InfraxSync* self, int64_t value);
+};
+
+// The instance structure
+struct InfraxSync {
+    InfraxSync* self;
+    InfraxSyncClassType* klass;//InfraxSyncClass
+
+    bool is_initialized;
+    InfraxSyncType type;
+
+    // Native handles for different synchronization primitives
+    union {
+        pthread_mutex_t mutex;
+        pthread_rwlock_t rwlock;
+        pthread_spinlock_t spin;
+        sem_t sem;
+        pthread_cond_t cond;
+    } native_handle;
+
+    _Atomic int64_t value;
 };
 
 // The "static" interface instance (like Java's Class object)

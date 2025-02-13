@@ -43,10 +43,10 @@ static void* pool_test_func(void* arg) {
     
     // 更新计数器
     if (task_mutex) {
-        task_mutex->mutex_lock(task_mutex);
+        task_mutex->klass->mutex_lock(task_mutex);
         task_counter++;
         core->printf(core, "Task %d executed, total completed: %d\n", *task_id, task_counter);
-        task_mutex->mutex_unlock(task_mutex);
+        task_mutex->klass->mutex_unlock(task_mutex);
     }
     
     return NULL;
@@ -340,13 +340,13 @@ void test_thread_pool_basic() {
     }
     
     // 检查任务计数器
-    task_mutex->mutex_lock(task_mutex);
+    task_mutex->klass->mutex_lock(task_mutex);
     if (task_counter != 5) {
         core->printf(core, "Task counter mismatch: expected 5, got %d\n", task_counter);
     } else {
         core->printf(core, "All tasks completed successfully\n");
     }
-    task_mutex->mutex_unlock(task_mutex);
+    task_mutex->klass->mutex_unlock(task_mutex);
     
     // 清理
     core->printf(core, "Cleaning up thread pool...\n");
@@ -369,9 +369,9 @@ void test_thread_pool_basic() {
 static void* stress_thread_func(void* arg) {
     int* iterations = (int*)arg;
     for(int i = 0; i < *iterations; i++) {
-        stress_mutex->mutex_lock(stress_mutex);
+        stress_mutex->klass->mutex_lock(stress_mutex);
         stress_counter++;
-        stress_mutex->mutex_unlock(stress_mutex);
+        stress_mutex->klass->mutex_unlock(stress_mutex);
         core->hint_yield(core);  // 提示让出CPU
     }
     return NULL;
@@ -383,10 +383,10 @@ static void* producer_func(void* arg) {
     int produced = 0;
     
     while(produced < *items) {
-        producer_consumer_mutex->mutex_lock(producer_consumer_mutex);
+        producer_consumer_mutex->klass->mutex_lock(producer_consumer_mutex);
         
         while(queue_full) {
-            producer_consumer_cond->cond_wait(producer_consumer_cond, producer_consumer_mutex);
+            producer_consumer_cond->klass->cond_wait(producer_consumer_cond, producer_consumer_mutex);
         }
         
         producer_consumer_queue[queue_tail] = produced;
@@ -394,8 +394,8 @@ static void* producer_func(void* arg) {
         queue_full = (queue_head == queue_tail);
         produced++;
         
-        producer_consumer_cond->cond_signal(producer_consumer_cond);
-        producer_consumer_mutex->mutex_unlock(producer_consumer_mutex);
+        producer_consumer_cond->klass->cond_signal(producer_consumer_cond);
+        producer_consumer_mutex->klass->mutex_unlock(producer_consumer_mutex);
         
         core->sleep_ms(core, 1);  // 模拟生产耗时
     }
@@ -409,10 +409,10 @@ static void* consumer_func(void* arg) {
     int consumed = 0;
     
     while(consumed < *items) {
-        producer_consumer_mutex->mutex_lock(producer_consumer_mutex);
+        producer_consumer_mutex->klass->mutex_lock(producer_consumer_mutex);
         
         while(queue_head == queue_tail && !queue_full) {
-            producer_consumer_cond->cond_wait(producer_consumer_cond, producer_consumer_mutex);
+            producer_consumer_cond->klass->cond_wait(producer_consumer_cond, producer_consumer_mutex);
         }
         
         int value = producer_consumer_queue[queue_head];
@@ -420,8 +420,8 @@ static void* consumer_func(void* arg) {
         queue_full = false;
         consumed++;
         
-        producer_consumer_cond->cond_signal(producer_consumer_cond);
-        producer_consumer_mutex->mutex_unlock(producer_consumer_mutex);
+        producer_consumer_cond->klass->cond_signal(producer_consumer_cond);
+        producer_consumer_mutex->klass->mutex_unlock(producer_consumer_mutex);
         
         core->sleep_ms(core, 2);  // 模拟消费耗时
     }

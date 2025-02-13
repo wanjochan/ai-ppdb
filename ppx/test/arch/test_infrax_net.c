@@ -297,10 +297,10 @@ static void* tcp_server_thread(void* arg) {
     }
     
     // Signal ready
-    ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
+    ctx->ready_mutex->klass->mutex_lock(ctx->ready_mutex);
     ctx->is_ready = true;
-    ctx->ready_cond->cond_signal(ctx->ready_cond);
-    ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
+    ctx->ready_cond->klass->cond_signal(ctx->ready_cond);
+    ctx->ready_mutex->klass->mutex_unlock(ctx->ready_mutex);
     
     TEST_LOG_INFO("TCP server ready on port %d", ctx->port);
     
@@ -401,10 +401,10 @@ static void* udp_server_thread(void* arg) {
     }
     
     // Signal ready
-    ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
+    ctx->ready_mutex->klass->mutex_lock(ctx->ready_mutex);
     ctx->is_ready = true;
-    ctx->ready_cond->cond_signal(ctx->ready_cond);
-    ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
+    ctx->ready_cond->klass->cond_signal(ctx->ready_cond);
+    ctx->ready_mutex->klass->mutex_unlock(ctx->ready_mutex);
     
     TEST_LOG_INFO("UDP server ready on port %d", ctx->port);
     
@@ -603,11 +603,11 @@ static bool setup_tcp_server(void* arg) {
     // Wait for ready
     int retry = TEST_RETRY_COUNT;
     while (retry > 0 && !ctx->is_ready) {
-        ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
-        err = ctx->ready_cond->cond_timedwait(ctx->ready_cond, 
+        ctx->ready_mutex->klass->mutex_lock(ctx->ready_mutex);
+        err = ctx->ready_cond->klass->cond_timedwait(ctx->ready_cond, 
                                             ctx->ready_mutex, 
                                             TEST_TIMEOUT_SEC * 1000);
-        ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
+        ctx->ready_mutex->klass->mutex_unlock(ctx->ready_mutex);
         
         if (INFRAX_ERROR_IS_ERR(err)) {
             TEST_LOG_WARN("Waiting for server (%d retries left)", retry);
@@ -648,11 +648,11 @@ static bool setup_udp_server(void* arg) {
     // Wait for ready
     int retry = TEST_RETRY_COUNT;
     while (retry > 0 && !ctx->is_ready) {
-        ctx->ready_mutex->mutex_lock(ctx->ready_mutex);
-        err = ctx->ready_cond->cond_timedwait(ctx->ready_cond, 
+        ctx->ready_mutex->klass->mutex_lock(ctx->ready_mutex);
+        err = ctx->ready_cond->klass->cond_timedwait(ctx->ready_cond, 
                                             ctx->ready_mutex, 
                                             TEST_TIMEOUT_SEC * 1000);
-        ctx->ready_mutex->mutex_unlock(ctx->ready_mutex);
+        ctx->ready_mutex->klass->mutex_unlock(ctx->ready_mutex);
         
         if (INFRAX_ERROR_IS_ERR(err)) {
             TEST_LOG_WARN("Waiting for server (%d retries left)", retry);

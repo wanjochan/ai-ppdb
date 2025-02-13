@@ -40,6 +40,23 @@ static int64_t infrax_atomic_fetch_and(InfraxSync* self, int64_t value);
 static int64_t infrax_atomic_fetch_or(InfraxSync* self, int64_t value);
 static int64_t infrax_atomic_fetch_xor(InfraxSync* self, int64_t value);
 
+// 添加缺失的函数声明
+static int64_t cond_exchange(InfraxSync* self, int64_t value);
+static bool cond_compare_exchange(InfraxSync* self, int64_t* expected, int64_t desired);
+static InfraxError cond_fetch_add(InfraxSync* self, int64_t value);
+static InfraxError cond_fetch_sub(InfraxSync* self, int64_t value);
+static InfraxError cond_fetch_and(InfraxSync* self, int64_t value);
+static InfraxError cond_fetch_or(InfraxSync* self, int64_t value);
+static InfraxError cond_fetch_xor(InfraxSync* self, int64_t value);
+
+// 添加初始化函数声明
+static InfraxError mutex_init(InfraxSync* self);
+static InfraxError rwlock_init(InfraxSync* self);
+static InfraxError spinlock_init(InfraxSync* self);
+static InfraxError semaphore_init(InfraxSync* self);
+static InfraxError condition_init(InfraxSync* self);
+static InfraxError atomic_init_sync(InfraxSync* self);
+
 // Helper function for memory management
 static InfraxMemory* get_memory_manager(void) {
     static InfraxMemory* memory = NULL;
@@ -56,47 +73,41 @@ static InfraxMemory* get_memory_manager(void) {
 }
 
 // Private initialization function
-static void infrax_sync_init(InfraxSync* self) {
-    if (!self) return;
+static InfraxError infrax_sync_init(InfraxSync* self) {
+    if (!self) {
+        return make_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid sync object");
+    }
 
-    // Initialize default state
-    self->is_initialized = true;
+    InfraxError err = INFRAX_ERROR_OK_STRUCT;
 
-    // Initialize all function pointers
-    self->mutex_lock = mutex_lock;
-    self->mutex_try_lock = mutex_try_lock;
-    self->mutex_unlock = mutex_unlock;
+    switch (self->type) {
+        case INFRAX_SYNC_TYPE_MUTEX:
+            err = mutex_init(self);
+            break;
+        case INFRAX_SYNC_TYPE_RWLOCK:
+            err = rwlock_init(self);
+            break;
+        case INFRAX_SYNC_TYPE_SPINLOCK:
+            err = spinlock_init(self);
+            break;
+        case INFRAX_SYNC_TYPE_SEMAPHORE:
+            err = semaphore_init(self);
+            break;
+        case INFRAX_SYNC_TYPE_CONDITION:
+            err = condition_init(self);
+            break;
+        case INFRAX_SYNC_TYPE_ATOMIC:
+            err = atomic_init_sync(self);
+            break;
+        default:
+            return make_error(INFRAX_ERROR_SYNC_INVALID_ARGUMENT, "Invalid sync type");
+    }
 
-    self->rwlock_read_lock = rwlock_read_lock;
-    self->rwlock_try_read_lock = rwlock_try_read_lock;
-    self->rwlock_read_unlock = rwlock_read_unlock;
-    self->rwlock_write_lock = rwlock_write_lock;
-    self->rwlock_try_write_lock = rwlock_try_write_lock;
-    self->rwlock_write_unlock = rwlock_write_unlock;
+    if (err.code == 0) {
+        self->is_initialized = true;
+    }
 
-    self->spinlock_lock = spinlock_lock;
-    self->spinlock_try_lock = spinlock_try_lock;
-    self->spinlock_unlock = spinlock_unlock;
-
-    self->semaphore_wait = semaphore_wait;
-    self->semaphore_try_wait = semaphore_try_wait;
-    self->semaphore_post = semaphore_post;
-    self->semaphore_get_value = semaphore_get_value;
-
-    self->cond_wait = cond_wait;
-    self->cond_timedwait = cond_timedwait;
-    self->cond_signal = cond_signal;
-    self->cond_broadcast = cond_broadcast;
-
-    self->atomic_load = infrax_atomic_load;
-    self->atomic_store = infrax_atomic_store;
-    self->atomic_exchange = infrax_atomic_exchange;
-    self->atomic_compare_exchange = infrax_atomic_compare_exchange;
-    self->atomic_fetch_add = infrax_atomic_fetch_add;
-    self->atomic_fetch_sub = infrax_atomic_fetch_sub;
-    self->atomic_fetch_and = infrax_atomic_fetch_and;
-    self->atomic_fetch_or = infrax_atomic_fetch_or;
-    self->atomic_fetch_xor = infrax_atomic_fetch_xor;
+    return err;
 }
 
 // Factory implementation
@@ -114,7 +125,11 @@ static InfraxSync* infrax_sync_new(InfraxSyncType type) {
     if (!sync) return NULL;
 
     // Initialize the sync object
-    infrax_sync_init(sync);
+    InfraxError err = infrax_sync_init(sync);
+    if (err.code != 0) {
+        memory->dealloc(memory, sync);
+        return NULL;
+    }
 
     // Initialize specific sync primitive based on type
     switch (type) {
@@ -134,7 +149,7 @@ static InfraxSync* infrax_sync_new(InfraxSyncType type) {
             sem_init(&sync->native_handle.sem, 0, 0);
             break;
         case INFRAX_SYNC_TYPE_ATOMIC:
-            atomic_init(&sync->value, 0);
+            // Nothing to clean up for atomic
             break;
         default:
             memory->dealloc(memory, sync);
@@ -183,7 +198,43 @@ static void infrax_sync_free(InfraxSync* sync) {
 // The "static" interface implementation
 InfraxSyncClassType InfraxSyncClass = {
     .new = infrax_sync_new,
-    .free = infrax_sync_free
+    .free = infrax_sync_free,
+    .mutex_lock = mutex_lock,
+    .mutex_try_lock = mutex_try_lock,
+    .mutex_unlock = mutex_unlock,
+    .rwlock_read_lock = rwlock_read_lock,
+    .rwlock_try_read_lock = rwlock_try_read_lock,
+    .rwlock_read_unlock = rwlock_read_unlock,
+    .rwlock_write_lock = rwlock_write_lock,
+    .rwlock_try_write_lock = rwlock_try_write_lock,
+    .rwlock_write_unlock = rwlock_write_unlock,
+    .spinlock_lock = spinlock_lock,
+    .spinlock_try_lock = spinlock_try_lock,
+    .spinlock_unlock = spinlock_unlock,
+    .semaphore_wait = semaphore_wait,
+    .semaphore_try_wait = semaphore_try_wait,
+    .semaphore_post = semaphore_post,
+    .semaphore_get_value = semaphore_get_value,
+    .cond_wait = cond_wait,
+    .cond_timedwait = cond_timedwait,
+    .cond_signal = cond_signal,
+    .cond_broadcast = cond_broadcast,
+    .cond_exchange = cond_exchange,
+    .cond_compare_exchange = cond_compare_exchange,
+    .cond_fetch_add = cond_fetch_add,
+    .cond_fetch_sub = cond_fetch_sub,
+    .cond_fetch_and = cond_fetch_and,
+    .cond_fetch_or = cond_fetch_or,
+    .cond_fetch_xor = cond_fetch_xor,
+    .atomic_load = infrax_atomic_load,
+    .atomic_store = infrax_atomic_store,
+    .atomic_exchange = infrax_atomic_exchange,
+    .atomic_compare_exchange = infrax_atomic_compare_exchange,
+    .atomic_fetch_add = infrax_atomic_fetch_add,
+    .atomic_fetch_sub = infrax_atomic_fetch_sub,
+    .atomic_fetch_and = infrax_atomic_fetch_and,
+    .atomic_fetch_or = infrax_atomic_fetch_or,
+    .atomic_fetch_xor = infrax_atomic_fetch_xor
 };
 
 //-----------------------------------------------------------------------------
@@ -719,4 +770,79 @@ static int64_t infrax_atomic_fetch_or(InfraxSync* self, int64_t value) {
 
 static int64_t infrax_atomic_fetch_xor(InfraxSync* self, int64_t value) {
     return atomic_fetch_xor(&self->value, value);
+}
+
+// 实现缺失的函数
+static int64_t cond_exchange(InfraxSync* self, int64_t value) {
+    return atomic_exchange(&self->value, value);
+}
+
+static bool cond_compare_exchange(InfraxSync* self, int64_t* expected, int64_t desired) {
+    return atomic_compare_exchange_strong(&self->value, expected, desired);
+}
+
+static InfraxError cond_fetch_add(InfraxSync* self, int64_t value) {
+    atomic_fetch_add(&self->value, value);
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError cond_fetch_sub(InfraxSync* self, int64_t value) {
+    atomic_fetch_sub(&self->value, value);
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError cond_fetch_and(InfraxSync* self, int64_t value) {
+    atomic_fetch_and(&self->value, value);
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError cond_fetch_or(InfraxSync* self, int64_t value) {
+    atomic_fetch_or(&self->value, value);
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError cond_fetch_xor(InfraxSync* self, int64_t value) {
+    atomic_fetch_xor(&self->value, value);
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+// 实现初始化函数
+static InfraxError mutex_init(InfraxSync* self) {
+    if (pthread_mutex_init(&self->native_handle.mutex, NULL) != 0) {
+        return make_error(INFRAX_ERROR_SYNC_INIT_FAILED, "Failed to initialize mutex");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError rwlock_init(InfraxSync* self) {
+    if (pthread_rwlock_init(&self->native_handle.rwlock, NULL) != 0) {
+        return make_error(INFRAX_ERROR_SYNC_INIT_FAILED, "Failed to initialize rwlock");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError spinlock_init(InfraxSync* self) {
+    if (pthread_spin_init(&self->native_handle.spin, PTHREAD_PROCESS_PRIVATE) != 0) {
+        return make_error(INFRAX_ERROR_SYNC_INIT_FAILED, "Failed to initialize spinlock");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError semaphore_init(InfraxSync* self) {
+    if (sem_init(&self->native_handle.sem, 0, 0) != 0) {
+        return make_error(INFRAX_ERROR_SYNC_INIT_FAILED, "Failed to initialize semaphore");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError condition_init(InfraxSync* self) {
+    if (pthread_cond_init(&self->native_handle.cond, NULL) != 0) {
+        return make_error(INFRAX_ERROR_SYNC_INIT_FAILED, "Failed to initialize condition");
+    }
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError atomic_init_sync(InfraxSync* self) {
+    atomic_init(&self->value, 0);
+    return INFRAX_ERROR_OK_STRUCT;
 }
