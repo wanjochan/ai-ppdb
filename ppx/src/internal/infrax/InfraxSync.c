@@ -1,6 +1,3 @@
-#include "libc/thread/thread.h"
-#include "libc/thread/semaphore.h"
-#include "libc/atomic.h"
 #include "InfraxSync.h"
 #include "InfraxMemory.h"
 #include "InfraxCore.h"

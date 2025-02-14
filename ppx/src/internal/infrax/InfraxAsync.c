@@ -1,16 +1,8 @@
+#include "cosmopolitan.h"
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <time.h>
-#include <poll.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/event.h>
-#include <sys/time.h>
+
 
 // Forward declarations
 static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg);

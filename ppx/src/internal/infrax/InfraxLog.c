@@ -1,9 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <time.h>
-#include <stdarg.h>
-#include <stdbool.h>
+#include "cosmopolitan.h"
 #include "internal/infrax/InfraxLog.h"
 
 // Forward declaration of static variables

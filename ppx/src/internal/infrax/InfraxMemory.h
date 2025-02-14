@@ -2,9 +2,7 @@
 #define INFRAX_MEMORY_H
 
 //design pattern: factory
-
-#include <stddef.h>
-#include <stdbool.h>
+#include "cosmopolitan.h"
 
 // Memory statistics
 typedef struct {

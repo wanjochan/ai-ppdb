@@ -8,7 +8,7 @@
 #ifndef PPDB_INFRAX_NET_H
 #define PPDB_INFRAX_NET_H
 
-#include <stdbool.h>
+#include "cosmopolitan.h"
 #include "internal/infrax/InfraxCore.h"
 
 //TODO rename to InfraxNet...

@@ -4,9 +4,7 @@
 //sync primitive
 //design pattern: factory (by type)
 
-#include <pthread.h>
-#include <semaphore.h>
-#include <stdbool.h>
+#include "cosmopolitan.h"
 #include "InfraxCore.h"
 
 // Error codes

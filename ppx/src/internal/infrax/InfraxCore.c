@@ -1,7 +1,4 @@
 #include "internal/infrax/InfraxCore.h"
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/resource.h>
 
 int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     va_list args;

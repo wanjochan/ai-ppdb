@@ -31,6 +31,7 @@
 #include <setjmp.h>
 #include <signal.h>     /* 信号处理 */
 #include <pthread.h>    /* 线程支持 */
+#include <semaphore.h>  /* POSIX 信号量 */
 #include <stdatomic.h>  /* 原子操作 */
 #include <sys/types.h>
 #include <sys/select.h>
@@ -42,6 +43,7 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <sys/resource.h>  /* 系统资源使用统计 */
 
 #endif
 #endif /* COSMOPOLITAN_H_ */

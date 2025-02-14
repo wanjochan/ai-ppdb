@@ -2,16 +2,6 @@
 #include "InfraxCore.h"
 #include "InfraxMemory.h"
 
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <string.h>
-#include <errno.h>
-
 // Private functions declarations
 static InfraxError set_socket_option(intptr_t handle, int level, int option, const void* value, size_t len);
 static InfraxError get_socket_option(intptr_t handle, int level, int option, void* value, size_t* len);

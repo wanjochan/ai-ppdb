@@ -1,5 +1,3 @@
-#include <stdlib.h>
-#include <string.h>
 #include "InfraxMemory.h"
 
 // Forward declarations of instance methods
