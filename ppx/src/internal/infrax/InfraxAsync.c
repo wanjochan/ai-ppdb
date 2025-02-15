@@ -195,6 +195,7 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
     if (ret < 0) {
         if (errno == EINTR) {
             // 被信号中断，重试
+            //TODO 这里要输出重试的日志，而且要有重试上限
             return infrax_async_pollset_poll(self, timeout_ms);
         }
         return -1;

@@ -1,4 +1,4 @@
-#include "PeerxRinetdInterface.h"
+#include "PeerxRinetd.h"
 #include "internal/infrax/InfraxMemory.h"
 #include "internal/infrax/InfraxSocket.h"
 #include <string.h>

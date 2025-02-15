@@ -1,4 +1,4 @@
-#include "PeerxMemKVInterface.h"
+#include "PeerxMemKV.h"
 #include "internal/infrax/InfraxMemory.h"
 #include "internal/infrax/InfraxHash.h"
 #include <string.h>

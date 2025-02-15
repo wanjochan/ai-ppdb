@@ -4,17 +4,6 @@
 #include "internal/infrax/InfraxNet.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
-#include <errno.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <fcntl.h>
-// #include <sys/timerfd.h>
-#include <time.h>
-#include <sys/types.h>
-#include <sys/event.h>
-#include <sys/time.h>
-// #include <poll.h>
 
 // 全局内存管理器
 static InfraxMemory* g_memory = NULL;
@@ -599,6 +588,7 @@ static void polyx_async_stop_timer(PolyxAsync* self, PolyxEvent* timer) {
     // TODO: Implement timer stop
 }
 
+//TODO using InfraxAsync pollset_poll?
 static int polyx_async_poll(PolyxAsync* self, int timeout_ms) {
     if (!self) return POLYX_ERROR_INVALID_PARAM;
     

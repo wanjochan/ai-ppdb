@@ -1,31 +1,9 @@
 #ifndef POLYX_ASYNC_H
 #define POLYX_ASYNC_H
-/**
-poll() 基本原理
-poll() 是一个多路复用 I/O 机制
-可以同时监控多个文件描述符的状态变化
-主要监控读、写、异常三种事件
-可被 poll() 监控的主要 fd 类型:
-a) 网络相关
-TCP sockets
-UDP sockets
-Unix domain sockets
-b) 标准 I/O
-管道(pipes)
-FIFO
-终端设备(/dev/tty)
-标准输入输出(stdin/stdout/stderr)
-c) 其他
-字符设备
-事件fd (eventfd)
-定时器fd (timerfd)
-信号fd (signalfd)
-inotify fd (文件系统事件监控)
- */
+
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
-// #include <poll.h>
 
 // Forward declarations
 typedef struct PolyxAsync PolyxAsync;

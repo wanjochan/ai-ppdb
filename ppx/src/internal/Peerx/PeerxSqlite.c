@@ -1,4 +1,4 @@
-#include "PeerxSqliteInterface.h"
+#include "PeerxSqlite.h"
 #include "internal/infrax/InfraxMemory.h"
 #include <sqlite3.h>
 #include <string.h>

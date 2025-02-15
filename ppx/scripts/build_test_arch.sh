@@ -1,29 +1,15 @@
 #!/bin/bash
 # timeout 60s ./ppx/scripts/build_test_arch.sh
+# Usage: build_test_arch.sh [test_name] [--clean]
 
 # Import common functions and environment variables
 source "$(dirname "$0")/build_env.sh"
-
-# Clean old build files
-clean_build() {
-    echo "Cleaning old build files..."
-    rm -rf "${BUILD_DIR}/arch"
-    rm -f "${TEST_DIR}/arch/test_arch"
-    rm -f "${TEST_DIR}/arch/test_infrax_memory"
-    rm -f "${TEST_DIR}/arch/test_infrax_error"
-    rm -f "${TEST_DIR}/arch/test_infrax_thread"
-    rm -f "${TEST_DIR}/arch/test_infrax_sync"
-    rm -f "${TEST_DIR}/arch/test_infrax_net"
-    # rm -f "${TEST_DIR}/arch/test_infrax_net_async"
-    rm -f "${TEST_DIR}/arch/test_infrax_async"
-    rm -f "${TEST_DIR}/arch/test_polyx_async"
-    rm -f "${TEST_DIR}/arch/test_c1m"  # 添加新测试
-}
+source "$(dirname "$0")/build_lib.sh"
 
 # Set compile flags with all necessary include paths
 CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR} -I${ROOT_DIR}/repos/cosmocc/include"
 
-# Define source files
+# Define source files for test build
 ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxCore.c"
     "${SRC_DIR}/internal/infrax/InfraxLog.c"
@@ -43,118 +29,46 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_infrax_error.c"
     "${TEST_DIR}/arch/test_infrax_sync.c"
     "${TEST_DIR}/arch/test_infrax_net.c"
-    # "${TEST_DIR}/arch/test_infrax_net_async.c"
     "${TEST_DIR}/arch/test_infrax_thread.c"
     "${TEST_DIR}/arch/test_infrax_async.c"
     "${TEST_DIR}/arch/test_polyx_async.c"
-    "${TEST_DIR}/arch/test_c1m.c"  # 添加新测试
-    "${TEST_DIR}/arch/test_cosmopolitan.c"  # 添加新测试
+    "${TEST_DIR}/arch/test_c1m.c"
+    "${TEST_DIR}/arch/test_cosmopolitan.c"
 )
 
-# Build the new architecture library
-build_arch() {
-    local build_dir="${BUILD_DIR}/arch"
-    local lib_file="${build_dir}/libarch.a"
-    local arch_objects=()
-    local need_rebuild=0
-
-    # Create build directory
-    mkdir -p "${build_dir}"
-
-    # Compile all source files
-    echo "Building new architecture..."
-    for src in "${ARCH_SOURCES[@]}"; do
-        local obj="${build_dir}/$(basename "${src}" .c).o"
-        
-        echo "Compiling: ${src}"
-        "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
-        if [ $? -ne 0 ]; then
-            echo "Error: Failed to compile ${src}"
-            exit 1
-        fi
-        arch_objects+=("${obj}")
-    done
-
-    # Create static library
-    echo "Creating static library: ${lib_file}"
-    rm -f "${lib_file}"
-    cd "${build_dir}" || exit 1
-    "${AR}" rcs "${lib_file}" *.o
-    if [ $? -ne 0 ]; then
-        echo "Failed to create arch library"
-        exit 1
-    fi
-    ls -l "${lib_file}"
-}
-
-# Build and run tests
-build_tests() {
-    local build_dir="${BUILD_DIR}/arch"
-    local test_dir="${build_dir}/tests"
-    local target_test="$1"
-    
-    mkdir -p "${test_dir}"
-
-    # Compile and link tests
-    echo "Building and running tests..."
-    local tests=()
-    for src in "${TEST_SOURCES[@]}"; do
-        local test_name="$(basename "${src}" .c)"
-        local test_bin="${test_dir}/${test_name}.exe"
-        
-        # Skip if target test is specified and doesn't match
-        if [ -n "${target_test}" ] && [ "${test_name}" != "${target_test}" ]; then
-            continue
-        fi
-        
-        echo "Building test: ${test_name}"
-        "${CC}" ${CFLAGS} "${src}" -L"${build_dir}" -larch -o "${test_bin}"
-        if [ $? -ne 0 ]; then
-            echo "Failed to build test: ${test_name}"
-            exit 1
-        fi
-        ls -al "${test_bin}"
-        
-        # 如果没有指定测试名称，则跳过 test_c1m 的自动运行
-        if [ -z "${target_test}" ]; then
-            if [ "${test_name}" != "test_c1m" ]; then
-                echo "Running test: ${test_name}"
-                "${test_bin}"
-                if [ $? -ne 0 ]; then
-                    echo "Test failed: ${test_name}"
-                    exit 1
-                fi
-            else
-                echo "Skipping auto-run for ${test_name} (manual run required)"
-                echo "bin=${test_bin}"
-            fi
-        else
-            # 指定了测试名称时直接运行
-            echo "Running test: ${test_name}"
-            "${test_bin}"
-            if [ $? -ne 0 ]; then
-                echo "Test failed: ${test_name}"
-                exit 1
-            fi
-        fi
-        # 对于C1M测试，我们不自动运行它
-        if [ "${test_name}" != "test_c1m" ]; then
-            echo "Running test: ${test_name}"
-            "${test_bin}"
-            if [ $? -ne 0 ]; then
-                echo "Test failed: ${test_name}"
-                exit 1
-            fi
-        else
-            echo "Skipping auto-run for ${test_name} (manual run required)"
-            echo "bin=${test_bin}"
-        fi
+# Clean build and test files
+clean_build() {
+    echo "Cleaning old build files..."
+    rm -rf "${BUILD_DIR}/arch"
+    for test in "${TEST_SOURCES[@]}"; do
+        rm -f "${TEST_DIR}/arch/$(basename "${test}" .c)"
     done
 }
 
-# Main execution
-clean_build
-build_arch
-if [ $? -eq 0 ]; then
-    build_tests "$1"
+# Parse command line arguments
+target_test=""
+do_clean=0
+
+for arg in "$@"; do
+    case $arg in
+        --clean)
+            do_clean=1
+            ;;
+        *)
+            if [ -z "$target_test" ]; then
+                target_test="$arg"
+            fi
+            ;;
+    esac
+done
+
+# Clean if requested
+if [ $do_clean -eq 1 ]; then
+    clean_build
+fi
+
+# Build arch library
+if build_arch_lib "${BUILD_DIR}/arch" "${ARCH_SOURCES[@]}"; then
+    # Build and run tests
+    build_and_run_tests "${BUILD_DIR}/arch" "$target_test" "${TEST_SOURCES[@]}"
 fi
