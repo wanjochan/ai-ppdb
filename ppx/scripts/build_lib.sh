@@ -74,8 +74,8 @@ build_and_run_tests() {
             return 1
         fi
         
-        # 特殊处理 test_c1m
-        if [ "${test_name}" = "test_c1m" ]; then
+        # 特殊处理 test_c1m （仅当 target_test 为空，即全量时跳过）
+        if [ "${test_name}" = "test_c1m" ] && [ "${target_test}" = "" ]; then
             echo "Skipping auto-run for ${test_name} (manual run required)"
             echo "bin=${test_bin}"
             continue

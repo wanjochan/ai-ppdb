@@ -323,6 +323,7 @@ int main() {
         
         // 让出控制权给事件循环
         InfraxAsyncClass.pollset_poll(NULL, 10);
+        core->sleep_ms(core,1);
     }
     
     // Print final metrics
@@ -355,6 +356,7 @@ int main() {
         }
         
         InfraxAsyncClass.pollset_poll(NULL, 10);
+        core->sleep_ms(core,1);
     }
     
     if (memory) {
