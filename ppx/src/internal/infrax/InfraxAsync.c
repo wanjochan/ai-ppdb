@@ -189,31 +189,37 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
     
     // 限制单次 poll 的超时时间
     int actual_timeout = timeout_ms > 100 ? 100 : timeout_ms;
+    int max_retries = 3;
+    int retries = 0;
     
-    // Use poll() to wait for events
-    int ret = poll(g_pollset->fds, g_pollset->size, actual_timeout);
-    if (ret < 0) {
-        if (errno == EINTR) {
-            // 被信号中断，重试
-            //TODO 这里要输出重试的日志，而且要有重试上限
-            return infrax_async_pollset_poll(self, timeout_ms);
-        }
-        return -1;
-    }
-    
-    // Process events
-    for (size_t i = 0; i < g_pollset->size; i++) {
-        if (g_pollset->fds[i].revents) {
-            if (g_pollset->infos[i]->callback) {
-                g_pollset->infos[i]->callback(self, g_pollset->fds[i].fd, 
-                                            g_pollset->fds[i].revents, 
-                                            g_pollset->infos[i]->arg);
+    while (retries < max_retries) {
+        // Use poll() to wait for events
+        int ret = poll(g_pollset->fds, g_pollset->size, actual_timeout);
+        if (ret < 0) {
+            if (errno == EINTR) {
+                // 被信号中断，重试
+                retries++;
+                continue;
             }
-            g_pollset->fds[i].revents = 0;
+            return -1;
         }
+        
+        // Process events
+        for (size_t i = 0; i < g_pollset->size; i++) {
+            if (g_pollset->fds[i].revents) {
+                if (g_pollset->infos[i]->callback) {
+                    g_pollset->infos[i]->callback(self, g_pollset->fds[i].fd, 
+                                                g_pollset->fds[i].revents, 
+                                                g_pollset->infos[i]->arg);
+                }
+                g_pollset->fds[i].revents = 0;
+            }
+        }
+        
+        return ret;
     }
     
-    return ret;
+    return -1;  // 超过最大重试次数
 }
 
 // Create new InfraxAsync instance
