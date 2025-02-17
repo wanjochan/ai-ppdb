@@ -381,17 +381,24 @@ static void* timer_thread_func(void* arg) {
     while (tt->running) {
         pthread_mutex_lock(&tt->mutex);
         
-        // Check timers
-        InfraxMuxTimer* timer = tt->timers;
-        while (timer) {
-            if (timer->active) {
-                infrax_timer_check_expired();
-            }
-            timer = timer->next;
-        }
+        // 只检查一次过期的定时器
+        infrax_timer_check_expired();
+        
+        // 计算下一个定时器的到期时间
+        uint64_t next_expiry = infrax_timer_next_expiration();
+        uint64_t now = InfraxCoreClass.singleton()->time_monotonic_ms(InfraxCoreClass.singleton());
         
         pthread_mutex_unlock(&tt->mutex);
-        usleep(1000);  // 1ms
+        
+        // 计算需要等待的时间
+        uint64_t wait_time = (next_expiry == UINT64_MAX) ? 1000 : 
+                            (next_expiry <= now) ? 1 : 
+                            (next_expiry - now);
+                            
+        // 限制最大等待时间为1秒
+        if (wait_time > 1000) wait_time = 1000;
+        
+        usleep(wait_time * 1000);  // 转换为微秒
     }
     
     return NULL;
@@ -455,17 +462,14 @@ static InfraxU32 infrax_timer_create_mux_timer(InfraxU32 interval_ms, InfraxTime
         return 0;  // Return 0 as invalid timer ID
     }
     
-    pthread_mutex_lock(&g_timer_thread->mutex);
-    
     // 创建新定时器
     InfraxMuxTimer* timer = (InfraxMuxTimer*)malloc(sizeof(InfraxMuxTimer));
     if (!timer) {
-        pthread_mutex_unlock(&g_timer_thread->mutex);
         return 0;
     }
     
     // 初始化定时器
-    timer->id = g_timer_thread->next_timer_id++;
+    timer->id = __atomic_add_fetch(&g_timer_thread->next_timer_id, 1, __ATOMIC_SEQ_CST);
     timer->interval_ms = interval_ms;
     timer->handler = handler;
     timer->arg = arg;
@@ -476,7 +480,6 @@ static InfraxU32 infrax_timer_create_mux_timer(InfraxU32 interval_ms, InfraxTime
     err = InfraxTimerClass.new(&timer->infrax_timer, interval_ms, mux_timer_callback, timer);
     if (err.code != 0) {
         free(timer);
-        pthread_mutex_unlock(&g_timer_thread->mutex);
         return 0;
     }
     
@@ -485,15 +488,15 @@ static InfraxU32 infrax_timer_create_mux_timer(InfraxU32 interval_ms, InfraxTime
     if (err.code != 0) {
         InfraxTimerClass.free(timer->infrax_timer);
         free(timer);
-        pthread_mutex_unlock(&g_timer_thread->mutex);
         return 0;
     }
     
-    // 添加到链表
+    // 添加到链表（使用短暂的锁）
+    pthread_mutex_lock(&g_timer_thread->mutex);
     timer->next = g_timer_thread->timers;
     g_timer_thread->timers = timer;
-    
     pthread_mutex_unlock(&g_timer_thread->mutex);
+    
     return timer->id;
 }
 
