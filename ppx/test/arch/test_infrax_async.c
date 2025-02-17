@@ -205,6 +205,84 @@ void test_multiple_timers() {
     core->printf(NULL, "Multiple timers test passed\n");
 }
 
+// 并发定时器测试
+#define CONCURRENT_TIMER_COUNT 100
+
+static void concurrent_timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
+    int* fired_count = (int*)arg;
+    (*fired_count)++;
+    core->printf(NULL, "Timer %d fired\n", *fired_count);
+}
+
+void test_concurrent_timers() {
+    core->printf(NULL, "Testing %d concurrent timers...\n", CONCURRENT_TIMER_COUNT);
+    setup_timeout(20);  // 20 second timeout
+    
+    // Create async task for polling
+    InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);
+    if (!async) {
+        core->printf(NULL,"Failed to create async task\n");
+        clear_timeout();
+        return;
+    }
+    
+    // 创建定时器数组
+    InfraxU32 timer_ids[CONCURRENT_TIMER_COUNT];
+    int fired_count = 0;
+    
+    // 设置定时器，间隔从100ms到1000ms不等
+    for (int i = 0; i < CONCURRENT_TIMER_COUNT; i++) {
+        InfraxU32 interval = 100 + (i % 10) * 100;  // 100ms到1000ms
+        timer_ids[i] = InfraxAsyncClass.setTimeout(interval, concurrent_timer_handler, &fired_count);
+        if (timer_ids[i] == 0) {
+            core->printf(NULL, "Failed to set timer %d\n", i);
+            // 清理已创建的定时器
+            for (int j = 0; j < i; j++) {
+                InfraxAsyncClass.clearTimeout(timer_ids[j]);
+            }
+            InfraxAsyncClass.free(async);
+            clear_timeout();
+            return;
+        }
+    }
+    
+    // 等待所有定时器触发
+    while (fired_count < CONCURRENT_TIMER_COUNT && !test_timeout) {
+        InfraxAsyncClass.pollset_poll(async, 100);
+    }
+    
+    if (test_timeout) {
+        core->printf(NULL,"Test timed out after firing %d timers\n", fired_count);
+        // 清理定时器
+        for (int i = 0; i < CONCURRENT_TIMER_COUNT; i++) {
+            InfraxAsyncClass.clearTimeout(timer_ids[i]);
+        }
+        InfraxAsyncClass.free(async);
+        clear_timeout();
+        return;
+    }
+    
+    if (fired_count != CONCURRENT_TIMER_COUNT) {
+        core->printf(NULL, "Not all timers fired (fired=%d, expected=%d)\n", 
+                    fired_count, CONCURRENT_TIMER_COUNT);
+        // 清理定时器
+        for (int i = 0; i < CONCURRENT_TIMER_COUNT; i++) {
+            InfraxAsyncClass.clearTimeout(timer_ids[i]);
+        }
+        InfraxAsyncClass.free(async);
+        clear_timeout();
+        return;
+    }
+    
+    // 清理定时器
+    for (int i = 0; i < CONCURRENT_TIMER_COUNT; i++) {
+        InfraxAsyncClass.clearTimeout(timer_ids[i]);
+    }
+    InfraxAsyncClass.free(async);
+    clear_timeout();
+    core->printf(NULL, "All %d concurrent timers fired successfully\n", CONCURRENT_TIMER_COUNT);
+}
+
 // Main test function
 int main(void) {
     core = InfraxCoreClass.singleton();
@@ -321,6 +399,7 @@ int main(void) {
     // Run timer tests
     test_async_timer();
     test_multiple_timers();
+    test_concurrent_timers();  // 添加并发测试
     
     core->printf(core, "All InfraxAsync tests passed!\n");
     return 0;
