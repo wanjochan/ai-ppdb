@@ -2,6 +2,7 @@
 #define INFRAX_ASYNC_H
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
+#include "internal/infrax/InfraxTimer.h"
 /** DESIGN NOTES
 
 design pattern: factory
@@ -98,9 +99,14 @@ typedef struct InfraxAsyncClassType {
     bool (*start)(InfraxAsync* self);
     void (*cancel)(InfraxAsync* self);
     bool (*is_done)(InfraxAsync* self);
+
     int (*pollset_add_fd)(InfraxAsync* self, int fd, short events, InfraxPollCallback callback, void* arg);
     void (*pollset_remove_fd)(InfraxAsync* self, int fd);
     int (*pollset_poll)(InfraxAsync* self, int timeout_ms);
+    
+    // Timer operations
+    InfraxU32 (*setTimeout)(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg);
+    InfraxError (*clearTimeout)(InfraxU32 timer_id);
 } InfraxAsyncClassType;
 
 // Global class instance

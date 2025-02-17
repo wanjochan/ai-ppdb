@@ -2,6 +2,7 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
+#include "internal/infrax/InfraxTimer.h"
 
 
 // Forward declarations
@@ -24,6 +25,24 @@ extern InfraxMemoryClassType InfraxMemoryClass;
 
 // Global Core instance
 static InfraxCore* g_core = NULL;
+
+// Timer callback adapter structure
+typedef struct {
+    InfraxU32 timer_id;
+    InfraxAsync* async;
+    InfraxPollCallback handler;
+    void* arg;
+} TimerCallbackAdapter;
+
+// Timer callback adapter function
+static void timer_callback_adapter(int fd, short events, void* arg) {
+    TimerCallbackAdapter* adapter = (TimerCallbackAdapter*)arg;
+    if (adapter && adapter->handler) {
+        adapter->handler(adapter->async, fd, events, adapter->arg);
+        // Free adapter after callback since timer is one-shot
+        g_memory->dealloc(g_memory, adapter);
+    }
+}
 
 // Initialize memory
 static bool init_memory(void) {
@@ -290,6 +309,48 @@ static bool infrax_async_is_done(InfraxAsync* self) {
     return self->state == INFRAX_ASYNC_FULFILLED || self->state == INFRAX_ASYNC_REJECTED;
 }
 
+// Set timeout using timer
+static InfraxU32 infrax_async_set_timeout(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg) {
+    // Create adapter
+    TimerCallbackAdapter* adapter = (TimerCallbackAdapter*)g_memory->alloc(g_memory, sizeof(TimerCallbackAdapter));
+    if (!adapter) return 0;
+    
+    adapter->async = NULL;  // Will be set when used in pollset
+    adapter->handler = handler;
+    adapter->arg = arg;
+    
+    InfraxU32 timer_id = InfraxTimerClass.create_mux_timer(interval_ms, timer_callback_adapter, adapter);
+    if (timer_id == 0) {
+        g_memory->dealloc(g_memory, adapter);
+        return 0;
+    }
+    
+    adapter->timer_id = timer_id;
+    
+    // Get timer from active timers list
+    InfraxMuxTimer* timer = InfraxTimerClass.get_active_mux_timers();
+    while (timer) {
+        if (timer->id == timer_id) {
+            // Add timer fd to pollset
+            int fd = InfraxTimerClass.get_fd(timer->infrax_timer);
+            if (infrax_async_pollset_add_fd(NULL, fd, INFRAX_POLLIN, handler, arg) < 0) {
+                InfraxTimerClass.clear_mux_timer(timer_id);
+                g_memory->dealloc(g_memory, adapter);
+                return 0;
+            }
+            break;
+        }
+        timer = timer->next;
+    }
+    
+    return timer_id;
+}
+
+// Clear timeout
+static InfraxError infrax_async_clear_timeout(InfraxU32 timer_id) {
+    return InfraxTimerClass.clear_mux_timer(timer_id);
+}
+
 // Global class instance
 InfraxAsyncClassType InfraxAsyncClass = {
     .new = infrax_async_new,
@@ -299,5 +360,7 @@ InfraxAsyncClassType InfraxAsyncClass = {
     .is_done = infrax_async_is_done,
     .pollset_add_fd = infrax_async_pollset_add_fd,
     .pollset_remove_fd = infrax_async_pollset_remove_fd,
-    .pollset_poll = infrax_async_pollset_poll
+    .pollset_poll = infrax_async_pollset_poll,
+    .setTimeout = infrax_async_set_timeout,
+    .clearTimeout = infrax_async_clear_timeout
 }; 
