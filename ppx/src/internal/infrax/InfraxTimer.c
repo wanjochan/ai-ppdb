@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <pthread.h>
 
 #define WHEEL_SIZE 256  // Must be power of 2
 #define WHEEL_MASK (WHEEL_SIZE - 1)
@@ -38,6 +39,18 @@ static struct {
     size_t capacity;              // Current capacity
     size_t size;                  // Current size
 } heap;
+
+// Timer thread state
+typedef struct InfraxTimerThread {
+    pthread_t thread;
+    pthread_mutex_t mutex;
+    InfraxBool running;
+    InfraxMuxTimer* timers;  // 定时器链表
+    InfraxU32 next_timer_id;  // For generating unique timer IDs
+} InfraxTimerThread;
+
+// Global timer thread instance
+static InfraxTimerThread* g_timer_thread = NULL;
 
 // Initialize wheel and heap
 static void init_timer_system() {
@@ -82,6 +95,8 @@ static InfraxError infrax_timer_new(InfraxTimer** timer, int timeout_ms,
     if (pipe(pipefd) < 0) {
         err.code = INFRAX_ERROR_SYSTEM;
         snprintf(err.message, sizeof(err.message), "pipe() failed: %s", strerror(errno));
+        close(pipefd[0]);
+        close(pipefd[1]);
         free(*timer);
         *timer = NULL;
         return err;
@@ -359,6 +374,171 @@ static uint64_t infrax_timer_next_expiration() {
     return next;
 }
 
+// Timer thread function
+static void* timer_thread_func(void* arg) {
+    InfraxTimerThread* tt = (InfraxTimerThread*)arg;
+    
+    while (tt->running) {
+        pthread_mutex_lock(&tt->mutex);
+        
+        // Check timers
+        InfraxMuxTimer* timer = tt->timers;
+        while (timer) {
+            if (timer->active) {
+                infrax_timer_check_expired();
+            }
+            timer = timer->next;
+        }
+        
+        pthread_mutex_unlock(&tt->mutex);
+        usleep(1000);  // 1ms
+    }
+    
+    return NULL;
+}
+
+// Initialize timer thread if needed
+static InfraxError ensure_timer_thread(void) {
+    InfraxError err = {0};
+    
+    if (g_timer_thread) {
+        return err;  // Already initialized
+    }
+    
+    // Allocate thread state
+    g_timer_thread = (InfraxTimerThread*)malloc(sizeof(InfraxTimerThread));
+    if (!g_timer_thread) {
+        err.code = INFRAX_ERROR_NO_MEMORY;
+        snprintf(err.message, sizeof(err.message), "Failed to allocate timer thread state");
+        return err;
+    }
+    
+    // Initialize mutex
+    if (pthread_mutex_init(&g_timer_thread->mutex, NULL) != 0) {
+        err.code = INFRAX_ERROR_SYSTEM;
+        snprintf(err.message, sizeof(err.message), "Failed to init mutex: %s", strerror(errno));
+        free(g_timer_thread);
+        g_timer_thread = NULL;
+        return err;
+    }
+    
+    g_timer_thread->next_timer_id = 1;  // Start from 1
+    g_timer_thread->timers = NULL;  // 初始化定时器链表为空
+    g_timer_thread->running = 1;
+    
+    // Start thread
+    if (pthread_create(&g_timer_thread->thread, NULL, timer_thread_func, g_timer_thread) != 0) {
+        err.code = INFRAX_ERROR_SYSTEM;
+        snprintf(err.message, sizeof(err.message), "Failed to create thread: %s", strerror(errno));
+        pthread_mutex_destroy(&g_timer_thread->mutex);
+        free(g_timer_thread);
+        g_timer_thread = NULL;
+        return err;
+    }
+    
+    return err;
+}
+
+// Timer callback
+static void mux_timer_callback(void* arg) {
+    InfraxMuxTimer* timer = (InfraxMuxTimer*)arg;
+    if (timer && timer->active && timer->handler) {
+        timer->handler(InfraxTimerClass.get_fd(timer->infrax_timer), POLLIN, timer->arg);
+    }
+}
+
+// Create a new mux timer
+static InfraxU32 infrax_timer_create_mux_timer(InfraxU32 interval_ms, InfraxTimerHandler handler, void* arg) {
+    // Ensure timer thread is running
+    InfraxError err = ensure_timer_thread();
+    if (err.code != 0) {
+        return 0;  // Return 0 as invalid timer ID
+    }
+    
+    pthread_mutex_lock(&g_timer_thread->mutex);
+    
+    // 创建新定时器
+    InfraxMuxTimer* timer = (InfraxMuxTimer*)malloc(sizeof(InfraxMuxTimer));
+    if (!timer) {
+        pthread_mutex_unlock(&g_timer_thread->mutex);
+        return 0;
+    }
+    
+    // 初始化定时器
+    timer->id = g_timer_thread->next_timer_id++;
+    timer->interval_ms = interval_ms;
+    timer->handler = handler;
+    timer->arg = arg;
+    timer->active = 1;
+    timer->expiry = InfraxCoreClass.singleton()->time_monotonic_ms(InfraxCoreClass.singleton()) + interval_ms;
+    
+    // 创建 InfraxTimer
+    err = InfraxTimerClass.new(&timer->infrax_timer, interval_ms, mux_timer_callback, timer);
+    if (err.code != 0) {
+        free(timer);
+        pthread_mutex_unlock(&g_timer_thread->mutex);
+        return 0;
+    }
+    
+    // 启动定时器
+    err = InfraxTimerClass.start(timer->infrax_timer);
+    if (err.code != 0) {
+        InfraxTimerClass.free(timer->infrax_timer);
+        free(timer);
+        pthread_mutex_unlock(&g_timer_thread->mutex);
+        return 0;
+    }
+    
+    // 添加到链表
+    timer->next = g_timer_thread->timers;
+    g_timer_thread->timers = timer;
+    
+    pthread_mutex_unlock(&g_timer_thread->mutex);
+    return timer->id;
+}
+
+// Clear a mux timer
+static InfraxError infrax_timer_clear_mux_timer(InfraxU32 timer_id) {
+    InfraxError err = {0};
+    
+    if (!g_timer_thread) {
+        return err;  // No timer running
+    }
+    
+    pthread_mutex_lock(&g_timer_thread->mutex);
+    
+    // 查找并移除定时器
+    InfraxMuxTimer** pp = &g_timer_thread->timers;
+    while (*pp) {
+        InfraxMuxTimer* timer = *pp;
+        if (timer->id == timer_id) {
+            *pp = timer->next;
+            timer->active = 0;  // 停用定时器
+            InfraxTimerClass.stop(timer->infrax_timer);  // 停止定时器
+            InfraxTimerClass.free(timer->infrax_timer);  // 释放定时器
+            free(timer);
+            break;
+        }
+        pp = &timer->next;
+    }
+    
+    pthread_mutex_unlock(&g_timer_thread->mutex);
+    return err;
+}
+
+// Get active mux timers
+static InfraxMuxTimer* infrax_timer_get_active_mux_timers() {
+    if (!g_timer_thread) {
+        return NULL;
+    }
+    
+    pthread_mutex_lock(&g_timer_thread->mutex);
+    InfraxMuxTimer* timers = g_timer_thread->timers;
+    pthread_mutex_unlock(&g_timer_thread->mutex);
+    
+    return timers;
+}
+
 // Global timer class instance
 InfraxTimerClassType InfraxTimerClass = {
     .new = infrax_timer_new,
@@ -367,5 +547,8 @@ InfraxTimerClassType InfraxTimerClass = {
     .stop = infrax_timer_stop,
     .reset = infrax_timer_reset,
     .get_fd = infrax_timer_get_fd,
-    .next_expiration = infrax_timer_next_expiration
+    .next_expiration = infrax_timer_next_expiration,
+    .create_mux_timer = infrax_timer_create_mux_timer,
+    .clear_mux_timer = infrax_timer_clear_mux_timer,
+    .get_active_mux_timers = infrax_timer_get_active_mux_timers
 };

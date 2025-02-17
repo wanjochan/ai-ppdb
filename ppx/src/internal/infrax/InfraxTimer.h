@@ -7,8 +7,23 @@
 // Timer callback type
 typedef void (*InfraxTimerCallback)(void* arg);
 
+// Timer event handler type
+typedef void (*InfraxTimerHandler)(int fd, short events, void* arg);
+
 // Timer object
 typedef struct InfraxTimer InfraxTimer;
+
+// Timer structure
+typedef struct InfraxMuxTimer {
+    InfraxU32 id;
+    InfraxU32 interval_ms;
+    InfraxTimerHandler handler;
+    void* arg;
+    InfraxBool active;
+    InfraxTime expiry;
+    struct InfraxMuxTimer* next;
+    InfraxTimer* infrax_timer;
+} InfraxMuxTimer;
 
 // Timer class structure
 typedef struct {
@@ -37,6 +52,15 @@ typedef struct {
     // Get next expiration time in milliseconds
     // Returns UINT64_MAX if no active timers
     uint64_t (*next_expiration)();
+
+    // Create a new mux timer
+    InfraxU32 (*create_mux_timer)(InfraxU32 interval_ms, InfraxTimerHandler handler, void* arg);
+    
+    // Clear a mux timer
+    InfraxError (*clear_mux_timer)(InfraxU32 timer_id);
+    
+    // Get active mux timers
+    InfraxMuxTimer* (*get_active_mux_timers)();
 } InfraxTimerClassType;
 
 // Global timer class instance

@@ -9,11 +9,10 @@
 // Timer thread state
 typedef struct InfraxMuxTimerThread {
     pthread_t thread;
-    int pipe_read;
-    int pipe_write;
-    InfraxBool running;
     pthread_mutex_t mutex;
-    InfraxTimer* timer;
+    InfraxBool running;
+    InfraxTimer* timer;  // 使用 InfraxTimer
+    InfraxMuxTimer* timers;  // 定时器链表
     InfraxU32 next_timer_id;  // For generating unique timer IDs
 } InfraxMuxTimerThread;
 
@@ -25,24 +24,30 @@ static void* timer_thread_func(void* arg) {
     InfraxMuxTimerThread* tt = (InfraxMuxTimerThread*)arg;
     
     while (tt->running) {
-        // Check timer expiration
         pthread_mutex_lock(&tt->mutex);
-        InfraxTime next = InfraxTimerClass.next_expiration(tt->timer);
-        if (next >= 0) {
-            InfraxTime now = InfraxCoreClass.singleton()->time_monotonic_ms(InfraxCoreClass.singleton());
-            if (now >= next) {
-                // Timer expired, notify through pipe
-                char c = '!';
-                write(tt->pipe_write, &c, 1);
-            }
-        }
-        pthread_mutex_unlock(&tt->mutex);
         
-        // Sleep a bit to avoid busy loop
+        // Check timers
+        InfraxMuxTimer* timer = tt->timers;
+        while (timer) {
+            if (timer->active) {
+                infrax_timer_check_expired();
+            }
+            timer = timer->next;
+        }
+        
+        pthread_mutex_unlock(&tt->mutex);
         usleep(1000);  // 1ms
     }
     
     return NULL;
+}
+
+// Timer callback
+static void timer_callback(void* arg) {
+    InfraxMuxTimer* timer = (InfraxMuxTimer*)arg;
+    if (timer && timer->active && timer->handler) {
+        timer->handler(InfraxTimerClass.get_fd(timer->infrax_timer), POLLIN, timer->arg);
+    }
 }
 
 // Initialize timer thread if needed
@@ -61,51 +66,25 @@ static InfraxError ensure_timer_thread(void) {
         return err;
     }
     
-    // Create pipe
-    int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        err.code = INFRAX_ERROR_SYSTEM;
-        snprintf(err.message, sizeof(err.message), "Failed to create pipe: %s", strerror(errno));
-        free(g_timer_thread);
-        g_timer_thread = NULL;
-        return err;
-    }
-    
-    g_timer_thread->pipe_read = pipefd[0];
-    g_timer_thread->pipe_write = pipefd[1];
-    g_timer_thread->next_timer_id = 1;  // Start from 1
-    
     // Initialize mutex
     if (pthread_mutex_init(&g_timer_thread->mutex, NULL) != 0) {
         err.code = INFRAX_ERROR_SYSTEM;
         snprintf(err.message, sizeof(err.message), "Failed to init mutex: %s", strerror(errno));
-        close(g_timer_thread->pipe_read);
-        close(g_timer_thread->pipe_write);
         free(g_timer_thread);
         g_timer_thread = NULL;
         return err;
     }
     
-    // Create timer
-    err = InfraxTimerClass.new(&g_timer_thread->timer, 0, NULL, NULL);
-    if (err.code != 0) {
-        pthread_mutex_destroy(&g_timer_thread->mutex);
-        close(g_timer_thread->pipe_read);
-        close(g_timer_thread->pipe_write);
-        free(g_timer_thread);
-        g_timer_thread = NULL;
-        return err;
-    }
+    g_timer_thread->next_timer_id = 1;  // Start from 1
+    g_timer_thread->timers = NULL;  // 初始化定时器链表为空
+    g_timer_thread->timer = NULL;  // 不再需要全局定时器
     
     // Start thread
     g_timer_thread->running = 1;
     if (pthread_create(&g_timer_thread->thread, NULL, timer_thread_func, g_timer_thread) != 0) {
         err.code = INFRAX_ERROR_SYSTEM;
         snprintf(err.message, sizeof(err.message), "Failed to create thread: %s", strerror(errno));
-        InfraxTimerClass.free(g_timer_thread->timer);
         pthread_mutex_destroy(&g_timer_thread->mutex);
-        close(g_timer_thread->pipe_read);
-        close(g_timer_thread->pipe_write);
         free(g_timer_thread);
         g_timer_thread = NULL;
         return err;
@@ -116,41 +95,12 @@ static InfraxError ensure_timer_thread(void) {
 
 // Set timeout
 static InfraxU32 infrax_mux_set_timeout(InfraxU32 interval_ms, InfraxMuxHandler handler, void* arg) {
-    // Ensure timer thread is running
-    InfraxError err = ensure_timer_thread();
-    if (err.code != 0) {
-        return 0;  // Return 0 as invalid timer ID
-    }
-    
-    pthread_mutex_lock(&g_timer_thread->mutex);
-    
-    // Get next timer ID
-    InfraxU32 timer_id = g_timer_thread->next_timer_id++;
-    
-    // Start timer
-    err = InfraxTimerClass.start(g_timer_thread->timer);
-    if (err.code != 0) {
-        pthread_mutex_unlock(&g_timer_thread->mutex);
-        return 0;  // Return 0 as invalid timer ID
-    }
-    
-    pthread_mutex_unlock(&g_timer_thread->mutex);
-    return timer_id;
+    return InfraxTimerClass.create_mux_timer(interval_ms, handler, arg);
 }
 
 // Clear timeout
 static InfraxError infrax_mux_clear_timeout(InfraxU32 timer_id) {
-    InfraxError err = {0};
-    
-    if (!g_timer_thread) {
-        return err;  // No timer running
-    }
-    
-    pthread_mutex_lock(&g_timer_thread->mutex);
-    InfraxTimerClass.stop(g_timer_thread->timer);  // stop() returns void
-    pthread_mutex_unlock(&g_timer_thread->mutex);
-    
-    return err;
+    return InfraxTimerClass.clear_mux_timer(timer_id);
 }
 
 // Poll for events
@@ -158,10 +108,15 @@ static InfraxError infrax_mux_pollall(const int* fds, size_t nfds, InfraxMuxHand
     InfraxError err = {0};
     struct pollfd* pfds = NULL;
     
-    // Add pipe fd if timer thread exists
+    // Add timer fds
     size_t total_fds = nfds;
-    if (g_timer_thread) {
-        total_fds++;
+    InfraxMuxTimer* timers = InfraxTimerClass.get_active_mux_timers();
+    InfraxMuxTimer* timer = timers;
+    while (timer) {
+        if (timer->active) {
+            total_fds++;
+        }
+        timer = timer->next;
     }
     
     // Allocate pollfd array
@@ -179,11 +134,17 @@ static InfraxError infrax_mux_pollall(const int* fds, size_t nfds, InfraxMuxHand
         pfds[i].revents = 0;
     }
     
-    // Add pipe fd
-    if (g_timer_thread) {
-        pfds[nfds].fd = g_timer_thread->pipe_read;
-        pfds[nfds].events = POLLIN;
-        pfds[nfds].revents = 0;
+    // Add timer fds
+    size_t idx = nfds;
+    timer = timers;
+    while (timer) {
+        if (timer->active) {
+            pfds[idx].fd = InfraxTimerClass.get_fd(timer->infrax_timer);
+            pfds[idx].events = POLLIN;
+            pfds[idx].revents = 0;
+            idx++;
+        }
+        timer = timer->next;
     }
     
     // Do the poll
@@ -203,18 +164,24 @@ static InfraxError infrax_mux_pollall(const int* fds, size_t nfds, InfraxMuxHand
         return err;
     }
     
-    // Call handler for ready descriptors
-    if (handler) {
-        for (size_t i = 0; i < total_fds; i++) {
-            if (pfds[i].revents) {
-                if (g_timer_thread && pfds[i].fd == g_timer_thread->pipe_read) {
-                    // Handle timer event
-                    char buf[1];
-                    read(pfds[i].fd, buf, 1);  // Clear pipe
-                    handler(pfds[i].fd, POLLIN, arg);
-                } else {
-                    handler(pfds[i].fd, pfds[i].revents, arg);
+    // Process events
+    for (size_t i = 0; i < total_fds; i++) {
+        if (pfds[i].revents) {
+            if (i >= nfds) {
+                // Handle timer event
+                timer = timers;
+                while (timer) {
+                    if (timer->active && pfds[i].fd == InfraxTimerClass.get_fd(timer->infrax_timer)) {
+                        infrax_timer_check_expired();
+                        if (timer->handler) {
+                            timer->handler(pfds[i].fd, pfds[i].revents, timer->arg);
+                        }
+                        break;
+                    }
+                    timer = timer->next;
                 }
+            } else if (handler) {
+                handler(pfds[i].fd, pfds[i].revents, arg);
             }
         }
     }
