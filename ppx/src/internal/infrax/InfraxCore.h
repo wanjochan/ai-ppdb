@@ -107,6 +107,8 @@ typedef struct InfraxRingBuffer {
 #define INFRAX_ERROR_FILE_NOT_FOUND -4
 #define INFRAX_ERROR_FILE_ACCESS -5
 #define INFRAX_ERROR_FILE_READ -6
+#define INFRAX_ERROR_TIMEOUT -7
+#define INFRAX_ERROR_SYSTEM 5  // 系统级错误(如pthread, pipe等)
 
 // Helper macro to create InfraxError
 static inline InfraxError make_error(InfraxI32 code, const char* msg) {
