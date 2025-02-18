@@ -229,11 +229,11 @@ void test_multiple_timers() {
 }
 
 // 并发定时器测试
-#define CONCURRENT_TIMER_COUNT 100
+#define CONCURRENT_TIMER_COUNT 2048  // Increased from 300 to test higher concurrency
 
 void test_concurrent_timers() {
     core->printf(NULL, "Testing %d concurrent timers...\n", CONCURRENT_TIMER_COUNT);
-    setup_timeout(30);  // 增加超时时间到30秒
+    setup_timeout(60);  // 增加超时时间到60秒以适应更多的并发定时器
     
     // Create async task for polling
     InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);

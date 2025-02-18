@@ -16,7 +16,7 @@
 #define INFRAX_POLLHUP 0x010
 
 // Timer constants
-#define MAX_TIMERS 1024
+#define INITIAL_TIMER_CAPACITY 1024  // Initial capacity for timer arrays
 #define INVALID_TIMER_ID 0
 
 // Timer structure
@@ -32,9 +32,10 @@ typedef struct {
 
 // Timer system
 typedef struct {
-    InfraxTimer timers[MAX_TIMERS];  // Timer pool
-    InfraxTimer* heap[MAX_TIMERS];   // Min heap
-    size_t heap_size;
+    InfraxTimer* timers;     // Dynamic timer pool
+    InfraxTimer** heap;      // Dynamic min heap
+    size_t capacity;         // Current capacity
+    size_t heap_size;        // Current heap size
     InfraxU32 next_id;
     bool initialized;
 } InfraxTimerSystem;
@@ -58,6 +59,69 @@ struct InfraxPollset {
     size_t capacity;
 };
 
+// 堆操作辅助函数
+static void heap_swap(size_t i, size_t j) {
+    InfraxTimer* temp = g_timers.heap[i];
+    g_timers.heap[i] = g_timers.heap[j];
+    g_timers.heap[j] = temp;
+}
+
+static void heap_up(size_t pos) {
+    while (pos > 0) {
+        size_t parent = (pos - 1) / 2;
+        if (g_timers.heap[parent]->expire_time <= g_timers.heap[pos]->expire_time) {
+            break;
+        }
+        heap_swap(parent, pos);
+        pos = parent;
+    }
+}
+
+static void heap_down(size_t pos) {
+    while (true) {
+        size_t min_pos = pos;
+        size_t left = 2 * pos + 1;
+        size_t right = 2 * pos + 2;
+        
+        if (left < g_timers.heap_size && 
+            g_timers.heap[left]->expire_time < g_timers.heap[min_pos]->expire_time) {
+            min_pos = left;
+        }
+        
+        if (right < g_timers.heap_size && 
+            g_timers.heap[right]->expire_time < g_timers.heap[min_pos]->expire_time) {
+            min_pos = right;
+        }
+        
+        if (min_pos == pos) break;
+        
+        heap_swap(pos, min_pos);
+        pos = min_pos;
+    }
+}
+
+static void remove_timer_from_heap(InfraxTimer* timer) {
+    if (!timer || g_timers.heap_size == 0) return;
+    
+    // Find timer in heap
+    size_t pos;
+    for (pos = 0; pos < g_timers.heap_size; pos++) {
+        if (g_timers.heap[pos] == timer) break;
+    }
+    
+    if (pos == g_timers.heap_size) return;  // Not found
+    
+    // Replace with last element and remove last
+    g_timers.heap[pos] = g_timers.heap[--g_timers.heap_size];
+    
+    // Restore heap property
+    if (pos > 0 && g_timers.heap[pos]->expire_time < g_timers.heap[(pos-1)/2]->expire_time) {
+        heap_up(pos);
+    } else {
+        heap_down(pos);
+    }
+}
+
 // Thread-local pollset
 __thread struct InfraxPollset* g_pollset = NULL;
 
@@ -72,53 +136,67 @@ static InfraxCore* g_core = NULL;
 static bool init_timer_system(void) {
     if (g_timers.initialized) return true;
     
-    memset(&g_timers, 0, sizeof(g_timers));
+    // Allocate initial arrays
+    g_timers.timers = (InfraxTimer*)g_memory->alloc(g_memory, INITIAL_TIMER_CAPACITY * sizeof(InfraxTimer));
+    g_timers.heap = (InfraxTimer**)g_memory->alloc(g_memory, INITIAL_TIMER_CAPACITY * sizeof(InfraxTimer*));
+    
+    if (!g_timers.timers || !g_timers.heap) {
+        if (g_timers.timers) g_memory->dealloc(g_memory, g_timers.timers);
+        if (g_timers.heap) g_memory->dealloc(g_memory, g_timers.heap);
+        return false;
+    }
+    
+    g_timers.capacity = INITIAL_TIMER_CAPACITY;
+    g_timers.heap_size = 0;
     g_timers.next_id = 1;  // Start from 1
     g_timers.initialized = true;
     
     return true;
 }
 
-// Heap operations
-static void heap_up(size_t i) {
-    InfraxTimer* timer = g_timers.heap[i];
-    while (i > 0) {
-        size_t parent = (i - 1) / 2;
-        if (g_timers.heap[parent]->expire_time <= timer->expire_time) break;
-        g_timers.heap[i] = g_timers.heap[parent];
-        i = parent;
+// Expand timer arrays
+static bool expand_timer_arrays(void) {
+    size_t new_capacity = g_timers.capacity * 2;
+    
+    // Allocate new arrays
+    InfraxTimer* new_timers = (InfraxTimer*)g_memory->alloc(g_memory, new_capacity * sizeof(InfraxTimer));
+    InfraxTimer** new_heap = (InfraxTimer**)g_memory->alloc(g_memory, new_capacity * sizeof(InfraxTimer*));
+    
+    if (!new_timers || !new_heap) {
+        if (new_timers) g_memory->dealloc(g_memory, new_timers);
+        if (new_heap) g_memory->dealloc(g_memory, new_heap);
+        return false;
     }
-    g_timers.heap[i] = timer;
-}
-
-static void heap_down(size_t i) {
-    InfraxTimer* timer = g_timers.heap[i];
-    while (1) {
-        size_t min = i;
-        size_t left = i * 2 + 1;
-        size_t right = left + 1;
-        
-        if (left < g_timers.heap_size && 
-            g_timers.heap[left]->expire_time < g_timers.heap[min]->expire_time) {
-            min = left;
-        }
-        if (right < g_timers.heap_size && 
-            g_timers.heap[right]->expire_time < g_timers.heap[min]->expire_time) {
-            min = right;
-        }
-        
-        if (min == i) break;
-        
-        g_timers.heap[i] = g_timers.heap[min];
-        i = min;
+    
+    // Copy existing data
+    memcpy(new_timers, g_timers.timers, g_timers.capacity * sizeof(InfraxTimer));
+    memcpy(new_heap, g_timers.heap, g_timers.heap_size * sizeof(InfraxTimer*));
+    
+    // Update heap pointers
+    for (size_t i = 0; i < g_timers.heap_size; i++) {
+        size_t offset = g_timers.heap[i] - g_timers.timers;
+        new_heap[i] = new_timers + offset;
     }
-    g_timers.heap[i] = timer;
+    
+    // Free old arrays
+    g_memory->dealloc(g_memory, g_timers.timers);
+    g_memory->dealloc(g_memory, g_timers.heap);
+    
+    // Update system state
+    g_timers.timers = new_timers;
+    g_timers.heap = new_heap;
+    g_timers.capacity = new_capacity;
+    
+    return true;
 }
 
 // Add timer to heap
 static bool add_timer_to_heap(InfraxTimer* timer) {
-    if (!timer || !timer->is_valid || g_timers.heap_size >= MAX_TIMERS) {
-        return false;
+    if (!timer || !timer->is_valid) return false;
+    
+    // Check if expansion is needed
+    if (g_timers.heap_size >= g_timers.capacity) {
+        if (!expand_timer_arrays()) return false;
     }
     
     size_t pos = g_timers.heap_size++;
@@ -128,38 +206,24 @@ static bool add_timer_to_heap(InfraxTimer* timer) {
     return true;
 }
 
-// Remove timer from heap
-static void remove_timer_from_heap(InfraxTimer* timer) {
-    if (!timer) return;
-    
-    // Find timer in heap
-    size_t pos = 0;
-    for (; pos < g_timers.heap_size; pos++) {
-        if (g_timers.heap[pos] == timer) break;
-    }
-    
-    if (pos < g_timers.heap_size) {
-        g_timers.heap[pos] = g_timers.heap[--g_timers.heap_size];
-        if (pos < g_timers.heap_size) {
-            heap_down(pos);
-        }
-    }
-}
-
 // Create new timer
 static InfraxU32 create_timer(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg, bool is_interval) {
     if (!init_timer_system() || !handler) return INVALID_TIMER_ID;
     
     // Find free timer slot
     InfraxTimer* timer = NULL;
-    for (int i = 0; i < MAX_TIMERS; i++) {
+    for (size_t i = 0; i < g_timers.capacity; i++) {
         if (!g_timers.timers[i].is_valid) {
             timer = &g_timers.timers[i];
             break;
         }
     }
     
-    if (!timer) return INVALID_TIMER_ID;
+    // If no free slot, try to expand
+    if (!timer) {
+        if (!expand_timer_arrays()) return INVALID_TIMER_ID;
+        timer = &g_timers.timers[g_timers.capacity / 2];  // Use first slot in new space
+    }
     
     // Initialize timer
     timer->id = g_timers.next_id++;
@@ -197,7 +261,7 @@ static InfraxError infrax_async_clear_timer(InfraxU32 timer_id) {
     
     // Find timer
     InfraxTimer* timer = NULL;
-    for (int i = 0; i < MAX_TIMERS; i++) {
+    for (int i = 0; i < g_timers.capacity; i++) {
         if (g_timers.timers[i].is_valid && g_timers.timers[i].id == timer_id) {
             timer = &g_timers.timers[i];
             break;
