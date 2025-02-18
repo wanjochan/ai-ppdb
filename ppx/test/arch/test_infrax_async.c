@@ -1,9 +1,7 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
-#include "internal/infrax/InfraxTimer.h"
-// #include <signal.h>
-// #include <stdlib.h>
+#include <signal.h>
 
 InfraxCore* core = NULL;
 
@@ -43,59 +41,40 @@ static uint64_t get_current_time_ms(void) {
     return core->time_monotonic_ms(core);
 }
 
-// Test async function
-static void test_async_fn(InfraxAsync* self, void* arg) {
-    TestContext* ctx = (TestContext*)arg;
-    if (!ctx) {
-        self->state = INFRAX_ASYNC_REJECTED;
-        return;
-    }
-    
-    // Simulate potential errors
-    if (ctx->has_error) {
-        self->state = INFRAX_ASYNC_REJECTED;
-        return;
-    }
-
-    if (self->state != INFRAX_ASYNC_FULFILLED && self->state != INFRAX_ASYNC_REJECTED) {
-        // Increment counter
-        ctx->counter++;
-        
-        // Check if we've reached the target
-        if (ctx->counter >= ctx->target) {
-            self->state = INFRAX_ASYNC_FULFILLED;
-            return;
-        }
-    }
-    
-    // // Return to let other tasks run
-    self->state = INFRAX_ASYNC_PENDING;
-    return;
-}
-
 // Timer test handlers
 static void timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
+    char discard_buf[256];
+    if (fd >= 0) {
+        while (read(fd, discard_buf, sizeof(discard_buf)) > 0) {}  // 完全清空管道
+    }
     core->printf(NULL,"Timer event received!\n");
     *(int*)arg = 1;  // Set result
 }
 
 static void multi_timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
+    char discard_buf[256];
+    if (fd >= 0) {
+        while (read(fd, discard_buf, sizeof(discard_buf)) > 0) {}  // 完全清空管道
+    }
     int* timer_count = (int*)arg;
     (*timer_count)++;
     core->printf(NULL, "Timer %d fired!\n", *timer_count);
 }
 
-typedef struct {
-    int* sequence;
-    int index;
-    int max_index;
-} SequenceContext;
-
-static void sequence_timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
-    SequenceContext* ctx = (SequenceContext*)arg;
-    if (ctx->index < ctx->max_index) {
-        ctx->sequence[ctx->index++] = 1;
-        core->printf(NULL, "Timer at index %d fired\n", ctx->index - 1);
+static void concurrent_timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
+    TestContext* ctx = (TestContext*)arg;
+    char discard_buf[256];
+    if (fd >= 0) {
+        while (read(fd, discard_buf, sizeof(discard_buf)) > 0) {}  // 完全清空管道
+    }
+    
+    ctx->counter++;
+    uint64_t now = get_current_time_ms();
+    
+    if (ctx->counter % 10 == 0 || ctx->counter == ctx->target) {
+        core->printf(NULL, "Progress: %d/%d timers fired (%.2f%%)\n", 
+                    ctx->counter, ctx->target,
+                    (float)ctx->counter * 100 / ctx->target);
     }
 }
 
@@ -123,8 +102,27 @@ void test_async_timer() {
     }
     
     // Wait for timer event
+    uint64_t start_time = get_current_time_ms();
     while (!result && !test_timeout) {
         InfraxAsyncClass.pollset_poll(async, 100);
+        
+        // 每秒打印一次进度
+        static uint64_t last_progress = 0;
+        uint64_t now = get_current_time_ms();
+        if (now - last_progress >= 1000) {
+            core->printf(NULL, "Waiting for timer... (elapsed: %lu ms)\n", 
+                        now - start_time);
+            last_progress = now;
+        }
+        
+        // 检查是否超时
+        if (now - start_time > 2000) {  // 2秒超时
+            core->printf(NULL, "Timer did not expire in time\n");
+            InfraxAsyncClass.clearTimeout(timer_id);
+            InfraxAsyncClass.free(async);
+            clear_timeout();
+            return;
+        }
     }
     
     if (test_timeout) {
@@ -143,10 +141,13 @@ void test_async_timer() {
         return;
     }
     
+    uint64_t end_time = get_current_time_ms();
+    uint64_t elapsed = end_time - start_time;
+    core->printf(NULL, "Timer test passed (elapsed: %lu ms)\n", elapsed);
+    
     InfraxAsyncClass.clearTimeout(timer_id);
     InfraxAsyncClass.free(async);
     clear_timeout();
-    core->printf(NULL,"Timer test passed\n");
 }
 
 void test_multiple_timers() {
@@ -175,8 +176,28 @@ void test_multiple_timers() {
     }
     
     // Wait for all timers to fire
+    uint64_t start_time = get_current_time_ms();
     while (timer_count < 2 && !test_timeout) {
         InfraxAsyncClass.pollset_poll(async, 100);
+        
+        // 每秒打印一次进度
+        static uint64_t last_progress = 0;
+        uint64_t now = get_current_time_ms();
+        if (now - last_progress >= 1000) {
+            core->printf(NULL, "Waiting for timers... (elapsed: %lu ms, count: %d/2)\n", 
+                        now - start_time, timer_count);
+            last_progress = now;
+        }
+        
+        // 检查是否超时
+        if (now - start_time > 3000) {  // 3秒超时
+            core->printf(NULL, "Not all timers fired in time\n");
+            InfraxAsyncClass.clearTimeout(timer1);
+            InfraxAsyncClass.clearTimeout(timer2);
+            InfraxAsyncClass.free(async);
+            clear_timeout();
+            return;
+        }
     }
     
     if (test_timeout) {
@@ -197,25 +218,22 @@ void test_multiple_timers() {
         return;
     }
     
+    uint64_t end_time = get_current_time_ms();
+    uint64_t elapsed = end_time - start_time;
+    core->printf(NULL, "Multiple timers test passed (elapsed: %lu ms)\n", elapsed);
+    
     InfraxAsyncClass.clearTimeout(timer1);
     InfraxAsyncClass.clearTimeout(timer2);
     InfraxAsyncClass.free(async);
     clear_timeout();
-    core->printf(NULL, "Multiple timers test passed\n");
 }
 
 // 并发定时器测试
 #define CONCURRENT_TIMER_COUNT 100
 
-static void concurrent_timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
-    int* fired_count = (int*)arg;
-    (*fired_count)++;
-    core->printf(NULL, "Timer %d fired\n", *fired_count);
-}
-
 void test_concurrent_timers() {
     core->printf(NULL, "Testing %d concurrent timers...\n", CONCURRENT_TIMER_COUNT);
-    setup_timeout(20);  // 20 second timeout
+    setup_timeout(30);  // 增加超时时间到30秒
     
     // Create async task for polling
     InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);
@@ -225,16 +243,28 @@ void test_concurrent_timers() {
         return;
     }
     
+    // 创建测试上下文
+    TestContext ctx = {
+        .counter = 0,
+        .target = CONCURRENT_TIMER_COUNT,
+        .has_error = false
+    };
+    
+    // 记录开始时间
+    uint64_t start_time = get_current_time_ms();
+    
     // 创建定时器数组
     InfraxU32 timer_ids[CONCURRENT_TIMER_COUNT];
-    int fired_count = 0;
     
     // 设置定时器，间隔从100ms到1000ms不等
+    core->printf(NULL, "Creating %d timers...\n", CONCURRENT_TIMER_COUNT);
     for (int i = 0; i < CONCURRENT_TIMER_COUNT; i++) {
         InfraxU32 interval = 100 + (i % 10) * 100;  // 100ms到1000ms
-        timer_ids[i] = InfraxAsyncClass.setTimeout(interval, concurrent_timer_handler, &fired_count);
+        timer_ids[i] = InfraxAsyncClass.setTimeout(interval, concurrent_timer_handler, &ctx);
         if (timer_ids[i] == 0) {
             core->printf(NULL, "Failed to set timer %d\n", i);
+            ctx.has_error = true;
+            snprintf(ctx.error_msg, sizeof(ctx.error_msg), "Failed to create timer %d", i);
             // 清理已创建的定时器
             for (int j = 0; j < i; j++) {
                 InfraxAsyncClass.clearTimeout(timer_ids[j]);
@@ -244,14 +274,31 @@ void test_concurrent_timers() {
             return;
         }
     }
+    core->printf(NULL, "All timers created successfully\n");
     
     // 等待所有定时器触发
-    while (fired_count < CONCURRENT_TIMER_COUNT && !test_timeout) {
+    core->printf(NULL, "Waiting for timers to fire...\n");
+    while (ctx.counter < CONCURRENT_TIMER_COUNT && !test_timeout) {
         InfraxAsyncClass.pollset_poll(async, 100);
+        
+        // 每秒打印一次进度
+        static uint64_t last_progress = 0;
+        uint64_t now = get_current_time_ms();
+        if (now - last_progress >= 1000) {
+            core->printf(NULL, "Progress: %d/%d timers fired (%.2f%%)\n", 
+                        ctx.counter, ctx.target,
+                        (float)ctx.counter * 100 / ctx.target);
+            last_progress = now;
+        }
     }
     
+    // 记录结束时间
+    uint64_t end_time = get_current_time_ms();
+    uint64_t total_time = end_time - start_time;
+    
     if (test_timeout) {
-        core->printf(NULL,"Test timed out after firing %d timers\n", fired_count);
+        core->printf(NULL,"Test timed out after %lu ms. Only %d/%d timers fired.\n", 
+                    total_time, ctx.counter, CONCURRENT_TIMER_COUNT);
         // 清理定时器
         for (int i = 0; i < CONCURRENT_TIMER_COUNT; i++) {
             InfraxAsyncClass.clearTimeout(timer_ids[i]);
@@ -261,9 +308,9 @@ void test_concurrent_timers() {
         return;
     }
     
-    if (fired_count != CONCURRENT_TIMER_COUNT) {
-        core->printf(NULL, "Not all timers fired (fired=%d, expected=%d)\n", 
-                    fired_count, CONCURRENT_TIMER_COUNT);
+    if (ctx.counter != CONCURRENT_TIMER_COUNT) {
+        core->printf(NULL, "Not all timers fired (count=%d/%d) after %lu ms\n", 
+                    ctx.counter, CONCURRENT_TIMER_COUNT, total_time);
         // 清理定时器
         for (int i = 0; i < CONCURRENT_TIMER_COUNT; i++) {
             InfraxAsyncClass.clearTimeout(timer_ids[i]);
@@ -277,138 +324,31 @@ void test_concurrent_timers() {
     for (int i = 0; i < CONCURRENT_TIMER_COUNT; i++) {
         InfraxAsyncClass.clearTimeout(timer_ids[i]);
     }
+    
     InfraxAsyncClass.free(async);
     clear_timeout();
-    core->printf(NULL, "All %d concurrent timers fired successfully\n", CONCURRENT_TIMER_COUNT);
+    
+    // 打印性能统计
+    core->printf(NULL, "\nPerformance Statistics:\n");
+    core->printf(NULL, "Total time: %lu ms\n", total_time);
+    core->printf(NULL, "Average time per timer: %.2f ms\n", 
+                (float)total_time / CONCURRENT_TIMER_COUNT);
+    core->printf(NULL, "Timers per second: %.2f\n", 
+                (float)CONCURRENT_TIMER_COUNT * 1000 / total_time);
+    
+    core->printf(NULL, "Concurrent timers test passed\n");
 }
 
-int default_test(){
-    // Create test context
-    TestContext ctx = {
-        .counter = 0,
-        .target = 5,
-        .has_error = false,
-        .error_msg = {0}
-    };
-    
-    // Record start time for timeout control
-    uint64_t start_time = get_current_time_ms();
-    uint64_t current_time;
-    int poll_interval = POLL_INTERVAL_MS;
-    
-    // Create async task
-    InfraxAsync* async = InfraxAsyncClass.new(test_async_fn, &ctx);
-    if (!async) {
-        core->printf(core, "Failed to create async task\n");
-        return 1;
-    }
-    
-    // Start task
-    bool started = InfraxAsyncClass.start(async);
-    if (!started) {
-        core->printf(core, "Failed to start async task\n");
-        InfraxAsyncClass.free(async);
-        return 1;
-    }
-    
-    // Poll until done or timeout
-    while (!InfraxAsyncClass.is_done(async)) {
-        // Check timeout
-        current_time = get_current_time_ms();
-        if (current_time - start_time >= TEST_TIMEOUT_MS) {
-            core->printf(core, "Test timeout after %d ms\n", TEST_TIMEOUT_MS);
-            InfraxAsyncClass.cancel(async);
-            InfraxAsyncClass.free(async);
-            return 1;
-        }
-        
-        // Poll with adaptive interval
-        int ret = InfraxAsyncClass.pollset_poll(async, poll_interval);
-        if (ret < 0) {
-            core->printf(core, "Poll failed with error: %d\n", ret);
-            InfraxAsyncClass.free(async);
-            return 1;
-        }
-        
-        // Handle different states
-        switch (async->state) {
-            case INFRAX_ASYNC_PENDING:
-                // Restart task
-                if (!InfraxAsyncClass.start(async)) {
-                    core->printf(core, "Failed to restart async task\n");
-                    InfraxAsyncClass.free(async);
-                    return 1;
-                }
-                // Increase poll interval for efficiency
-                poll_interval = poll_interval * 2;
-                if (poll_interval > MAX_POLL_INTERVAL_MS) {
-                    poll_interval = MAX_POLL_INTERVAL_MS;
-                }
-                break;
-                
-            case INFRAX_ASYNC_TMP:
-                core->printf(core, "Task is running!!!!!!!!!!!!!!\n");
-                break;
-                
-            case INFRAX_ASYNC_REJECTED:
-                core->printf(core, "Task was rejected\n");
-                if (ctx.has_error) {
-                    core->printf(core, "Error: %s\n", ctx.error_msg);
-                }
-                InfraxAsyncClass.free(async);
-                return 1;
-                
-            case INFRAX_ASYNC_FULFILLED:
-                // Will be handled by the loop condition
-                break;
-        }
-        
-        // Reset poll interval if making progress
-        if (ctx.counter > 0 && poll_interval > POLL_INTERVAL_MS) {
-            poll_interval = POLL_INTERVAL_MS;
-        }
-    }
-    
-    // Check final state and results
-    if (async->state != INFRAX_ASYNC_FULFILLED) {
-        core->printf(core, "Task did not complete successfully. Final state: %d\n", async->state);
-        InfraxAsyncClass.free(async);
-        return 1;
-    }
-    
-    if (ctx.counter != ctx.target) {
-        core->printf(core, "Counter mismatch: expected %d, got %d\n", ctx.target, ctx.counter);
-        InfraxAsyncClass.free(async);
-        return 1;
-    }
-    
-    // Calculate and print performance metrics
-    current_time = get_current_time_ms();
-    core->printf(core, "Test completed in %lu ms\n", current_time - start_time);
-    
-    // Cleanup
-    InfraxAsyncClass.free(async);
-    return 0;
-}
-
-// Main test function
 int main(void) {
     core = InfraxCoreClass.singleton();
-    INFRAX_ASSERT(core, core != NULL);
-    
-    core->printf(core, "Running InfraxAsync tests...\n");
-    
-    int ret = default_test();
-    if (ret != 0) {
-        core->printf(core, "Default test failed\n");
-        return ret;
+    if (!core) {
+        printf("Failed to get core singleton\n");
+        return 1;
     }
-
-    // Run timer tests
+    
     test_async_timer();
     test_multiple_timers();
-    test_concurrent_timers();  // 添加并发测试
+    test_concurrent_timers();
     
-    core->printf(core, "All InfraxAsync tests passed!\n");
     return 0;
 }

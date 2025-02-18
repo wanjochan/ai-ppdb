@@ -57,7 +57,7 @@ sh ppdb/scripts/test_memkv.sh
 - 当前规划:
   - Rinetd: 第一个功能模块，网络转发服务（参见同名软件）【基本完成】
   - MemKV: 内存KV存储，兼容Memcached协议【初步通过，待压测和优化】
-  - DiskKV: 持久化存储，兼容Redis协议【未开始，但底层重用 MemKV 的底层，即 poly_db(vender=sqlite3|duckdb)】
+  - DisKV: 持久化存储，兼容Redis协议【未开始，但底层重用 MemKV 的底层，即 poly_db(vender=sqlite3|duckdb)】
   - 分布式集群支持【未开始】
 - 限制:
   - 只能调用Poly层和Infra层接口

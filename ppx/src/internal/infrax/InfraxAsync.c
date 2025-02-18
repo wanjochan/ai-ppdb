@@ -2,14 +2,44 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
-#include "internal/infrax/InfraxTimer.h"
 
+#include <string.h>
+#include <errno.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <time.h>
 
 // Poll events
 #define INFRAX_POLLIN  0x001
 #define INFRAX_POLLOUT 0x004
 #define INFRAX_POLLERR 0x008
 #define INFRAX_POLLHUP 0x010
+
+// Timer constants
+#define MAX_TIMERS 1024
+#define INVALID_TIMER_ID 0
+
+// Timer structure
+typedef struct {
+    InfraxU32 id;
+    uint64_t expire_time;
+    InfraxU32 interval_ms;
+    bool is_interval;
+    bool is_valid;
+    InfraxPollCallback handler;
+    void* arg;
+} InfraxTimer;
+
+// Timer system
+typedef struct {
+    InfraxTimer timers[MAX_TIMERS];  // Timer pool
+    InfraxTimer* heap[MAX_TIMERS];   // Min heap
+    size_t heap_size;
+    InfraxU32 next_id;
+    bool initialized;
+} InfraxTimerSystem;
+
+static InfraxTimerSystem g_timers = {0};
 
 // Poll info structure
 struct InfraxPollInfo {
@@ -28,18 +58,6 @@ struct InfraxPollset {
     size_t capacity;
 };
 
-
-// Forward declarations
-static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg);
-static void infrax_async_free(InfraxAsync* self);
-static bool infrax_async_start(InfraxAsync* self);
-static void infrax_async_cancel(InfraxAsync* self);
-static bool infrax_async_is_done(InfraxAsync* self);
-static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, InfraxPollCallback callback, void* arg);
-static void infrax_async_pollset_remove_fd(InfraxAsync* self, int fd);
-static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms);
-static bool init_memory(void);
-
 // Thread-local pollset
 __thread struct InfraxPollset* g_pollset = NULL;
 
@@ -50,23 +68,148 @@ extern InfraxMemoryClassType InfraxMemoryClass;
 // Global Core instance
 static InfraxCore* g_core = NULL;
 
-// Timer callback wrapper structure
-typedef struct {
-    InfraxTimer* timer;
-    InfraxPollCallback handler;
-    void* arg;
-    InfraxBool is_valid;  // 标记包装器是否有效
-} TimerWrapper;
+// Initialize timer system
+static bool init_timer_system(void) {
+    if (g_timers.initialized) return true;
+    
+    memset(&g_timers, 0, sizeof(g_timers));
+    g_timers.next_id = 1;  // Start from 1
+    g_timers.initialized = true;
+    
+    return true;
+}
 
-// Timer callback wrapper
-static void timer_callback(void* arg) {
-    TimerWrapper* wrapper = (TimerWrapper*)arg;
-    if (wrapper && wrapper->is_valid && wrapper->handler && wrapper->timer) {
-        int fd = InfraxTimerClass.get_fd(wrapper->timer);
-        if (fd >= 0) {
-            wrapper->handler(NULL, fd, INFRAX_POLLIN, wrapper->arg);
+// Heap operations
+static void heap_up(size_t i) {
+    InfraxTimer* timer = g_timers.heap[i];
+    while (i > 0) {
+        size_t parent = (i - 1) / 2;
+        if (g_timers.heap[parent]->expire_time <= timer->expire_time) break;
+        g_timers.heap[i] = g_timers.heap[parent];
+        i = parent;
+    }
+    g_timers.heap[i] = timer;
+}
+
+static void heap_down(size_t i) {
+    InfraxTimer* timer = g_timers.heap[i];
+    while (1) {
+        size_t min = i;
+        size_t left = i * 2 + 1;
+        size_t right = left + 1;
+        
+        if (left < g_timers.heap_size && 
+            g_timers.heap[left]->expire_time < g_timers.heap[min]->expire_time) {
+            min = left;
+        }
+        if (right < g_timers.heap_size && 
+            g_timers.heap[right]->expire_time < g_timers.heap[min]->expire_time) {
+            min = right;
+        }
+        
+        if (min == i) break;
+        
+        g_timers.heap[i] = g_timers.heap[min];
+        i = min;
+    }
+    g_timers.heap[i] = timer;
+}
+
+// Add timer to heap
+static bool add_timer_to_heap(InfraxTimer* timer) {
+    if (!timer || !timer->is_valid || g_timers.heap_size >= MAX_TIMERS) {
+        return false;
+    }
+    
+    size_t pos = g_timers.heap_size++;
+    g_timers.heap[pos] = timer;
+    heap_up(pos);
+    
+    return true;
+}
+
+// Remove timer from heap
+static void remove_timer_from_heap(InfraxTimer* timer) {
+    if (!timer) return;
+    
+    // Find timer in heap
+    size_t pos = 0;
+    for (; pos < g_timers.heap_size; pos++) {
+        if (g_timers.heap[pos] == timer) break;
+    }
+    
+    if (pos < g_timers.heap_size) {
+        g_timers.heap[pos] = g_timers.heap[--g_timers.heap_size];
+        if (pos < g_timers.heap_size) {
+            heap_down(pos);
         }
     }
+}
+
+// Create new timer
+static InfraxU32 create_timer(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg, bool is_interval) {
+    if (!init_timer_system() || !handler) return INVALID_TIMER_ID;
+    
+    // Find free timer slot
+    InfraxTimer* timer = NULL;
+    for (int i = 0; i < MAX_TIMERS; i++) {
+        if (!g_timers.timers[i].is_valid) {
+            timer = &g_timers.timers[i];
+            break;
+        }
+    }
+    
+    if (!timer) return INVALID_TIMER_ID;
+    
+    // Initialize timer
+    timer->id = g_timers.next_id++;
+    timer->expire_time = g_core->time_monotonic_ms(g_core) + interval_ms;
+    timer->interval_ms = interval_ms;
+    timer->is_interval = is_interval;
+    timer->is_valid = true;
+    timer->handler = handler;
+    timer->arg = arg;
+    
+    // Add to heap
+    if (!add_timer_to_heap(timer)) {
+        timer->is_valid = false;
+        return INVALID_TIMER_ID;
+    }
+    
+    return timer->id;
+}
+
+// Set timeout
+static InfraxU32 infrax_async_set_timeout(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg) {
+    return create_timer(interval_ms, handler, arg, false);
+}
+
+// Set interval
+static InfraxU32 infrax_async_set_interval(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg) {
+    return create_timer(interval_ms, handler, arg, true);
+}
+
+// Clear timer
+static InfraxError infrax_async_clear_timer(InfraxU32 timer_id) {
+    InfraxError err = {0};
+    
+    if (timer_id == INVALID_TIMER_ID) return err;
+    
+    // Find timer
+    InfraxTimer* timer = NULL;
+    for (int i = 0; i < MAX_TIMERS; i++) {
+        if (g_timers.timers[i].is_valid && g_timers.timers[i].id == timer_id) {
+            timer = &g_timers.timers[i];
+            break;
+        }
+    }
+    
+    if (timer) {
+        remove_timer_from_heap(timer);
+        timer->is_valid = false;
+    }
+    
+    return err;
 }
 
 // Initialize memory
@@ -83,15 +226,7 @@ static bool init_memory(void) {
     g_memory = InfraxMemoryClass.new(&config);
     g_core = InfraxCoreClass.singleton();
     
-    if (!g_memory || !g_core) {
-        if (g_memory) {
-            InfraxMemoryClass.free(g_memory);
-            g_memory = NULL;
-        }
-        return false;
-    }
-    
-    return true;
+    return (g_memory != NULL && g_core != NULL);
 }
 
 // Initialize pollset
@@ -129,9 +264,8 @@ static void pollset_cleanup(struct InfraxPollset* ps) {
 }
 
 // Ensure pollset is initialized
-static int ensure_pollset() {
+static int ensure_pollset(void) {
     if (g_pollset) return 0;
-    if (!init_memory()) return -1;
     
     g_pollset = (struct InfraxPollset*)g_memory->alloc(g_memory, sizeof(struct InfraxPollset));
     if (!g_pollset) return -1;
@@ -145,24 +279,22 @@ static int ensure_pollset() {
     return 0;
 }
 
-// Add fd to pollset (class method)
+// Add file descriptor to pollset
 static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, InfraxPollCallback callback, void* arg) {
-    if (fd < 0) return -1;
-    if (ensure_pollset() < 0) return -1;
+    if (!g_pollset || fd < 0) return -1;
     
     // Check if fd already exists
     for (size_t i = 0; i < g_pollset->size; i++) {
         if (g_pollset->fds[i].fd == fd) {
             // Update existing entry
             g_pollset->fds[i].events = events;
-            g_pollset->infos[i]->events = events;
             g_pollset->infos[i]->callback = callback;
             g_pollset->infos[i]->arg = arg;
             return 0;
         }
     }
     
-    // Grow arrays if needed
+    // Check capacity
     if (g_pollset->size >= g_pollset->capacity) {
         size_t new_capacity = g_pollset->capacity * 2;
         struct pollfd* new_fds = (struct pollfd*)g_memory->alloc(g_memory, new_capacity * sizeof(struct pollfd));
@@ -174,11 +306,9 @@ static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, 
             return -1;
         }
         
-        // Copy old data
         memcpy(new_fds, g_pollset->fds, g_pollset->size * sizeof(struct pollfd));
         memcpy(new_infos, g_pollset->infos, g_pollset->size * sizeof(struct InfraxPollInfo*));
         
-        // Free old arrays
         g_memory->dealloc(g_memory, g_pollset->fds);
         g_memory->dealloc(g_memory, g_pollset->infos);
         
@@ -206,85 +336,88 @@ static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, 
     return 0;
 }
 
-// Remove fd from pollset (class method)
+// Remove file descriptor from pollset
 static void infrax_async_pollset_remove_fd(InfraxAsync* self, int fd) {
-    if (fd < 0 || !g_pollset) return;
+    if (!g_pollset || fd < 0) return;
     
     for (size_t i = 0; i < g_pollset->size; i++) {
         if (g_pollset->fds[i].fd == fd) {
-            struct InfraxPollInfo* info = g_pollset->infos[i];
-            if (info) {
-                // 检查是否是定时器回调
-                if (info->arg) {
-                    TimerWrapper* wrapper = (TimerWrapper*)info->arg;
-                    if (wrapper && wrapper->timer) {
-                        // 等待回调完成
-                        InfraxTimerClass.wait_callback(wrapper->timer);
-                    }
-                }
-                g_memory->dealloc(g_memory, info);
+            // Free info
+            if (g_pollset->infos[i]) {
+                g_memory->dealloc(g_memory, g_pollset->infos[i]);
             }
             
-            // Move last element to this position if not last
+            // Move last entry to this position
             if (i < g_pollset->size - 1) {
                 g_pollset->fds[i] = g_pollset->fds[g_pollset->size - 1];
                 g_pollset->infos[i] = g_pollset->infos[g_pollset->size - 1];
             }
             
             g_pollset->size--;
-            return;
+            break;
         }
     }
 }
 
-// Poll events (class method)
+// Poll for events
 static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
-    if (!g_pollset || g_pollset->size == 0) return 0;
+    if (!g_pollset) return 0;
     
-    // 限制单次 poll 的超时时间
-    int actual_timeout = timeout_ms > 100 ? 100 : timeout_ms;
-    int max_retries = 3;
-    int retries = 0;
+    // Check timers
+    uint64_t now = g_core->time_monotonic_ms(g_core);
+    bool timer_triggered = false;
     
-    while (retries < max_retries) {
-        // Use poll() to wait for events
-        int ret = poll(g_pollset->fds, g_pollset->size, actual_timeout);
-        if (ret < 0) {
-            if (errno == EINTR) {
-                // 被信号中断，重试
-                retries++;
-                continue;
+    while (g_timers.heap_size > 0 && g_timers.heap[0]->expire_time <= now) {
+        InfraxTimer* timer = g_timers.heap[0];
+        if (timer->is_valid) {
+            // Call handler
+            if (timer->handler) {
+                timer->handler(self, -1, INFRAX_POLLIN, timer->arg);
+                timer_triggered = true;
             }
-            return -1;
-        }
-        
-        // Process events
-        for (size_t i = 0; i < g_pollset->size; i++) {
-            if (g_pollset->fds[i].revents) {
-                struct InfraxPollInfo* info = g_pollset->infos[i];
-                if (info && info->callback) {
-                    // 检查定时器回调的有效性
-                    if (info->arg) {
-                        TimerWrapper* wrapper = (TimerWrapper*)info->arg;
-                        if (wrapper->is_valid) {
-                            info->callback(self, g_pollset->fds[i].fd, 
-                                         g_pollset->fds[i].revents, 
-                                         wrapper->arg);  // 使用原始参数
-                        }
-                    } else {
-                        info->callback(self, g_pollset->fds[i].fd, 
-                                     g_pollset->fds[i].revents, 
-                                     info->arg);
-                    }
-                }
-                g_pollset->fds[i].revents = 0;
+            
+            if (timer->is_interval) {
+                // Update timer for next interval
+                timer->expire_time = now + timer->interval_ms;
+                remove_timer_from_heap(timer);
+                add_timer_to_heap(timer);
+            } else {
+                // Remove one-shot timer
+                timer->is_valid = false;
+                remove_timer_from_heap(timer);
             }
+        } else {
+            // Remove invalid timer
+            remove_timer_from_heap(timer);
         }
-        
-        return ret;
     }
     
-    return -1;  // 超过最大重试次数
+    // If timer triggered, poll immediately
+    if (timer_triggered) {
+        timeout_ms = 0;
+    }
+    
+    // Poll with timeout
+    int ret = poll(g_pollset->fds, g_pollset->size, timeout_ms);
+    if (ret < 0) {
+        if (errno == EINTR) return 0;
+        return -1;
+    }
+    
+    // Process events
+    for (size_t i = 0; i < g_pollset->size; i++) {
+        if (g_pollset->fds[i].revents) {
+            struct InfraxPollInfo* info = g_pollset->infos[i];
+            if (info && info->callback) {
+                info->callback(self, g_pollset->fds[i].fd, 
+                             g_pollset->fds[i].revents, 
+                             info->arg);
+            }
+            g_pollset->fds[i].revents = 0;
+        }
+    }
+    
+    return ret;
 }
 
 // Create new InfraxAsync instance
@@ -295,12 +428,11 @@ static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg) {
     if (!self) return NULL;
     
     memset(self, 0, sizeof(InfraxAsync));
-    //self->self = self;//??
     self->klass = &InfraxAsyncClass;
     self->state = INFRAX_ASYNC_PENDING;
     self->callback = callback;
     self->arg = arg;
-
+    
     // Initialize pollset
     if (ensure_pollset() < 0) {
         g_memory->dealloc(g_memory, self);
@@ -330,11 +462,8 @@ static bool infrax_async_start(InfraxAsync* self) {
     if (self->state != INFRAX_ASYNC_PENDING) return false;
     
     self->state = INFRAX_ASYNC_TMP;
-    
-    // Call callback
     self->callback(self, self->arg);
     
-    // If callback didn't set state, set to fulfilled
     if (self->state == INFRAX_ASYNC_TMP) {
         self->state = INFRAX_ASYNC_FULFILLED;
     }
@@ -354,82 +483,6 @@ static bool infrax_async_is_done(InfraxAsync* self) {
     return self->state == INFRAX_ASYNC_FULFILLED || self->state == INFRAX_ASYNC_REJECTED;
 }
 
-// Set timeout using timer
-static InfraxU32 infrax_async_set_timeout(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg) {
-    if (!init_memory() || !g_pollset) return 0;
-    
-    // 创建回调包装器
-    TimerWrapper* wrapper = (TimerWrapper*)g_memory->alloc(g_memory, sizeof(TimerWrapper));
-    if (!wrapper) return 0;
-    
-    wrapper->handler = handler;
-    wrapper->arg = arg;
-    wrapper->is_valid = INFRAX_TRUE;
-    wrapper->timer = NULL;
-    
-    // 创建定时器
-    InfraxTimer* timer = NULL;
-    InfraxError err = InfraxTimerClass.new(&timer, interval_ms, timer_callback, wrapper);
-    if (err.code != 0) {
-        g_memory->dealloc(g_memory, wrapper);
-        return 0;
-    }
-    
-    wrapper->timer = timer;
-    
-    // 启动定时器
-    err = InfraxTimerClass.start(timer);
-    if (err.code != 0) {
-        InfraxTimerClass.free(timer);
-        g_memory->dealloc(g_memory, wrapper);
-        return 0;
-    }
-    
-    // 获取定时器文件描述符并添加到 pollset
-    int fd = InfraxTimerClass.get_fd(timer);
-    if (fd >= 0) {
-        if (infrax_async_pollset_add_fd(NULL, fd, INFRAX_POLLIN, handler, wrapper) < 0) {
-            InfraxTimerClass.stop(timer);
-            InfraxTimerClass.free(timer);
-            g_memory->dealloc(g_memory, wrapper);
-            return 0;
-        }
-    }
-    
-    return (InfraxU32)fd;
-}
-
-// Clear timeout
-static InfraxError infrax_async_clear_timeout(InfraxU32 timer_id) {
-    InfraxError err = {0};
-    
-    if (!g_pollset) return err;
-    
-    int fd = (int)timer_id;
-    if (fd >= 0) {
-        for (size_t i = 0; i < g_pollset->size; i++) {
-            if (g_pollset->fds[i].fd == fd && g_pollset->infos[i]) {
-                TimerWrapper* wrapper = g_pollset->infos[i]->arg;
-                if (wrapper && wrapper->is_valid) {
-                    wrapper->is_valid = INFRAX_FALSE;  // 标记为无效
-                    if (wrapper->timer) {
-                        // 等待回调完成
-                        InfraxTimerClass.wait_callback(wrapper->timer);
-                        InfraxTimerClass.stop(wrapper->timer);
-                        InfraxTimerClass.free(wrapper->timer);
-                        wrapper->timer = NULL;
-                    }
-                    g_memory->dealloc(g_memory, wrapper);
-                }
-                break;
-            }
-        }
-        infrax_async_pollset_remove_fd(NULL, fd);
-    }
-    
-    return err;
-}
-
 // Global class instance
 InfraxAsyncClassType InfraxAsyncClass = {
     .new = infrax_async_new,
@@ -441,5 +494,7 @@ InfraxAsyncClassType InfraxAsyncClass = {
     .pollset_remove_fd = infrax_async_pollset_remove_fd,
     .pollset_poll = infrax_async_pollset_poll,
     .setTimeout = infrax_async_set_timeout,
-    .clearTimeout = infrax_async_clear_timeout
+    .clearTimeout = infrax_async_clear_timer,
+    .setInterval = infrax_async_set_interval,
+    .clearInterval = infrax_async_clear_timer
 }; 

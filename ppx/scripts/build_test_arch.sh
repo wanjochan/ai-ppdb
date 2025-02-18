@@ -19,7 +19,6 @@ ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxNet.c"
     "${SRC_DIR}/internal/infrax/InfraxThread.c"
     "${SRC_DIR}/internal/infrax/InfraxAsync.c"
-    "${SRC_DIR}/internal/infrax/InfraxTimer.c"
 )
 
 # Define test sources
