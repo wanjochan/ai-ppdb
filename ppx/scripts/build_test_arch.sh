@@ -19,9 +19,7 @@ ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxNet.c"
     "${SRC_DIR}/internal/infrax/InfraxThread.c"
     "${SRC_DIR}/internal/infrax/InfraxAsync.c"
-    "${SRC_DIR}/internal/polyx/PolyxAsync.c"
     "${SRC_DIR}/internal/infrax/InfraxTimer.c"
-    "${SRC_DIR}/internal/infrax/InfraxMux.c"
 )
 
 # Define test sources
@@ -36,7 +34,6 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_polyx_async.c"
     "${TEST_DIR}/arch/test_c1m.c"
     "${TEST_DIR}/arch/test_cosmopolitan.c"
-    "${TEST_DIR}/arch/test_infrax_mux.c"
 )
 
 # Clean build and test files

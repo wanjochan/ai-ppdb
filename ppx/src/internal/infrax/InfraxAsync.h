@@ -44,7 +44,7 @@ typedef struct InfraxAsyncClassType InfraxAsyncClassType;
 // Async states
 typedef enum {
     INFRAX_ASYNC_PENDING = 0,
-    INFRAX_ASYNC_RUNNING,     // 新增运行中状态
+    INFRAX_ASYNC_TMP,     // TMP state
     INFRAX_ASYNC_FULFILLED,
     INFRAX_ASYNC_REJECTED
 } InfraxAsyncState;
@@ -104,7 +104,7 @@ typedef struct InfraxAsyncClassType {
     void (*pollset_remove_fd)(InfraxAsync* self, int fd);
     int (*pollset_poll)(InfraxAsync* self, int timeout_ms);
     
-    // Timer operations
+    // Timer operations helper (call pollset_add_fd and pollset_remove_fd)
     InfraxU32 (*setTimeout)(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg);
     InfraxError (*clearTimeout)(InfraxU32 timer_id);
 } InfraxAsyncClassType;

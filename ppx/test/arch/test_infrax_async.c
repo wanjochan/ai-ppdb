@@ -56,20 +56,31 @@ static void test_async_fn(InfraxAsync* self, void* arg) {
         self->state = INFRAX_ASYNC_REJECTED;
         return;
     }
-    
-    // Update state to running
-    self->state = INFRAX_ASYNC_RUNNING;
-    
-    // Increment counter
-    ctx->counter++;
-    
-    // Check if we've reached the target
-    if (ctx->counter >= ctx->target) {
-        self->state = INFRAX_ASYNC_FULFILLED;
-        return;
+
+    if (self->state != INFRAX_ASYNC_FULFILLED && self->state != INFRAX_ASYNC_REJECTED) {
+        // Increment counter
+        ctx->counter++;
+        
+        // Check if we've reached the target
+        if (ctx->counter >= ctx->target) {
+            self->state = INFRAX_ASYNC_FULFILLED;
+            return;
+        }
     }
     
-    // Return to let other tasks run
+    // // Update state to running
+    // self->state = INFRAX_ASYNC_RUNNING;
+    
+    // // Increment counter
+    // ctx->counter++;
+    
+    // // Check if we've reached the target
+    // if (ctx->counter >= ctx->target) {
+    //     self->state = INFRAX_ASYNC_FULFILLED;
+    //     return;
+    // }
+    
+    // // Return to let other tasks run
     self->state = INFRAX_ASYNC_PENDING;
     return;
 }
@@ -283,13 +294,7 @@ void test_concurrent_timers() {
     core->printf(NULL, "All %d concurrent timers fired successfully\n", CONCURRENT_TIMER_COUNT);
 }
 
-// Main test function
-int main(void) {
-    core = InfraxCoreClass.singleton();
-    INFRAX_ASSERT(core, core != NULL);
-    
-    core->printf(core, "Running InfraxAsync tests...\n");
-    
+int default_test(){
     // Create test context
     TestContext ctx = {
         .counter = 0,
@@ -353,8 +358,8 @@ int main(void) {
                 }
                 break;
                 
-            case INFRAX_ASYNC_RUNNING:
-                // Task is running, keep current poll interval
+            case INFRAX_ASYNC_TMP:
+                core->printf(core, "Task is running!!!!!!!!!!!!!!\n");
                 break;
                 
             case INFRAX_ASYNC_REJECTED:
@@ -395,7 +400,22 @@ int main(void) {
     
     // Cleanup
     InfraxAsyncClass.free(async);
+    return 0;
+}
+
+// Main test function
+int main(void) {
+    core = InfraxCoreClass.singleton();
+    INFRAX_ASSERT(core, core != NULL);
     
+    core->printf(core, "Running InfraxAsync tests...\n");
+    
+    int ret = default_test();
+    if (ret != 0) {
+        core->printf(core, "Default test failed\n");
+        return ret;
+    }
+
     // Run timer tests
     test_async_timer();
     test_multiple_timers();

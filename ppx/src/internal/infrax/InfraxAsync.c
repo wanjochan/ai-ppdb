@@ -283,14 +283,13 @@ static bool infrax_async_start(InfraxAsync* self) {
     if (!self || !self->callback) return false;
     if (self->state != INFRAX_ASYNC_PENDING) return false;
     
-    // Set state to running
-    self->state = INFRAX_ASYNC_RUNNING;
+    self->state = INFRAX_ASYNC_TMP;
     
     // Call callback
     self->callback(self, self->arg);
     
     // If callback didn't set state, set to fulfilled
-    if (self->state == INFRAX_ASYNC_RUNNING) {
+    if (self->state == INFRAX_ASYNC_TMP) {
         self->state = INFRAX_ASYNC_FULFILLED;
     }
     
