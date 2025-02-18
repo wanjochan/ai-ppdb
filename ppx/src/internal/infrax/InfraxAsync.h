@@ -55,29 +55,6 @@ typedef void (*InfraxAsyncCallback)(InfraxAsync* self, void* arg);
 // Poll callback type
 typedef void (*InfraxPollCallback)(InfraxAsync* self, int fd, short events, void* arg);
 
-// Poll events
-#define INFRAX_POLLIN  0x001
-#define INFRAX_POLLOUT 0x004
-#define INFRAX_POLLERR 0x008
-#define INFRAX_POLLHUP 0x010
-
-// Poll info structure
-struct InfraxPollInfo {
-    int fd;
-    short events;
-    InfraxPollCallback callback;
-    void* arg;
-    struct InfraxPollInfo* next;
-};
-
-// Poll structure
-struct InfraxPollset {
-    struct pollfd* fds;
-    struct InfraxPollInfo** infos;
-    size_t size;
-    size_t capacity;
-};
-
 // Thread-local pollset
 extern __thread struct InfraxPollset* g_pollset;
 
@@ -97,8 +74,8 @@ typedef struct InfraxAsyncClassType {
     InfraxAsync* (*new)(InfraxAsyncCallback callback, void* arg);
     void (*free)(InfraxAsync* self);
     bool (*start)(InfraxAsync* self);
-    void (*cancel)(InfraxAsync* self);
-    bool (*is_done)(InfraxAsync* self);
+    void (*cancel)(InfraxAsync* self);//reject(), TODO resolve()?
+    bool (*is_done)(InfraxAsync* self);// fulfilled | rejected
 
     int (*pollset_add_fd)(InfraxAsync* self, int fd, short events, InfraxPollCallback callback, void* arg);
     void (*pollset_remove_fd)(InfraxAsync* self, int fd);

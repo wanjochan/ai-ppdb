@@ -5,6 +5,30 @@
 #include "internal/infrax/InfraxTimer.h"
 
 
+// Poll events
+#define INFRAX_POLLIN  0x001
+#define INFRAX_POLLOUT 0x004
+#define INFRAX_POLLERR 0x008
+#define INFRAX_POLLHUP 0x010
+
+// Poll info structure
+struct InfraxPollInfo {
+    int fd;
+    short events;
+    InfraxPollCallback callback;
+    void* arg;
+    struct InfraxPollInfo* next;
+};
+
+// Poll structure
+struct InfraxPollset {
+    struct pollfd* fds;
+    struct InfraxPollInfo** infos;
+    size_t size;
+    size_t capacity;
+};
+
+
 // Forward declarations
 static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg);
 static void infrax_async_free(InfraxAsync* self);

@@ -2,8 +2,8 @@
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
 #include "internal/infrax/InfraxTimer.h"
-#include <signal.h>
-#include <stdlib.h>
+// #include <signal.h>
+// #include <stdlib.h>
 
 InfraxCore* core = NULL;
 
@@ -67,18 +67,6 @@ static void test_async_fn(InfraxAsync* self, void* arg) {
             return;
         }
     }
-    
-    // // Update state to running
-    // self->state = INFRAX_ASYNC_RUNNING;
-    
-    // // Increment counter
-    // ctx->counter++;
-    
-    // // Check if we've reached the target
-    // if (ctx->counter >= ctx->target) {
-    //     self->state = INFRAX_ASYNC_FULFILLED;
-    //     return;
-    // }
     
     // // Return to let other tasks run
     self->state = INFRAX_ASYNC_PENDING;
