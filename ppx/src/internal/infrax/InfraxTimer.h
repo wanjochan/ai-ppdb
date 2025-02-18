@@ -2,36 +2,16 @@
 #define INFRAX_TIMER_H
 
 #include "internal/infrax/InfraxCore.h"
-#include <time.h>
 
-// Timer callback type
+// Timer callback function type
 typedef void (*InfraxTimerCallback)(void* arg);
 
-// Timer event handler type
-typedef void (*InfraxTimerHandler)(int fd, short events, void* arg);
-
-// Timer object
+// Timer structure (opaque)
 typedef struct InfraxTimer InfraxTimer;
 
-// Timer structure
-typedef struct InfraxMuxTimer {
-    InfraxU32 id;
-    InfraxU32 interval_ms;
-    InfraxTimerHandler handler;
-    void* arg;
-    InfraxBool active;
-    InfraxTime expiry;
-    struct InfraxMuxTimer* next;
-    InfraxTimer* infrax_timer;
-} InfraxMuxTimer;
-
-// Timer class structure
+// Timer class type
 typedef struct {
-    // Create a new timer with callback
-    // timeout_ms: timeout in milliseconds
-    // callback: function to call when timer expires
-    // arg: argument to pass to callback
-    // Returns: InfraxError with code 0 on success
+    // Create a new timer
     InfraxError (*new)(InfraxTimer** timer, int timeout_ms, InfraxTimerCallback callback, void* arg);
     
     // Free a timer
@@ -46,27 +26,20 @@ typedef struct {
     // Reset the timer with new timeout
     InfraxError (*reset)(InfraxTimer* timer, int timeout_ms);
     
-    // Get timer file descriptor for polling
+    // Get timer file descriptor
     int (*get_fd)(const InfraxTimer* timer);
-
-    // Get next expiration time in milliseconds
-    // Returns UINT64_MAX if no active timers
-    uint64_t (*next_expiration)();
-
-    // Create a new mux timer
-    InfraxU32 (*create_mux_timer)(InfraxU32 interval_ms, InfraxTimerHandler handler, void* arg);
     
-    // Clear a mux timer
-    InfraxError (*clear_mux_timer)(InfraxU32 timer_id);
+    // Get next expiration time
+    uint64_t (*next_expiration)(void);
     
-    // Get active mux timers
-    InfraxMuxTimer* (*get_active_mux_timers)();
+    // Check if timer is in callback
+    InfraxBool (*is_in_callback)(const InfraxTimer* timer);
+    
+    // Wait for callback to complete
+    void (*wait_callback)(const InfraxTimer* timer);
 } InfraxTimerClassType;
 
 // Global timer class instance
 extern InfraxTimerClassType InfraxTimerClass;
-
-// Check and fire expired timers
-void infrax_timer_check_expired();
 
 #endif // INFRAX_TIMER_H

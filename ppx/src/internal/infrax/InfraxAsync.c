@@ -50,21 +50,22 @@ extern InfraxMemoryClassType InfraxMemoryClass;
 // Global Core instance
 static InfraxCore* g_core = NULL;
 
-// Timer callback adapter structure
+// Timer callback wrapper structure
 typedef struct {
-    InfraxU32 timer_id;
-    InfraxAsync* async;
+    InfraxTimer* timer;
     InfraxPollCallback handler;
     void* arg;
-} TimerCallbackAdapter;
+    InfraxBool is_valid;  // 标记包装器是否有效
+} TimerWrapper;
 
-// Timer callback adapter function
-static void timer_callback_adapter(int fd, short events, void* arg) {
-    TimerCallbackAdapter* adapter = (TimerCallbackAdapter*)arg;
-    if (adapter && adapter->handler) {
-        adapter->handler(adapter->async, fd, events, adapter->arg);
-        // Free adapter after callback since timer is one-shot
-        g_memory->dealloc(g_memory, adapter);
+// Timer callback wrapper
+static void timer_callback(void* arg) {
+    TimerWrapper* wrapper = (TimerWrapper*)arg;
+    if (wrapper && wrapper->is_valid && wrapper->handler && wrapper->timer) {
+        int fd = InfraxTimerClass.get_fd(wrapper->timer);
+        if (fd >= 0) {
+            wrapper->handler(NULL, fd, INFRAX_POLLIN, wrapper->arg);
+        }
     }
 }
 
@@ -211,8 +212,18 @@ static void infrax_async_pollset_remove_fd(InfraxAsync* self, int fd) {
     
     for (size_t i = 0; i < g_pollset->size; i++) {
         if (g_pollset->fds[i].fd == fd) {
-            // Free the info structure
-            g_memory->dealloc(g_memory, g_pollset->infos[i]);
+            struct InfraxPollInfo* info = g_pollset->infos[i];
+            if (info) {
+                // 检查是否是定时器回调
+                if (info->arg) {
+                    TimerWrapper* wrapper = (TimerWrapper*)info->arg;
+                    if (wrapper && wrapper->timer) {
+                        // 等待回调完成
+                        InfraxTimerClass.wait_callback(wrapper->timer);
+                    }
+                }
+                g_memory->dealloc(g_memory, info);
+            }
             
             // Move last element to this position if not last
             if (i < g_pollset->size - 1) {
@@ -250,10 +261,21 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
         // Process events
         for (size_t i = 0; i < g_pollset->size; i++) {
             if (g_pollset->fds[i].revents) {
-                if (g_pollset->infos[i]->callback) {
-                    g_pollset->infos[i]->callback(self, g_pollset->fds[i].fd, 
-                                                g_pollset->fds[i].revents, 
-                                                g_pollset->infos[i]->arg);
+                struct InfraxPollInfo* info = g_pollset->infos[i];
+                if (info && info->callback) {
+                    // 检查定时器回调的有效性
+                    if (info->arg) {
+                        TimerWrapper* wrapper = (TimerWrapper*)info->arg;
+                        if (wrapper->is_valid) {
+                            info->callback(self, g_pollset->fds[i].fd, 
+                                         g_pollset->fds[i].revents, 
+                                         wrapper->arg);  // 使用原始参数
+                        }
+                    } else {
+                        info->callback(self, g_pollset->fds[i].fd, 
+                                     g_pollset->fds[i].revents, 
+                                     info->arg);
+                    }
                 }
                 g_pollset->fds[i].revents = 0;
             }
@@ -334,44 +356,78 @@ static bool infrax_async_is_done(InfraxAsync* self) {
 
 // Set timeout using timer
 static InfraxU32 infrax_async_set_timeout(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg) {
-    // Create adapter
-    TimerCallbackAdapter* adapter = (TimerCallbackAdapter*)g_memory->alloc(g_memory, sizeof(TimerCallbackAdapter));
-    if (!adapter) return 0;
+    if (!init_memory() || !g_pollset) return 0;
     
-    adapter->async = NULL;  // Will be set when used in pollset
-    adapter->handler = handler;
-    adapter->arg = arg;
+    // 创建回调包装器
+    TimerWrapper* wrapper = (TimerWrapper*)g_memory->alloc(g_memory, sizeof(TimerWrapper));
+    if (!wrapper) return 0;
     
-    InfraxU32 timer_id = InfraxTimerClass.create_mux_timer(interval_ms, timer_callback_adapter, adapter);
-    if (timer_id == 0) {
-        g_memory->dealloc(g_memory, adapter);
+    wrapper->handler = handler;
+    wrapper->arg = arg;
+    wrapper->is_valid = INFRAX_TRUE;
+    wrapper->timer = NULL;
+    
+    // 创建定时器
+    InfraxTimer* timer = NULL;
+    InfraxError err = InfraxTimerClass.new(&timer, interval_ms, timer_callback, wrapper);
+    if (err.code != 0) {
+        g_memory->dealloc(g_memory, wrapper);
         return 0;
     }
     
-    adapter->timer_id = timer_id;
+    wrapper->timer = timer;
     
-    // Get timer from active timers list
-    InfraxMuxTimer* timer = InfraxTimerClass.get_active_mux_timers();
-    while (timer) {
-        if (timer->id == timer_id) {
-            // Add timer fd to pollset
-            int fd = InfraxTimerClass.get_fd(timer->infrax_timer);
-            if (infrax_async_pollset_add_fd(NULL, fd, INFRAX_POLLIN, handler, arg) < 0) {
-                InfraxTimerClass.clear_mux_timer(timer_id);
-                g_memory->dealloc(g_memory, adapter);
-                return 0;
-            }
-            break;
-        }
-        timer = timer->next;
+    // 启动定时器
+    err = InfraxTimerClass.start(timer);
+    if (err.code != 0) {
+        InfraxTimerClass.free(timer);
+        g_memory->dealloc(g_memory, wrapper);
+        return 0;
     }
     
-    return timer_id;
+    // 获取定时器文件描述符并添加到 pollset
+    int fd = InfraxTimerClass.get_fd(timer);
+    if (fd >= 0) {
+        if (infrax_async_pollset_add_fd(NULL, fd, INFRAX_POLLIN, handler, wrapper) < 0) {
+            InfraxTimerClass.stop(timer);
+            InfraxTimerClass.free(timer);
+            g_memory->dealloc(g_memory, wrapper);
+            return 0;
+        }
+    }
+    
+    return (InfraxU32)fd;
 }
 
 // Clear timeout
 static InfraxError infrax_async_clear_timeout(InfraxU32 timer_id) {
-    return InfraxTimerClass.clear_mux_timer(timer_id);
+    InfraxError err = {0};
+    
+    if (!g_pollset) return err;
+    
+    int fd = (int)timer_id;
+    if (fd >= 0) {
+        for (size_t i = 0; i < g_pollset->size; i++) {
+            if (g_pollset->fds[i].fd == fd && g_pollset->infos[i]) {
+                TimerWrapper* wrapper = g_pollset->infos[i]->arg;
+                if (wrapper && wrapper->is_valid) {
+                    wrapper->is_valid = INFRAX_FALSE;  // 标记为无效
+                    if (wrapper->timer) {
+                        // 等待回调完成
+                        InfraxTimerClass.wait_callback(wrapper->timer);
+                        InfraxTimerClass.stop(wrapper->timer);
+                        InfraxTimerClass.free(wrapper->timer);
+                        wrapper->timer = NULL;
+                    }
+                    g_memory->dealloc(g_memory, wrapper);
+                }
+                break;
+            }
+        }
+        infrax_async_pollset_remove_fd(NULL, fd);
+    }
+    
+    return err;
 }
 
 // Global class instance

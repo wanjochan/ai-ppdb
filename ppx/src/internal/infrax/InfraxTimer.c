@@ -12,25 +12,28 @@
 
 // Forward declarations
 static void infrax_timer_stop(InfraxTimer* timer);
+static InfraxError ensure_timer_thread(void);
 
 // Timer implementation
 struct InfraxTimer {
     int timeout_ms;              // Timer timeout in milliseconds
     InfraxTimerCallback callback;// Callback function
     void* callback_arg;          // Callback argument
-    int active;                  // Timer is active
+    _Atomic int active;          // Timer is active (atomic)
+    _Atomic int in_callback;     // Timer is in callback (atomic)
     int pipe_read;              // Pipe read end
     int pipe_write;             // Pipe write end
     struct InfraxTimer* next;   // Next timer in wheel/heap
     struct InfraxTimer* prev;   // Previous timer in wheel/heap
     uint64_t expire_time;       // Expiration time in milliseconds
-    uint64_t expiry_count;      // Number of times timer has expired
-    uint64_t last_notify_count; // Last notified expiry count
+    _Atomic uint64_t expiry_count;      // Number of times timer has expired (atomic)
+    _Atomic uint64_t last_notify_count; // Last notified expiry count (atomic)
 };
 
 // Time wheel for short timers
 static struct {
     struct InfraxTimer* slots[WHEEL_SIZE];
+    pthread_mutex_t mutex;  // 每个时间轮槽位一个锁
 } wheel;
 
 // Min heap for long timers
@@ -38,15 +41,14 @@ static struct {
     struct InfraxTimer** timers;  // Array of timer pointers
     size_t capacity;              // Current capacity
     size_t size;                  // Current size
+    pthread_mutex_t mutex;        // 堆操作的锁
 } heap;
 
 // Timer thread state
 typedef struct InfraxTimerThread {
     pthread_t thread;
     pthread_mutex_t mutex;
-    InfraxBool running;
-    InfraxMuxTimer* timers;  // 定时器链表
-    InfraxU32 next_timer_id;  // For generating unique timer IDs
+    _Atomic InfraxBool running;  // 原子运行状态
 } InfraxTimerThread;
 
 // Global timer thread instance
@@ -58,11 +60,21 @@ static void init_timer_system() {
     if (!initialized) {
         // Initialize wheel
         memset(&wheel, 0, sizeof(wheel));
+        pthread_mutex_init(&wheel.mutex, NULL);
         
         // Initialize heap
         memset(&heap, 0, sizeof(heap));
+        pthread_mutex_init(&heap.mutex, NULL);
         heap.capacity = 16;
         heap.timers = calloc(heap.capacity, sizeof(struct InfraxTimer*));
+        
+        // Initialize timer thread
+        InfraxError err = ensure_timer_thread();
+        if (err.code != 0) {
+            InfraxCoreClass.singleton()->printf(NULL, 
+                "Failed to initialize timer thread: %s\n", err.message);
+            return;
+        }
         
         initialized = 1;
     }
@@ -88,7 +100,8 @@ static InfraxError infrax_timer_new(InfraxTimer** timer, int timeout_ms,
     (*timer)->timeout_ms = timeout_ms;
     (*timer)->callback = callback;
     (*timer)->callback_arg = arg;
-    (*timer)->last_notify_count = 0;
+    __atomic_store_n(&(*timer)->expiry_count, 0, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&(*timer)->last_notify_count, 0, __ATOMIC_SEQ_CST);
     
     // Create notification pipe
     int pipefd[2];
@@ -187,16 +200,22 @@ static InfraxError infrax_timer_start(InfraxTimer* timer) {
         heap.size++;
     }
     
-    timer->active = 1;
+    __atomic_store_n(&timer->active, 1, __ATOMIC_SEQ_CST);
     return err;
 }
 
 // Stop the timer
 static void infrax_timer_stop(InfraxTimer* timer) {
-    if (!timer || !timer->active) return;
+    if (!timer || !__atomic_load_n(&timer->active, __ATOMIC_SEQ_CST)) return;
+    
+    // 等待回调完成
+    while (__atomic_load_n(&timer->in_callback, __ATOMIC_SEQ_CST)) {
+        usleep(1000);  // 等待1ms
+    }
     
     // Remove from wheel/heap
     if (timer->timeout_ms <= WHEEL_MS) {
+        pthread_mutex_lock(&wheel.mutex);
         if (timer->prev) {
             timer->prev->next = timer->next;
         } else {
@@ -206,7 +225,9 @@ static void infrax_timer_stop(InfraxTimer* timer) {
         if (timer->next) {
             timer->next->prev = timer->prev;
         }
+        pthread_mutex_unlock(&wheel.mutex);
     } else {
+        pthread_mutex_lock(&heap.mutex);
         // Find timer in heap
         for (size_t i = 0; i < heap.size; i++) {
             if (heap.timers[i] == timer) {
@@ -240,9 +261,10 @@ static void infrax_timer_stop(InfraxTimer* timer) {
                 break;
             }
         }
+        pthread_mutex_unlock(&heap.mutex);
     }
     
-    timer->active = 0;
+    __atomic_store_n(&timer->active, 0, __ATOMIC_SEQ_CST);
 }
 
 // Reset the timer
@@ -270,35 +292,59 @@ void infrax_timer_check_expired() {
         InfraxCoreClass.singleton());
     
     // Check wheel
+    pthread_mutex_lock(&wheel.mutex);
     uint64_t slot = now & WHEEL_MASK;
     struct InfraxTimer* timer = wheel.slots[slot];
     wheel.slots[slot] = NULL;
+    pthread_mutex_unlock(&wheel.mutex);
     
     // Process all timers in this slot
     while (timer) {
         struct InfraxTimer* next = timer->next;
         if (timer->expire_time <= now) {
             // Timer expired
-            if (timer->active) {
-                timer->expiry_count++;
-                if (timer->expiry_count > timer->last_notify_count) {
-                    write(timer->pipe_write, &timer->expiry_count, sizeof(uint64_t));
-                    timer->last_notify_count = timer->expiry_count;
+            if (__atomic_load_n(&timer->active, __ATOMIC_SEQ_CST)) {
+                uint64_t count = __atomic_add_fetch(&timer->expiry_count, 1, __ATOMIC_SEQ_CST);
+                uint64_t last_count = __atomic_load_n(&timer->last_notify_count, __ATOMIC_SEQ_CST);
+                
+                if (count > last_count) {
+                    // 尝试写入 pipe，带错误处理
+                    char byte = 1;  // 简化为单字节通知
+                    ssize_t written = write(timer->pipe_write, &byte, sizeof(byte));
+                    if (written == sizeof(byte)) {
+                        __atomic_store_n(&timer->last_notify_count, count, __ATOMIC_SEQ_CST);
+                        
+                        // 调用回调函数
+                        if (timer->callback) {
+                            timer->callback(timer->callback_arg);
+                        }
+                    } else if (written < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            // 管道已满，稍后重试
+                            __atomic_store_n(&timer->expiry_count, count - 1, __ATOMIC_SEQ_CST);
+                        } else {
+                            InfraxCoreClass.singleton()->printf(NULL, 
+                                "Timer pipe write failed: %s\n", strerror(errno));
+                        }
+                    }
                 }
             }
         } else {
             // Timer not expired, move to next slot
+            pthread_mutex_lock(&wheel.mutex);
             uint64_t new_slot = timer->expire_time & WHEEL_MASK;
             timer->next = wheel.slots[new_slot];
             if (wheel.slots[new_slot]) {
                 wheel.slots[new_slot]->prev = timer;
             }
             wheel.slots[new_slot] = timer;
+            pthread_mutex_unlock(&wheel.mutex);
         }
         timer = next;
     }
     
     // Check heap
+    pthread_mutex_lock(&heap.mutex);
     while (heap.size > 0) {
         if (heap.timers[0]->expire_time > now) {
             break;
@@ -335,16 +381,39 @@ void infrax_timer_check_expired() {
                 i = smallest;
             }
         }
+        pthread_mutex_unlock(&heap.mutex);
         
         // Fire timer
-        if (timer->active) {
-            timer->expiry_count++;
-            if (timer->expiry_count > timer->last_notify_count) {
-                write(timer->pipe_write, &timer->expiry_count, sizeof(uint64_t));
-                timer->last_notify_count = timer->expiry_count;
+        if (__atomic_load_n(&timer->active, __ATOMIC_SEQ_CST)) {
+            uint64_t count = __atomic_add_fetch(&timer->expiry_count, 1, __ATOMIC_SEQ_CST);
+            uint64_t last_count = __atomic_load_n(&timer->last_notify_count, __ATOMIC_SEQ_CST);
+            
+            if (count > last_count) {
+                // 尝试写入 pipe，带错误处理
+                char byte = 1;  // 简化为单字节通知
+                ssize_t written = write(timer->pipe_write, &byte, sizeof(byte));
+                if (written == sizeof(byte)) {
+                    __atomic_store_n(&timer->last_notify_count, count, __ATOMIC_SEQ_CST);
+                    
+                    // 调用回调函数
+                    if (timer->callback) {
+                        timer->callback(timer->callback_arg);
+                    }
+                } else if (written < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        // 管道已满，稍后重试
+                        __atomic_store_n(&timer->expiry_count, count - 1, __ATOMIC_SEQ_CST);
+                    } else {
+                        InfraxCoreClass.singleton()->printf(NULL, 
+                            "Timer pipe write failed: %s\n", strerror(errno));
+                    }
+                }
             }
         }
+        
+        pthread_mutex_lock(&heap.mutex);
     }
+    pthread_mutex_unlock(&heap.mutex);
 }
 
 // Get next expiration time
@@ -378,17 +447,13 @@ static uint64_t infrax_timer_next_expiration() {
 static void* timer_thread_func(void* arg) {
     InfraxTimerThread* tt = (InfraxTimerThread*)arg;
     
-    while (tt->running) {
-        pthread_mutex_lock(&tt->mutex);
-        
-        // 只检查一次过期的定时器
+    while (__atomic_load_n(&tt->running, __ATOMIC_SEQ_CST)) {
+        // 检查过期的定时器
         infrax_timer_check_expired();
         
         // 计算下一个定时器的到期时间
         uint64_t next_expiry = infrax_timer_next_expiration();
         uint64_t now = InfraxCoreClass.singleton()->time_monotonic_ms(InfraxCoreClass.singleton());
-        
-        pthread_mutex_unlock(&tt->mutex);
         
         // 计算需要等待的时间
         uint64_t wait_time = (next_expiry == UINT64_MAX) ? 1000 : 
@@ -429,9 +494,7 @@ static InfraxError ensure_timer_thread(void) {
         return err;
     }
     
-    g_timer_thread->next_timer_id = 1;  // Start from 1
-    g_timer_thread->timers = NULL;  // 初始化定时器链表为空
-    g_timer_thread->running = 1;
+    __atomic_store_n(&g_timer_thread->running, 1, __ATOMIC_SEQ_CST);
     
     // Start thread
     if (pthread_create(&g_timer_thread->thread, NULL, timer_thread_func, g_timer_thread) != 0) {
@@ -446,100 +509,18 @@ static InfraxError ensure_timer_thread(void) {
     return err;
 }
 
-// Timer callback
-static void mux_timer_callback(void* arg) {
-    InfraxMuxTimer* timer = (InfraxMuxTimer*)arg;
-    if (timer && timer->active && timer->handler) {
-        timer->handler(InfraxTimerClass.get_fd(timer->infrax_timer), POLLIN, timer->arg);
-    }
+// Check if timer is in callback
+static InfraxBool infrax_timer_is_in_callback(const InfraxTimer* timer) {
+    if (!timer) return INFRAX_FALSE;
+    return __atomic_load_n(&timer->in_callback, __ATOMIC_SEQ_CST) ? INFRAX_TRUE : INFRAX_FALSE;
 }
 
-// Create a new mux timer
-static InfraxU32 infrax_timer_create_mux_timer(InfraxU32 interval_ms, InfraxTimerHandler handler, void* arg) {
-    // Ensure timer thread is running
-    InfraxError err = ensure_timer_thread();
-    if (err.code != 0) {
-        return 0;  // Return 0 as invalid timer ID
+// Wait for callback to complete
+static void infrax_timer_wait_callback(const InfraxTimer* timer) {
+    if (!timer) return;
+    while (__atomic_load_n(&timer->in_callback, __ATOMIC_SEQ_CST)) {
+        usleep(1000);  // 等待1ms
     }
-    
-    // 创建新定时器
-    InfraxMuxTimer* timer = (InfraxMuxTimer*)malloc(sizeof(InfraxMuxTimer));
-    if (!timer) {
-        return 0;
-    }
-    
-    // 初始化定时器
-    timer->id = __atomic_add_fetch(&g_timer_thread->next_timer_id, 1, __ATOMIC_SEQ_CST);
-    timer->interval_ms = interval_ms;
-    timer->handler = handler;
-    timer->arg = arg;
-    timer->active = 1;
-    timer->expiry = InfraxCoreClass.singleton()->time_monotonic_ms(InfraxCoreClass.singleton()) + interval_ms;
-    
-    // 创建 InfraxTimer
-    err = InfraxTimerClass.new(&timer->infrax_timer, interval_ms, mux_timer_callback, timer);
-    if (err.code != 0) {
-        free(timer);
-        return 0;
-    }
-    
-    // 启动定时器
-    err = InfraxTimerClass.start(timer->infrax_timer);
-    if (err.code != 0) {
-        InfraxTimerClass.free(timer->infrax_timer);
-        free(timer);
-        return 0;
-    }
-    
-    // 添加到链表（使用短暂的锁）
-    pthread_mutex_lock(&g_timer_thread->mutex);
-    timer->next = g_timer_thread->timers;
-    g_timer_thread->timers = timer;
-    pthread_mutex_unlock(&g_timer_thread->mutex);
-    
-    return timer->id;
-}
-
-// Clear a mux timer
-static InfraxError infrax_timer_clear_mux_timer(InfraxU32 timer_id) {
-    InfraxError err = {0};
-    
-    if (!g_timer_thread) {
-        return err;  // No timer running
-    }
-    
-    pthread_mutex_lock(&g_timer_thread->mutex);
-    
-    // 查找并移除定时器
-    InfraxMuxTimer** pp = &g_timer_thread->timers;
-    while (*pp) {
-        InfraxMuxTimer* timer = *pp;
-        if (timer->id == timer_id) {
-            *pp = timer->next;
-            timer->active = 0;  // 停用定时器
-            InfraxTimerClass.stop(timer->infrax_timer);  // 停止定时器
-            InfraxTimerClass.free(timer->infrax_timer);  // 释放定时器
-            free(timer);
-            break;
-        }
-        pp = &timer->next;
-    }
-    
-    pthread_mutex_unlock(&g_timer_thread->mutex);
-    return err;
-}
-
-// Get active mux timers
-static InfraxMuxTimer* infrax_timer_get_active_mux_timers() {
-    if (!g_timer_thread) {
-        return NULL;
-    }
-    
-    pthread_mutex_lock(&g_timer_thread->mutex);
-    InfraxMuxTimer* timers = g_timer_thread->timers;
-    pthread_mutex_unlock(&g_timer_thread->mutex);
-    
-    return timers;
 }
 
 // Global timer class instance
@@ -551,7 +532,6 @@ InfraxTimerClassType InfraxTimerClass = {
     .reset = infrax_timer_reset,
     .get_fd = infrax_timer_get_fd,
     .next_expiration = infrax_timer_next_expiration,
-    .create_mux_timer = infrax_timer_create_mux_timer,
-    .clear_mux_timer = infrax_timer_clear_mux_timer,
-    .get_active_mux_timers = infrax_timer_get_active_mux_timers
+    .is_in_callback = infrax_timer_is_in_callback,
+    .wait_callback = infrax_timer_wait_callback
 };
