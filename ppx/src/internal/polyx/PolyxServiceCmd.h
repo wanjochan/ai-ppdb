@@ -28,12 +28,12 @@ struct PolyxServiceCmdClassType {
     void (*free)(PolyxServiceCmd* self);
     
     // Service command handlers
-    infrax_error_t (*handle_rinetd)(PolyxServiceCmd* self, const polyx_config_t* config, int argc, char** argv);
-    infrax_error_t (*handle_sqlite)(PolyxServiceCmd* self, const polyx_config_t* config, int argc, char** argv);
-    infrax_error_t (*handle_memkv)(PolyxServiceCmd* self, const polyx_config_t* config, int argc, char** argv);
+    InfraxError (*handle_rinetd)(PolyxServiceCmd* self, const polyx_config_t* config, InfraxI32 argc, char** argv);
+    InfraxError (*handle_sqlite)(PolyxServiceCmd* self, const polyx_config_t* config, InfraxI32 argc, char** argv);
+    InfraxError (*handle_memkv)(PolyxServiceCmd* self, const polyx_config_t* config, InfraxI32 argc, char** argv);
     
     // Service command registration
-    infrax_error_t (*register_all)(PolyxServiceCmd* self);
+    InfraxError (*register_all)(PolyxServiceCmd* self);
 };
 
 // Global class instance

@@ -1,3 +1,0 @@
-LIBRARY test4
-EXPORTS
-    test4_func 

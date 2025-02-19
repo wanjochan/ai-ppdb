@@ -1,6 +1,0 @@
-{
-  global:
-    dl_*;
-    get_*;
-  local: *;
-}; 

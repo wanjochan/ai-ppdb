@@ -27,12 +27,12 @@ struct PolyxService {
     polyx_service_state_t state;
     
     // Service operations
-    infrax_error_t (*init)(struct PolyxService* self);
-    infrax_error_t (*cleanup)(struct PolyxService* self);
-    infrax_error_t (*start)(struct PolyxService* self);
-    infrax_error_t (*stop)(struct PolyxService* self);
-    infrax_error_t (*reload)(struct PolyxService* self);
-    infrax_error_t (*get_status)(struct PolyxService* self, char* status, size_t size);
+    InfraxError (*init)(struct PolyxService* self);
+    InfraxError (*cleanup)(struct PolyxService* self);
+    InfraxError (*start)(struct PolyxService* self);
+    InfraxError (*stop)(struct PolyxService* self);
+    InfraxError (*reload)(struct PolyxService* self);
+    InfraxError (*get_status)(struct PolyxService* self, char* status, InfraxSize size);
     
     // Private data
     void* private_data;
@@ -45,17 +45,17 @@ struct PolyxServiceClassType {
     void (*free)(PolyxService* self);
     
     // Service registration
-    infrax_error_t (*register_service)(PolyxService* self, const polyx_service_config_t* config);
+    InfraxError (*register_service)(PolyxService* self, const polyx_service_config_t* config);
     PolyxService* (*get_service)(PolyxService* self, polyx_service_type_t type);
     
     // Service lifecycle management
-    infrax_error_t (*start_all)(PolyxService* self);
-    infrax_error_t (*stop_all)(PolyxService* self);
-    infrax_error_t (*reload_all)(PolyxService* self);
+    InfraxError (*start_all)(PolyxService* self);
+    InfraxError (*stop_all)(PolyxService* self);
+    InfraxError (*reload_all)(PolyxService* self);
     
     // Service status
-    infrax_error_t (*get_status)(PolyxService* self, polyx_service_type_t type, char* status, size_t size);
-    infrax_error_t (*get_all_status)(PolyxService* self, char* status, size_t size);
+    InfraxError (*get_status)(PolyxService* self, polyx_service_type_t type, char* status, InfraxSize size);
+    InfraxError (*get_all_status)(PolyxService* self, char* status, InfraxSize size);
 };
 
 // Global class instance

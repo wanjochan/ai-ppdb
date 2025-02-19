@@ -1,0 +1,4 @@
+dl_main
+dl_init
+dl_fini
+test_func 
