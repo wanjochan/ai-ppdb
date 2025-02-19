@@ -8,11 +8,11 @@ static void test_net_invalid_address(void) {
     core->printf(core, "Testing invalid network address...\n");
 
     InfraxNetConfig config = {
-        .is_udp = false,
-        .is_nonblocking = false,
+        .is_udp = INFRAX_FALSE,
+        .is_nonblocking = INFRAX_FALSE,
         .send_timeout_ms = 1000,
         .recv_timeout_ms = 1000,
-        .reuse_addr = false
+        .reuse_addr = INFRAX_FALSE
     };
 
     InfraxNet* net = InfraxNetClass.new(&config);
@@ -44,11 +44,11 @@ static void test_net_connection_timeout(void) {
     core->printf(core, "Testing network connection timeout...\n");
 
     InfraxNetConfig config = {
-        .is_udp = false,
-        .is_nonblocking = false,
+        .is_udp = INFRAX_FALSE,
+        .is_nonblocking = INFRAX_FALSE,
         .send_timeout_ms = 1000,
         .recv_timeout_ms = 1000,
-        .reuse_addr = false
+        .reuse_addr = INFRAX_FALSE
     };
 
     InfraxNet* net = InfraxNetClass.new(&config);
@@ -69,11 +69,11 @@ static void test_net_tcp_boundary_conditions(void) {
     core->printf(core, "Testing TCP boundary conditions...\n");
 
     InfraxNetConfig config = {
-        .is_udp = false,
-        .is_nonblocking = false,
+        .is_udp = INFRAX_FALSE,
+        .is_nonblocking = INFRAX_FALSE,
         .send_timeout_ms = 1000,
         .recv_timeout_ms = 1000,
-        .reuse_addr = false
+        .reuse_addr = INFRAX_FALSE
     };
 
     InfraxNet* net = InfraxNetClass.new(&config);
@@ -95,11 +95,11 @@ static void test_net_udp_boundary_conditions(void) {
     core->printf(core, "Testing UDP boundary conditions...\n");
 
     InfraxNetConfig config = {
-        .is_udp = true,
-        .is_nonblocking = false,
+        .is_udp = INFRAX_TRUE,
+        .is_nonblocking = INFRAX_FALSE,
         .send_timeout_ms = 1000,
         .recv_timeout_ms = 1000,
-        .reuse_addr = false
+        .reuse_addr = INFRAX_FALSE
     };
 
     InfraxNet* udp_net = InfraxNetClass.new(&config);

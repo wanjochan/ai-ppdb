@@ -1,17 +1,9 @@
-/**
- * @file InfraxNet.h
- * @brief Network operations functionality for the infrax subsystem
- */
-
 //design pattern: factory
 
 #ifndef PPDB_INFRAX_NET_H
 #define PPDB_INFRAX_NET_H
 
-#include "cosmopolitan.h"
 #include "internal/infrax/InfraxCore.h"
-
-//TODO rename to InfraxNet...
 
 // Forward declarations
 typedef struct InfraxNet InfraxNet;
@@ -25,9 +17,9 @@ typedef struct {
 
 // Network configuration
 typedef struct {
-    bool is_udp;           // true for UDP, false for TCP
-    bool is_nonblocking;   // true for non-blocking mode
-    bool reuse_addr;       // true to enable SO_REUSEADDR
+    InfraxBool is_udp;           // INFRAX_TRUE for UDP, INFRAX_FALSE for TCP
+    InfraxBool is_nonblocking;   // INFRAX_TRUE for non-blocking mode
+    InfraxBool reuse_addr;       // INFRAX_TRUE to enable SO_REUSEADDR
     uint32_t send_timeout_ms;
     uint32_t recv_timeout_ms;
 } InfraxNetConfig;
@@ -48,7 +40,7 @@ struct InfraxNetClassType {
     InfraxError (*recvfrom)(InfraxNet* self, void* buffer, size_t size, size_t* received, InfraxNetAddr* addr);
     InfraxError (*set_option)(InfraxNet* self, int level, int option, const void* value, size_t len);
     InfraxError (*get_option)(InfraxNet* self, int level, int option, void* value, size_t* len);
-    InfraxError (*set_nonblock)(InfraxNet* self, bool nonblock);
+    InfraxError (*set_nonblock)(InfraxNet* self, InfraxBool nonblock);
     InfraxError (*set_timeout)(InfraxNet* self, uint32_t send_timeout_ms, uint32_t recv_timeout_ms);
     InfraxError (*get_local_addr)(InfraxNet* self, InfraxNetAddr* addr);
     InfraxError (*get_peer_addr)(InfraxNet* self, InfraxNetAddr* addr);
@@ -64,7 +56,7 @@ struct InfraxNet {
     // Network data
     InfraxNetConfig config;
     intptr_t native_handle;
-    bool is_connected;
+    InfraxBool is_connected;
     InfraxNetAddr local_addr;
     InfraxNetAddr peer_addr;
 };
