@@ -7,6 +7,9 @@
 ### 注意，ppdb 已经基本完成 PoC，
 目前正在重构 PPX（INFRAX, POLYX, PEERX），预计完成迁移后会删除 ppdb 目录
 
+### test arch (infrax+polyx+peerx)
+rm -rf ppx/build/ && timeout 60s sh ppx/scripts/build_test_arch.sh
+
 测试 sqlite3 
 服务端：sh ppdb/scripts/build_ppdb.sh && ./ppdb/ppdb_latest.exe sqlite3 --start --config=ppdb/sqlite3.conf --log-level=5
 客户端：${HOME}/miniconda3/bin/python3 ppdb/test/black/system/test_sqlite3_service.py

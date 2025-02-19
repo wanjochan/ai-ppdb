@@ -1,3 +1,4 @@
+#include "cosmopolitan.h"
 #include "InfraxNet.h"
 #include "InfraxCore.h"
 #include "InfraxMemory.h"
@@ -5,7 +6,7 @@
 // Private functions declarations
 static InfraxError set_socket_option(intptr_t handle, int level, int option, const void* value, size_t len);
 static InfraxError get_socket_option(intptr_t handle, int level, int option, void* value, size_t* len);
-static InfraxError set_socket_nonblocking(intptr_t handle, bool nonblock);
+static InfraxError set_socket_nonblocking(intptr_t handle, InfraxBool nonblock);
 static InfraxNet* net_new(const InfraxNetConfig* config);
 static void net_free(InfraxNet* self);
 static InfraxError net_shutdown(InfraxNet* self, int how);
@@ -422,7 +423,7 @@ static InfraxError net_get_option(InfraxNet* self, int level, int option, void* 
     return get_socket_option(self->native_handle, level, option, value, len);
 }
 
-static InfraxError net_set_nonblock(InfraxNet* self, bool nonblock) {
+static InfraxError net_set_nonblock(InfraxNet* self, InfraxBool nonblock) {
     if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     
     InfraxError err = set_socket_nonblocking(self->native_handle, nonblock);
@@ -629,7 +630,7 @@ static InfraxError get_socket_option(intptr_t handle, int level, int option, voi
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError set_socket_nonblocking(intptr_t handle, bool nonblock) {
+static InfraxError set_socket_nonblocking(intptr_t handle, InfraxBool nonblock) {
     int flags = fcntl(handle, F_GETFL, 0);
     if (flags < 0) return INFRAX_ERROR_NET_OPTION_FAILED;
 

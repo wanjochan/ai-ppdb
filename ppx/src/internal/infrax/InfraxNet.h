@@ -3,7 +3,7 @@
 #ifndef PPDB_INFRAX_NET_H
 #define PPDB_INFRAX_NET_H
 
-#include "internal/infrax/InfraxCore.h"
+#include "InfraxCore.h"
 
 // Forward declarations
 typedef struct InfraxNet InfraxNet;
@@ -12,7 +12,7 @@ typedef struct InfraxNetClassType InfraxNetClassType;
 // Network address structure
 typedef struct {
     char ip[64];
-    uint16_t port;
+    InfraxU16 port;
 } InfraxNetAddr;
 
 // Network configuration
@@ -20,8 +20,8 @@ typedef struct {
     InfraxBool is_udp;           // INFRAX_TRUE for UDP, INFRAX_FALSE for TCP
     InfraxBool is_nonblocking;   // INFRAX_TRUE for non-blocking mode
     InfraxBool reuse_addr;       // INFRAX_TRUE to enable SO_REUSEADDR
-    uint32_t send_timeout_ms;
-    uint32_t recv_timeout_ms;
+    InfraxU32 send_timeout_ms;
+    InfraxU32 recv_timeout_ms;
 } InfraxNetConfig;
 
 // The "static" interface (like static methods in OOP)
@@ -55,7 +55,7 @@ struct InfraxNet {
 
     // Network data
     InfraxNetConfig config;
-    intptr_t native_handle;
+    intptr_t native_handle;//? InfraxInt* ??
     InfraxBool is_connected;
     InfraxNetAddr local_addr;
     InfraxNetAddr peer_addr;

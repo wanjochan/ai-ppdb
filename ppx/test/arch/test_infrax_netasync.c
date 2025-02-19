@@ -72,7 +72,7 @@ static void on_tcp_connect(InfraxAsync* self, int fd, short events, void* arg) {
     AsyncTcpContext* ctx = (AsyncTcpContext*)arg;
     const char* test_data = "Hello, Async TCP!";
     
-    InfraxError err = ctx->client->klass->send(ctx->client, test_data, strlen(test_data), &ctx->bytes);
+    InfraxError err = ctx->client->klass->send(ctx->client, test_data, core->strlen(core, test_data), &ctx->bytes);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Send failed: %s\n", err.message);
         return;
@@ -86,7 +86,7 @@ static void on_udp_send(InfraxAsync* self, int fd, short events, void* arg) {
     AsyncUdpContext* ctx = (AsyncUdpContext*)arg;
     const char* test_data = "Hello, Async UDP!";
     
-    InfraxError err = ctx->socket->klass->sendto(ctx->socket, test_data, strlen(test_data), 
+    InfraxError err = ctx->socket->klass->sendto(ctx->socket, test_data, core->strlen(core, test_data), 
                                                 &ctx->bytes, &ctx->peer_addr);
     if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "UDP send failed: %s\n", err.message);
@@ -140,7 +140,7 @@ static void on_concurrent_tcp_connect(InfraxAsync* self, int fd, short events, v
     // 为所有未发送数据的已连接客户端发送数据
     for (int i = 0; i < ctx->client_count; i++) {
         if (ctx->client_connected[i] && !ctx->client_sent[i]) {
-            InfraxError err = ctx->clients[i]->klass->send(ctx->clients[i], test_data, strlen(test_data), &ctx->bytes);
+            InfraxError err = ctx->clients[i]->klass->send(ctx->clients[i], test_data, core->strlen(core, test_data), &ctx->bytes);
             if (INFRAX_ERROR_IS_ERR(err)) {
                 if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
                     continue;
@@ -177,7 +177,7 @@ static void on_concurrent_udp_send(InfraxAsync* self, int fd, short events, void
     // 为所有未发送数据的socket发送数据
     for (int i = 0; i < ctx->socket_count; i++) {
         if (!ctx->socket_sent[i]) {
-            InfraxError err = ctx->sockets[i]->klass->sendto(ctx->sockets[i], test_data, strlen(test_data),
+            InfraxError err = ctx->sockets[i]->klass->sendto(ctx->sockets[i], test_data, core->strlen(core, test_data),
                                                            &ctx->bytes, &ctx->peer_addrs[i]);
             if (INFRAX_ERROR_IS_ERR(err)) {
                 if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {

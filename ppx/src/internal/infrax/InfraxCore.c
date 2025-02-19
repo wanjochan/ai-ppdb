@@ -1,7 +1,22 @@
 #include "cosmopolitan.h"
 
-#include "internal/infrax/InfraxCore.h"
+#include "InfraxCore.h"
 
+void* infrax_core_malloc(InfraxCore *self, size_t size) {
+    return malloc(size);
+}
+
+void* infrax_core_calloc(InfraxCore *self, size_t nmemb, size_t size) {
+    return calloc(nmemb, size);
+}
+
+void* infrax_core_realloc(InfraxCore *self, void* ptr, size_t size) {
+    return realloc(ptr, size);
+}
+
+void infrax_core_free(InfraxCore *self, void* ptr) {
+    free(ptr);
+}
 int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     va_list args;
     va_start(args, format);
@@ -697,6 +712,10 @@ static InfraxCore singleton = {
     .forward_call = infrax_core_forward_call,
     .printf = infrax_core_printf,
     .snprintf = infrax_core_snprintf,
+    .malloc = infrax_core_malloc,
+    .calloc = infrax_core_calloc,
+    .realloc = infrax_core_realloc,
+    .free = infrax_core_free,
     
     // String operations
     .strlen = infrax_core_strlen,

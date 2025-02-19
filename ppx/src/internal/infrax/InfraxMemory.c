@@ -1,5 +1,5 @@
-#include "InfraxMemory.h"
 #include "cosmopolitan.h"
+#include "InfraxMemory.h"
 
 // Forward declarations of instance methods
 static void* infrax_memory_alloc(InfraxMemory* self, size_t size);

@@ -38,3 +38,5 @@ fi
 
 # Build arch library
 build_arch_lib "${BUILD_DIR}/arch" "${ARCH_SOURCES[@]}" 
+
+cp -vf "${BUILD_DIR}/arch/libarch.a" "${PPX_DIR}/lib/libarch.a"

@@ -1,6 +1,6 @@
 #include "internal/arch/PpxInfra.h"
 #include "internal/infrax/InfraxLog.h"
-#include "cosmopolitan.h"
+#include "internal/infrax/cosmopolitan.h"
 
 // Define itimerspec structure if not defined
 #ifndef _STRUCT_ITIMERSPEC

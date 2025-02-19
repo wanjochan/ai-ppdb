@@ -125,6 +125,12 @@ struct InfraxCore {
     void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);
     int (*printf)(InfraxCore *self, const char* format, ...);
     int (*snprintf)(InfraxCore *self, char* str, size_t size, const char* format, ...);
+    
+    // core memory operations
+    void* (*malloc)(InfraxCore *self, size_t size);
+    void* (*calloc)(InfraxCore *self, size_t nmemb, size_t size);
+    void* (*realloc)(InfraxCore *self, void* ptr, size_t size);
+    void (*free)(InfraxCore *self, void* ptr);
 
     // String operations
     size_t (*strlen)(InfraxCore *self, const char* s);

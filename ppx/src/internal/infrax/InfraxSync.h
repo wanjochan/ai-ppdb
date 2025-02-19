@@ -84,7 +84,6 @@ struct InfraxSyncClassType {
 // Size is set to accommodate the largest sync primitive across platforms
 // Alignment is set to the strictest requirement
 typedef struct {
-    uint64_t data[8];  // 64 bytes, enough for any sync primitive
     // union {
     //     pthread_mutex_t mutex;
     //     pthread_rwlock_t rwlock;
@@ -92,7 +91,8 @@ typedef struct {
     //     sem_t sem;
     //     pthread_cond_t cond;
     // } native_handle;    
-} __attribute__((aligned(8))) InfraxSyncHandle;
+    InfraxU64 data[8];  // 128 bytes, double the size to ensure enough space
+} __attribute__((aligned(16))) InfraxSyncHandle;
 
 // The instance structure
 struct InfraxSync {

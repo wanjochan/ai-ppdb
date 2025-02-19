@@ -1,4 +1,3 @@
-#include "cosmopolitan.h"
 #include "PpxInfra.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
