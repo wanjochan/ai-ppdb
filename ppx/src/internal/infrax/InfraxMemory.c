@@ -1,4 +1,5 @@
 #include "InfraxMemory.h"
+#include "cosmopolitan.h"
 
 // Forward declarations of instance methods
 static void* infrax_memory_alloc(InfraxMemory* self, size_t size);
@@ -35,8 +36,8 @@ static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
             self->pool_size = self->config.initial_size;
             self->free_list = self->pool_start;
             self->free_list->size = self->config.initial_size - sizeof(MemoryBlock);
-            self->free_list->is_used = false;
-            self->free_list->is_gc_root = false;
+            self->free_list->is_used = INFRAX_FALSE;
+            self->free_list->is_gc_root = INFRAX_FALSE;
             self->free_list->next = NULL;
         }
     }
@@ -98,8 +99,8 @@ static void split_block(MemoryBlock* block, size_t size) {
     if (remaining >= sizeof(MemoryBlock) + 8) {
         MemoryBlock* new_block = (MemoryBlock*)((char*)block + sizeof(MemoryBlock) + size);
         new_block->size = remaining - sizeof(MemoryBlock);
-        new_block->is_used = false;
-        new_block->is_gc_root = false;
+        new_block->is_used = INFRAX_FALSE;
+        new_block->is_gc_root = INFRAX_FALSE;
         new_block->next = block->next;
         
         block->size = size;
@@ -125,7 +126,7 @@ static void mark_from_roots(InfraxMemory* self) {
     MemoryBlock* obj = self->gc_objects;
     while (obj) {
         if (obj->is_gc_root) {
-            obj->is_used = true;
+            obj->is_used = INFRAX_TRUE;
         }
         obj = obj->next;
     }
@@ -141,7 +142,7 @@ static void sweep_unused(InfraxMemory* self) {
             self->stats.current_usage -= obj->size;
             free(obj);
         } else {
-            obj->is_used = false;  // Reset for next collection
+            obj->is_used = INFRAX_FALSE;  // Reset for next collection
             obj_ptr = &obj->next;
         }
     }
@@ -160,7 +161,7 @@ static void* infrax_memory_alloc(InfraxMemory* self, size_t size) {
         MemoryBlock* block = find_best_fit(self, size);
         if (block) {
             split_block(block, size);
-            block->is_used = true;
+            block->is_used = INFRAX_TRUE;
             block->is_gc_root = self->config.use_gc;
             ptr = (char*)block + sizeof(MemoryBlock);
         }
@@ -173,7 +174,7 @@ static void* infrax_memory_alloc(InfraxMemory* self, size_t size) {
         if (!block) return NULL;
         
         block->size = size;
-        block->is_used = true;
+        block->is_used = INFRAX_TRUE;
         block->is_gc_root = self->config.use_gc;
         
         if (self->config.use_gc) {
@@ -207,7 +208,7 @@ static void infrax_memory_dealloc(InfraxMemory* self, void* ptr) {
         // Check if ptr is in pool range
         if ((char*)ptr >= (char*)self->pool_start && 
             (char*)ptr < (char*)self->pool_start + self->pool_size) {
-            block->is_used = false;
+            block->is_used = INFRAX_FALSE;
             merge_free_blocks(self);
             self->stats.total_deallocations++;
             // 检查减法是否会导致溢出
@@ -251,16 +252,16 @@ static void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
     }
     
     // 检查是否在内存池中
-    bool is_pool_block = (self->config.use_pool && 
+    InfraxBool is_pool_block = (self->config.use_pool && 
                          (char*)ptr >= (char*)self->pool_start && 
-                         (char*)ptr < (char*)self->pool_start + self->pool_size);
+                         (char*)ptr < (char*)self->pool_start + self->pool_size) ? INFRAX_TRUE : INFRAX_FALSE;
     
-    if (is_pool_block) {
+    if (is_pool_block == INFRAX_TRUE) {
         // 尝试合并后面的空闲块
         size_t needed_size = size - block->size;
         MemoryBlock* next = block->next;
         
-        if (next && !next->is_used && 
+        if (next && next->is_used == INFRAX_FALSE && 
             (sizeof(MemoryBlock) + next->size) >= needed_size) {
             // 可以直接扩展当前块
             size_t remaining = next->size - needed_size;
@@ -268,8 +269,8 @@ static void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
                 // 分割剩余空间
                 MemoryBlock* new_next = (MemoryBlock*)((char*)next + needed_size);
                 new_next->size = remaining - sizeof(MemoryBlock);
-                new_next->is_used = false;
-                new_next->is_gc_root = false;
+                new_next->is_used = INFRAX_FALSE;
+                new_next->is_gc_root = INFRAX_FALSE;
                 new_next->next = next->next;
                 block->next = new_next;
             } else {

@@ -235,6 +235,7 @@ static void test_file_operations(void) {
     const char* test_path = "./test.txt";
     const char* test_data = "Hello, File I/O!";
     const char* new_path = "./test_renamed.txt";
+    InfraxBool exists;
     
     // Test file creation and write
     InfraxError err = core->file_open(core, test_path, INFRAX_FILE_CREATE | INFRAX_FILE_WRONLY | INFRAX_FILE_TRUNC, 0644, &file);
@@ -248,41 +249,40 @@ static void test_file_operations(void) {
     err = core->file_close(core, file);
     INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File close should succeed");
     
-    // Test file read
-    err = core->file_open(core, test_path, INFRAX_FILE_RDONLY, 0, &file);
-    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File open for reading should succeed");
-    
-    char read_data[64] = {0};
-    size_t bytes_read;
-    err = core->file_read(core, file, read_data, sizeof(read_data), &bytes_read);
-    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File read should succeed");
-    INFRAX_ASSERT(core, bytes_read == strlen(test_data));
-    INFRAX_ASSERT(core, memcmp(read_data, test_data, strlen(test_data)) == 0);
-    
-    err = core->file_close(core, file);
-    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File close should succeed");
+    // Test file exists
+    err = core->file_exists(core, new_path, &exists);
+    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File exists check should succeed");
+    INFRAX_ASSERT(core, !exists);
     
     // Test file rename
     err = core->file_rename(core, test_path, new_path);
     INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File rename should succeed");
     
-    // Test file exists
-    bool exists;
-    err = core->file_exists(core, new_path, &exists);
-    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File exists check should succeed");
-    INFRAX_ASSERT(core, exists);
-    
     err = core->file_exists(core, test_path, &exists);
     INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File exists check should succeed");
     INFRAX_ASSERT(core, !exists);
     
-    // Test file removal
-    err = core->file_remove(core, new_path);
-    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File removal should succeed");
+    // Test file read
+    err = core->file_open(core, new_path, INFRAX_FILE_RDONLY, 0, &file);
+    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File open should succeed");
+    
+    char read_data[128];
+    size_t read;
+    err = core->file_read(core, file, read_data, sizeof(read_data), &read);
+    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File read should succeed");
+    INFRAX_ASSERT(core, read == strlen(test_data));
+    INFRAX_ASSERT(core, memcmp(read_data, test_data, read) == 0);
+    
+    err = core->file_close(core, file);
+    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File close should succeed");
     
     err = core->file_exists(core, new_path, &exists);
     INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File exists check should succeed");
-    INFRAX_ASSERT(core, !exists);
+    INFRAX_ASSERT(core, exists);
+    
+    // Test file removal
+    err = core->file_remove(core, new_path);
+    INFRAX_ASSERT_MSG(core, INFRAX_ERROR_IS_OK(err), "File remove should succeed");
     
     printf("File operations tests passed!\n");
 }

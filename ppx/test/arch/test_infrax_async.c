@@ -4,6 +4,7 @@
 #include "internal/infrax/InfraxLog.h"
 
 InfraxCore* core = NULL;
+InfraxMemory* memory = NULL;
 
 // Test timeout control
 #define TEST_TIMEOUT_MS 2000  // 2 seconds timeout for each test
@@ -16,17 +17,17 @@ static volatile int test_timeout = 0;
 
 static void alarm_handler(int sig) {
     test_timeout = 1;
-    core->printf(NULL, "Test timeout!\n");
+    core->printf(core, "Test timeout!\n");
 }
 
-static void setup_timeout(int seconds) {
+static void setup_timeout(InfraxCore *core, unsigned int seconds) {
     test_timeout = 0;
-    signal(SIGALRM, alarm_handler);
-    alarm(seconds);
+    core->signal(core, INFRAX_SIGALRM, alarm_handler);
+    core->alarm(core, seconds);
 }
 
-static void clear_timeout() {
-    alarm(0);
+static void clear_timeout(InfraxCore *core) {
+    core->alarm(core, 0);
     test_timeout = 0;
 }
 
@@ -34,17 +35,17 @@ static void clear_timeout() {
 typedef struct {
     int counter;
     int target;
-    bool has_error;
+    InfraxBool has_error;
     char error_msg[256];
 } TestContext;
 
 // File IO test context
 typedef struct {
     const char* filename;
-    int fd;
-    char* buffer;
-    size_t buffer_size;
-    size_t bytes_processed;
+    InfraxHandle fd;
+    void* buffer;
+    InfraxSize buffer_size;
+    InfraxSize bytes_processed;
     int yield_count;
 } FileIOTestContext;
 
@@ -57,9 +58,11 @@ static uint64_t get_current_time_ms(void) {
 static void timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
     char discard_buf[256];
     if (fd >= 0) {
-        while (read(fd, discard_buf, sizeof(discard_buf)) > 0) {}  // 完全清空管道
+        InfraxSize bytes_read;
+        InfraxError err;
+        while (INFRAX_ERROR_IS_OK(err = core->file_read(core, fd, discard_buf, sizeof(discard_buf), &bytes_read)) && bytes_read > 0) {}  // 完全清空管道
     }
-    core->printf(NULL,"Timer event received!\n");
+    core->printf(core, "Timer event received!\n");
     *(int*)arg = 1;  // Set result
 }
 
@@ -93,13 +96,13 @@ static void concurrent_timer_handler(InfraxAsync* self, int fd, short events, vo
 // Timer tests
 void test_async_timer() {
     core->printf(NULL,"Testing async with timer...\n");
-    setup_timeout(5);  // 5 second timeout
+    setup_timeout(core, 5);  // 5 second timeout
     
     // Create async task for polling
     InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);
     if (!async) {
         core->printf(NULL,"Failed to create async task\n");
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -109,7 +112,7 @@ void test_async_timer() {
     if (timer_id == 0) {
         core->printf(NULL,"Failed to set timeout\n");
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -132,7 +135,7 @@ void test_async_timer() {
             core->printf(NULL, "Timer did not expire in time\n");
             InfraxAsyncClass.clearTimeout(timer_id);
             InfraxAsyncClass.free(async);
-            clear_timeout();
+            clear_timeout(core);
             return;
         }
     }
@@ -141,7 +144,7 @@ void test_async_timer() {
         core->printf(NULL,"Test timed out\n");
         InfraxAsyncClass.clearTimeout(timer_id);
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -149,7 +152,7 @@ void test_async_timer() {
         core->printf(NULL,"Timer did not expire in time\n");
         InfraxAsyncClass.clearTimeout(timer_id);
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -159,18 +162,18 @@ void test_async_timer() {
     
     InfraxAsyncClass.clearTimeout(timer_id);
     InfraxAsyncClass.free(async);
-    clear_timeout();
+    clear_timeout(core);
 }
 
 void test_multiple_timers() {
     core->printf(NULL, "Testing multiple concurrent timers...\n");
-    setup_timeout(10);  // 10 second timeout
+    setup_timeout(core, 10);  // 10 second timeout
     
     // Create async task for polling
     InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);
     if (!async) {
         core->printf(NULL,"Failed to create async task\n");
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -183,7 +186,7 @@ void test_multiple_timers() {
         if (timer1) InfraxAsyncClass.clearTimeout(timer1);
         if (timer2) InfraxAsyncClass.clearTimeout(timer2);
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -207,7 +210,7 @@ void test_multiple_timers() {
             InfraxAsyncClass.clearTimeout(timer1);
             InfraxAsyncClass.clearTimeout(timer2);
             InfraxAsyncClass.free(async);
-            clear_timeout();
+            clear_timeout(core);
             return;
         }
     }
@@ -217,7 +220,7 @@ void test_multiple_timers() {
         InfraxAsyncClass.clearTimeout(timer1);
         InfraxAsyncClass.clearTimeout(timer2);
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -226,7 +229,7 @@ void test_multiple_timers() {
         InfraxAsyncClass.clearTimeout(timer1);
         InfraxAsyncClass.clearTimeout(timer2);
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -237,7 +240,7 @@ void test_multiple_timers() {
     InfraxAsyncClass.clearTimeout(timer1);
     InfraxAsyncClass.clearTimeout(timer2);
     InfraxAsyncClass.free(async);
-    clear_timeout();
+    clear_timeout(core);
 }
 
 // 并发定时器测试
@@ -245,13 +248,13 @@ void test_multiple_timers() {
 
 void test_concurrent_timers() {
     core->printf(NULL, "Testing %d concurrent timers...\n", CONCURRENT_TIMER_COUNT);
-    setup_timeout(60);  // 增加超时时间到60秒以适应更多的并发定时器
+    setup_timeout(core, 60);  // 增加超时时间到60秒以适应更多的并发定时器
     
     // Create async task for polling
     InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);
     if (!async) {
         core->printf(NULL,"Failed to create async task\n");
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -259,7 +262,7 @@ void test_concurrent_timers() {
     TestContext ctx = {
         .counter = 0,
         .target = CONCURRENT_TIMER_COUNT,
-        .has_error = false
+        .has_error = INFRAX_FALSE
     };
     
     // 记录开始时间
@@ -275,14 +278,14 @@ void test_concurrent_timers() {
         timer_ids[i] = InfraxAsyncClass.setTimeout(interval, concurrent_timer_handler, &ctx);
         if (timer_ids[i] == 0) {
             core->printf(NULL, "Failed to set timer %d\n", i);
-            ctx.has_error = true;
-            snprintf(ctx.error_msg, sizeof(ctx.error_msg), "Failed to create timer %d", i);
+            ctx.has_error = INFRAX_TRUE;
+            core->snprintf(core, ctx.error_msg, sizeof(ctx.error_msg), "Failed to create timer %d", i);
             // 清理已创建的定时器
             for (int j = 0; j < i; j++) {
                 InfraxAsyncClass.clearTimeout(timer_ids[j]);
             }
             InfraxAsyncClass.free(async);
-            clear_timeout();
+            clear_timeout(core);
             return;
         }
     }
@@ -316,7 +319,7 @@ void test_concurrent_timers() {
             InfraxAsyncClass.clearTimeout(timer_ids[i]);
         }
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -328,7 +331,7 @@ void test_concurrent_timers() {
             InfraxAsyncClass.clearTimeout(timer_ids[i]);
         }
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
@@ -338,7 +341,7 @@ void test_concurrent_timers() {
     }
     
     InfraxAsyncClass.free(async);
-    clear_timeout();
+    clear_timeout(core);
     
     // 打印性能统计
     core->printf(NULL, "\nPerformance Statistics:\n");
@@ -371,36 +374,45 @@ static void file_io_callback(InfraxAsync* self, int fd, short events, void* arg)
 
 // Basic file IO test
 void test_basic_file_io(void) {
-    InfraxCore* core = InfraxCoreClass.singleton();
     core->printf(core, "Testing basic file IO...\n");
-    setup_timeout(5);  // 5 second timeout
+    setup_timeout(core, 5);  // 5 second timeout
     
     // Create async instance to initialize pollset
     InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);
     if (!async) {
         core->printf(core, "Failed to create async instance\n");
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
     
     // Create test file with known content
     const char* test_file = "test_file.txt";
     const char* test_content = "Hello, File IO Test! This is a test content with known length.";
-    FILE* fp = fopen(test_file, "w");
-    if (!fp) {
+    InfraxHandle file_handle;
+    InfraxError err = core->file_open(core, test_file, INFRAX_FILE_CREATE | INFRAX_FILE_WRONLY | INFRAX_FILE_TRUNC, 0644, &file_handle);
+    if (INFRAX_ERROR_IS_ERR(err)) {
         core->printf(core, "Failed to create test file\n");
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
-    fprintf(fp, "%s", test_content);
-    fclose(fp);
+    
+    InfraxSize bytes_written;
+    err = core->file_write(core, file_handle, test_content, core->strlen(core, test_content), &bytes_written);
+    core->file_close(core, file_handle);
+    
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Failed to write test content\n");
+        InfraxAsyncClass.free(async);
+        clear_timeout(core);
+        return;
+    }
     
     // Initialize context
     FileIOTestContext ctx = {
         .filename = test_file,
-        .fd = -1,
-        .buffer = malloc(1024),
+        .fd = 0,
+        .buffer = memory->alloc(memory, 1024),
         .buffer_size = 1024,
         .bytes_processed = 0,
         .yield_count = 0
@@ -408,17 +420,17 @@ void test_basic_file_io(void) {
     
     if (!ctx.buffer) {
         core->printf(core, "Failed to allocate buffer\n");
-        remove(test_file);
+        core->file_remove(core, test_file);
         InfraxAsyncClass.free(async);
-        clear_timeout();
+        clear_timeout(core);
         return;
     }
-    memset(ctx.buffer, 0, ctx.buffer_size);
+    core->memset(core, ctx.buffer, 0, ctx.buffer_size);
     
-    // Open file non-blocking
-    ctx.fd = open(test_file, O_RDONLY | O_NONBLOCK);
-    if (ctx.fd < 0) {
-        core->printf(core, "Failed to open file: %s\n", strerror(errno));
+    // Open file for reading
+    err = core->file_open(core, test_file, INFRAX_FILE_RDONLY, 0, &ctx.fd);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Failed to open file for reading\n");
         goto cleanup;
     }
     
@@ -430,7 +442,7 @@ void test_basic_file_io(void) {
     
     // Poll until read complete or timeout
     uint64_t start_time = get_current_time_ms();
-    size_t expected_size = strlen(test_content);
+    InfraxSize expected_size = core->strlen(core, test_content);
     
     while (ctx.bytes_processed < expected_size && !test_timeout) {
         InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
@@ -455,7 +467,7 @@ void test_basic_file_io(void) {
         goto cleanup;
     }
     
-    if (memcmp(ctx.buffer, test_content, expected_size) != 0) {
+    if (core->memcmp(core, ctx.buffer, test_content, expected_size) != 0) {
         core->printf(core, "Content verification failed\n");
         goto cleanup;
     }
@@ -464,30 +476,44 @@ void test_basic_file_io(void) {
                  ctx.bytes_processed);
     
 cleanup:
-    if (ctx.fd >= 0) {
-        close(ctx.fd);
+    if (ctx.fd) {
+        core->file_close(core, ctx.fd);
     }
     if (ctx.buffer) {
-        free(ctx.buffer);
+        memory->dealloc(memory, ctx.buffer);
     }
     if (async) {
         InfraxAsyncClass.free(async);
     }
-    remove(test_file);
-    clear_timeout();
+    core->file_remove(core, test_file);
+    clear_timeout(core);
 }
 
 int main(void) {
     core = InfraxCoreClass.singleton();
     if (!core) {
-        printf("Failed to get core singleton\n");
+        core->printf(core, "Failed to get core singleton\n");
+        return 1;
+    }
+    
+    // 初始化内存管理器
+    InfraxMemoryConfig mem_config = {
+        .initial_size = 1024 * 1024,  // 1MB
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
+        .gc_threshold = 0
+    };
+    memory = InfraxMemoryClass.new(&mem_config);
+    if (!memory) {
+        core->printf(core, "Failed to create memory manager\n");
         return 1;
     }
     
     test_async_timer();
     test_multiple_timers();
     test_concurrent_timers();
-    test_basic_file_io();  // Add new test
+    test_basic_file_io();
     
+    InfraxMemoryClass.free(memory);
     return 0;
 }

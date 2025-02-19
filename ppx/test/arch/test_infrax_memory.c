@@ -1,5 +1,6 @@
 #include "internal/infrax/InfraxMemory.h"
 #include "internal/infrax/InfraxCore.h"
+
 InfraxCore* core = NULL;
 
 // 测试基础内存管理
@@ -9,8 +10,8 @@ void test_base_memory() {
     // 创建内存管理器
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -73,8 +74,8 @@ void test_pool_memory() {
     // 创建内存管理器
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -129,8 +130,8 @@ void test_realloc() {
     // 创建内存管理器
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -190,8 +191,8 @@ void test_memory_stress() {
     
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -217,7 +218,7 @@ void test_memory_stress() {
         INFRAX_ASSERT(core, ptrs[i] != NULL);
         
         // 填充数据
-        memset(ptrs[i], i & 0xFF, sizes[i]);
+        core->memset(core, ptrs[i], i & 0xFF, sizes[i]);
     }
     
     // Phase 2: 验证数据
@@ -277,7 +278,7 @@ void test_memory_stress() {
             sizes[i] = (core->random(core) % 512) + 64;
             ptrs[i] = memory->alloc(memory, sizes[i]);
             INFRAX_ASSERT(core, ptrs[i] != NULL);
-            memset(ptrs[i], i & 0xFF, sizes[i]);
+            core->memset(core, ptrs[i], i & 0xFF, sizes[i]);
         }
     }
     
@@ -308,8 +309,8 @@ void test_memory_edge_cases() {
     
     InfraxMemoryConfig config = {
         .initial_size = 1024,  // 故意设置较小的初始大小
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -348,8 +349,8 @@ void test_memory_fragmentation() {
     
     InfraxMemoryConfig config = {
         .initial_size = 4096,  // 4KB
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -398,8 +399,8 @@ void test_memory_gc() {
     
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,
-        .use_gc = true,
-        .use_pool = true,
+        .use_gc = INFRAX_TRUE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 512  // 较小的阈值以便触发GC
     };
     
@@ -436,8 +437,8 @@ void test_memory_alignment() {
     
     InfraxMemoryConfig config = {
         .initial_size = 4096,
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -452,7 +453,7 @@ void test_memory_alignment() {
         INFRAX_ASSERT(core, ((uintptr_t)ptr & 7) == 0);  // 验证8字节对齐
         
         // 写入并读取以验证访问正确性
-        memset(ptr, 0xAA, test_sizes[i]);
+        core->memset(core, ptr, 0xAA, test_sizes[i]);
         for(size_t j = 0; j < test_sizes[i]; j++) {
             INFRAX_ASSERT(core, ((unsigned char*)ptr)[j] == 0xAA);
         }
@@ -470,8 +471,8 @@ void test_memory_concurrent() {
     
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -491,7 +492,7 @@ void test_memory_concurrent() {
             ptrs[i] = memory->alloc(memory, CONCURRENT_SIZE);
             INFRAX_ASSERT(core, ptrs[i] != NULL);
             // 立即写入以验证内存有效
-            memset(ptrs[i], i & 0xFF, CONCURRENT_SIZE);
+            core->memset(core, ptrs[i], i & 0xFF, CONCURRENT_SIZE);
         }
         
         // 验证数据
@@ -519,8 +520,8 @@ void test_memory_leak_detection() {
     
     InfraxMemoryConfig config = {
         .initial_size = 4096,
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -567,8 +568,8 @@ void test_memory_defragmentation() {
     
     InfraxMemoryConfig config = {
         .initial_size = 16 * 1024, // 16KB
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     };
     
@@ -584,7 +585,7 @@ void test_memory_defragmentation() {
         sizes[i] = 64 << (i % 4); // 64, 128, 256, 512 循环
         ptrs[i] = memory->alloc(memory, sizes[i]);
         INFRAX_ASSERT(core, ptrs[i] != NULL);
-        memset(ptrs[i], i & 0xFF, sizes[i]);
+        core->memset(core, ptrs[i], i & 0xFF, sizes[i]);
     }
     
     // 2. 特定模式释放以创建碎片

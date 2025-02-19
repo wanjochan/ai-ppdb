@@ -2,9 +2,6 @@
 #define PPDB_INFRAX_CORE_H
 
 //design pattern: singleton
-
-#include "cosmopolitan.h"
-
 //-----------------------------------------------------------------------------
 // Basic Types
 //-----------------------------------------------------------------------------
@@ -18,20 +15,19 @@ typedef int64_t InfraxI64;
 typedef uint64_t InfraxU64;
 typedef size_t InfraxSize;
 typedef ssize_t InfraxSSize;
-typedef int InfraxBool;
-typedef int InfraxInt;
+typedef uint8_t InfraxBool;
+typedef int InfraxInt;//尽量不用
 
-typedef clock_t InfraxClock;
-typedef time_t InfraxTime;
-// typedef InfraxU64 InfraxTime;//
+typedef InfraxU64 InfraxClock;
+typedef InfraxU64 InfraxTime;
 
-#define INFRAX_TRUE  1
-#define INFRAX_FALSE 0
+#define INFRAX_TRUE ((InfraxBool)1)
+#define INFRAX_FALSE ((InfraxBool)0)
 
-// Forward declaration
-typedef struct InfraxError InfraxError;
+// Forward declarations
+typedef struct InfraxCore InfraxCore;
 typedef struct InfraxCoreClassType InfraxCoreClassType;
-
+typedef struct InfraxError InfraxError;
 
 // Error structure definition
 struct InfraxError {
@@ -45,30 +41,7 @@ struct InfraxError {
     char stack_trace[1024];
     #endif
 };
-//TODO
-// Helper macro to create InfraxError with stack trace
-static inline InfraxError make_error_with_stack(InfraxI32 code, const char* msg) {
-    InfraxError err = {.code = code};
-    if (msg) {
-        strncpy(err.message, msg, sizeof(err.message) - 1);
-        err.message[sizeof(err.message) - 1] = '\0';
-    }
-    
-    #ifdef INFRAX_ENABLE_STACKTRACE
-    err.stack_depth = backtrace(err.stack_frames, 32);
-    char** symbols = backtrace_symbols(err.stack_frames, err.stack_depth);
-    if (symbols) {
-        int pos = 0;
-        for (int i = 0; i < err.stack_depth && pos < sizeof(err.stack_trace) - 1; i++) {
-            pos += snprintf(err.stack_trace + pos, sizeof(err.stack_trace) - pos, 
-                          "%s\n", symbols[i]);
-        }
-        free(symbols);
-    }
-    #endif
-    
-    return err;
-}
+
 typedef InfraxU32 InfraxFlags;
 typedef InfraxU64 InfraxHandle;
 
@@ -110,25 +83,6 @@ typedef struct InfraxRingBuffer {
 #define INFRAX_ERROR_TIMEOUT -7
 #define INFRAX_ERROR_SYSTEM 5  // 系统级错误(如pthread, pipe等)
 
-// Helper macro to create InfraxError
-static inline InfraxError make_error(InfraxI32 code, const char* msg) {
-    InfraxError err = {.code = code};
-    if (msg) {
-        strncpy(err.message, msg, sizeof(err.message) - 1);
-        err.message[sizeof(err.message) - 1] = '\0';
-    } else {
-        err.message[0] = '\0';
-    }
-    return err;
-}
-
-//TODO 后面全部同意改用 make_error()
-#define INFRAX_ERROR_OK_STRUCT (InfraxError){.code = INFRAX_ERROR_OK, .message = ""}
-
-// Helper macro to compare InfraxError
-#define INFRAX_ERROR_IS_OK(err) ((err).code == INFRAX_ERROR_OK)
-#define INFRAX_ERROR_IS_ERR(err) ((err).code != INFRAX_ERROR_OK)
-
 //-----------------------------------------------------------------------------
 // Thread Types
 //-----------------------------------------------------------------------------
@@ -139,9 +93,6 @@ typedef void* InfraxCond;
 typedef void* InfraxCondAttr;
 typedef void* InfraxThreadAttr;
 typedef void* (*InfraxThreadFunc)(void*);
-
-// Forward declaration
-typedef struct InfraxCore InfraxCore;
 
 // Assert macros and functions
 #define INFRAX_ASSERT_FAILED_CODE -1000
@@ -157,6 +108,11 @@ typedef struct {
 
 #define INFRAX_CLOCK_REALTIME  0
 #define INFRAX_CLOCK_MONOTONIC 1
+
+// Signal definitions
+#define INFRAX_SIGALRM 14  // SIGALRM 的标准值
+
+typedef void (*InfraxSignalHandler)(int);
 
 // Core structure definition
 struct InfraxCore {
@@ -185,6 +141,7 @@ struct InfraxCore {
 
     //Misc operations
     int (*memcmp)(struct InfraxCore *self, const void* s1, const void* s2, size_t n);
+    void* (*memset)(struct InfraxCore *self, void* s, int c, size_t n);
     void (*hint_yield)(struct InfraxCore *self);//hint only, not guaranteed to yield
     int (*pid)(struct InfraxCore *self);
     
@@ -228,7 +185,7 @@ struct InfraxCore {
     InfraxError (*file_size)(struct InfraxCore *self, InfraxHandle handle, size_t* size);
     InfraxError (*file_remove)(struct InfraxCore *self, const char* path);
     InfraxError (*file_rename)(struct InfraxCore *self, const char* old_path, const char* new_path);
-    InfraxError (*file_exists)(struct InfraxCore *self, const char* path, bool* exists);
+    InfraxError (*file_exists)(struct InfraxCore *self, const char* path, InfraxBool* exists);
 
     // Assert functions
     void (*assert_failed)(struct InfraxCore *self, const char* file, int line, const char* func, const char* expr, const char* msg);
@@ -253,13 +210,63 @@ struct InfraxCore {
     void (*sleep_ms)(struct InfraxCore *self, uint32_t milliseconds);
     void (*sleep_us)(InfraxCore *self, unsigned int microseconds);
     InfraxSize (*get_memory_usage)(InfraxCore *self);
+
+    // Signal operations
+    InfraxSignalHandler (*signal)(InfraxCore *self, int signum, InfraxSignalHandler handler);
+    unsigned int (*alarm)(InfraxCore *self, unsigned int seconds);
 };
 
 // "Class" for static methods
 struct InfraxCoreClassType {
     InfraxCore* (*singleton)(void);  // Singleton getter
 };
+
 extern InfraxCoreClassType InfraxCoreClass;
+
+// Helper macro to create InfraxError with stack trace
+static inline InfraxError make_error_with_stack(InfraxI32 code, const char* msg) {
+    InfraxError err = {.code = code};
+    if (msg) {
+        InfraxCore* core = InfraxCoreClass.singleton();
+        core->strncpy(core, err.message, msg, sizeof(err.message) - 1);
+        err.message[sizeof(err.message) - 1] = '\0';
+    }
+    
+    #ifdef INFRAX_ENABLE_STACKTRACE
+    err.stack_depth = backtrace(err.stack_frames, 32);
+    char** symbols = backtrace_symbols(err.stack_frames, err.stack_depth);
+    if (symbols) {
+        int pos = 0;
+        for (int i = 0; i < err.stack_depth && pos < sizeof(err.stack_trace) - 1; i++) {
+            pos += snprintf(err.stack_trace + pos, sizeof(err.stack_trace) - pos, 
+                          "%s\n", symbols[i]);
+        }
+        free(symbols);
+    }
+    #endif
+    
+    return err;
+}
+
+// Helper macro to create InfraxError
+static inline InfraxError make_error(InfraxI32 code, const char* msg) {
+    InfraxError err = {.code = code};
+    if (msg) {
+        InfraxCore* core = InfraxCoreClass.singleton();
+        core->strncpy(core, err.message, msg, sizeof(err.message) - 1);
+        err.message[sizeof(err.message) - 1] = '\0';
+    } else {
+        err.message[0] = '\0';
+    }
+    return err;
+}
+
+//TODO 后面全部同意改用 make_error()
+#define INFRAX_ERROR_OK_STRUCT (InfraxError){.code = INFRAX_ERROR_OK, .message = ""}
+
+// Helper macro to compare InfraxError
+#define INFRAX_ERROR_IS_OK(err) ((err).code == INFRAX_ERROR_OK)
+#define INFRAX_ERROR_IS_ERR(err) ((err).code != INFRAX_ERROR_OK)
 
 // Assert macros
 #define INFRAX_ASSERT(core, expr) \

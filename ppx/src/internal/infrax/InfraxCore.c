@@ -1,3 +1,5 @@
+#include "cosmopolitan.h"
+
 #include "internal/infrax/InfraxCore.h"
 
 int infrax_core_printf(InfraxCore *self, const char* format, ...) {
@@ -296,6 +298,10 @@ static int infrax_core_memcmp(InfraxCore *self, const void* ptr1, const void* pt
     return memcmp(ptr1, ptr2, num);
 }
 
+static void* infrax_core_memset(InfraxCore *self, void* ptr, int value, size_t num) {
+    if (!ptr || num == 0) return ptr;
+    return memset(ptr, value, num);
+}
 
 static InfraxError infrax_core_buffer_write(InfraxCore *self, InfraxBuffer* buf, const void* data, size_t size) {
     if (!buf || !buf->data || !data || size == 0) {
@@ -375,7 +381,7 @@ static InfraxError infrax_core_ring_buffer_init(InfraxCore *self, InfraxRingBuff
     rb->size = size;
     rb->read_pos = 0;
     rb->write_pos = 0;
-    rb->full = false;
+    rb->full = INFRAX_FALSE;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
@@ -386,7 +392,7 @@ static void infrax_core_ring_buffer_destroy(InfraxCore *self, InfraxRingBuffer* 
         rb->size = 0;
         rb->read_pos = 0;
         rb->write_pos = 0;
-        rb->full = false;
+        rb->full = INFRAX_FALSE;
     }
 }
 
@@ -438,7 +444,7 @@ static InfraxError infrax_core_ring_buffer_read(InfraxCore *self, InfraxRingBuff
     }
     
     rb->read_pos = (rb->read_pos + size) % rb->size;
-    rb->full = false;
+    rb->full = INFRAX_FALSE;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
@@ -446,7 +452,7 @@ static void infrax_core_ring_buffer_reset(InfraxCore *self, InfraxRingBuffer* rb
     if (rb) {
         rb->read_pos = 0;
         rb->write_pos = 0;
-        rb->full = false;
+        rb->full = INFRAX_FALSE;
     }
 }
 
@@ -577,13 +583,13 @@ static InfraxError infrax_core_file_rename(InfraxCore *self, const char* old_pat
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError infrax_core_file_exists(InfraxCore *self, const char* path, bool* exists) {
+static InfraxError infrax_core_file_exists(InfraxCore *self, const char* path, InfraxBool* exists) {
     if (!path || !exists) {
         return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
     
     struct stat st;
-    *exists = (stat(path, &st) == 0);
+    *exists = (stat(path, &st) == 0) ? INFRAX_TRUE : INFRAX_FALSE;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
@@ -649,8 +655,12 @@ static int infrax_core_clock_gettime(InfraxCore *self, int clk_id, InfraxTimeSpe
     return result;
 }
 
-static time_t infrax_core_time(InfraxCore *self, time_t* tloc) {
-    return time(tloc);
+static InfraxTime infrax_core_time(InfraxCore *self, InfraxTime* tloc) {
+    time_t t = time(NULL);
+    if (tloc) {
+        *tloc = (InfraxTime)t;
+    }
+    return (InfraxTime)t;
 }
 
 static int infrax_core_clocks_per_sec(InfraxCore *self) {
@@ -671,6 +681,13 @@ static size_t infrax_core_get_memory_usage(InfraxCore *self) {
     return usage.ru_maxrss;
 }
 
+static InfraxSignalHandler infrax_core_signal(InfraxCore *self, int signum, InfraxSignalHandler handler) {
+    return signal(signum, handler);
+}
+
+static unsigned int infrax_core_alarm(InfraxCore *self, unsigned int seconds) {
+    return alarm(seconds);
+}
 
 // Initialize singleton instance
 static InfraxCore singleton = {
@@ -695,13 +712,9 @@ static InfraxCore singleton = {
     .strdup = infrax_core_strdup,
     .strndup = infrax_core_strndup,
     
-    // Time management
-    .time_now_ms = infrax_core_time_now_ms,
-    .time_monotonic_ms = infrax_core_time_monotonic_ms,
-    .sleep_ms = infrax_core_sleep_ms,
-
     // Misc operations
     .memcmp = infrax_core_memcmp,
+    .memset = infrax_core_memset,
     .hint_yield = infrax_core_hint_yield,
     .pid = infrax_core_pid,
     
@@ -728,12 +741,12 @@ static InfraxCore singleton = {
     .buffer_reset = infrax_core_buffer_reset,
     
     // Ring buffer operations
-    .ring_buffer_readable = infrax_core_ring_buffer_readable,
-    .ring_buffer_writable = infrax_core_ring_buffer_writable,
     .ring_buffer_init = infrax_core_ring_buffer_init,
     .ring_buffer_destroy = infrax_core_ring_buffer_destroy,
     .ring_buffer_write = infrax_core_ring_buffer_write,
     .ring_buffer_read = infrax_core_ring_buffer_read,
+    .ring_buffer_readable = infrax_core_ring_buffer_readable,
+    .ring_buffer_writable = infrax_core_ring_buffer_writable,
     .ring_buffer_reset = infrax_core_ring_buffer_reset,
     
     // File operations
@@ -746,6 +759,8 @@ static InfraxCore singleton = {
     .file_remove = infrax_core_file_remove,
     .file_rename = infrax_core_file_rename,
     .file_exists = infrax_core_file_exists,
+    
+    // Assert functions
     .assert_failed = infrax_core_assert_failed,
     .set_assert_handler = infrax_core_set_assert_handler,
     
@@ -757,14 +772,20 @@ static InfraxCore singleton = {
     .close_fd = infrax_core_close_fd,
     
     // Time operations
+    .time_now_ms = infrax_core_time_now_ms,
+    .time_monotonic_ms = infrax_core_time_monotonic_ms,
     .clock = infrax_core_clock,
     .clock_gettime = infrax_core_clock_gettime,
     .time = infrax_core_time,
     .clocks_per_sec = infrax_core_clocks_per_sec,
     .sleep = infrax_core_sleep,
+    .sleep_ms = infrax_core_sleep_ms,
     .sleep_us = infrax_core_sleep_us,
     .get_memory_usage = infrax_core_get_memory_usage,
     
+    // Signal operations
+    .signal = infrax_core_signal,
+    .alarm = infrax_core_alarm,
 };
 
 // Simple singleton getter

@@ -50,8 +50,8 @@ static InfraxMemory* get_memory_manager(void) {
     if (!memory) {
         InfraxMemoryConfig config = {
             .initial_size = 1024 * 1024,  // 1MB
-            .use_gc = false,
-            .use_pool = true,
+            .use_gc = INFRAX_FALSE,
+            .use_pool = INFRAX_TRUE,
             .gc_threshold = 0
         };
         memory = InfraxMemoryClass.new(&config);
@@ -145,7 +145,7 @@ static InfraxError net_close(InfraxNet* self) {
     }
     
     self->native_handle = -1;
-    self->is_connected = false;
+    self->is_connected = INFRAX_FALSE;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
@@ -166,7 +166,7 @@ static InfraxError net_accept(InfraxNet* self, InfraxNet** client_socket, Infrax
 
     // Create new socket configuration for client
     InfraxNetConfig config = {
-        .is_udp = false,
+        .is_udp = INFRAX_FALSE,
         .is_nonblocking = self->config.is_nonblocking,
         .send_timeout_ms = self->config.send_timeout_ms,
         .recv_timeout_ms = self->config.recv_timeout_ms,
@@ -187,7 +187,7 @@ static InfraxError net_accept(InfraxNet* self, InfraxNet** client_socket, Infrax
     
     // Set client file descriptor
     new_socket->native_handle = client_fd;
-    new_socket->is_connected = true;
+    new_socket->is_connected = INFRAX_TRUE;
 
     // Set client address if requested
     if (client_addr) {
@@ -217,7 +217,7 @@ static InfraxError net_connect(InfraxNet* self, const InfraxNetAddr* addr) {
     bool was_nonblocking = self->config.is_nonblocking;
     
     // 设置为非阻塞模式
-    InfraxError err = set_socket_nonblocking(self->native_handle, true);
+    InfraxError err = set_socket_nonblocking(self->native_handle, INFRAX_TRUE);
     if (INFRAX_ERROR_IS_ERR(err)) {
         return err;
     }
@@ -278,14 +278,14 @@ static InfraxError net_connect(InfraxNet* self, const InfraxNetAddr* addr) {
 
     // 恢复原始的非阻塞状态
     if (!was_nonblocking) {
-        err = set_socket_nonblocking(self->native_handle, false);
+        err = set_socket_nonblocking(self->native_handle, INFRAX_FALSE);
         if (INFRAX_ERROR_IS_ERR(err)) {
             return err;
         }
     }
 
     self->peer_addr = *addr;
-    self->is_connected = true;
+    self->is_connected = INFRAX_TRUE;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
@@ -517,7 +517,7 @@ static InfraxNet* net_new(const InfraxNetConfig* config) {
     // Initialize socket
     self->config = *config;
     self->native_handle = fd;
-    self->is_connected = false;
+    self->is_connected = INFRAX_FALSE;
     
     // Initialize addresses
     memset(&self->local_addr, 0, sizeof(self->local_addr));
