@@ -6,6 +6,8 @@
 source "$(dirname "$0")/build_env.sh"
 source "$(dirname "$0")/build_lib.sh"
 
+# NOTES: for wsl the file /proc/sys/fs/binfmt_misc/WSLInterop might need to be edit to nothing...
+
 # Set compile flags with all necessary include paths
 CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR} -I${ROOT_DIR}/repos/cosmocc/include"
 

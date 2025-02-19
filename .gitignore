@@ -84,3 +84,4 @@ ppdb/src/cosmo/test4.map
 ppdb/src/vendor/libduckdb.zip
 ppdb/vendor/duckdb/tmp/duckdb
 ppdb/vendor/duckdb/tmp/duckdb-cli.zip
+ppx/build/
