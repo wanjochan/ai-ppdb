@@ -44,7 +44,7 @@ typedef struct InfraxAsyncClassType InfraxAsyncClassType;
 // Async states
 typedef enum {
     INFRAX_ASYNC_PENDING = 0,
-    INFRAX_ASYNC_TMP,     // TMP state
+    INFRAX_ASYNC_TMP,     // inner state (see .c)
     INFRAX_ASYNC_FULFILLED,
     INFRAX_ASYNC_REJECTED
 } InfraxAsyncState;

@@ -311,39 +311,6 @@ static int pollset_init(struct InfraxPollset* ps, size_t initial_capacity) {
     return 0;
 }
 
-// Wake-up pipe for efficient event notification
-static int g_wake_fds[2] = {-1, -1};
-
-// Initialize wake-up pipe
-static int init_wake_pipe(void) {
-    if (g_wake_fds[0] >= 0) return 0;
-    
-    if (pipe(g_wake_fds) < 0) return -1;
-    
-    // Set non-blocking
-    for (int i = 0; i < 2; i++) {
-        int flags = fcntl(g_wake_fds[i], F_GETFL);
-        if (flags < 0) goto error;
-        if (fcntl(g_wake_fds[i], F_SETFL, flags | O_NONBLOCK) < 0) goto error;
-    }
-    
-    return 0;
-    
-error:
-    close(g_wake_fds[0]);
-    close(g_wake_fds[1]);
-    g_wake_fds[0] = g_wake_fds[1] = -1;
-    return -1;
-}
-
-// Wake up pollset
-static void wake_pollset(void) {
-    if (g_wake_fds[1] >= 0) {
-        char c = 1;
-        write(g_wake_fds[1], &c, 1);
-    }
-}
-
 // Clean up pollset
 static void pollset_cleanup(struct InfraxPollset* ps) {
     if (!ps || !g_memory) return;

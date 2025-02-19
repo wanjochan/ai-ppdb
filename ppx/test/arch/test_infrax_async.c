@@ -1,7 +1,7 @@
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
-#include <signal.h>
+#include "internal/infrax/InfraxLog.h"
 
 InfraxCore* core = NULL;
 
@@ -10,6 +10,8 @@ InfraxCore* core = NULL;
 #define POLL_INTERVAL_MS 10   // Initial poll interval
 #define MAX_POLL_INTERVAL_MS 100  // Maximum poll interval
 
+/* 使用系统 singal 的防范来辅助测试超时。。。
+*/
 static volatile int test_timeout = 0;
 
 static void alarm_handler(int sig) {
@@ -35,6 +37,16 @@ typedef struct {
     bool has_error;
     char error_msg[256];
 } TestContext;
+
+// File IO test context
+typedef struct {
+    const char* filename;
+    int fd;
+    char* buffer;
+    size_t buffer_size;
+    size_t bytes_processed;
+    int yield_count;
+} FileIOTestContext;
 
 // Helper function to get current timestamp in milliseconds
 static uint64_t get_current_time_ms(void) {
@@ -339,6 +351,88 @@ void test_concurrent_timers() {
     core->printf(NULL, "Concurrent timers test passed\n");
 }
 
+// File IO callback
+static void file_io_callback(InfraxAsync* self, int fd, short events, void* arg) {
+    FileIOTestContext* ctx = (FileIOTestContext*)arg;
+    InfraxCore* core = InfraxCoreClass.singleton();
+    
+    if (events & 0x001) {  // POLLIN
+        // Read data
+        ssize_t n = read(fd, 
+                        ctx->buffer + ctx->bytes_processed,
+                        ctx->buffer_size - ctx->bytes_processed);
+        
+        if (n > 0) {
+            ctx->bytes_processed += n;
+            core->printf(core, "Read %zd bytes\n", n);
+        }
+    }
+}
+
+// Basic file IO test
+void test_basic_file_io(void) {
+    InfraxCore* core = InfraxCoreClass.singleton();
+    core->printf(core, "Testing basic file IO...\n");
+    
+    // Create async instance to initialize pollset
+    InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);
+    if (!async) {
+        core->printf(core, "Failed to create async instance\n");
+        return;
+    }
+    
+    // Create test file
+    const char* test_file = "test_file.txt";
+    FILE* fp = fopen(test_file, "w");
+    fprintf(fp, "Hello, File IO Test!");
+    fclose(fp);
+    
+    // Initialize context
+    FileIOTestContext ctx = {
+        .filename = test_file,
+        .fd = -1,
+        .buffer = malloc(1024),
+        .buffer_size = 1024,
+        .bytes_processed = 0,
+        .yield_count = 0
+    };
+    
+    // Open file non-blocking
+    ctx.fd = open(test_file, O_RDONLY | O_NONBLOCK);
+    if (ctx.fd < 0) {
+        core->printf(core, "Failed to open file\n");
+        goto cleanup;
+    }
+    
+    // Add to pollset
+    if (InfraxAsyncClass.pollset_add_fd(async, ctx.fd, 0x001, file_io_callback, &ctx) < 0) {
+        core->printf(core, "Failed to add fd to pollset\n");
+        goto cleanup;
+    }
+    
+    // Poll until read complete or timeout
+    int poll_count = 0;
+    while (ctx.bytes_processed < ctx.buffer_size && poll_count < 100) {
+        InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
+        poll_count++;
+    }
+    
+    // Verify result
+    core->printf(core, "Read %zu bytes from file\n", ctx.bytes_processed);
+    
+cleanup:
+    if (ctx.fd >= 0) {
+        close(ctx.fd);
+    }
+    if (ctx.buffer) {
+        free(ctx.buffer);
+    }
+    if (async) {
+        InfraxAsyncClass.free(async);
+    }
+    remove(test_file);
+}
+
 int main(void) {
     core = InfraxCoreClass.singleton();
     if (!core) {
@@ -349,6 +443,7 @@ int main(void) {
     test_async_timer();
     test_multiple_timers();
     test_concurrent_timers();
+    test_basic_file_io();  // Add new test
     
     return 0;
 }

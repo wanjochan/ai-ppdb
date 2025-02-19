@@ -1,11 +1,11 @@
 # PPDB 架构设计 （由AI自己总结和调整的）
 
-## 整体架构
+## TMP NOTES
 
-PPDB采用分层架构设计，自下而上分为三层:
 
-【【【 注意，ppdb 已经基本完成 PoC，
-目前正在重构 PPX（INFRAX, POLYX, PEERX））
+```
+### 注意，ppdb 已经基本完成 PoC，
+目前正在重构 PPX（INFRAX, POLYX, PEERX），预计完成迁移后会删除 ppdb 目录
 
 测试 sqlite3 
 服务端：sh ppdb/scripts/build_ppdb.sh && ./ppdb/ppdb_latest.exe sqlite3 --start --config=ppdb/sqlite3.conf --log-level=5
@@ -16,7 +16,7 @@ PPDB采用分层架构设计，自下而上分为三层:
   - 如果改动了 peer_memkv.c 哪怕一点点也必须要严格按这个顺序重新来测试!
   - 如果编译不通过就恢复 peer_memkv.c 文件，重新再来!
   - 如果修复了任何一个测试，也要重头再来按顺序测试（因为有一定的依赖关系）
-```
+
 ## 先是分步测试
 sh ppdb/scripts/test_memkv.sh -k test_basic_set_get
 sh ppdb/scripts/test_memkv.sh -k test_delete
@@ -27,36 +27,42 @@ sh ppdb/scripts/test_memkv.sh -k test_increment_decrement
 sh ppdb/scripts/test_memkv.sh -k test_large_value
 ## 最后整体测试（目前未通过，要小心分析）：
 sh ppdb/scripts/test_memkv.sh
-```
 
 #sh ppdb/scripts/test_memkv.sh -k test_flags
 
+```
 
-】】】
+## 整体架构
 
-### 1. Infra层 (基础设施层)
-- 基于cosmopolitan提供跨平台支持
-- 核心功能模块:
-  - 内存管理(系统模式和内存池模式)
-  - 错误处理
+PPDB采用分层架构设计，自下而上分为三层:
+
+
+### 1. Infra 层 (基础设施层)
+- 基于 cosmopolitan 实现跨平台
+- 核心底层能模块:
+  - 日志模块
+  - 核心函数（字符串、Buffer、RingBuffer、随机数、时间、网络字节序、内存管理、错误处理）
+  - 内存管理(系统模式、内存池、GC模式)
   - 同步原语(互斥、锁、条件变量等)
-  - 网络
-  - 基本数据结构
+  - 网络（socket）
+  - 线程（线程池）
+  - 异步原语（定时器、异步任务）
 
 ### 2. Poly层 (工具组件层)
-- 基于Infra层构建的可重用工具组件
+- 基于 Infra 层构建的可重用工具组件
 - 限制:
-  - 只能调用Infra层接口
+  - 应只能调用Infra层接口，如果不够用应向 Infra 层添加（需经审批）
   - 原则上不允许直接调用cosmopolitan或libc
-- 目标:
+- 目标（抽象与复用）:
   - 抽象通用功能组件
   - 提高代码复用性
 
 ### 3. Peer层 (产品组件层)
 - 具体功能模块实现
 - 当前规划:
-  - Rinetd: 第一个功能模块，网络转发服务（参见同名软件）【基本完成】
-  - MemKV: 内存KV存储，兼容Memcached协议【初步通过，待压测和优化】
+  - Rinetd: 第一个功能模块，网络转发服务（参见同名软件）
+  - Sqlite: 相当于 sqlite3 的网络版
+  - MemKV: 内存KV存储，兼容Memcached协议
   - DisKV: 持久化存储，兼容Redis协议【未开始，但底层重用 MemKV 的底层，即 poly_db(vender=sqlite3|duckdb)】
   - 分布式集群支持【未开始】
 - 限制:
@@ -64,6 +70,7 @@ sh ppdb/scripts/test_memkv.sh
   - 不允许直接调用系统API
   - 不允许适配操作系统
   - 不允许擅自更改 infra 层代码
+  - 只能使用我们自己的构建脚本，不使用 make/gmake/cmake 等构建工具
 
 ## 项目目标
 
@@ -74,7 +81,7 @@ sh ppdb/scripts/test_memkv.sh
 - 协议兼容性(Memcached/Redis)
 - 其它计划中（兼容列数据库、时序数据，参考 clickhouse/dolphindb/kdb/duckdb 等产品功能和设计理念）
 
-2. 跨平台支持:
+2. 跨平台支持（目前主要依赖 cosmopolitan 实现）:
 - 统一的API接口
 - 自动适配不同平台
 - 最小化平台差异
@@ -83,8 +90,9 @@ sh ppdb/scripts/test_memkv.sh
 - 模块化设计
 - 清晰的分层架构
 - 标准化的接口
+- 超小脚本引擎（AST 解析、执行，以后可能会整合 JIT/IR/LLVM/WASM）
 
-## Rinetd模块
+## Rinetd 产品模块
 
 作为第一个功能模块，主要目标:
 1. 验证基础架构的可用性
@@ -92,7 +100,9 @@ sh ppdb/scripts/test_memkv.sh
 3. 提供基础的网络转发服务
 4. 为后续模块开发积累经验
 
-## MemKV模块
+## Sqlite3 产品模块
+
+## MemKV 产品模块
 
 作为第二个功能模块，主要特点:
 1. 分层设计:
@@ -111,11 +121,15 @@ sh ppdb/scripts/test_memkv.sh
    - 便于扩展新引擎
    - 复用性强
 
+## DisKV 产品模块
+
+TODO
+
 ## 测试框架
 
 1. 测试策略:
-- 提供白盒和黑盒测试
-- 支持性能测试和场景测试
+- 白盒和黑盒测试
+- 性能测试、场景测试
 
 2. 测试覆盖:
 - 基础功能测试
@@ -123,10 +137,10 @@ sh ppdb/scripts/test_memkv.sh
 - 错误处理测试
 - 性能基准测试
 
-## 架构优势
+## 未来路线图
 
-1. 层次清晰，职责分明
-2. 良好的可扩展性和可维护性
-3. 完善的测试支持
-4. 强大的跨平台能力
-5. 标准化的开发规范
+- 实现 IPFS 星际协议支持
+- 支持 MySQL 协议
+- 支持 GraphQL 查询
+- 自然语言模糊查询
+- 分布式一致性优化
