@@ -11,8 +11,8 @@ InfraxMemory* get_memory_manager(void) {
     if (!memory) {
         InfraxMemoryConfig config = {
             .initial_size = 1024 * 1024,  // 1MB
-            .use_gc = false,
-            .use_pool = true,
+            .use_gc = INFRAX_FALSE,
+            .use_pool = INFRAX_TRUE,
             .gc_threshold = 0
         };
         memory = InfraxMemoryClass.new(&config);
@@ -197,64 +197,68 @@ static void test_semaphore(void) {
 }
 
 static void test_atomic(void) {
-
     InfraxSync* atomic = InfraxSyncClass.new(INFRAX_SYNC_TYPE_ATOMIC);
     if (atomic == NULL) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic != NULL", "Failed to create atomic");
     }
 
     // Test atomic operations
-    atomic_store(&atomic->value, 42);
-    if (atomic_load(&atomic->value) != 42) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == 42", "Atomic store/load failed");
+    atomic->klass->atomic_store(atomic, 42);
+    if (atomic->klass->atomic_load(atomic) != 42) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(atomic) == 42", "Atomic store/load failed");
     }
 
-    int64_t old_value = atomic_exchange(&atomic->value, 100);
+    InfraxI64 old_value = atomic->klass->atomic_exchange(atomic, 42);
+    if (atomic->klass->atomic_load(atomic) != 42) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(atomic) == 42", "Atomic store/load failed");
+    }
+
+    old_value = atomic->klass->atomic_exchange(atomic, 100);
     if (old_value != 42) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == 42", "Atomic exchange failed");
     }
-    if (atomic_load(&atomic->value) != 100) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == 100", "Atomic exchange failed");
+    if (atomic->klass->atomic_load(atomic) != 100) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(atomic) == 100", "Atomic exchange failed");
     }
 
-    old_value = atomic_fetch_add(&atomic->value, 10);
+    old_value = atomic->klass->atomic_fetch_add(atomic, 10);
     if (old_value != 100) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == 100", "Atomic fetch_add failed");
     }
-    if (atomic_load(&atomic->value) != 110) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == 110", "Atomic fetch_add failed");
+    if (atomic->klass->atomic_load(atomic) != 110) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(atomic) == 110", "Atomic fetch_add failed");
     }
 
-    old_value = atomic_fetch_sub(&atomic->value, 10);
+    old_value = atomic->klass->atomic_fetch_sub(atomic, 10);
     if (old_value != 110) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == 110", "Atomic fetch_sub failed");
     }
-    if (atomic_load(&atomic->value) != 100) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == 100", "Atomic fetch_sub failed");
+    if (atomic->klass->atomic_load(atomic) != 100) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(atomic) == 100", "Atomic fetch_sub failed");
     }
 
-    old_value = atomic_fetch_and(&atomic->value, 0xFF);
+    old_value = atomic->klass->atomic_fetch_and(atomic, 0xFF);
     if (old_value != 100) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == 100", "Atomic fetch_and failed");
     }
-    if (atomic_load(&atomic->value) != (100 & 0xFF)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == (100 & 0xFF)", "Atomic fetch_and failed");
+    if (atomic->klass->atomic_load(atomic) != (100 & 0xFF)) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(atomic) == (100 & 0xFF)", "Atomic fetch_and failed");
     }
 
-    old_value = atomic_fetch_or(&atomic->value, 0xF0);
+    old_value = atomic->klass->atomic_fetch_or(atomic, 0xF0);
     if (old_value != (100 & 0xFF)) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == (100 & 0xFF)", "Atomic fetch_or failed");
     }
-    if (atomic_load(&atomic->value) != ((100 & 0xFF) | 0xF0)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == ((100 & 0xFF) | 0xF0)", "Atomic fetch_or failed");
+    if (atomic->klass->atomic_load(atomic) != ((100 & 0xFF) | 0xF0)) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(atomic) == ((100 & 0xFF) | 0xF0)", "Atomic fetch_or failed");
     }
 
-    old_value = atomic_fetch_xor(&atomic->value, 0xFF);
+    old_value = atomic->klass->atomic_fetch_xor(atomic, 0xFF);
     if (old_value != ((100 & 0xFF) | 0xF0)) {
         core->assert_failed(core, __FILE__, __LINE__, __func__, "old_value == ((100 & 0xFF) | 0xF0)", "Atomic fetch_xor failed");
     }
-    if (atomic_load(&atomic->value) != (((100 & 0xFF) | 0xF0) ^ 0xFF)) {
-        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(&atomic->value) == (((100 & 0xFF) | 0xF0) ^ 0xFF)", "Atomic fetch_xor failed");
+    if (atomic->klass->atomic_load(atomic) != (((100 & 0xFF) | 0xF0) ^ 0xFF)) {
+        core->assert_failed(core, __FILE__, __LINE__, __func__, "atomic_load(atomic) == (((100 & 0xFF) | 0xF0) ^ 0xFF)", "Atomic fetch_xor failed");
     }
 
     // Clean up
@@ -302,13 +306,13 @@ void test_sync_stress() {
     INFRAX_ASSERT(core, shared_value == SHARED_VALUE_TARGET);
     
     // 2. 原子操作压力测试
-    atomic_store(&atomic->value, 0);
+    atomic->klass->atomic_store(atomic, 0);
     for(int i = 0; i < NUM_ITERATIONS; i++) {
-        atomic_fetch_add(&atomic->value, 1);
-        atomic_fetch_add(&atomic->value, 1);
+        atomic->klass->atomic_fetch_add(atomic, 1);
+        atomic->klass->atomic_fetch_add(atomic, 1);
     }
     
-    INFRAX_ASSERT(core, atomic_load(&atomic->value) == SHARED_VALUE_TARGET);
+    INFRAX_ASSERT(core, atomic->klass->atomic_load(atomic) == SHARED_VALUE_TARGET);
     
     InfraxSyncClass.free(mutex);
     InfraxSyncClass.free(atomic);
@@ -363,7 +367,7 @@ void test_condition_variable_detailed() {
     mutex->klass->mutex_unlock(mutex);
     
     // 2. 测试虚假唤醒处理
-    bool condition_met = false;
+    InfraxBool condition_met = INFRAX_FALSE;
     int spurious_wakeup_count = 0;
     
     err = mutex->klass->mutex_lock(mutex);

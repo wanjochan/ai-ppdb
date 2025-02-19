@@ -4,7 +4,6 @@
 //sync primitive
 //design pattern: factory (by type)
 
-#include "cosmopolitan.h"
 #include "InfraxCore.h"
 
 // Error codes
@@ -62,43 +61,53 @@ struct InfraxSyncClassType {
     InfraxError (*cond_timedwait)(InfraxSync* self, InfraxSync* mutex, InfraxTime timeout_ms);
     InfraxError (*cond_signal)(InfraxSync* self);
     InfraxError (*cond_broadcast)(InfraxSync* self);
-    int64_t (*cond_exchange)(InfraxSync* self, int64_t value);
-    bool (*cond_compare_exchange)(InfraxSync* self, int64_t* expected, int64_t desired);
-    InfraxError (*cond_fetch_add)(InfraxSync* self, int64_t value);
-    InfraxError (*cond_fetch_sub)(InfraxSync* self, int64_t value);
-    InfraxError (*cond_fetch_and)(InfraxSync* self, int64_t value);
-    InfraxError (*cond_fetch_or)(InfraxSync* self, int64_t value);
-    InfraxError (*cond_fetch_xor)(InfraxSync* self, int64_t value);
+    InfraxI64 (*cond_exchange)(InfraxSync* self, InfraxI64 value);
+    InfraxBool (*cond_compare_exchange)(InfraxSync* self, InfraxI64* expected, InfraxI64 desired);
+    InfraxError (*cond_fetch_add)(InfraxSync* self, InfraxI64 value);
+    InfraxError (*cond_fetch_sub)(InfraxSync* self, InfraxI64 value);
+    InfraxError (*cond_fetch_and)(InfraxSync* self, InfraxI64 value);
+    InfraxError (*cond_fetch_or)(InfraxSync* self, InfraxI64 value);
+    InfraxError (*cond_fetch_xor)(InfraxSync* self, InfraxI64 value);
     
-    int64_t (*atomic_load)(InfraxSync* self);
-    void (*atomic_store)(InfraxSync* self, int64_t value);
-    int64_t (*atomic_exchange)(InfraxSync* self, int64_t value);
-    bool (*atomic_compare_exchange)(InfraxSync* self, int64_t* expected, int64_t desired);
-    int64_t (*atomic_fetch_add)(InfraxSync* self, int64_t value);
-    int64_t (*atomic_fetch_sub)(InfraxSync* self, int64_t value);
-    int64_t (*atomic_fetch_and)(InfraxSync* self, int64_t value);
-    int64_t (*atomic_fetch_or)(InfraxSync* self, int64_t value);
-    int64_t (*atomic_fetch_xor)(InfraxSync* self, int64_t value);
+    InfraxI64 (*atomic_load)(InfraxSync* self);
+    void (*atomic_store)(InfraxSync* self, InfraxI64 value);
+    InfraxI64 (*atomic_exchange)(InfraxSync* self, InfraxI64 value);
+    InfraxBool (*atomic_compare_exchange)(InfraxSync* self, InfraxI64* expected, InfraxI64 desired);
+    InfraxI64 (*atomic_fetch_add)(InfraxSync* self, InfraxI64 value);
+    InfraxI64 (*atomic_fetch_sub)(InfraxSync* self, InfraxI64 value);
+    InfraxI64 (*atomic_fetch_and)(InfraxSync* self, InfraxI64 value);
+    InfraxI64 (*atomic_fetch_or)(InfraxSync* self, InfraxI64 value);
+    InfraxI64 (*atomic_fetch_xor)(InfraxSync* self, InfraxI64 value);
 };
+
+// Opaque handle for synchronization primitives
+// Size is set to accommodate the largest sync primitive across platforms
+// Alignment is set to the strictest requirement
+typedef struct {
+    uint64_t data[8];  // 64 bytes, enough for any sync primitive
+    // union {
+    //     pthread_mutex_t mutex;
+    //     pthread_rwlock_t rwlock;
+    //     pthread_spinlock_t spin;
+    //     sem_t sem;
+    //     pthread_cond_t cond;
+    // } native_handle;    
+} __attribute__((aligned(8))) InfraxSyncHandle;
 
 // The instance structure
 struct InfraxSync {
     InfraxSync* self;
     InfraxSyncClassType* klass;//InfraxSyncClass
 
-    bool is_initialized;
+    InfraxBool is_initialized;
     InfraxSyncType type;
 
-    // Native handles for different synchronization primitives
-    union {
-        pthread_mutex_t mutex;
-        pthread_rwlock_t rwlock;
-        pthread_spinlock_t spin;
-        sem_t sem;
-        pthread_cond_t cond;
-    } native_handle;
+    // Opaque handle for the native synchronization primitive
+    InfraxSyncHandle handle;
 
-    _Atomic int64_t value;
+    // For atomic operations
+    //int64_t value;
+    InfraxI64 value;
 };
 
 // The "static" interface instance (like Java's Class object)

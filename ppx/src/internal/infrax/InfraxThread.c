@@ -41,8 +41,8 @@ InfraxMemory* get_memory_manager(void) {
     if (!memory) {
         InfraxMemoryConfig config = {
             .initial_size = 1024 * 1024,  // 1MB
-            .use_gc = false,
-            .use_pool = true,
+            .use_gc = INFRAX_FALSE,
+            .use_pool = INFRAX_TRUE,
             .gc_threshold = 0
         };
         memory = InfraxMemoryClass.new(&config);
@@ -103,7 +103,7 @@ static void thread_free(InfraxThread* self) {
     InfraxMemory* memory = get_memory_manager();
     if (!memory) return;
     
-    if (self->is_running) {
+    if (self->is_running == INFRAX_TRUE) {
         pthread_t handle = (pthread_t)self->native_handle;
         pthread_cancel(handle);
         pthread_join(handle, NULL);
@@ -139,7 +139,7 @@ static InfraxError thread_start(InfraxThread* self, InfraxThreadFunc func, void*
         return make_error(INFRAX_ERROR_THREAD_INVALID_ARGUMENT, "Invalid thread");
     }
     
-    if (self->is_running) {
+    if (self->is_running == INFRAX_TRUE) {
         return make_error(INFRAX_ERROR_THREAD_ALREADY_RUNNING, "Thread already running");
     }
     
@@ -175,7 +175,7 @@ static InfraxError thread_start(InfraxThread* self, InfraxThreadFunc func, void*
     }
     
     self->native_handle = (void*)handle;
-    self->is_running = true;
+    self->is_running = INFRAX_TRUE;
     
     return INFRAX_ERROR_OK_STRUCT;
 }
@@ -185,7 +185,7 @@ static InfraxError thread_join(InfraxThread* self, void** result) {
         return make_error(INFRAX_ERROR_THREAD_INVALID_ARGUMENT, "Invalid thread");
     }
     
-    if (!self->is_running) {
+    if (self->is_running != INFRAX_TRUE) {
         return make_error(INFRAX_ERROR_THREAD_NOT_RUNNING, "Thread not running");
     }
     
@@ -196,7 +196,7 @@ static InfraxError thread_join(InfraxThread* self, void** result) {
         return make_error(INFRAX_ERROR_THREAD_JOIN_FAILED, "Failed to join thread");
     }
     
-    self->is_running = false;
+    self->is_running = INFRAX_FALSE;
     
     return INFRAX_ERROR_OK_STRUCT;
 }
@@ -229,7 +229,7 @@ typedef struct {
     InfraxSync* not_empty;
     InfraxSync* not_full;
     
-    bool shutdown;
+    InfraxBool shutdown;
 } ThreadPool;
 
 // 工作线程函数
@@ -237,7 +237,7 @@ static void* worker_thread(void* arg) {
     InfraxThread* self = (InfraxThread*)arg;
     ThreadPool* pool = (ThreadPool*)self->private_data;
     
-    while (true) {
+    while (INFRAX_TRUE) {
         pool->mutex->klass->mutex_lock(pool->mutex);
         
         while (pool->queue_head == pool->queue_tail && !pool->shutdown) {
@@ -292,7 +292,7 @@ InfraxError infrax_thread_pool_create(InfraxThread* self, InfraxThreadPoolConfig
     pool->config = *config;
     pool->queue_head = 0;
     pool->queue_tail = 0;
-    pool->shutdown = false;
+    pool->shutdown = INFRAX_FALSE;
     
     // 初始化任务队列
     pool->queue_size = config->queue_size;
@@ -406,7 +406,7 @@ InfraxError infrax_thread_pool_destroy(InfraxThread* self) {
     
     // 设置关闭标志
     pool->mutex->klass->mutex_lock(pool->mutex);
-    pool->shutdown = true;
+    pool->shutdown = INFRAX_TRUE;
     pool->mutex->klass->mutex_unlock(pool->mutex);
     
     // 唤醒所有等待的线程

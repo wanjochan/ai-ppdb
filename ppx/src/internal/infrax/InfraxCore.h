@@ -21,6 +21,7 @@ typedef int InfraxInt;//尽量不用
 typedef InfraxU64 InfraxClock;
 typedef InfraxU64 InfraxTime;
 
+#define INFRAX_VOID void
 #define INFRAX_TRUE ((InfraxBool)1)
 #define INFRAX_FALSE ((InfraxBool)0)
 

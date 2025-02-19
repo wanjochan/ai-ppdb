@@ -59,7 +59,7 @@ typedef struct InfraxThread {
     void* native_handle;       // 底层线程句柄
     void* private_data;        // 私有数据
     InfraxThreadConfig config; // 线程配置
-    bool is_running;          // 运行状态
+    InfraxBool is_running;    // 运行状态
     void* result;             // 线程返回值
     InfraxSync* mutex;        // 状态保护
 } InfraxThread;

@@ -31,7 +31,7 @@ static InfraxSync* producer_consumer_cond = NULL;
 static int producer_consumer_queue[10];
 static int queue_head = 0;
 static int queue_tail = 0;
-static bool queue_full = false;
+static InfraxBool queue_full = INFRAX_FALSE;
 
 // 线程池测试用的任务函数
 static void* pool_test_func(void* arg) {
@@ -417,7 +417,7 @@ static void* consumer_func(void* arg) {
         
         int value = producer_consumer_queue[queue_head];
         queue_head = (queue_head + 1) % 10;
-        queue_full = false;
+        queue_full = INFRAX_FALSE;
         consumed++;
         
         producer_consumer_cond->klass->cond_signal(producer_consumer_cond);
@@ -576,7 +576,7 @@ void test_thread_sync_complex(void) {
     producer_consumer_mutex = NULL;
     producer_consumer_cond = NULL;
     queue_head = queue_tail = 0;
-    queue_full = false;
+    queue_full = INFRAX_FALSE;
     
     core->printf(core, "Complex thread synchronization test passed\n");
 }

@@ -162,7 +162,7 @@ static void create_task_batch(size_t target_tasks) {
         TaskContext* ctx = memory->alloc(memory, sizeof(TaskContext));
         if (!ctx) break;
         
-        memset(ctx, 0, sizeof(TaskContext));
+        core->memset(core, ctx, 0, sizeof(TaskContext));
         ctx->is_active = 1;
         ctx->state = 0;
         core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &ctx->start_time);
@@ -273,29 +273,27 @@ void print_metrics(time_t elapsed_seconds) {
 }
 
 int main() {
-    printf("Initializing core...\n");
     core = InfraxCoreClass.singleton();
-    if (!core) {
-        printf("Failed to initialize core!\n");
-        return 1;
-    }
     
-    printf("Initializing memory...\n");
+    core->printf(core, "Initializing core...\n");
+    
+    core->printf(core, "Initializing memory...\n");
     InfraxMemoryConfig config = {
         .initial_size = 64 * 1024 * 1024,  // 64MB initial size
-        .use_gc = true,
-        .use_pool = true,
+        .use_gc = INFRAX_TRUE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 32 * 1024 * 1024  // 32MB
     };
     memory = InfraxMemoryClass.new(&config);
     if (!memory) {
-        printf("Failed to initialize memory!\n");
+        core->printf(core, "Failed to initialize memory!\n");
         return 1;
     }
     
-    printf("Initialization completed, starting test...\n");
+    core->printf(core, "Initialization completed, starting test...\n");
     
     // Initialize metrics
+    core->memset(core, &metrics, 0, sizeof(TestMetrics));
     core->clock_gettime(core, INFRAX_CLOCK_MONOTONIC, &metrics.start_time);
     metrics.last_batch_time = core->time_now_ms(core);
     metrics.tasks_per_second = TARGET_CONNECTIONS / 10;  // 目标10秒内达到连接数
@@ -330,7 +328,7 @@ int main() {
     print_metrics(TEST_DURATION_SEC);
     
     // Cleanup
-    printf("\nTest completed. Cleaning up...\n");
+    core->printf(core, "\nTest completed. Cleaning up...\n");
     
     // 确保所有任务都被处理
     InfraxTime cleanup_start = core->time_monotonic_ms(core);
@@ -351,7 +349,7 @@ int main() {
         // 防止清理死循环
         InfraxTime current = core->time_monotonic_ms(core);
         if (current - cleanup_start > 5000) {  // 5秒超时保护
-            printf("Cleanup timeout, forcing exit...\n");
+            core->printf(core, "Cleanup timeout, forcing exit...\n");
             break;
         }
         
