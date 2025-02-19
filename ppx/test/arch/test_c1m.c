@@ -6,14 +6,14 @@ static InfraxCore* core = NULL;
 static InfraxMemory* memory = NULL;
 
 // 添加任务数组管理
-static InfraxAsync* task_pool[40] = {0};  // 预分配任务池大小
+static InfraxAsync* task_pool[200] = {0};  // 增加任务池大小到200
 static size_t task_pool_index = 0;
 
-#define TARGET_CONNECTIONS 20     // 增加目标连接数
-#define BATCH_SIZE 10             // 优化批处理大小
-#define TEST_DURATION_SEC 10     // 从30改为10
-#define TASK_LIFETIME_MS 1000    // 减少任务生命周期
-#define COMPUTATION_LIMIT 100    // 减少计算量
+#define TARGET_CONNECTIONS 150    // 增加目标连接数
+#define BATCH_SIZE 50            // 增加批处理大小
+#define TEST_DURATION_SEC 30     // 保持30秒
+#define TASK_LIFETIME_MS 1000    // 减少生命周期提高周转
+#define COMPUTATION_LIMIT 500    // 适中的计算量
 
 // Performance metrics
 typedef struct {
@@ -98,20 +98,19 @@ void process_active_tasks() {
     static InfraxTime last_process_time = 0;
     InfraxTime now = core->time_monotonic_ms(core);
     
-    // 减少处理频率和原子操作
-    if (now - last_process_time < 5) return;
+    // 减少处理间隔提高响应速度
+    if (now - last_process_time < 2) return;  // 从5ms改为2ms
     last_process_time = now;
     
     size_t active_count = 0;
     
     // 直接遍历任务池
-    for (size_t i = 0; i < 40; i++) {
+    for (size_t i = 0; i < 200; i++) {  // 更新遍历范围
         if (!task_pool[i]) continue;
         
         if (InfraxAsyncClass.is_done(task_pool[i])) {
             TaskContext* ctx = (TaskContext*)task_pool[i]->arg;
             
-            // 减少原子操作频率
             if (task_pool[i]->state == INFRAX_ASYNC_FULFILLED) {
                 metrics.completed_tasks++;
             } else {
@@ -122,14 +121,13 @@ void process_active_tasks() {
             task_pool[i] = NULL;
         } else {
             active_count++;
-            InfraxAsyncClass.pollset_poll(task_pool[i], 10);
+            InfraxAsyncClass.pollset_poll(task_pool[i], 5);  // 减少poll间隔
             if (task_pool[i]->state == INFRAX_ASYNC_PENDING) {
                 InfraxAsyncClass.start(task_pool[i]);
             }
         }
     }
     
-    // 使用非原子方式更新活跃任务数
     metrics.active_tasks = active_count;
 }
 
@@ -137,23 +135,21 @@ void process_active_tasks() {
 static void create_task_batch(size_t target_tasks) {
     InfraxTime now = core->time_now_ms(core);
     
-    // 更智能的任务创建策略
+    // 更积极的任务创建策略
     InfraxTime time_delta = now - metrics.last_batch_time;
-    if (time_delta < 1) return;  // 时间间隔太短，跳过本次创建
+    if (time_delta < 0) return;  // 只检查时间有效性
     
-    // 根据当前负载动态调整批处理大小
-    size_t max_new_tasks = (metrics.active_tasks >= TARGET_CONNECTIONS * 0.9) ? 
-        1 : // 高负载时每次只创建1个
+    // 更激进的批处理策略
+    size_t max_new_tasks = (metrics.active_tasks >= TARGET_CONNECTIONS * 0.95) ? 
+        BATCH_SIZE / 4 : // 高负载时仍保持一定创建量
         BATCH_SIZE; // 正常负载使用标准批次大小
     
     size_t created = 0;
     for (size_t i = 0; i < max_new_tasks && metrics.active_tasks < TARGET_CONNECTIONS; i++) {
-        // 从任务池中获取空闲任务槽
-        if (task_pool_index >= 40) {
-            task_pool_index = 0;  // 循环使用任务池
+        if (task_pool_index >= 200) {
+            task_pool_index = 0;
         }
         
-        // 如果当前槽位已被占用，跳过
         if (task_pool[task_pool_index] != NULL) {
             task_pool_index++;
             continue;
@@ -337,7 +333,7 @@ int main() {
         
         // 检查是否所有任务都已清理
         bool all_slots_empty = true;
-        for (size_t i = 0; i < 40; i++) {
+        for (size_t i = 0; i < 200; i++) {
             if (task_pool[i] != NULL) {
                 all_slots_empty = false;
                 break;
