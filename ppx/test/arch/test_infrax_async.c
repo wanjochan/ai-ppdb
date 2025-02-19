@@ -373,18 +373,27 @@ static void file_io_callback(InfraxAsync* self, int fd, short events, void* arg)
 void test_basic_file_io(void) {
     InfraxCore* core = InfraxCoreClass.singleton();
     core->printf(core, "Testing basic file IO...\n");
+    setup_timeout(5);  // 5 second timeout
     
     // Create async instance to initialize pollset
     InfraxAsync* async = InfraxAsyncClass.new(NULL, NULL);
     if (!async) {
         core->printf(core, "Failed to create async instance\n");
+        clear_timeout();
         return;
     }
     
-    // Create test file
+    // Create test file with known content
     const char* test_file = "test_file.txt";
+    const char* test_content = "Hello, File IO Test! This is a test content with known length.";
     FILE* fp = fopen(test_file, "w");
-    fprintf(fp, "Hello, File IO Test!");
+    if (!fp) {
+        core->printf(core, "Failed to create test file\n");
+        InfraxAsyncClass.free(async);
+        clear_timeout();
+        return;
+    }
+    fprintf(fp, "%s", test_content);
     fclose(fp);
     
     // Initialize context
@@ -397,10 +406,19 @@ void test_basic_file_io(void) {
         .yield_count = 0
     };
     
+    if (!ctx.buffer) {
+        core->printf(core, "Failed to allocate buffer\n");
+        remove(test_file);
+        InfraxAsyncClass.free(async);
+        clear_timeout();
+        return;
+    }
+    memset(ctx.buffer, 0, ctx.buffer_size);
+    
     // Open file non-blocking
     ctx.fd = open(test_file, O_RDONLY | O_NONBLOCK);
     if (ctx.fd < 0) {
-        core->printf(core, "Failed to open file\n");
+        core->printf(core, "Failed to open file: %s\n", strerror(errno));
         goto cleanup;
     }
     
@@ -411,14 +429,39 @@ void test_basic_file_io(void) {
     }
     
     // Poll until read complete or timeout
-    int poll_count = 0;
-    while (ctx.bytes_processed < ctx.buffer_size && poll_count < 100) {
+    uint64_t start_time = get_current_time_ms();
+    size_t expected_size = strlen(test_content);
+    
+    while (ctx.bytes_processed < expected_size && !test_timeout) {
         InfraxAsyncClass.pollset_poll(async, 100);  // 100ms timeout
-        poll_count++;
+        
+        // Check for timeout
+        uint64_t now = get_current_time_ms();
+        if (now - start_time > 3000) {  // 3 second operation timeout
+            core->printf(core, "Operation timed out\n");
+            goto cleanup;
+        }
     }
     
     // Verify result
-    core->printf(core, "Read %zu bytes from file\n", ctx.bytes_processed);
+    if (test_timeout) {
+        core->printf(core, "Test timed out\n");
+        goto cleanup;
+    }
+    
+    if (ctx.bytes_processed != expected_size) {
+        core->printf(core, "Read size mismatch: expected %zu, got %zu\n", 
+                     expected_size, ctx.bytes_processed);
+        goto cleanup;
+    }
+    
+    if (memcmp(ctx.buffer, test_content, expected_size) != 0) {
+        core->printf(core, "Content verification failed\n");
+        goto cleanup;
+    }
+    
+    core->printf(core, "File IO test passed: Read %zu bytes, content verified\n", 
+                 ctx.bytes_processed);
     
 cleanup:
     if (ctx.fd >= 0) {
@@ -431,6 +474,7 @@ cleanup:
         InfraxAsyncClass.free(async);
     }
     remove(test_file);
+    clear_timeout();
 }
 
 int main(void) {

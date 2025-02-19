@@ -32,9 +32,9 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_infrax_net.c"
     "${TEST_DIR}/arch/test_infrax_thread.c"
     "${TEST_DIR}/arch/test_infrax_async.c"
-    "${TEST_DIR}/arch/test_polyx_async.c"
     "${TEST_DIR}/arch/test_c1m.c"
     "${TEST_DIR}/arch/test_cosmopolitan.c"
+    "${TEST_DIR}/arch/test_infrax_netasync.c"
 )
 
 # Clean build and test files
