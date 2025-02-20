@@ -814,8 +814,8 @@ static long long infrax_core_atoll(InfraxCore *self, const char* str) {
 }
 
 // Initialize singleton instance
-static InfraxCore g_core = {
-    .self = &g_core,
+InfraxCore gInfraxCore = {
+    .self = &gInfraxCore,
     .klass = NULL,
     
     // Core functions
@@ -930,7 +930,7 @@ static InfraxCore g_core = {
 
 // Simple singleton getter
 InfraxCore* infrax_core_singleton(void) {
-    return &g_core;
+    return &gInfraxCore;
 };
 
 InfraxCoreClassType InfraxCoreClass = {

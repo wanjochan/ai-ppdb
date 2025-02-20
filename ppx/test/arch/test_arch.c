@@ -1,4 +1,3 @@
-#include "../../src/internal/infrax/cosmopolitan.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxLog.h"
 #include "internal/infrax/InfraxMemory.h"
@@ -291,8 +290,9 @@ static void test_file_operations(void) {
 }
 
 int main(void) {
+    
     // 首先初始化 core
-    core = InfraxCoreClass.singleton();
+    core = &gInfraxCore;//InfraxCoreClass.singleton();
     INFRAX_ASSERT(core, core != NULL);
     
     // 然后初始化 memory

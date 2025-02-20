@@ -239,6 +239,7 @@ struct InfraxCoreClassType {
     InfraxCore* (*singleton)(void);  // Singleton getter
 };
 
+extern InfraxCore gInfraxCore;//faster access to the singleton
 extern InfraxCoreClassType InfraxCoreClass;
 
 // Helper macro to create InfraxError with stack trace

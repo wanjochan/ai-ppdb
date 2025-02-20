@@ -1,8 +1,9 @@
 #include "PeerxRinetd.h"
-#include "internal/infrax/InfraxMemory.h"
+#include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxNet.h"
-#include <string.h>
-#include <stdio.h>
+#include "internal/infrax/InfraxMemory.h"
+// #include <string.h>
+// #include <stdio.h>
 
 #define MAX_RULES 64
 #define MAX_CONNECTIONS 1024
@@ -26,21 +27,26 @@ typedef struct {
 // Private data structure
 typedef struct {
     InfraxMemory* memory;
+    InfraxCore* core;
+    InfraxNet* net;
     peerx_rinetd_rule_t rules[MAX_RULES];
     size_t rule_count;
     peerx_rinetd_stats_t stats[MAX_RULES];
     peerx_rinetd_conn_t connections[MAX_CONNECTIONS];
     size_t conn_count;
+    bool initialized;
 } PeerxRinetdPrivate;
 
-// Global memory manager
+// Global memory manager and core
 static InfraxMemory* g_memory = NULL;
+static InfraxCore* g_core = NULL;
 extern InfraxMemoryClassType InfraxMemoryClass;
+extern InfraxCoreClassType InfraxCoreClass;
 extern InfraxNetClassType InfraxNetClass;
 
 // Forward declarations of private functions
 static bool init_memory(void);
-static int find_rule(PeerxRinetdPrivate* private, const char* bind_host, int bind_port);
+static ssize_t find_rule(PeerxRinetdPrivate* private, const char* bind_host, int bind_port);
 static void handle_connection(PeerxRinetd* self, InfraxNet* client, int rule_index);
 
 // Constructor
@@ -57,7 +63,7 @@ static PeerxRinetd* peerx_rinetd_new(void) {
     }
 
     // Initialize instance
-    memset(self, 0, sizeof(PeerxRinetd));
+    g_core->memset(g_core, self, 0, sizeof(PeerxRinetd));
     
     // Initialize base service
     PeerxService* base = PeerxServiceClass.new();
@@ -65,7 +71,7 @@ static PeerxRinetd* peerx_rinetd_new(void) {
         g_memory->dealloc(g_memory, self);
         return NULL;
     }
-    memcpy(&self->base, base, sizeof(PeerxService));
+    g_core->memcpy(g_core, &self->base, base, sizeof(PeerxService));
     g_memory->dealloc(g_memory, base);
 
     // Allocate private data
@@ -76,10 +82,18 @@ static PeerxRinetd* peerx_rinetd_new(void) {
     }
 
     // Initialize private data
-    memset(private, 0, sizeof(PeerxRinetdPrivate));
+    g_core->memset(g_core, private, 0, sizeof(PeerxRinetdPrivate));
     private->memory = g_memory;
+    private->core = g_core;
+    private->net = InfraxNetClass.new(NULL);  // Use default config
+    if (!private->net) {
+        g_memory->dealloc(g_memory, private);
+        g_memory->dealloc(g_memory, self);
+        return NULL;
+    }
 
     self->base.private_data = private;
+
     return self;
 }
 
@@ -110,31 +124,29 @@ static void peerx_rinetd_free(PeerxRinetd* self) {
     g_memory->dealloc(g_memory, self);
 }
 
-// Rules management
+// Rule management
 static InfraxError peerx_rinetd_add_rule(PeerxRinetd* self, const peerx_rinetd_rule_t* rule) {
     if (!self || !rule) {
         return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
     PeerxRinetdPrivate* private = self->base.private_data;
-    if (!private) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
+    if (!private || !private->initialized) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Service not initialized");
     }
 
-    if (private->rule_count >= MAX_RULES) {
-        PEERX_SERVICE_ERROR(&self->base, "Maximum number of rules reached");
-        return make_error(INFRAX_ERROR_NO_MEMORY, "Maximum number of rules reached");
-    }
-
-    // Check for duplicate
+    // Check if rule already exists
     if (find_rule(private, rule->bind_host, rule->bind_port) >= 0) {
-        PEERX_SERVICE_ERROR(&self->base, "Rule already exists for %s:%d",
-                          rule->bind_host, rule->bind_port);
         return make_error(INFRAX_ERROR_FILE_EXISTS, "Rule already exists");
     }
 
+    // Check if we have space
+    if (private->rule_count >= MAX_RULES) {
+        return make_error(INFRAX_ERROR_NO_MEMORY, "Maximum number of rules reached");
+    }
+
     // Add rule
-    memcpy(&private->rules[private->rule_count], rule, sizeof(peerx_rinetd_rule_t));
+    g_core->memcpy(g_core, &private->rules[private->rule_count], rule, sizeof(peerx_rinetd_rule_t));
     private->rule_count++;
 
     return make_error(INFRAX_ERROR_OK, NULL);
@@ -146,24 +158,24 @@ static InfraxError peerx_rinetd_remove_rule(PeerxRinetd* self, const char* bind_
     }
 
     PeerxRinetdPrivate* private = self->base.private_data;
-    if (!private) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
+    if (!private || !private->initialized) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Service not initialized");
     }
 
-    int index = find_rule(private, bind_host, bind_port);
+    // Find rule
+    ssize_t index = find_rule(private, bind_host, bind_port);
     if (index < 0) {
-        PEERX_SERVICE_ERROR(&self->base, "Rule not found for %s:%d", bind_host, bind_port);
         return make_error(INFRAX_ERROR_FILE_NOT_FOUND, "Rule not found");
     }
 
-    // Remove rule
+    // Remove rule by shifting remaining rules
     if (index < private->rule_count - 1) {
-        memmove(&private->rules[index], &private->rules[index + 1],
+        g_core->memmove(g_core, &private->rules[index], &private->rules[index + 1],
                 (private->rule_count - index - 1) * sizeof(peerx_rinetd_rule_t));
-        memmove(&private->stats[index], &private->stats[index + 1],
-                (private->rule_count - index - 1) * sizeof(peerx_rinetd_stats_t));
     }
+
     private->rule_count--;
+    g_core->memset(g_core, &private->rules[private->rule_count], 0, sizeof(peerx_rinetd_rule_t));
 
     return make_error(INFRAX_ERROR_OK, NULL);
 }
@@ -214,12 +226,13 @@ static InfraxError peerx_rinetd_get_rules(PeerxRinetd* self, peerx_rinetd_rule_t
     }
 
     PeerxRinetdPrivate* private = self->base.private_data;
-    if (!private) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
+    if (!private || !private->initialized) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Service not initialized");
     }
 
+    // Copy rules
     size_t to_copy = *count < private->rule_count ? *count : private->rule_count;
-    memcpy(rules, private->rules, to_copy * sizeof(peerx_rinetd_rule_t));
+    g_core->memcpy(g_core, rules, private->rules, to_copy * sizeof(peerx_rinetd_rule_t));
     *count = to_copy;
 
     return make_error(INFRAX_ERROR_OK, NULL);
@@ -263,16 +276,15 @@ static InfraxError peerx_rinetd_init(PeerxRinetd* self, const polyx_service_conf
         return err;
     }
 
-    // Initialize private data
     PeerxRinetdPrivate* private = self->base.private_data;
     if (!private) {
         return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
     }
 
-    // Clear all rules and stats
-    memset(private->rules, 0, sizeof(private->rules));
-    memset(private->stats, 0, sizeof(private->stats));
+    // Initialize rules
+    g_core->memset(g_core, private->rules, 0, sizeof(private->rules));
     private->rule_count = 0;
+    private->initialized = true;
 
     return make_error(INFRAX_ERROR_OK, NULL);
 }
@@ -282,73 +294,13 @@ static InfraxError peerx_rinetd_start(PeerxRinetd* self) {
         return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameter");
     }
 
-    // Start base service
-    InfraxError err = self->base.klass->start(&self->base);
-    if (err.code != INFRAX_ERROR_OK) {
-        return err;
-    }
-
-    // Get private data
     PeerxRinetdPrivate* private = self->base.private_data;
-    if (!private) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
+    if (!private || !private->initialized) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Service not initialized");
     }
 
-    // Start all enabled rules
-    for (size_t i = 0; i < private->rule_count; i++) {
-        if (!private->rules[i].enabled) {
-            continue;
-        }
-
-        // Create listener socket
-        InfraxNetConfig config = {
-            .is_udp = INFRAX_FALSE,
-            .is_nonblocking = INFRAX_TRUE,
-            .reuse_addr = INFRAX_TRUE,
-            .send_timeout_ms = 5000,
-            .recv_timeout_ms = 5000
-        };
-        
-        InfraxNet* listener = InfraxNetClass.new(&config);
-        if (!listener) {
-            PEERX_SERVICE_ERROR(&self->base, "Failed to create listener socket");
-            continue;
-        }
-
-        // Bind and listen
-        InfraxNetAddr addr;
-        err = infrax_net_addr_from_string(private->rules[i].bind_host, private->rules[i].bind_port, &addr);
-        if (err.code != INFRAX_ERROR_OK) {
-            PEERX_SERVICE_ERROR(&self->base, "Failed to create address for %s:%d",
-                              private->rules[i].bind_host,
-                              private->rules[i].bind_port);
-            InfraxNetClass.free(listener);
-            continue;
-        }
-
-        err = InfraxNetClass.bind(listener, &addr);
-        if (err.code != INFRAX_ERROR_OK) {
-            PEERX_SERVICE_ERROR(&self->base, "Failed to bind to %s:%d",
-                              private->rules[i].bind_host,
-                              private->rules[i].bind_port);
-            InfraxNetClass.free(listener);
-            continue;
-        }
-
-        err = InfraxNetClass.listen(listener, 5);
-        if (err.code != INFRAX_ERROR_OK) {
-            PEERX_SERVICE_ERROR(&self->base, "Failed to listen on %s:%d",
-                              private->rules[i].bind_host,
-                              private->rules[i].bind_port);
-            InfraxNetClass.free(listener);
-            continue;
-        }
-
-        // TODO: Register accept callback
-        // This needs to be implemented using the async framework
-    }
-
-    return make_error(INFRAX_ERROR_OK, NULL);
+    // Start base service
+    return self->base.klass->start(&self->base);
 }
 
 static InfraxError peerx_rinetd_stop(PeerxRinetd* self) {
@@ -357,15 +309,7 @@ static InfraxError peerx_rinetd_stop(PeerxRinetd* self) {
     }
 
     // Stop base service
-    InfraxError err = self->base.klass->stop(&self->base);
-    if (err.code != INFRAX_ERROR_OK) {
-        return err;
-    }
-
-    // TODO: Stop all listeners and close all connections
-    // This needs to be implemented using the async framework
-
-    return make_error(INFRAX_ERROR_OK, NULL);
+    return self->base.klass->stop(&self->base);
 }
 
 static InfraxError peerx_rinetd_reload(PeerxRinetd* self) {
@@ -374,15 +318,7 @@ static InfraxError peerx_rinetd_reload(PeerxRinetd* self) {
     }
 
     // Reload base service
-    InfraxError err = self->base.klass->reload(&self->base);
-    if (err.code != INFRAX_ERROR_OK) {
-        return err;
-    }
-
-    // TODO: Implement reload functionality
-    // This should probably re-read the configuration and update rules
-
-    return make_error(INFRAX_ERROR_OK, NULL);
+    return self->base.klass->reload(&self->base);
 }
 
 // Status and error handling
@@ -397,43 +333,41 @@ static InfraxError peerx_rinetd_get_status(PeerxRinetd* self, char* status, size
     }
 
     // Get base status
-    char base_status[512];
-    InfraxError err = PeerxServiceClass.get_status(&self->base, base_status, sizeof(base_status));
+    InfraxError err = self->base.klass->get_status(&self->base, status, size);
     if (err.code != INFRAX_ERROR_OK) {
         return err;
     }
 
-    // Add rinetd specific status
-    snprintf(status, size, "%s\nRules: %zu, Active connections: %zu",
-             base_status, private->rule_count, private->conn_count);
+    // Append our status
+    g_core->snprintf(g_core, status, size, "%s\nRules: %zu, Active connections: %zu",
+        status, private->rule_count, 0);  // TODO: Track active connections
 
     return make_error(INFRAX_ERROR_OK, NULL);
 }
 
 // Private helper functions
 static bool init_memory(void) {
-    if (g_memory) {
-        return true;
-    }
-
+    if (g_memory && g_core) return true;
+    
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,  // 1MB
         .use_gc = false,
         .use_pool = true,
         .gc_threshold = 0
     };
-
+    
     g_memory = InfraxMemoryClass.new(&config);
-    return g_memory != NULL;
+    if (!g_memory) return false;
+
+    g_core = InfraxCoreClass.singleton();
+    return g_core != NULL;
 }
 
-static int find_rule(PeerxRinetdPrivate* private, const char* bind_host, int bind_port) {
-    if (!private || !bind_host) {
-        return -1;
-    }
+static ssize_t find_rule(PeerxRinetdPrivate* private, const char* bind_host, int bind_port) {
+    if (!private || !bind_host) return -1;
 
     for (size_t i = 0; i < private->rule_count; i++) {
-        if (strcmp(private->rules[i].bind_host, bind_host) == 0 &&
+        if (g_core->strcmp(g_core, private->rules[i].bind_host, bind_host) == 0 &&
             private->rules[i].bind_port == bind_port) {
             return i;
         }

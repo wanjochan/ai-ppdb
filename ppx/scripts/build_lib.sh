@@ -1,51 +1,111 @@
 #!/bin/bash
 
-# 构建 arch 库的核心函数
-build_arch_lib() {
-    local build_dir="$1"
-    local sources=("${@:2}")  # 从第二个参数开始的所有参数作为源文件数组
-    local lib_file="${build_dir}/libarch.a"
-    local arch_objects=()
-    local need_rebuild=0
+# Error handling function
+handle_error() {
+    local exit_code=$1
+    local error_message=$2
+    if [ $exit_code -ne 0 ]; then
+        echo "Error: ${error_message}"
+        exit $exit_code
+    fi
+}
 
+# Check if rebuild is needed
+need_rebuild() {
+    local target=$1
+    shift
+    local sources=("$@")
+    
+    # If target doesn't exist, rebuild needed
+    if [ ! -f "$target" ]; then
+        return 0
+    fi
+    
+    # Check each source file
+    for src in "${sources[@]}"; do
+        if [ ! -f "$src" ]; then
+            echo "Error: Source file not found: $src"
+            exit 1
+        fi
+        if [ "$src" -nt "$target" ]; then
+            return 0
+        fi
+    done
+    
+    return 1
+}
+
+# Build a static library
+build_static_lib() {
+    local build_dir=$1
+    local lib_name=$2
+    shift 2
+    local sources=("$@")
+    
     # Create build directory
     mkdir -p "${build_dir}"
-
-    # Compile all source files
-    echo "Building architecture library..."
+    
+    # Compile each source file
+    local objects=()
     for src in "${sources[@]}"; do
         local obj="${build_dir}/$(basename "${src}" .c).o"
+        objects+=("${obj}")
         
-        # Check if we need to rebuild
+        # Check if rebuild is needed
         if [ ! -f "${obj}" ] || [ "${src}" -nt "${obj}" ]; then
             echo "Compiling: ${src}"
             "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
-            if [ $? -ne 0 ]; then
-                echo "Error: Failed to compile ${src}"
-                return 1
-            fi
-            need_rebuild=1
+            handle_error $? "Failed to compile ${src}"
         else
             echo "Skipping: ${src} (up to date)"
         fi
-        arch_objects+=("${obj}")
     done
-
-    # Create static library only if needed
-    if [ ${need_rebuild} -eq 1 ] || [ ! -f "${lib_file}" ]; then
-        echo "Creating static library: ${lib_file}"
-        rm -f "${lib_file}"
-        cd "${build_dir}" || return 1
-        "${AR}" rcs "${lib_file}" *.o
-        if [ $? -ne 0 ]; then
-            echo "Failed to create arch library"
-            return 1
-        fi
-        ls -l "${lib_file}"
+    
+    # Create static library
+    local lib="${build_dir}/lib${lib_name}.a"
+    if need_rebuild "${lib}" "${objects[@]}"; then
+        echo "Creating static library: ${lib}"
+        "${AR}" rcs "${lib}" "${objects[@]}"
+        handle_error $? "Failed to create static library"
     else
-        echo "Static library is up to date: ${lib_file}"
+        echo "Static library is up to date: ${lib}"
     fi
-    return 0
+}
+
+# Build arch library
+build_arch_lib() {
+    local build_dir=$1
+    shift
+    local sources=("$@")
+    
+    # Create build directory
+    mkdir -p "${build_dir}"
+    
+    # Compile each source file
+    local objects=()
+    for src in "${sources[@]}"; do
+        local obj="${build_dir}/$(basename "${src}" .c).o"
+        objects+=("${obj}")
+        
+        # Check if rebuild is needed
+        if [ ! -f "${obj}" ] || [ "${src}" -nt "${obj}" ]; then
+            echo "Compiling: ${src}"
+            "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
+            handle_error $? "Failed to compile ${src}"
+        else
+            echo "Skipping: ${src} (up to date)"
+        fi
+    done
+    
+    # Create static library
+    local lib="${build_dir}/libarch.a"
+    if need_rebuild "${lib}" "${objects[@]}"; then
+        echo "Creating static library: ${lib}"
+        "${AR}" rcs "${lib}" "${objects[@]}"
+        handle_error $? "Failed to create static library"
+    else
+        echo "Static library is up to date: ${lib}"
+    fi
 }
 
 # 构建并运行测试的核心函数

@@ -1,11 +1,14 @@
 #include "PeerxSqlite.h"
-#include "internal/infrax/InfraxMemory.h"
 #include "sqlite3/sqlite3.h"
+#include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxMemory.h"
 // #include <string.h>
 // #include <stdio.h>
 
 // Error codes
 #define INFRAX_ERROR_IO -10
+#define INFRAX_ERROR_SQL INFRAX_ERROR_IO
+#define INFRAX_ERROR_NOT_FOUND INFRAX_ERROR_FILE_NOT_FOUND
 
 // Forward declarations
 static const char* polyx_service_config_get_string(const polyx_service_config_t* config, const char* key, const char* default_value);
@@ -13,18 +16,23 @@ static const char* polyx_service_config_get_string(const polyx_service_config_t*
 // Private data structure
 typedef struct {
     InfraxMemory* memory;
+    InfraxCore* core;
     sqlite3* db;
     peerx_sqlite_conn_info_t conn_info;
+    bool initialized;
     bool in_transaction;
 } PeerxSqlitePrivate;
 
-// Global memory manager
+// Global memory manager and core
 static InfraxMemory* g_memory = NULL;
+static InfraxCore* g_core = NULL;
 extern InfraxMemoryClassType InfraxMemoryClass;
+extern InfraxCoreClassType InfraxCoreClass;
 
 // Forward declarations of private functions
 static bool init_memory(void);
 static void free_result_internal(peerx_sqlite_result_t* result);
+static InfraxError get_config_string(const polyx_service_config_t* config, const char* key, const char** value);
 
 // Forward declarations
 static InfraxError peerx_sqlite_open(PeerxSqlite* self, const peerx_sqlite_conn_info_t* info);
@@ -57,7 +65,7 @@ static PeerxSqlite* peerx_sqlite_new(void) {
     }
 
     // Initialize instance
-    memset(self, 0, sizeof(PeerxSqlite));
+    g_core->memset(g_core, self, 0, sizeof(PeerxSqlite));
     
     // Initialize base service
     PeerxService* base = PeerxServiceClass.new();
@@ -65,7 +73,7 @@ static PeerxSqlite* peerx_sqlite_new(void) {
         g_memory->dealloc(g_memory, self);
         return NULL;
     }
-    memcpy(&self->base, base, sizeof(PeerxService));
+    g_core->memcpy(g_core, &self->base, base, sizeof(PeerxService));
     g_memory->dealloc(g_memory, base);
 
     // Allocate private data
@@ -76,8 +84,9 @@ static PeerxSqlite* peerx_sqlite_new(void) {
     }
 
     // Initialize private data
-    memset(private, 0, sizeof(PeerxSqlitePrivate));
+    g_core->memset(g_core, private, 0, sizeof(PeerxSqlitePrivate));
     private->memory = g_memory;
+    private->core = g_core;
 
     self->base.private_data = private;
 
@@ -134,23 +143,25 @@ static InfraxError peerx_sqlite_open(PeerxSqlite* self, const peerx_sqlite_conn_
         private->db = NULL;
     }
 
+    // Save connection info
+    g_core->memcpy(g_core, &private->conn_info, info, sizeof(peerx_sqlite_conn_info_t));
+
     // Open database
-    int flags = info->read_only ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+    int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+    if (info->read_only) {
+        flags = SQLITE_OPEN_READONLY;
+    }
+
     const char* path = info->in_memory ? ":memory:" : info->path;
-    
     int rc = sqlite3_open_v2(path, &private->db, flags, NULL);
     if (rc != SQLITE_OK) {
-        PEERX_SERVICE_ERROR(&self->base, "Failed to open database: %s", sqlite3_errmsg(private->db));
-        return make_error(INFRAX_ERROR_IO, "Failed to open database");
+        return make_error(INFRAX_ERROR_IO, sqlite3_errmsg(private->db));
     }
 
-    // Set busy timeout
-    if (info->timeout_ms > 0) {
-        sqlite3_busy_timeout(private->db, info->timeout_ms);
-    }
+    // Configure connection
+    sqlite3_busy_timeout(private->db, info->timeout_ms);
 
-    // Save connection info
-    memcpy(&private->conn_info, info, sizeof(peerx_sqlite_conn_info_t));
+    private->initialized = true;
     return make_error(INFRAX_ERROR_OK, NULL);
 }
 
@@ -200,25 +211,27 @@ static InfraxError peerx_sqlite_exec(PeerxSqlite* self, const char* sql) {
     return make_error(INFRAX_ERROR_OK, NULL);
 }
 
-static InfraxError peerx_sqlite_query(PeerxSqlite* self, const char* sql, 
-                                       peerx_sqlite_result_t* result) {
+static InfraxError peerx_sqlite_query(PeerxSqlite* self, const char* sql, peerx_sqlite_result_t* result) {
     if (!self || !sql || !result) {
         return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
     PeerxSqlitePrivate* private = self->base.private_data;
-    if (!private || !private->db) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
+    if (!private || !private->db || !private->initialized) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Database not open");
     }
 
+    // Initialize result
+    g_core->memset(g_core, result, 0, sizeof(peerx_sqlite_result_t));
+
+    // Prepare statement
     sqlite3_stmt* stmt = NULL;
     int rc = sqlite3_prepare_v2(private->db, sql, -1, &stmt, NULL);
     if (rc != SQLITE_OK) {
-        PEERX_SERVICE_ERROR(&self->base, "Failed to prepare SQL: %s", sqlite3_errmsg(private->db));
-        return make_error(INFRAX_ERROR_IO, "Failed to prepare SQL");
+        return make_error(INFRAX_ERROR_SQL, sqlite3_errmsg(private->db));
     }
 
-    // Get column count and names
+    // Get column info
     result->column_count = sqlite3_column_count(stmt);
     result->column_names = g_memory->alloc(g_memory, result->column_count * sizeof(char*));
     if (!result->column_names) {
@@ -226,39 +239,37 @@ static InfraxError peerx_sqlite_query(PeerxSqlite* self, const char* sql,
         return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate column names");
     }
 
-    for (int i = 0; i < result->column_count; i++) {
+    for (size_t i = 0; i < result->column_count; i++) {
         const char* name = sqlite3_column_name(stmt, i);
-        result->column_names[i] = g_memory->alloc(g_memory, strlen(name) + 1);
+        result->column_names[i] = g_memory->alloc(g_memory, g_core->strlen(g_core, name) + 1);
         if (!result->column_names[i]) {
             free_result_internal(result);
             sqlite3_finalize(stmt);
             return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate column name");
         }
-        strcpy(result->column_names[i], name);
+        g_core->strcpy(g_core, result->column_names[i], name);
     }
 
-    // Allocate initial rows array
+    // Fetch rows
     size_t capacity = 16;
     result->rows = g_memory->alloc(g_memory, capacity * sizeof(char**));
     if (!result->rows) {
         free_result_internal(result);
         sqlite3_finalize(stmt);
-        return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate rows array");
+        return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate rows");
     }
 
-    // Fetch rows
-    result->row_count = 0;
     while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
-        // Expand rows array if needed
+        // Grow rows array if needed
         if (result->row_count >= capacity) {
             size_t new_capacity = capacity * 2;
             char*** new_rows = g_memory->alloc(g_memory, new_capacity * sizeof(char**));
             if (!new_rows) {
                 free_result_internal(result);
                 sqlite3_finalize(stmt);
-                return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to expand rows array");
+                return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to grow rows array");
             }
-            memcpy(new_rows, result->rows, capacity * sizeof(char**));
+            g_core->memcpy(g_core, new_rows, result->rows, capacity * sizeof(char**));
             g_memory->dealloc(g_memory, result->rows);
             result->rows = new_rows;
             capacity = new_capacity;
@@ -272,17 +283,17 @@ static InfraxError peerx_sqlite_query(PeerxSqlite* self, const char* sql,
             return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate row");
         }
 
-        // Get column values
-        for (int i = 0; i < result->column_count; i++) {
+        // Copy values
+        for (size_t i = 0; i < result->column_count; i++) {
             const unsigned char* value = sqlite3_column_text(stmt, i);
             if (value) {
-                result->rows[result->row_count][i] = g_memory->alloc(g_memory, strlen((const char*)value) + 1);
+                result->rows[result->row_count][i] = g_memory->alloc(g_memory, g_core->strlen(g_core, (const char*)value) + 1);
                 if (!result->rows[result->row_count][i]) {
                     free_result_internal(result);
                     sqlite3_finalize(stmt);
-                    return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate column value");
+                    return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate cell");
                 }
-                strcpy(result->rows[result->row_count][i], (const char*)value);
+                g_core->strcpy(g_core, result->rows[result->row_count][i], (const char*)value);
             } else {
                 result->rows[result->row_count][i] = NULL;
             }
@@ -294,9 +305,8 @@ static InfraxError peerx_sqlite_query(PeerxSqlite* self, const char* sql,
     sqlite3_finalize(stmt);
 
     if (rc != SQLITE_DONE) {
-        PEERX_SERVICE_ERROR(&self->base, "Failed to execute query: %s", sqlite3_errmsg(private->db));
         free_result_internal(result);
-        return make_error(INFRAX_ERROR_IO, "Failed to execute query");
+        return make_error(INFRAX_ERROR_SQL, sqlite3_errmsg(private->db));
     }
 
     return make_error(INFRAX_ERROR_OK, NULL);
@@ -310,16 +320,16 @@ static void peerx_sqlite_free_result(PeerxSqlite* self, peerx_sqlite_result_t* r
 // Transaction management
 static InfraxError peerx_sqlite_begin(PeerxSqlite* self) {
     if (!self) {
-        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameter");
     }
 
     PeerxSqlitePrivate* private = self->base.private_data;
-    if (!private) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
+    if (!private || !private->db || !private->initialized) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Database not open");
     }
 
-    if (!private->db) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Database not open");
+    if (private->in_transaction) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Transaction already in progress");
     }
 
     InfraxError err = peerx_sqlite_exec(self, "BEGIN TRANSACTION");
@@ -331,20 +341,16 @@ static InfraxError peerx_sqlite_begin(PeerxSqlite* self) {
 
 static InfraxError peerx_sqlite_commit(PeerxSqlite* self) {
     if (!self) {
-        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameter");
     }
 
     PeerxSqlitePrivate* private = self->base.private_data;
-    if (!private) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
-    }
-
-    if (!private->db) {
+    if (!private || !private->db || !private->initialized) {
         return make_error(INFRAX_ERROR_INVALID_STATE, "Database not open");
     }
 
     if (!private->in_transaction) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "No active transaction");
+        return make_error(INFRAX_ERROR_INVALID_STATE, "No transaction in progress");
     }
 
     InfraxError err = peerx_sqlite_exec(self, "COMMIT");
@@ -356,20 +362,16 @@ static InfraxError peerx_sqlite_commit(PeerxSqlite* self) {
 
 static InfraxError peerx_sqlite_rollback(PeerxSqlite* self) {
     if (!self) {
-        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameter");
     }
 
     PeerxSqlitePrivate* private = self->base.private_data;
-    if (!private) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
-    }
-
-    if (!private->db) {
+    if (!private || !private->db || !private->initialized) {
         return make_error(INFRAX_ERROR_INVALID_STATE, "Database not open");
     }
 
     if (!private->in_transaction) {
-        return make_error(INFRAX_ERROR_INVALID_STATE, "No active transaction");
+        return make_error(INFRAX_ERROR_INVALID_STATE, "No transaction in progress");
     }
 
     InfraxError err = peerx_sqlite_exec(self, "ROLLBACK");
@@ -465,26 +467,32 @@ static InfraxError peerx_sqlite_init(PeerxSqlite* self, const polyx_service_conf
     }
 
     // Initialize base service
-    InfraxError err = PeerxServiceClass.init(&self->base, config);
+    InfraxError err = self->base.klass->init(&self->base, config);
     if (err.code != INFRAX_ERROR_OK) {
         return err;
     }
 
-    // Get connection info from config
-    peerx_sqlite_conn_info_t conn_info = {0};
-    conn_info.in_memory = false;
-    conn_info.read_only = false;
-    conn_info.timeout_ms = 5000;
+    PeerxSqlitePrivate* private = self->base.private_data;
+    if (!private) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
+    }
 
     // Get database path from config
-    const char* db_path = polyx_service_config_get_string(config, "db_path", NULL);
-    if (db_path) {
-        strncpy(conn_info.path, db_path, sizeof(conn_info.path) - 1);
-    } else {
-        conn_info.in_memory = true;
+    const char* db_path = NULL;
+    err = get_config_string(config, "db_path", &db_path);
+    if (err.code != INFRAX_ERROR_OK) {
+        return err;
     }
 
     // Open database
+    peerx_sqlite_conn_info_t conn_info = {0};
+    if (db_path) {
+        g_core->strncpy(g_core, conn_info.path, db_path, sizeof(conn_info.path) - 1);
+    } else {
+        conn_info.in_memory = true;
+    }
+    conn_info.timeout_ms = 5000;
+
     return peerx_sqlite_open(self, &conn_info);
 }
 
@@ -532,18 +540,16 @@ static InfraxError peerx_sqlite_get_status(PeerxSqlite* self, char* status, size
         return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
     }
 
-    // Get base service status
-    char base_status[256];
-    InfraxError err = PeerxServiceClass.get_status(&self->base, base_status, sizeof(base_status));
+    // Get base status
+    InfraxError err = self->base.klass->get_status(&self->base, status, size);
     if (err.code != INFRAX_ERROR_OK) {
         return err;
     }
 
-    // Format status string
-    const char* db_state = private->db ? "open" : "closed";
+    // Add SQLite specific status
+    const char* conn_state = private->initialized ? "connected" : "not connected";
     const char* tx_state = private->in_transaction ? "in transaction" : "no transaction";
-    snprintf(status, size, "%s, Database: %s, %s", 
-             base_status, db_state, tx_state);
+    g_core->snprintf(g_core, status, size, "%s\nState: %s, %s", status, conn_state, tx_state);
 
     return make_error(INFRAX_ERROR_OK, NULL);
 }
@@ -564,10 +570,10 @@ static bool init_memory(void) {
 }
 
 static void free_result_internal(peerx_sqlite_result_t* result) {
-    if (!result) return;
+    if (!result || !g_memory || !g_core) return;
 
     if (result->column_names) {
-        for (int i = 0; i < result->column_count; i++) {
+        for (size_t i = 0; i < result->column_count; i++) {
             if (result->column_names[i]) {
                 g_memory->dealloc(g_memory, result->column_names[i]);
             }
@@ -576,9 +582,9 @@ static void free_result_internal(peerx_sqlite_result_t* result) {
     }
 
     if (result->rows) {
-        for (int i = 0; i < result->row_count; i++) {
+        for (size_t i = 0; i < result->row_count; i++) {
             if (result->rows[i]) {
-                for (int j = 0; j < result->column_count; j++) {
+                for (size_t j = 0; j < result->column_count; j++) {
                     if (result->rows[i][j]) {
                         g_memory->dealloc(g_memory, result->rows[i][j]);
                     }
@@ -589,7 +595,7 @@ static void free_result_internal(peerx_sqlite_result_t* result) {
         g_memory->dealloc(g_memory, result->rows);
     }
 
-    memset(result, 0, sizeof(peerx_sqlite_result_t));
+    g_core->memset(g_core, result, 0, sizeof(peerx_sqlite_result_t));
 }
 
 // Global class instance
@@ -607,15 +613,16 @@ const PeerxSqliteClassType PeerxSqliteClass = {
     .apply_config = (InfraxError (*)(PeerxSqlite*, const polyx_service_config_t*))PeerxServiceClass.apply_config
 };
 
-// Helper function to get string from config
-static const char* polyx_service_config_get_string(const polyx_service_config_t* config, const char* key, const char* default_value) {
-    if (!config || !key) {
-        return default_value;
+// Helper function for config
+static InfraxError get_config_string(const polyx_service_config_t* config, const char* key, const char** value) {
+    if (!config || !key || !value) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
-    
-    if (strcmp(key, "db_path") == 0) {
-        return config->backend;
+
+    if (g_core->strcmp(g_core, key, "db_path") == 0) {
+        *value = config->backend;  // Use backend field for db_path
+        return make_error(INFRAX_ERROR_OK, NULL);
     }
-    
-    return default_value;
+
+    return make_error(INFRAX_ERROR_NOT_FOUND, "Key not found");
 } 

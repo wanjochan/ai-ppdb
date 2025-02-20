@@ -269,7 +269,7 @@ void print_metrics(time_t elapsed_seconds) {
 }
 
 int main() {
-    core = InfraxCoreClass.singleton();
+    core = &gInfraxCore;//or InfraxCoreClass.singleton();
     
     core->printf(core, "Initializing core...\n");
     

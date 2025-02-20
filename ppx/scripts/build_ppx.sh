@@ -2,33 +2,10 @@
 
 # Import common functions and environment variables
 source "$(dirname "$0")/build_env.sh"
+source "$(dirname "$0")/build_lib.sh"
 
 # Set compile flags with all necessary include paths
 CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR} -I${ROOT_DIR}/repos/cosmocc/include -I${PPX_DIR}/vendor"
-
-# Build SQLite3 first
-echo "Building SQLite3..."
-SQLITE_LIB="${BUILD_DIR}/sqlite3/libsqlite3.a"
-SQLITE_SRC="${PPX_DIR}/vendor/sqlite3/sqlite3.c"
-
-# Create SQLite3 build directory
-mkdir -p "${BUILD_DIR}/sqlite3"
-
-# Compile SQLite3
-echo "Compiling SQLite3..."
-"${CC}" ${CFLAGS} -c -o "${BUILD_DIR}/sqlite3/sqlite3.o" "${SQLITE_SRC}"
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to compile sqlite3"
-    exit 1
-fi
-
-# Create SQLite3 static library
-echo "Creating SQLite3 static library..."
-"${AR}" rcs "${SQLITE_LIB}" "${BUILD_DIR}/sqlite3/sqlite3.o"
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to create sqlite3 static library"
-    exit 1
-fi
 
 # Define source files
 PPX_SOURCES=(
@@ -37,6 +14,7 @@ PPX_SOURCES=(
     "${SRC_DIR}/internal/polyx/PolyxConfig.c"
     "${SRC_DIR}/internal/polyx/PolyxService.c"
     "${SRC_DIR}/internal/polyx/PolyxServiceCmd.c"
+    "${SRC_DIR}/internal/polyx/PolyxDB.c"
     "${SRC_DIR}/internal/peerx/PeerxService.c"
     "${SRC_DIR}/internal/peerx/PeerxRinetd.c"
     "${SRC_DIR}/internal/peerx/PeerxSqlite.c"
@@ -58,7 +36,15 @@ build_ppx() {
     # Create build directory
     mkdir -p "${build_dir}"
 
-    # Build arch library first
+    # Build SQLite3 first
+    echo "Building SQLite3..."
+    sh "${PPX_DIR}/scripts/build_sqlite3.sh"
+    if [ $? -ne 0 ]; then
+        echo "Failed to build SQLite3"
+        exit 1
+    fi
+
+    # Build arch library
     echo "Building arch library..."
     sh "${PPX_DIR}/scripts/build_arch.sh"
     if [ $? -ne 0 ]; then
@@ -71,11 +57,16 @@ build_ppx() {
     for src in "${PPX_SOURCES[@]}"; do
         local obj="${build_dir}/$(basename "${src}" .c).o"
         
-        echo "Compiling: ${src}"
-        "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
-        if [ $? -ne 0 ]; then
-            echo "Error: Failed to compile ${src}"
-            exit 1
+        # Check if rebuild is needed
+        if [ ! -f "${obj}" ] || [ "${src}" -nt "${obj}" ]; then
+            echo "Compiling: ${src}"
+            "${CC}" ${CFLAGS} -c "${src}" -o "${obj}"
+            if [ $? -ne 0 ]; then
+                echo "Error: Failed to compile ${src}"
+                exit 1
+            fi
+        else
+            echo "Skipping: ${src} (up to date)"
         fi
         objects+=("${obj}")
     done
@@ -90,13 +81,14 @@ build_ppx() {
 
     # Copy to target directory
     echo "Installing PPX..."
-    cp -v "${build_dir}/ppx_latest.exe" "${PPX_DIR}/ppx_latest.exe"
+    mkdir -p "${PPX_DIR}/bin"
+    cp -v "${build_dir}/ppx_latest.exe" "${PPX_DIR}/bin/ppx_latest.exe"
     if [ $? -ne 0 ]; then
         echo "Failed to install PPX"
         exit 1
     fi
 
-    ls -l "${PPX_DIR}/ppx_latest.exe"
+    ls -l "${PPX_DIR}/bin/ppx_latest.exe"
 }
 
 # Main execution

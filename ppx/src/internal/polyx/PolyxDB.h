@@ -1,6 +1,7 @@
 #ifndef POLYX_DB_INTERFACE_H
 #define POLYX_DB_INTERFACE_H
 
+#include "internal/infrax/InfraxCore.h"
 #include "internal/polyx/PolyxService.h"
 
 // Forward declarations
@@ -11,16 +12,16 @@ typedef struct PolyxDBClassType PolyxDBClassType;
 typedef enum {
     POLYX_DB_TYPE_SQLITE,
     POLYX_DB_TYPE_DUCKDB
-} polyx_db_type_t;
+} polyx_db_type_t;//TODO PolyxDBType ?
 
 // Database configuration
 typedef struct {
     polyx_db_type_t type;        // Database type
     const char* url;            // Database URL
     size_t max_memory;          // Maximum memory usage (0 for unlimited)
-    bool read_only;             // Open in read-only mode
+    InfraxBool  read_only;             // Open in read-only mode
     const char* plugin_path;    // Path to dynamic library (for DuckDB)
-    bool allow_fallback;        // Allow fallback to SQLite if DuckDB fails
+    InfraxBool allow_fallback;        // Allow fallback to SQLite if DuckDB fails
 } polyx_db_config_t;
 
 // Query result
@@ -55,7 +56,7 @@ struct PolyxDB {
     InfraxError (*set)(PolyxDB* self, const char* key, const void* value, size_t value_size);
     InfraxError (*get)(PolyxDB* self, const char* key, void** value, size_t* value_size);
     InfraxError (*del)(PolyxDB* self, const char* key);
-    bool (*exists)(PolyxDB* self, const char* key);
+    InfraxBool (*exists)(PolyxDB* self, const char* key);
     
     // Status and error handling
     InfraxError (*get_status)(PolyxDB* self, char* status, size_t size);
@@ -85,7 +86,7 @@ struct PolyxDBClassType {
     InfraxError (*set)(PolyxDB* self, const char* key, const void* value, size_t value_size);
     InfraxError (*get)(PolyxDB* self, const char* key, void** value, size_t* value_size);
     InfraxError (*del)(PolyxDB* self, const char* key);
-    bool (*exists)(PolyxDB* self, const char* key);
+    InfraxBool (*exists)(PolyxDB* self, const char* key);
     
     // Status and error handling
     InfraxError (*get_status)(PolyxDB* self, char* status, size_t size);

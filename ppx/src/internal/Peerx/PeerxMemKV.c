@@ -1,13 +1,17 @@
+// #include <string.h>
+// #include <time.h>
+// #include <stdio.h>
 #include "PeerxMemKV.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
 #include "internal/polyx/PolyxDB.h"
 
-// #include <string.h>
-// #include <time.h>
-
 #define MAX_BUCKETS 1024
 #define LOAD_FACTOR_THRESHOLD 0.75
+
+// Error codes
+#define INFRAX_ERROR_NOT_SUPPORTED INFRAX_ERROR_NO_MEMORY
+#define INFRAX_ERROR_NOT_IMPLEMENTED INFRAX_ERROR_NOT_SUPPORTED
 
 // Hash table entry
 typedef struct peerx_memkv_entry {
@@ -18,14 +22,17 @@ typedef struct peerx_memkv_entry {
 // Private data structure
 typedef struct {
     InfraxMemory* memory;
+    InfraxCore* core;
     PolyxDB* db;
     bool initialized;
 } PeerxMemKVPrivate;
 
-// Global memory manager
+// Global memory manager and core
 static InfraxMemory* g_memory = NULL;
+static InfraxCore* g_core = NULL;
 extern InfraxMemoryClassType InfraxMemoryClass;
-extern PolyxDBClassType PolyxDBClass;
+extern InfraxCoreClassType InfraxCoreClass;
+extern const PolyxDBClassType PolyxDBClass;
 
 // Forward declarations of private functions
 static bool init_memory(void);
@@ -35,6 +42,27 @@ static void cleanup_expired(PeerxMemKV* self);
 static void free_value_internal(peerx_memkv_value_t* value);
 static InfraxError serialize_value(const peerx_memkv_value_t* value, void** data, size_t* size);
 static InfraxError deserialize_value(const void* data, size_t size, peerx_memkv_value_t* value);
+
+// Forward declarations of functions
+static PeerxMemKV* peerx_memkv_new(void);
+static void peerx_memkv_free(PeerxMemKV* self);
+static InfraxError peerx_memkv_init(PeerxMemKV* self, const polyx_service_config_t* config);
+static InfraxError peerx_memkv_start(PeerxMemKV* self);
+static InfraxError peerx_memkv_stop(PeerxMemKV* self);
+static InfraxError peerx_memkv_reload(PeerxMemKV* self);
+static InfraxError peerx_memkv_set(PeerxMemKV* self, const char* key, const peerx_memkv_value_t* value);
+static InfraxError peerx_memkv_set_ex(PeerxMemKV* self, const char* key, const peerx_memkv_value_t* value, int64_t ttl_ms);
+static InfraxError peerx_memkv_get(PeerxMemKV* self, const char* key, peerx_memkv_value_t* value);
+static InfraxError peerx_memkv_del(PeerxMemKV* self, const char* key);
+static bool peerx_memkv_exists(PeerxMemKV* self, const char* key);
+static InfraxError peerx_memkv_multi_set(PeerxMemKV* self, const peerx_memkv_pair_t* pairs, size_t count);
+static InfraxError peerx_memkv_multi_get(PeerxMemKV* self, const char** keys, size_t key_count, peerx_memkv_pair_t* pairs, size_t* pair_count);
+static InfraxError peerx_memkv_multi_del(PeerxMemKV* self, const char** keys, size_t count);
+static InfraxError peerx_memkv_keys(PeerxMemKV* self, const char* pattern, char** keys, size_t* count);
+static InfraxError peerx_memkv_expire(PeerxMemKV* self, const char* key, int64_t ttl_ms);
+static InfraxError peerx_memkv_ttl(PeerxMemKV* self, const char* key, int64_t* ttl_ms);
+static InfraxError peerx_memkv_flush(PeerxMemKV* self);
+static InfraxError peerx_memkv_info(PeerxMemKV* self, char* info, size_t size);
 
 // Constructor
 static PeerxMemKV* peerx_memkv_new(void) {
@@ -50,7 +78,7 @@ static PeerxMemKV* peerx_memkv_new(void) {
     }
 
     // Initialize instance
-    memset(self, 0, sizeof(PeerxMemKV));
+    g_core->memset(g_core, self, 0, sizeof(PeerxMemKV));
     
     // Initialize base service
     PeerxService* base = PeerxServiceClass.new();
@@ -58,7 +86,7 @@ static PeerxMemKV* peerx_memkv_new(void) {
         g_memory->dealloc(g_memory, self);
         return NULL;
     }
-    memcpy(&self->base, base, sizeof(PeerxService));
+    g_core->memcpy(g_core, &self->base, base, sizeof(PeerxService));
     g_memory->dealloc(g_memory, base);
 
     // Allocate private data
@@ -69,8 +97,9 @@ static PeerxMemKV* peerx_memkv_new(void) {
     }
 
     // Initialize private data
-    memset(private, 0, sizeof(PeerxMemKVPrivate));
+    g_core->memset(g_core, private, 0, sizeof(PeerxMemKVPrivate));
     private->memory = g_memory;
+    private->core = g_core;
 
     // Create database instance
     private->db = PolyxDBClass.new();
@@ -147,8 +176,7 @@ static InfraxError peerx_memkv_set(PeerxMemKV* self, const char* key, const peer
     return err;
 }
 
-static InfraxError peerx_memkv_set_ex(PeerxMemKV* self, const char* key, 
-                                     const peerx_memkv_value_t* value, int64_t ttl_ms) {
+static InfraxError peerx_memkv_set_ex(PeerxMemKV* self, const char* key, const peerx_memkv_value_t* value, int64_t ttl_ms) {
     if (!self || !key || !value) {
         return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
@@ -173,13 +201,17 @@ static InfraxError peerx_memkv_set_ex(PeerxMemKV* self, const char* key,
 
     // Set expiration
     if (ttl_ms > 0) {
-        char sql[256];
-        snprintf(sql, sizeof(sql), 
-            "UPDATE kv_store SET expire_at = ? WHERE key = ?");
+        InfraxTime current_time;
+        g_core->time(g_core, &current_time);
+        char sql[1024];
+        g_core->snprintf(g_core, sql, sizeof(sql), "INSERT OR REPLACE INTO kvstore (key, value, expire_at) VALUES ('%s', '%s', %ld);",
+                 value, key, current_time * 1000 + ttl_ms);
         
-        int64_t expire_at = time(NULL) * 1000 + ttl_ms;
-        
-        // TODO: Execute update
+        err = private->db->exec(private->db, sql);
+        if (err.code != INFRAX_ERROR_OK) {
+            private->db->rollback(private->db);
+            return err;
+        }
     }
 
     // Commit transaction
@@ -283,7 +315,7 @@ static InfraxError peerx_memkv_multi_get(PeerxMemKV* self, const char** keys, si
 
     // Get all values
     for (size_t i = 0; i < key_count && count < *pair_count; i++) {
-        strncpy(pairs[count].key, keys[i], sizeof(pairs[count].key) - 1);
+        g_core->strncpy(g_core, pairs[count].key, keys[i], sizeof(pairs[count].key) - 1);
         err = peerx_memkv_get(self, keys[i], &pairs[count].value);
         if (err.code == INFRAX_ERROR_OK) {
             count++;
@@ -335,7 +367,7 @@ static InfraxError peerx_memkv_keys(PeerxMemKV* self, const char* pattern, char*
     }
 
     // TODO: Implement pattern matching
-    return make_error(INFRAX_ERROR_NOT_IMPLEMENTED, "Pattern matching not implemented");
+    return make_error(INFRAX_ERROR_NOT_SUPPORTED, "Pattern matching not implemented");
 }
 
 static InfraxError peerx_memkv_expire(PeerxMemKV* self, const char* key, int64_t ttl_ms) {
@@ -349,7 +381,7 @@ static InfraxError peerx_memkv_expire(PeerxMemKV* self, const char* key, int64_t
     }
 
     // TODO: Implement expiration
-    return make_error(INFRAX_ERROR_NOT_IMPLEMENTED, "Expiration not implemented");
+    return make_error(INFRAX_ERROR_NOT_SUPPORTED, "Expiration not implemented");
 }
 
 static InfraxError peerx_memkv_ttl(PeerxMemKV* self, const char* key, int64_t* ttl_ms) {
@@ -363,7 +395,7 @@ static InfraxError peerx_memkv_ttl(PeerxMemKV* self, const char* key, int64_t* t
     }
 
     // TODO: Implement TTL query
-    return make_error(INFRAX_ERROR_NOT_IMPLEMENTED, "TTL query not implemented");
+    return make_error(INFRAX_ERROR_NOT_SUPPORTED, "TTL query not implemented");
 }
 
 // Server operations
@@ -412,7 +444,7 @@ static InfraxError peerx_memkv_init(PeerxMemKV* self, const polyx_service_config
 
     // Configure database
     polyx_db_config_t db_config = {
-        .type = POLY_DB_TYPE_SQLITE,
+        .type = POLYX_DB_TYPE_SQLITE,
         .url = ":memory:",
         .max_memory = 0,
         .read_only = false,
@@ -478,7 +510,7 @@ static InfraxError peerx_memkv_reload(PeerxMemKV* self) {
 
 // Helper functions
 static bool init_memory(void) {
-    if (g_memory) return true;
+    if (g_memory && g_core) return true;
     
     InfraxMemoryConfig config = {
         .initial_size = 1024 * 1024,  // 1MB
@@ -488,7 +520,10 @@ static bool init_memory(void) {
     };
     
     g_memory = InfraxMemoryClass.new(&config);
-    return g_memory != NULL;
+    if (!g_memory) return false;
+
+    g_core = InfraxCoreClass.singleton();
+    return g_core != NULL;
 }
 
 static void cleanup_entry(PeerxMemKVPrivate* private, peerx_memkv_entry_t* entry) {
@@ -501,29 +536,35 @@ static bool is_expired(const peerx_memkv_entry_t* entry) {
     if (!entry || entry->pair.expire_at == 0) {
         return false;
     }
-    return (time(NULL) * 1000) >= entry->pair.expire_at;
+    InfraxTime current_time;
+    g_core->time(g_core, &current_time);
+    return (current_time * 1000) >= entry->pair.expire_at;
 }
 
 static void cleanup_expired(PeerxMemKV* self) {
     if (!self) return;
 
     PeerxMemKVPrivate* private = self->base.private_data;
-    if (!private) return;
+    if (!private || !private->db || !private->initialized) return;
 
-    for (int i = 0; i < MAX_BUCKETS; i++) {
-        peerx_memkv_entry_t** pp = &private->buckets[i];
-        peerx_memkv_entry_t* entry = *pp;
-        while (entry) {
-            if (is_expired(entry)) {
-                *pp = entry->next;
-                cleanup_entry(private, entry);
-                private->size--;
-                entry = *pp;
-            } else {
-                pp = &entry->next;
-                entry = entry->next;
-            }
-        }
+    // Delete expired keys using SQL
+    char* sql = g_memory->alloc(g_memory, 256);
+    if (!sql) return;
+
+    InfraxTime current_time;
+    g_core->time(g_core, &current_time);
+    int64_t current_time_ms = current_time * 1000;
+    
+    g_core->snprintf(g_core, sql, 256, 
+        "DELETE FROM kv_store WHERE expire_at > 0 AND expire_at <= %lld", 
+        current_time_ms);
+    
+    // Execute the delete statement
+    InfraxError err = private->db->exec(private->db, sql);
+    g_memory->dealloc(g_memory, sql);
+    
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        g_core->printf(g_core, "Failed to cleanup expired keys: %s\n", err.message);
     }
 }
 
@@ -545,7 +586,7 @@ static void free_value_internal(peerx_memkv_value_t* value) {
             break;
     }
 
-    memset(value, 0, sizeof(peerx_memkv_value_t));
+    g_core->memset(g_core, value, 0, sizeof(peerx_memkv_value_t));
 }
 
 static InfraxError serialize_value(const peerx_memkv_value_t* value, void** data, size_t* size) {
@@ -558,7 +599,7 @@ static InfraxError serialize_value(const peerx_memkv_value_t* value, void** data
     switch (value->type) {
         case PEERX_MEMKV_TYPE_STRING:
             if (value->value.str) {
-                total_size += strlen(value->value.str) + 1;
+                total_size += g_core->strlen(g_core, value->value.str) + 1;
             }
             break;
         case PEERX_MEMKV_TYPE_INT:
@@ -582,26 +623,26 @@ static InfraxError serialize_value(const peerx_memkv_value_t* value, void** data
 
     // Serialize data
     char* ptr = buffer;
-    memcpy(ptr, &value->type, sizeof(peerx_memkv_type_t));
+    g_core->memcpy(g_core, ptr, &value->type, sizeof(peerx_memkv_type_t));
     ptr += sizeof(peerx_memkv_type_t);
 
     switch (value->type) {
         case PEERX_MEMKV_TYPE_STRING:
             if (value->value.str) {
-                strcpy(ptr, value->value.str);
+                g_core->strcpy(g_core, ptr, value->value.str);
             }
             break;
         case PEERX_MEMKV_TYPE_INT:
-            memcpy(ptr, &value->value.i, sizeof(int64_t));
+            g_core->memcpy(g_core, ptr, &value->value.i, sizeof(int64_t));
             break;
         case PEERX_MEMKV_TYPE_FLOAT:
-            memcpy(ptr, &value->value.f, sizeof(double));
+            g_core->memcpy(g_core, ptr, &value->value.f, sizeof(double));
             break;
         case PEERX_MEMKV_TYPE_BINARY:
             if (value->value.bin.data) {
-                memcpy(ptr, &value->value.bin.size, sizeof(size_t));
+                g_core->memcpy(g_core, ptr, &value->value.bin.size, sizeof(size_t));
                 ptr += sizeof(size_t);
-                memcpy(ptr, value->value.bin.data, value->value.bin.size);
+                g_core->memcpy(g_core, ptr, value->value.bin.data, value->value.bin.size);
             }
             break;
     }
@@ -617,33 +658,33 @@ static InfraxError deserialize_value(const void* data, size_t size, peerx_memkv_
     }
 
     const char* ptr = data;
-    memcpy(&value->type, ptr, sizeof(peerx_memkv_type_t));
+    g_core->memcpy(g_core, &value->type, ptr, sizeof(peerx_memkv_type_t));
     ptr += sizeof(peerx_memkv_type_t);
 
     switch (value->type) {
         case PEERX_MEMKV_TYPE_STRING: {
-            size_t str_len = strlen(ptr);
+            size_t str_len = g_core->strlen(g_core, ptr);
             value->value.str = g_memory->alloc(g_memory, str_len + 1);
             if (!value->value.str) {
                 return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate string");
             }
-            strcpy(value->value.str, ptr);
+            g_core->strcpy(g_core, value->value.str, ptr);
             break;
         }
         case PEERX_MEMKV_TYPE_INT:
-            memcpy(&value->value.i, ptr, sizeof(int64_t));
+            g_core->memcpy(g_core, &value->value.i, ptr, sizeof(int64_t));
             break;
         case PEERX_MEMKV_TYPE_FLOAT:
-            memcpy(&value->value.f, ptr, sizeof(double));
+            g_core->memcpy(g_core, &value->value.f, ptr, sizeof(double));
             break;
         case PEERX_MEMKV_TYPE_BINARY: {
-            memcpy(&value->value.bin.size, ptr, sizeof(size_t));
+            g_core->memcpy(g_core, &value->value.bin.size, ptr, sizeof(size_t));
             ptr += sizeof(size_t);
             value->value.bin.data = g_memory->alloc(g_memory, value->value.bin.size);
             if (!value->value.bin.data) {
                 return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to allocate binary data");
             }
-            memcpy(value->value.bin.data, ptr, value->value.bin.size);
+            g_core->memcpy(g_core, value->value.bin.data, ptr, value->value.bin.size);
             break;
         }
         default:
@@ -653,6 +694,7 @@ static InfraxError deserialize_value(const void* data, size_t size, peerx_memkv_
     return make_error(INFRAX_ERROR_OK, NULL);
 }
 
+//TODO: 后面可能要改得优雅点，比如用宏。（Rinetd, sqlite, memkv, diskv
 // Global class instance
 const PeerxMemKVClassType PeerxMemKVClass = {
     .new = peerx_memkv_new,
