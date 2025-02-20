@@ -1,9 +1,9 @@
-#include "cosmopolitan.h"
 #include "internal/infrax/InfraxLog.h"
+#include "internal/infrax/InfraxCore.h"
 
 // Forward declaration of static variables
-static InfraxLog global_infra_log;
-static bool is_initialized = false;
+// static InfraxLog global_infra_log;
+// static InfraxBool is_initialized = INFRAX_FALSE;
 
 // Forward declarations of instance methods
 static void infrax_log_set_level(InfraxLog* self, LogLevel level);
@@ -15,14 +15,27 @@ static void infrax_log_error(InfraxLog* self, const char* format, ...);
 // Private initialization function
 static void infrax_log_init(InfraxLog* self);
 
+InfraxLog gInfraxLog = {
+    .self = &gInfraxLog,
+   .klass = &InfraxLogClass,
+  .set_level = infrax_log_set_level,
+  .debug = infrax_log_debug,
+   .info = infrax_log_info,
+   .warn = infrax_log_warn,
+  .error = infrax_log_error
+};
+
 // Singleton implementation
 static InfraxLog* infrax_log_singleton(void) {
-    if (!is_initialized) {
-        infrax_log_init(&global_infra_log);
-        is_initialized = true;
-    }
-    return &global_infra_log;
+    // if (!is_initialized) {
+    //     infrax_log_init(&global_infra_log);
+    //     is_initialized = INFRAX_FALSE;
+    // }
+    // return &global_infra_log;
+    return &gInfraxLog;
 }
+
+InfraxCore* core = &gInfraxCore;//need "ensure"?
 
 // The "static" interface implementation
 InfraxLogClassType InfraxLogClass = {
@@ -31,12 +44,12 @@ InfraxLogClassType InfraxLogClass = {
 
 // Private functions
 static void get_time_str(char* buffer, size_t size) {
-    time_t now;
-    struct tm* timeinfo;
+    InfraxTime now;
+    InfraxTime* timeinfo;
     
-    time(&now);
-    timeinfo = localtime(&now);
-    strftime(buffer, size, "%Y-%m-%d %H:%M:%S", timeinfo);
+    now = core->time(core, NULL);
+    timeinfo = (InfraxTime*)core->localtime(core, &now);
+    core->snprintf(core, buffer, size, "%Y-%m-%d %H:%M:%S", timeinfo);
 }
 
 static const char* level_to_str(LogLevel level) {
@@ -60,15 +73,15 @@ static void log_message(InfraxLog* self, LogLevel level, const char* format, va_
     
     // First format the message with the timestamp and level
     char msg_buffer[1024];  // Reasonable buffer size
-    int prefix_len = snprintf(msg_buffer, sizeof(msg_buffer), "[%s][%s] ", 
+    int prefix_len = core->snprintf(core, msg_buffer, sizeof(msg_buffer), "[%s][%s] ", 
                             time_str, level_to_str(level));
     if (prefix_len < 0 || prefix_len >= sizeof(msg_buffer)) return;
     
     // Then format the actual message
-    vsnprintf(msg_buffer + prefix_len, sizeof(msg_buffer) - prefix_len, format, args);
+    core->snprintf(core, msg_buffer + prefix_len, sizeof(msg_buffer) - prefix_len, format, args);
     
     // Output the message
-    fprintf(stderr, "%s\n", msg_buffer);
+    core->printf(core, "%s\n", msg_buffer);
 }
 
 // Instance methods

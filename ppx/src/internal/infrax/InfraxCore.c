@@ -656,6 +656,15 @@ static int infrax_core_close_fd(InfraxCore *self, int fd) {
 }
 
 // Time operations
+static InfraxTime* infrax_core_localtime(InfraxCore *self, InfraxTime* tloc) {
+    if (!tloc) return NULL;
+    time_t t = (time_t)*tloc;
+    struct tm* tm_info = localtime(&t);
+    if (!tm_info) return NULL;
+    *tloc = (InfraxTime)mktime(tm_info);
+    return tloc;
+}
+
 static InfraxClock infrax_core_clock(InfraxCore *self) {
     return clock();
 }

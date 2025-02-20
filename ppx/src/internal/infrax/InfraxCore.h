@@ -217,7 +217,7 @@ struct InfraxCore {
     int (*close_fd)(InfraxCore *self, int fd);
 
     // Time operations
-    // Time management
+    InfraxTime (*localtime)(InfraxCore *self, InfraxTime* tloc);
     InfraxTime (*time_now_ms)(InfraxCore *self);
     InfraxTime (*time_monotonic_ms)(struct InfraxCore *self);
     InfraxClock (*clock)(InfraxCore *self);
@@ -246,7 +246,7 @@ extern InfraxCoreClassType InfraxCoreClass;
 static inline InfraxError make_error_with_stack(InfraxI32 code, const char* msg) {
     InfraxError err = {.code = code};
     if (msg) {
-        InfraxCore* core = InfraxCoreClass.singleton();
+        InfraxCore* core = &gInfraxCore;//InfraxCoreClass.singleton();
         core->strncpy(core, err.message, msg, sizeof(err.message) - 1);
         err.message[sizeof(err.message) - 1] = '\0';
     }
