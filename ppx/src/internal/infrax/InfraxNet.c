@@ -634,7 +634,7 @@ static void net_free(InfraxNet* self) {
     }
 }
 
-// Network class instance
+// Global class instance
 InfraxNetClassType InfraxNetClass = {
     .new = net_new,
     .free = net_free,

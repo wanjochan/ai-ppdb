@@ -104,6 +104,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Set cmdline instance in service_cmd
+    service_cmd->cmdline = cmdline;
+
     // Register help command
     static const polyx_cmd_t help_cmd = {
         .name = "help",

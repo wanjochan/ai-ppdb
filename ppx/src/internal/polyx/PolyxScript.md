@@ -1,6 +1,3 @@
-好的，我来创建这个设计文档。
-
-```markdown:/Users/wjc/ai-ppdb/ppx/src/internal/polyx/PolyxScript.md
 # PolyxScript 设计文档
 
 ## 1. 概述
@@ -108,9 +105,86 @@ async(expr(
 - `and`, `or`, `not` - 逻辑运算
 
 ## 6. 实现注意事项
+
+### 6.1 解析器实现
 - 采用递归下降解析
 - AST 基于表达式树
+- 支持语法错误恢复
+- 提供详细的错误位置信息
+
+### 6.2 类型系统
 - 动态类型系统
-- 闭包支持
-- 异步操作基于事件循环
+- 基本类型：数值、字符串、布尔、nil
+- 复合类型：列表、函数
+- 运行时类型检查
+
+### 6.3 闭包实现
+- 词法作用域
+- 变量捕获
+- 函数作为一等公民
+- 支持高阶函数
+
+### 6.4 异步机制
+- 基于事件循环的异步执行
+- Promise 风格的异步操作
+- 异步函数自动调度
+- 支持取消和超时
+
+### 6.5 错误处理
+- 异常传播机制
+- try/catch 支持
+- 异步错误处理
+- 错误堆栈跟踪
+
+### 6.6 内存管理
+- 引用计数
+- 循环引用检测
+- 自动内存回收
+- 资源自动释放
+
+## 7. 示例
+
+### 7.1 异步文件处理
+```lisp
+let(processFile,
+    fn((path),
+       async(expr(
+           try(
+               expr(
+                   let(content, await(readFile(path))),
+                   let(processed, process(content)),
+                   await(writeFile(path, processed))
+               ),
+               fn((err),
+                  expr(log(err)))
+           )
+       ))))
+```
+
+### 7.2 事件处理
+```lisp
+bind("dataStream",
+     fn((event),
+        expr(
+            let(value, event.data),
+            if(>(value, threshold),
+               expr(
+                   async(notify("high-value", value)),
+                   updateMetrics(value)
+               ),
+               expr(log("normal-value", value)))
+        )))
+```
+
+### 7.3 数据流转换
+```lisp
+let(transform,
+    fn((data),
+       pipe(
+           data,
+           expr(filter(it, not(isNull(it)))),
+           expr(map(it, normalize(it))),
+           expr(groupBy(it, it.category)),
+           expr(reduce(it, {}, merge(acc, it)))
+       )))
 ```
