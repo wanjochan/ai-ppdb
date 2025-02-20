@@ -82,13 +82,13 @@ build_ppx() {
     # Copy to target directory
     echo "Installing PPX..."
     mkdir -p "${PPX_DIR}/bin"
-    cp -v "${build_dir}/ppx_latest.exe" "${PPX_DIR}/bin/ppx_latest.exe"
+    cp -v "${build_dir}/ppx_latest.exe" "${PPX_DIR}/ppx_latest.exe"
     if [ $? -ne 0 ]; then
         echo "Failed to install PPX"
         exit 1
     fi
 
-    ls -l "${PPX_DIR}/bin/ppx_latest.exe"
+    ls -l "${PPX_DIR}/ppx_latest.exe"
 }
 
 # Main execution
