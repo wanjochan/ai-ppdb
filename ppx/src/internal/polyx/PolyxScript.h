@@ -7,14 +7,7 @@
  * 3. Support for basic control structures and data types
  * 4. Extensible design for future enhancements
  * 
- * Basic Syntax Example:
- * ```
- * ////x = 42.5 + y * "hello"  // Basic expression
- x = +(42.5,*(y,"hello"))
- //顺序语句还要设计一下
- * if (<=(x,10),;(y = x * 2,print("Result: " + y)),print("x is too large"))
- * ```
- * 
+ * Basic Syntax Example: PolyxScript.md
  * Implementation Notes:
  * - Lexical analysis with token classification
  * - Recursive descent parsing
