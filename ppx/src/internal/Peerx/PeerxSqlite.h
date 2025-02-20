@@ -29,20 +29,20 @@ struct PeerxSqlite {
     PeerxService base;
     
     // Database operations
-    infrax_error_t (*open)(PeerxSqlite* self, const peerx_sqlite_conn_info_t* info);
-    infrax_error_t (*close)(PeerxSqlite* self);
-    infrax_error_t (*exec)(PeerxSqlite* self, const char* sql);
-    infrax_error_t (*query)(PeerxSqlite* self, const char* sql, peerx_sqlite_result_t* result);
+    InfraxError (*open)(PeerxSqlite* self, const peerx_sqlite_conn_info_t* info);
+    InfraxError (*close)(PeerxSqlite* self);
+    InfraxError (*exec)(PeerxSqlite* self, const char* sql);
+    InfraxError (*query)(PeerxSqlite* self, const char* sql, peerx_sqlite_result_t* result);
     void (*free_result)(PeerxSqlite* self, peerx_sqlite_result_t* result);
     
     // Transaction management
-    infrax_error_t (*begin)(PeerxSqlite* self);
-    infrax_error_t (*commit)(PeerxSqlite* self);
-    infrax_error_t (*rollback)(PeerxSqlite* self);
+    InfraxError (*begin)(PeerxSqlite* self);
+    InfraxError (*commit)(PeerxSqlite* self);
+    InfraxError (*rollback)(PeerxSqlite* self);
     
     // Backup and restore
-    infrax_error_t (*backup)(PeerxSqlite* self, const char* path);
-    infrax_error_t (*restore)(PeerxSqlite* self, const char* path);
+    InfraxError (*backup)(PeerxSqlite* self, const char* path);
+    InfraxError (*restore)(PeerxSqlite* self, const char* path);
 };
 
 // SQLite service class interface
@@ -52,19 +52,19 @@ struct PeerxSqliteClassType {
     void (*free)(PeerxSqlite* self);
     
     // Service lifecycle (inherited from PeerxService)
-    infrax_error_t (*init)(PeerxSqlite* self, const polyx_service_config_t* config);
-    infrax_error_t (*start)(PeerxSqlite* self);
-    infrax_error_t (*stop)(PeerxSqlite* self);
-    infrax_error_t (*reload)(PeerxSqlite* self);
+    InfraxError (*init)(PeerxSqlite* self, const polyx_service_config_t* config);
+    InfraxError (*start)(PeerxSqlite* self);
+    InfraxError (*stop)(PeerxSqlite* self);
+    InfraxError (*reload)(PeerxSqlite* self);
     
     // Status and error handling (inherited from PeerxService)
-    infrax_error_t (*get_status)(PeerxSqlite* self, char* status, size_t size);
+    InfraxError (*get_status)(PeerxSqlite* self, char* status, size_t size);
     const char* (*get_error)(PeerxSqlite* self);
     void (*clear_error)(PeerxSqlite* self);
     
     // Configuration (inherited from PeerxService)
-    infrax_error_t (*validate_config)(PeerxSqlite* self, const polyx_service_config_t* config);
-    infrax_error_t (*apply_config)(PeerxSqlite* self, const polyx_service_config_t* config);
+    InfraxError (*validate_config)(PeerxSqlite* self, const polyx_service_config_t* config);
+    InfraxError (*apply_config)(PeerxSqlite* self, const polyx_service_config_t* config);
 };
 
 // Global class instance

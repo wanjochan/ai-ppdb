@@ -42,27 +42,27 @@ struct PeerxMemKV {
     PeerxService base;
     
     // Key-value operations
-    infrax_error_t (*set)(PeerxMemKV* self, const char* key, const peerx_memkv_value_t* value);
-    infrax_error_t (*set_ex)(PeerxMemKV* self, const char* key, const peerx_memkv_value_t* value, 
+    InfraxError (*set)(PeerxMemKV* self, const char* key, const peerx_memkv_value_t* value);
+    InfraxError (*set_ex)(PeerxMemKV* self, const char* key, const peerx_memkv_value_t* value, 
                             int64_t ttl_ms);
-    infrax_error_t (*get)(PeerxMemKV* self, const char* key, peerx_memkv_value_t* value);
-    infrax_error_t (*del)(PeerxMemKV* self, const char* key);
+    InfraxError (*get)(PeerxMemKV* self, const char* key, peerx_memkv_value_t* value);
+    InfraxError (*del)(PeerxMemKV* self, const char* key);
     bool (*exists)(PeerxMemKV* self, const char* key);
     
     // Batch operations
-    infrax_error_t (*multi_set)(PeerxMemKV* self, const peerx_memkv_pair_t* pairs, size_t count);
-    infrax_error_t (*multi_get)(PeerxMemKV* self, const char** keys, size_t key_count,
+    InfraxError (*multi_set)(PeerxMemKV* self, const peerx_memkv_pair_t* pairs, size_t count);
+    InfraxError (*multi_get)(PeerxMemKV* self, const char** keys, size_t key_count,
                                peerx_memkv_pair_t* pairs, size_t* pair_count);
-    infrax_error_t (*multi_del)(PeerxMemKV* self, const char** keys, size_t count);
+    InfraxError (*multi_del)(PeerxMemKV* self, const char** keys, size_t count);
     
     // Key operations
-    infrax_error_t (*keys)(PeerxMemKV* self, const char* pattern, char** keys, size_t* count);
-    infrax_error_t (*expire)(PeerxMemKV* self, const char* key, int64_t ttl_ms);
-    infrax_error_t (*ttl)(PeerxMemKV* self, const char* key, int64_t* ttl_ms);
+    InfraxError (*keys)(PeerxMemKV* self, const char* pattern, char** keys, size_t* count);
+    InfraxError (*expire)(PeerxMemKV* self, const char* key, int64_t ttl_ms);
+    InfraxError (*ttl)(PeerxMemKV* self, const char* key, int64_t* ttl_ms);
     
     // Server operations
-    infrax_error_t (*flush)(PeerxMemKV* self);
-    infrax_error_t (*info)(PeerxMemKV* self, char* info, size_t size);
+    InfraxError (*flush)(PeerxMemKV* self);
+    InfraxError (*info)(PeerxMemKV* self, char* info, size_t size);
 };
 
 // MemKV service class interface
@@ -72,19 +72,19 @@ struct PeerxMemKVClassType {
     void (*free)(PeerxMemKV* self);
     
     // Service lifecycle (inherited from PeerxService)
-    infrax_error_t (*init)(PeerxMemKV* self, const polyx_service_config_t* config);
-    infrax_error_t (*start)(PeerxMemKV* self);
-    infrax_error_t (*stop)(PeerxMemKV* self);
-    infrax_error_t (*reload)(PeerxMemKV* self);
+    InfraxError (*init)(PeerxMemKV* self, const polyx_service_config_t* config);
+    InfraxError (*start)(PeerxMemKV* self);
+    InfraxError (*stop)(PeerxMemKV* self);
+    InfraxError (*reload)(PeerxMemKV* self);
     
     // Status and error handling (inherited from PeerxService)
-    infrax_error_t (*get_status)(PeerxMemKV* self, char* status, size_t size);
+    InfraxError (*get_status)(PeerxMemKV* self, char* status, size_t size);
     const char* (*get_error)(PeerxMemKV* self);
     void (*clear_error)(PeerxMemKV* self);
     
     // Configuration (inherited from PeerxService)
-    infrax_error_t (*validate_config)(PeerxMemKV* self, const polyx_service_config_t* config);
-    infrax_error_t (*apply_config)(PeerxMemKV* self, const polyx_service_config_t* config);
+    InfraxError (*validate_config)(PeerxMemKV* self, const polyx_service_config_t* config);
+    InfraxError (*apply_config)(PeerxMemKV* self, const polyx_service_config_t* config);
 };
 
 // Global class instance
@@ -93,6 +93,6 @@ extern const PeerxMemKVClassType PeerxMemKVClass;
 // Helper functions
 void peerx_memkv_value_init(peerx_memkv_value_t* value);
 void peerx_memkv_value_free(peerx_memkv_value_t* value);
-infrax_error_t peerx_memkv_value_copy(peerx_memkv_value_t* dst, const peerx_memkv_value_t* src);
+InfraxError peerx_memkv_value_copy(peerx_memkv_value_t* dst, const peerx_memkv_value_t* src);
 
 #endif // PEERX_MEMKV_INTERFACE_H 
