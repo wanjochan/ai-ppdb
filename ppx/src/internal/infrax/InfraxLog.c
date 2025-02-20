@@ -35,7 +35,6 @@ static InfraxLog* infrax_log_singleton(void) {
     return &gInfraxLog;
 }
 
-InfraxCore* core = &gInfraxCore;//need "ensure"?
 
 // The "static" interface implementation
 InfraxLogClassType InfraxLogClass = {
@@ -44,6 +43,7 @@ InfraxLogClassType InfraxLogClass = {
 
 // Private functions
 static void get_time_str(char* buffer, size_t size) {
+    InfraxCore* core = &gInfraxCore;
     InfraxTime now;
     InfraxTime* timeinfo;
     
@@ -67,6 +67,7 @@ static void log_message(InfraxLog* self, LogLevel level, const char* format, va_
     
     // Check log level
     if (level < self->min_log_level) return;
+    InfraxCore* core = &gInfraxCore;
     
     char time_str[32];
     get_time_str(time_str, sizeof(time_str));
