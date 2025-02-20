@@ -1,7 +1,7 @@
 #include "PpxArch.h"
 
 static PpxArch g_arch = {0};
-static bool g_initialized = false;
+static InfraxBool g_initialized = false;
 
 PpxArch* ppx_arch(void) {
     if (!g_initialized) {

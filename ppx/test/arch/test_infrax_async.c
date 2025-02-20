@@ -69,7 +69,7 @@ static void timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
 static void multi_timer_handler(InfraxAsync* self, int fd, short events, void* arg) {
     char discard_buf[256];
     if (fd >= 0) {
-        while (read(fd, discard_buf, sizeof(discard_buf)) > 0) {}  // 完全清空管道
+        while (core->read_fd(core, fd, discard_buf, sizeof(discard_buf)) > 0) {}  // 完全清空管道
     }
     int* timer_count = (int*)arg;
     (*timer_count)++;
@@ -80,7 +80,7 @@ static void concurrent_timer_handler(InfraxAsync* self, int fd, short events, vo
     TestContext* ctx = (TestContext*)arg;
     char discard_buf[256];
     if (fd >= 0) {
-        while (read(fd, discard_buf, sizeof(discard_buf)) > 0) {}  // 完全清空管道
+        while (core->read_fd(core, fd, discard_buf, sizeof(discard_buf)) > 0) {}  // 完全清空管道
     }
     
     ctx->counter++;
@@ -361,7 +361,7 @@ static void file_io_callback(InfraxAsync* self, int fd, short events, void* arg)
     
     if (events & 0x001) {  // POLLIN
         // Read data
-        ssize_t n = read(fd, 
+        ssize_t n = core->read_fd(core, fd, 
                         ctx->buffer + ctx->bytes_processed,
                         ctx->buffer_size - ctx->bytes_processed);
         

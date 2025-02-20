@@ -856,7 +856,27 @@ static long long infrax_core_atoll(InfraxCore *self, const char* str) {
 
 // Network operations implementations
 static intptr_t infrax_core_socket_create(InfraxCore* self, int domain, int type, int protocol) {
-    return socket(domain, type, protocol);
+    // Map domain
+    int sys_domain;
+    switch (domain) {
+        case INFRAX_AF_INET: sys_domain = AF_INET; break;
+        default: return -1;
+    }
+    
+    // Map type
+    int sys_type;
+    switch (type) {
+        case INFRAX_SOCK_STREAM: sys_type = SOCK_STREAM; break;
+        case INFRAX_SOCK_DGRAM: sys_type = SOCK_DGRAM; break;
+        default: return -1;
+    }
+    
+    // Create socket
+    intptr_t fd = socket(sys_domain, sys_type, protocol);
+    if (fd < 0) {
+        printf("Failed to create socket: %s\n", strerror(errno));
+    }
+    return fd;
 }
 
 static int infrax_core_socket_bind(InfraxCore* self, intptr_t handle, const void* addr, size_t size) {
@@ -933,6 +953,486 @@ static int infrax_core_get_last_error(InfraxCore* self) {
 
 static const char* infrax_core_get_error_string(InfraxCore* self, int error_code) {
     return strerror(error_code);
+}
+
+static int infrax_core_socket_get_name(InfraxCore* self, intptr_t handle, void* addr, size_t* addr_len) {
+    return getsockname(handle, (struct sockaddr*)addr, (socklen_t*)addr_len);
+}
+
+static int infrax_core_socket_get_peer(InfraxCore* self, intptr_t handle, void* addr, size_t* addr_len) {
+    return getpeername(handle, (struct sockaddr*)addr, (socklen_t*)addr_len);
+}
+
+// File descriptor set operations
+static void infrax_core_fd_zero(InfraxCore* self, InfraxFdSet* set) {
+    if (!set) return;
+    memset(set->fds_bits, 0, sizeof(set->fds_bits));
+}
+
+static void infrax_core_fd_set(InfraxCore* self, int fd, InfraxFdSet* set) {
+    if (!set || fd < 0 || fd >= INFRAX_FD_SETSIZE) return;
+    set->fds_bits[fd / (8 * sizeof(unsigned long))] |= (1UL << (fd % (8 * sizeof(unsigned long))));
+}
+
+static void infrax_core_fd_clr(InfraxCore* self, int fd, InfraxFdSet* set) {
+    if (!set || fd < 0 || fd >= INFRAX_FD_SETSIZE) return;
+    set->fds_bits[fd / (8 * sizeof(unsigned long))] &= ~(1UL << (fd % (8 * sizeof(unsigned long))));
+}
+
+static int infrax_core_fd_isset(InfraxCore* self, int fd, InfraxFdSet* set) {
+    if (!set || fd < 0 || fd >= INFRAX_FD_SETSIZE) return 0;
+    return !!(set->fds_bits[fd / (8 * sizeof(unsigned long))] & (1UL << (fd % (8 * sizeof(unsigned long)))));
+}
+
+// File descriptor control operations
+static int infrax_core_fcntl(InfraxCore* self, int fd, int cmd, int arg) {
+    if (fd < 0) return -1;
+    return fcntl(fd, cmd, arg);
+}
+
+// IO multiplexing
+static int infrax_core_select(InfraxCore* self, int nfds, InfraxFdSet* readfds, 
+                            InfraxFdSet* writefds, InfraxFdSet* exceptfds, 
+                            InfraxTimeVal* timeout) {
+    if (nfds < 0 || nfds > INFRAX_FD_SETSIZE) return -1;
+    
+    fd_set* r = (fd_set*)readfds;
+    fd_set* w = (fd_set*)writefds;
+    fd_set* e = (fd_set*)exceptfds;
+    struct timeval* t = (struct timeval*)timeout;
+    
+    return select(nfds, r, w, e, t);
+}
+
+// High-level IO operations
+static InfraxError infrax_core_wait_for_read(InfraxCore* self, int fd, int timeout_ms) {
+    if (fd < 0) return make_error(INFRAX_ERROR_IO_INVALID_FD, "Invalid file descriptor");
+    
+    InfraxFdSet readfds;
+    InfraxTimeVal tv;
+    
+    infrax_core_fd_zero(self, &readfds);
+    infrax_core_fd_set(self, fd, &readfds);
+    
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    
+    int result = infrax_core_select(self, fd + 1, &readfds, NULL, NULL, &tv);
+    if (result < 0) {
+        if (errno == EINTR) {
+            return make_error(INFRAX_ERROR_IO_INTERRUPTED, "Operation interrupted");
+        }
+        return make_error(INFRAX_ERROR_IO_SELECT_FAILED, "Select failed");
+    }
+    if (result == 0) {
+        return make_error(INFRAX_ERROR_IO_TIMEOUT, "Operation timed out");
+    }
+    return make_error(INFRAX_ERROR_OK, NULL);
+}
+
+static InfraxError infrax_core_wait_for_write(InfraxCore* self, int fd, int timeout_ms) {
+    if (fd < 0) return make_error(INFRAX_ERROR_IO_INVALID_FD, "Invalid file descriptor");
+    
+    InfraxFdSet writefds;
+    InfraxTimeVal tv;
+    
+    infrax_core_fd_zero(self, &writefds);
+    infrax_core_fd_set(self, fd, &writefds);
+    
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    
+    int result = infrax_core_select(self, fd + 1, NULL, &writefds, NULL, &tv);
+    if (result < 0) {
+        if (errno == EINTR) {
+            return make_error(INFRAX_ERROR_IO_INTERRUPTED, "Operation interrupted");
+        }
+        return make_error(INFRAX_ERROR_IO_SELECT_FAILED, "Select failed");
+    }
+    if (result == 0) {
+        return make_error(INFRAX_ERROR_IO_TIMEOUT, "Operation timed out");
+    }
+    return make_error(INFRAX_ERROR_OK, NULL);
+}
+
+static InfraxError infrax_core_wait_for_except(InfraxCore* self, int fd, int timeout_ms) {
+    if (fd < 0) return make_error(INFRAX_ERROR_IO_INVALID_FD, "Invalid file descriptor");
+    
+    InfraxFdSet exceptfds;
+    InfraxTimeVal tv;
+    
+    infrax_core_fd_zero(self, &exceptfds);
+    infrax_core_fd_set(self, fd, &exceptfds);
+    
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    
+    int result = infrax_core_select(self, fd + 1, NULL, NULL, &exceptfds, &tv);
+    if (result < 0) {
+        if (errno == EINTR) {
+            return make_error(INFRAX_ERROR_IO_INTERRUPTED, "Operation interrupted");
+        }
+        return make_error(INFRAX_ERROR_IO_SELECT_FAILED, "Select failed");
+    }
+    if (result == 0) {
+        return make_error(INFRAX_ERROR_IO_TIMEOUT, "Operation timed out");
+    }
+    return make_error(INFRAX_ERROR_OK, NULL);
+}
+
+//-----------------------------------------------------------------------------
+// Timer System
+//-----------------------------------------------------------------------------
+
+#define INITIAL_TIMER_CAPACITY 1024
+#define INVALID_TIMER_ID 0
+
+// Timer structure
+typedef struct {
+    InfraxU32 id;
+    uint64_t expire_time;
+    InfraxU32 interval_ms;
+    InfraxBool is_interval;
+    InfraxBool is_valid;
+    InfraxBool is_paused;
+    void (*handler)(void*);
+    void* arg;
+} InfraxTimer;
+
+// Timer system
+typedef struct {
+    InfraxTimer* timers;     // Dynamic timer pool
+    InfraxTimer** heap;      // Dynamic min heap
+    size_t capacity;         // Current capacity
+    size_t heap_size;        // Current heap size
+    InfraxU32 next_id;
+    InfraxBool initialized;
+} InfraxTimerSystem;
+
+static InfraxTimerSystem g_timers = {0};
+
+// Timer system helper functions
+static void heap_swap(size_t i, size_t j) {
+    InfraxTimer* temp = g_timers.heap[i];
+    g_timers.heap[i] = g_timers.heap[j];
+    g_timers.heap[j] = temp;
+}
+
+static void heap_up(size_t pos) {
+    while (pos > 0) {
+        size_t parent = (pos - 1) / 2;
+        if (g_timers.heap[parent]->expire_time <= g_timers.heap[pos]->expire_time) {
+            break;
+        }
+        heap_swap(parent, pos);
+        pos = parent;
+    }
+}
+
+static void heap_down(size_t pos) {
+    while (true) {
+        size_t min_pos = pos;
+        size_t left = 2 * pos + 1;
+        size_t right = 2 * pos + 2;
+        
+        if (left < g_timers.heap_size && 
+            g_timers.heap[left]->expire_time < g_timers.heap[min_pos]->expire_time) {
+            min_pos = left;
+        }
+        
+        if (right < g_timers.heap_size && 
+            g_timers.heap[right]->expire_time < g_timers.heap[min_pos]->expire_time) {
+            min_pos = right;
+        }
+        
+        if (min_pos == pos) break;
+        
+        heap_swap(pos, min_pos);
+        pos = min_pos;
+    }
+}
+
+static void remove_timer_from_heap(InfraxTimer* timer) {
+    if (!timer || g_timers.heap_size == 0) return;
+    
+    // Find timer in heap
+    size_t pos;
+    for (pos = 0; pos < g_timers.heap_size; pos++) {
+        if (g_timers.heap[pos] == timer) break;
+    }
+    
+    if (pos == g_timers.heap_size) return;  // Not found
+    
+    // Replace with last element and remove last
+    g_timers.heap[pos] = g_timers.heap[--g_timers.heap_size];
+    
+    // Restore heap property
+    if (pos > 0 && g_timers.heap[pos]->expire_time < g_timers.heap[(pos-1)/2]->expire_time) {
+        heap_up(pos);
+    } else {
+        heap_down(pos);
+    }
+}
+
+static InfraxBool init_timer_system(void) {
+    if (g_timers.initialized) return true;
+    
+    // Allocate initial arrays
+    g_timers.timers = (InfraxTimer*)malloc(INITIAL_TIMER_CAPACITY * sizeof(InfraxTimer));
+    g_timers.heap = (InfraxTimer**)malloc(INITIAL_TIMER_CAPACITY * sizeof(InfraxTimer*));
+    
+    if (!g_timers.timers || !g_timers.heap) {
+        if (g_timers.timers) free(g_timers.timers);
+        if (g_timers.heap) free(g_timers.heap);
+        return false;
+    }
+    
+    g_timers.capacity = INITIAL_TIMER_CAPACITY;
+    g_timers.heap_size = 0;
+    g_timers.next_id = 1;  // Start from 1
+    g_timers.initialized = true;
+    
+    return true;
+}
+
+static InfraxBool expand_timer_arrays(void) {
+    size_t new_capacity = g_timers.capacity * 2;
+    
+    // Allocate new arrays
+    InfraxTimer* new_timers = (InfraxTimer*)malloc(new_capacity * sizeof(InfraxTimer));
+    InfraxTimer** new_heap = (InfraxTimer**)malloc(new_capacity * sizeof(InfraxTimer*));
+    
+    if (!new_timers || !new_heap) {
+        if (new_timers) free(new_timers);
+        if (new_heap) free(new_heap);
+        return false;
+    }
+    
+    // Copy existing data
+    memcpy(new_timers, g_timers.timers, g_timers.capacity * sizeof(InfraxTimer));
+    memcpy(new_heap, g_timers.heap, g_timers.heap_size * sizeof(InfraxTimer*));
+    
+    // Update heap pointers
+    for (size_t i = 0; i < g_timers.heap_size; i++) {
+        size_t offset = g_timers.heap[i] - g_timers.timers;
+        new_heap[i] = new_timers + offset;
+    }
+    
+    // Free old arrays
+    free(g_timers.timers);
+    free(g_timers.heap);
+    
+    // Update system state
+    g_timers.timers = new_timers;
+    g_timers.heap = new_heap;
+    g_timers.capacity = new_capacity;
+    
+    return true;
+}
+
+static InfraxBool add_timer_to_heap(InfraxTimer* timer) {
+    if (!timer || !timer->is_valid || timer->is_paused) return false;
+    
+    // Check if expansion is needed
+    if (g_timers.heap_size >= g_timers.capacity) {
+        if (!expand_timer_arrays()) return false;
+    }
+    
+    size_t pos = g_timers.heap_size++;
+    g_timers.heap[pos] = timer;
+    heap_up(pos);
+    
+    return true;
+}
+
+// Timer interface implementations
+static InfraxU32 infrax_timer_create(struct InfraxCore* self, InfraxU32 interval_ms, InfraxBool is_interval, void (*handler)(void*), void* arg) {
+    if (!init_timer_system() || !handler) return INVALID_TIMER_ID;
+    
+    // Find free timer slot
+    InfraxTimer* timer = NULL;
+    for (size_t i = 0; i < g_timers.capacity; i++) {
+        if (!g_timers.timers[i].is_valid) {
+            timer = &g_timers.timers[i];
+            break;
+        }
+    }
+    
+    // If no free slot, try to expand
+    if (!timer) {
+        if (!expand_timer_arrays()) return INVALID_TIMER_ID;
+        timer = &g_timers.timers[g_timers.capacity / 2];  // Use first slot in new space
+    }
+    
+    // Initialize timer
+    timer->id = g_timers.next_id++;
+    timer->expire_time = self->time_monotonic_ms(self) + interval_ms;
+    timer->interval_ms = interval_ms;
+    timer->is_interval = is_interval;
+    timer->is_valid = true;
+    timer->is_paused = false;
+    timer->handler = handler;
+    timer->arg = arg;
+    
+    // Add to heap
+    if (!add_timer_to_heap(timer)) {
+        timer->is_valid = false;
+        return INVALID_TIMER_ID;
+    }
+    
+    return timer->id;
+}
+
+static InfraxError infrax_timer_delete(struct InfraxCore* self, InfraxU32 timer_id) {
+    if (!g_timers.initialized || timer_id == INVALID_TIMER_ID) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid timer ID or timer system not initialized");
+    }
+    
+    // Find timer
+    InfraxTimer* timer = NULL;
+    for (size_t i = 0; i < g_timers.capacity; i++) {
+        if (g_timers.timers[i].is_valid && g_timers.timers[i].id == timer_id) {
+            timer = &g_timers.timers[i];
+            break;
+        }
+    }
+    
+    if (!timer) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Timer not found");
+    }
+    
+    // Remove from heap and invalidate
+    remove_timer_from_heap(timer);
+    timer->is_valid = false;
+    
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_timer_reset(struct InfraxCore* self, InfraxU32 timer_id, InfraxU32 interval_ms) {
+    if (!g_timers.initialized || timer_id == INVALID_TIMER_ID) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid timer ID or timer system not initialized");
+    }
+    
+    // Find timer
+    InfraxTimer* timer = NULL;
+    for (size_t i = 0; i < g_timers.capacity; i++) {
+        if (g_timers.timers[i].is_valid && g_timers.timers[i].id == timer_id) {
+            timer = &g_timers.timers[i];
+            break;
+        }
+    }
+    
+    if (!timer) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Timer not found");
+    }
+    
+    // Update timer
+    timer->interval_ms = interval_ms;
+    timer->expire_time = self->time_monotonic_ms(self) + interval_ms;
+    
+    // Reorder heap
+    if (!timer->is_paused) {
+        remove_timer_from_heap(timer);
+        add_timer_to_heap(timer);
+    }
+    
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_timer_pause(struct InfraxCore* self, InfraxU32 timer_id) {
+    if (!g_timers.initialized || timer_id == INVALID_TIMER_ID) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid timer ID or timer system not initialized");
+    }
+    
+    // Find timer
+    InfraxTimer* timer = NULL;
+    for (size_t i = 0; i < g_timers.capacity; i++) {
+        if (g_timers.timers[i].is_valid && g_timers.timers[i].id == timer_id) {
+            timer = &g_timers.timers[i];
+            break;
+        }
+    }
+    
+    if (!timer) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Timer not found");
+    }
+    
+    if (!timer->is_paused) {
+        timer->is_paused = true;
+        remove_timer_from_heap(timer);
+    }
+    
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError infrax_timer_resume(struct InfraxCore* self, InfraxU32 timer_id) {
+    if (!g_timers.initialized || timer_id == INVALID_TIMER_ID) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid timer ID or timer system not initialized");
+    }
+    
+    // Find timer
+    InfraxTimer* timer = NULL;
+    for (size_t i = 0; i < g_timers.capacity; i++) {
+        if (g_timers.timers[i].is_valid && g_timers.timers[i].id == timer_id) {
+            timer = &g_timers.timers[i];
+            break;
+        }
+    }
+    
+    if (!timer) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Timer not found");
+    }
+    
+    if (timer->is_paused) {
+        timer->is_paused = false;
+        timer->expire_time = self->time_monotonic_ms(self) + timer->interval_ms;
+        add_timer_to_heap(timer);
+    }
+    
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+//-----------------------------------------------------------------------------
+// Poll Implementation
+//-----------------------------------------------------------------------------
+
+static int infrax_poll(struct InfraxCore* self, InfraxPollFd* fds, size_t nfds, int timeout_ms) {
+    if (!fds && nfds > 0) {
+        return -1;
+    }
+
+    // 准备poll结构
+    struct pollfd* sys_fds = NULL;
+    if (nfds > 0) {
+        sys_fds = (struct pollfd*)malloc(nfds * sizeof(struct pollfd));
+        if (!sys_fds) {
+            return -1;
+        }
+        
+        // 转换为系统pollfd结构
+        for (size_t i = 0; i < nfds; i++) {
+            sys_fds[i].fd = fds[i].fd;
+            sys_fds[i].events = fds[i].events;
+            sys_fds[i].revents = 0;
+        }
+    }
+
+    // 调用系统poll
+    int result = poll(sys_fds, nfds, timeout_ms);
+
+    // 如果成功，复制返回的事件
+    if (result >= 0 && sys_fds) {
+        for (size_t i = 0; i < nfds; i++) {
+            fds[i].revents = sys_fds[i].revents;
+        }
+    }
+
+    // 清理
+    if (sys_fds) {
+        free(sys_fds);
+    }
+
+    return result;
 }
 
 // Initialize singleton instance
@@ -1063,6 +1563,8 @@ InfraxCore gInfraxCore = {
     .socket_set_option = infrax_core_socket_set_option,
     .socket_get_option = infrax_core_socket_get_option,
     .socket_get_error = infrax_core_socket_get_error,
+    .socket_get_name = infrax_core_socket_get_name,
+    .socket_get_peer = infrax_core_socket_get_peer,
 
     // Network address operations
     .ip_to_binary = infrax_core_ip_to_binary,
@@ -1071,6 +1573,33 @@ InfraxCore gInfraxCore = {
     // Error handling
     .get_last_error = infrax_core_get_last_error,
     .get_error_string = infrax_core_get_error_string,
+
+    // File descriptor set operations
+    .fd_zero = infrax_core_fd_zero,
+    .fd_set = infrax_core_fd_set,
+    .fd_clr = infrax_core_fd_clr,
+    .fd_isset = infrax_core_fd_isset,
+    
+    // File descriptor control operations
+    .fcntl = infrax_core_fcntl,
+    
+    // IO multiplexing
+    .select = infrax_core_select,
+    
+    // High-level IO operations
+    .wait_for_read = infrax_core_wait_for_read,
+    .wait_for_write = infrax_core_wait_for_write,
+    .wait_for_except = infrax_core_wait_for_except,
+
+    // Poll operations
+    .poll = infrax_poll,
+    
+    // Timer operations
+    .timer_create = infrax_timer_create,
+    .timer_delete = infrax_timer_delete,
+    .timer_reset = infrax_timer_reset,
+    .timer_pause = infrax_timer_pause,
+    .timer_resume = infrax_timer_resume,
 };
 
 // Simple singleton getter

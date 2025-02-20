@@ -120,7 +120,7 @@ static void test_net_udp_boundary_conditions(void) {
 }
 
 int main(void) {
-    core = InfraxCoreClass.singleton();
+    core = &gInfraxCore;
     INFRAX_ASSERT(core, core != NULL);
 
     core->printf(core, "Starting InfraxNet tests...\n");

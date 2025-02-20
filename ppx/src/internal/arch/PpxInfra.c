@@ -8,7 +8,7 @@
 #include "internal/infrax/InfraxAsync.h"
 
 static PpxInfra g_infra = {0};
-static bool g_infra_initialized = false;
+static InfraxBool g_infra_initialized = INFRAX_FALSE;
 
 const PpxInfra* ppx_infra(void) {
     if (!g_infra_initialized) {
@@ -24,7 +24,7 @@ const PpxInfra* ppx_infra(void) {
         g_infra.syncClass = &InfraxSyncClass;
         g_infra.asyncClass = &InfraxAsyncClass;
 
-        g_infra_initialized = true;
+        g_infra_initialized = INFRAX_TRUE;
     }
     return &g_infra;
 }

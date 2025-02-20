@@ -48,36 +48,21 @@ struct InfraxNetClassType {
     InfraxError (*shutdown)(InfraxNet* self, int how);
 };
 
-// The instance structure
+// Network instance structure
 struct InfraxNet {
     InfraxNet* self;
     InfraxNetClassType* klass;
 
     // Network data
     InfraxNetConfig config;
-    intptr_t native_handle;//? InfraxInt* ??
+    intptr_t native_handle;
     InfraxBool is_connected;
     InfraxNetAddr local_addr;
     InfraxNetAddr peer_addr;
 };
 
-// The "static" interface instance
+// Global class instance
 extern InfraxNetClassType InfraxNetClass;
-
-// Socket level options (compatible with system socket options)
-#define INFRAX_SOL_SOCKET      1
-#define INFRAX_SO_REUSEADDR    2
-#define INFRAX_SO_KEEPALIVE    3
-#define INFRAX_SO_RCVTIMEO     4
-#define INFRAX_SO_SNDTIMEO     5
-#define INFRAX_SO_RCVBUF       6
-#define INFRAX_SO_SNDBUF       7
-#define INFRAX_SO_ERROR        8
-
-// Shutdown modes
-#define INFRAX_SHUT_RD         0
-#define INFRAX_SHUT_WR         1
-#define INFRAX_SHUT_RDWR       2
 
 //-----------------------------------------------------------------------------
 // Error codes
@@ -129,7 +114,7 @@ extern InfraxNetClassType InfraxNetClass;
 #define INFRAX_ERROR_NET_SET_NONBLOCKING_FAILED make_error(INFRAX_ERROR_NET_SET_NONBLOCKING_FAILED_CODE, "Failed to set non-blocking mode")
 #define INFRAX_ERROR_NET_SET_TIMEOUT_FAILED make_error(INFRAX_ERROR_NET_SET_TIMEOUT_FAILED_CODE, "Failed to set socket timeout")
 
-// Utility functions for address conversion
+// Utility functions
 InfraxError infrax_net_addr_from_string(const char* ip, uint16_t port, InfraxNetAddr* addr);
 InfraxError infrax_net_addr_to_string(const InfraxNetAddr* addr, char* buffer, size_t size);
 

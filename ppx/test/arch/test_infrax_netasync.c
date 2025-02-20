@@ -11,8 +11,8 @@ InfraxMemory* memory = NULL;
 typedef struct {
     InfraxNet* server;
     InfraxNet* client;
-    bool connected;
-    bool completed;
+    InfraxBool connected;
+    InfraxBool completed;
     char buffer[1024];
     size_t bytes;
 } AsyncTcpContext;
@@ -31,8 +31,8 @@ typedef struct {
     InfraxNet** clients;  // 客户端数组
     int client_count;     // 客户端总数
     int connected_count;  // 已连接客户端数
-    bool* client_connected; // 客户端连接状态
-    bool* client_sent;    // 客户端发送状态
+    InfraxBool* client_connected; // 客户端连接状态
+    InfraxBool* client_sent;    // 客户端发送状态
     char buffer[1024];
     size_t bytes;
 } ConcurrentTcpContext;
@@ -42,7 +42,7 @@ typedef struct {
     InfraxNet** sockets;  // UDP socket数组
     int socket_count;     // socket总数
     int sent_count;       // 已发送数据的socket数
-    bool* socket_sent;    // socket发送状态
+    InfraxBool* socket_sent;    // socket发送状态
     InfraxNetAddr* peer_addrs; // 目标地址数组
     char buffer[1024];
     size_t bytes;
@@ -64,7 +64,7 @@ static void on_tcp_accept(InfraxAsync* self, int fd, short events, void* arg) {
         return;
     }
     
-    ctx->connected = true;
+    ctx->connected = INFRAX_TRUE;
     core->printf(core, "Client connected from %s:%d\n", client_addr.ip, client_addr.port);
 }
 
@@ -85,7 +85,7 @@ static void on_tcp_connect(InfraxAsync* self, int fd, short events, void* arg) {
     }
     
     core->printf(core, "Sent %zu bytes\n", ctx->bytes);
-    ctx->completed = true;
+    ctx->completed = INFRAX_TRUE;
 }
 
 // UDP数据发送回调函数
@@ -126,7 +126,7 @@ static void on_concurrent_tcp_accept(InfraxAsync* self, int fd, short events, vo
     for (int i = 0; i < ctx->client_count; i++) {
         if (!ctx->client_connected[i]) {
             ctx->clients[i] = new_client;
-            ctx->client_connected[i] = true;
+            ctx->client_connected[i] = INFRAX_TRUE;
             ctx->connected_count++;
             core->printf(core, "Client %d connected from %s:%d\n", i, client_addr.ip, client_addr.port);
             break;
@@ -156,16 +156,16 @@ static void on_concurrent_tcp_connect(InfraxAsync* self, int fd, short events, v
                 continue;
             }
             
-            ctx->client_sent[i] = true;
+            ctx->client_sent[i] = INFRAX_TRUE;
             core->printf(core, "Client %d sent %zu bytes\n", i, ctx->bytes);
         }
     }
     
     // 检查是否所有客户端都已发送数据
-    bool all_sent = true;
+    InfraxBool all_sent = INFRAX_TRUE;
     for (int i = 0; i < ctx->client_count; i++) {
         if (ctx->client_connected[i] && !ctx->client_sent[i]) {
-            all_sent = false;
+            all_sent = INFRAX_FALSE;
             break;
         }
     }
@@ -212,7 +212,7 @@ static void on_concurrent_udp_send(InfraxAsync* self, int fd, short events, void
                 continue;
             }
             
-            ctx->socket_sent[i] = true;
+            ctx->socket_sent[i] = INFRAX_TRUE;
             ctx->sent_count++;
             core->printf(core, "[DEBUG] UDP socket %d sent %zu bytes\n", i, ctx->bytes);
         }
@@ -237,20 +237,20 @@ static void test_async_tcp(void) {
     
     // 创建TCP服务器配置
     InfraxNetConfig server_config = {
-        .is_udp = false,
-        .is_nonblocking = true,  // 异步模式必须是非阻塞的
+        .is_udp = INFRAX_FALSE,
+        .is_nonblocking = INFRAX_TRUE,  // 异步模式必须是非阻塞的
         .send_timeout_ms = 1000,
         .recv_timeout_ms = 1000,
-        .reuse_addr = true
+        .reuse_addr = INFRAX_TRUE
     };
     
     // 创建TCP客户端配置
     InfraxNetConfig client_config = {
-        .is_udp = false,
-        .is_nonblocking = true,
+        .is_udp = INFRAX_FALSE,
+        .is_nonblocking = INFRAX_TRUE,
         .send_timeout_ms = 1000,
         .recv_timeout_ms = 1000,
-        .reuse_addr = false
+        .reuse_addr = INFRAX_FALSE
     };
     
     AsyncTcpContext ctx = {0};
@@ -330,11 +330,11 @@ static void test_async_udp(void) {
     core->printf(core, "Testing async UDP...\n");
     
     InfraxNetConfig config = {
-        .is_udp = true,
-        .is_nonblocking = true,
+        .is_udp = INFRAX_TRUE,
+        .is_nonblocking = INFRAX_TRUE,
         .send_timeout_ms = 1000,
         .recv_timeout_ms = 1000,
-        .reuse_addr = true
+        .reuse_addr = INFRAX_TRUE
     };
     
     AsyncUdpContext ctx = {0};
@@ -371,19 +371,19 @@ static void test_concurrent_tcp(int num_clients) {
     
     // 创建TCP服务器配置
     InfraxNetConfig server_config = {
-        .is_udp = false,
-        .is_nonblocking = true,
+        .is_udp = INFRAX_FALSE,
+        .is_nonblocking = INFRAX_TRUE,
         .send_timeout_ms = 1000,
         .recv_timeout_ms = 1000,
-        .reuse_addr = true
+        .reuse_addr = INFRAX_TRUE
     };
     
     // 创建并初始化上下文
     ConcurrentTcpContext ctx = {0};
     ctx.client_count = num_clients;
     ctx.clients = memory->alloc(memory, sizeof(InfraxNet*) * num_clients);
-    ctx.client_connected = memory->alloc(memory, sizeof(bool) * num_clients);
-    ctx.client_sent = memory->alloc(memory, sizeof(bool) * num_clients);
+    ctx.client_connected = memory->alloc(memory, sizeof(InfraxBool) * num_clients);
+    ctx.client_sent = memory->alloc(memory, sizeof(InfraxBool) * num_clients);
     INFRAX_ASSERT(core, ctx.clients != NULL && ctx.client_connected != NULL && ctx.client_sent != NULL);
     
     // 初始化服务器
@@ -419,11 +419,11 @@ static void test_concurrent_tcp(int num_clients) {
     // 创建并连接客户端
     for (int i = 0; i < num_clients; i++) {
         InfraxNetConfig client_config = {
-            .is_udp = false,
-            .is_nonblocking = true,
+            .is_udp = INFRAX_FALSE,
+            .is_nonblocking = INFRAX_TRUE,
             .send_timeout_ms = 1000,
             .recv_timeout_ms = 1000,
-            .reuse_addr = false
+            .reuse_addr = INFRAX_FALSE
         };
         
         ctx.clients[i] = InfraxNetClass.new(&client_config);
@@ -439,7 +439,7 @@ static void test_concurrent_tcp(int num_clients) {
             core->printf(core, "Client %d connect failed: %s\n", i, err.message);
             goto cleanup;
         } else {
-            ctx.client_connected[i] = true;
+            ctx.client_connected[i] = INFRAX_TRUE;
             ctx.connected_count++;
         }
     }
@@ -481,7 +481,7 @@ static void test_concurrent_udp(int num_sockets) {
     ctx.socket_count = num_sockets;
     ctx.sent_count = 0;  // 显式初始化
     ctx.sockets = memory->alloc(memory, sizeof(InfraxNet*) * num_sockets);
-    ctx.socket_sent = memory->alloc(memory, sizeof(bool) * num_sockets);
+    ctx.socket_sent = memory->alloc(memory, sizeof(InfraxBool) * num_sockets);
     ctx.peer_addrs = memory->alloc(memory, sizeof(InfraxNetAddr) * num_sockets);
     INFRAX_ASSERT(core, ctx.sockets != NULL && ctx.socket_sent != NULL && ctx.peer_addrs != NULL);
     
@@ -489,16 +489,16 @@ static void test_concurrent_udp(int num_sockets) {
                 ctx.socket_count, ctx.sent_count);
     
     // 初始化 socket_sent 数组
-    core->memset(core, ctx.socket_sent, 0, sizeof(bool) * num_sockets);
+    core->memset(core, ctx.socket_sent, 0, sizeof(InfraxBool) * num_sockets);
     
     // 创建UDP sockets
     for (int i = 0; i < num_sockets; i++) {
         InfraxNetConfig config = {
-            .is_udp = true,
-            .is_nonblocking = true,
+            .is_udp = INFRAX_TRUE,
+            .is_nonblocking = INFRAX_TRUE,
             .send_timeout_ms = 1000,
             .recv_timeout_ms = 1000,
-            .reuse_addr = true
+            .reuse_addr = INFRAX_TRUE
         };
         
         ctx.sockets[i] = InfraxNetClass.new(&config);
@@ -565,8 +565,8 @@ int main(void) {
     core = &gInfraxCore;
     memory = InfraxMemoryClass.new(&(InfraxMemoryConfig){
         .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
+        .use_gc = INFRAX_FALSE,
+        .use_pool = INFRAX_TRUE,
         .gc_threshold = 0
     });
     INFRAX_ASSERT(core, memory != NULL);

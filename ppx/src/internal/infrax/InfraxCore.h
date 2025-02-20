@@ -21,9 +21,87 @@ typedef int InfraxInt;//尽量不用
 typedef InfraxU64 InfraxClock;
 typedef InfraxU64 InfraxTime;
 
+// Time value structure
+typedef struct InfraxTimeVal {
+    InfraxI64 tv_sec;    // seconds
+    InfraxI64 tv_usec;   // microseconds
+} InfraxTimeVal;
+
 #define INFRAX_VOID void
 #define INFRAX_TRUE ((InfraxBool)1)
 #define INFRAX_FALSE ((InfraxBool)0)
+
+//-----------------------------------------------------------------------------
+// Network Types
+//-----------------------------------------------------------------------------
+// 网络地址族
+#define INFRAX_AF_INET 2  // IPv4
+
+// 网络协议族
+#define INFRAX_PF_INET INFRAX_AF_INET
+
+// Socket 类型
+#define INFRAX_SOCK_STREAM 1  // TCP
+#define INFRAX_SOCK_DGRAM  2  // UDP
+
+// 网络协议
+#define INFRAX_IPPROTO_TCP 6
+#define INFRAX_IPPROTO_UDP 17
+
+// Socket 选项级别
+#define INFRAX_SOL_SOCKET 0xffff
+
+// Socket 选项
+#define INFRAX_SO_REUSEADDR 0x0004
+#define INFRAX_SO_KEEPALIVE 0x0008
+#define INFRAX_SO_RCVTIMEO 0x1006
+#define INFRAX_SO_SNDTIMEO 0x1005
+#define INFRAX_SO_RCVBUF 0x1002
+#define INFRAX_SO_SNDBUF 0x1001
+#define INFRAX_SO_ERROR 0x1007
+
+// Socket shutdown 方式
+#define INFRAX_SHUT_RD   0
+#define INFRAX_SHUT_WR   1
+#define INFRAX_SHUT_RDWR 2
+
+// 错误码
+#define INFRAX_EAGAIN      11
+#define INFRAX_EWOULDBLOCK INFRAX_EAGAIN
+#define INFRAX_EINPROGRESS 115
+#define INFRAX_ENOTCONN    107
+#define INFRAX_ECONNREFUSED 111
+#define INFRAX_ETIMEDOUT   110
+#define INFRAX_EINVAL      22
+#define INFRAX_EBADF       9
+#define INFRAX_ENOTSOCK    88
+#define INFRAX_EOPNOTSUPP  95
+#define INFRAX_EADDRINUSE  98
+#define INFRAX_EADDRNOTAVAIL 99
+#define INFRAX_EAFNOSUPPORT 97
+#define INFRAX_EALREADY    114
+#define INFRAX_EISCONN     106
+#define INFRAX_EMSGSIZE    90
+#define INFRAX_ENOBUFS     105
+#define INFRAX_ENOMEM      12
+#define INFRAX_EPIPE       32
+
+// 网络地址结构 （TODO 要加 ipv6 地址？）
+typedef struct InfraxInAddr {
+    InfraxU32 s_addr;  // IPv4 地址，网络字节序
+} InfraxInAddr;
+
+typedef struct InfraxSockAddrIn {
+    InfraxU16 sin_family;     // 地址族 (AF_INET)
+    InfraxU16 sin_port;       // 端口号，网络字节序
+    InfraxInAddr sin_addr;    // IPv4 地址
+    InfraxU8 sin_zero[8];     // 填充字节
+} InfraxSockAddrIn;
+
+typedef struct InfraxSockAddr {
+    InfraxU16 sa_family;      // 地址族
+    InfraxU8 sa_data[14];     // 协议地址
+} InfraxSockAddr;
 
 // Forward declarations
 typedef struct InfraxCore InfraxCore;
@@ -116,6 +194,44 @@ typedef struct {
 #define INFRAX_SIGALRM 14  // SIGALRM 的标准值
 
 typedef void (*InfraxSignalHandler)(int);
+
+// File descriptor set structure
+typedef struct InfraxFdSet {
+    unsigned long fds_bits[1024 / (8 * sizeof(unsigned long))];
+} InfraxFdSet;
+
+// File descriptor operations flags
+#define INFRAX_F_GETFL  3   // Get file status flags
+#define INFRAX_F_SETFL  4   // Set file status flags
+#define INFRAX_F_GETFD  1   // Get file descriptor flags
+#define INFRAX_F_SETFD  2   // Set file descriptor flags
+
+// File status flags
+#define INFRAX_O_NONBLOCK  0x00004000  // Non-blocking mode
+
+// File descriptor macros
+#define INFRAX_FD_SETSIZE 1024
+
+// Error codes
+#define INFRAX_ERROR_IO_INVALID_FD -200
+#define INFRAX_ERROR_IO_FCNTL_FAILED -201
+#define INFRAX_ERROR_IO_SELECT_FAILED -202
+#define INFRAX_ERROR_IO_TIMEOUT -203
+#define INFRAX_ERROR_IO_INTERRUPTED -204
+
+// Poll events
+#define INFRAX_POLLIN  0x001  // 有数据可读
+#define INFRAX_POLLOUT 0x004  // 可以写数据
+#define INFRAX_POLLERR 0x008  // 发生错误
+#define INFRAX_POLLHUP 0x010  // 挂起
+#define INFRAX_POLLNVAL 0x020 // 文件描述符未打开
+
+// Poll structure
+typedef struct InfraxPollFd {
+    int fd;             // 文件描述符
+    short events;       // 请求的事件
+    short revents;      // 返回的事件
+} InfraxPollFd;
 
 // Core structure definition
 struct InfraxCore {
@@ -236,17 +352,19 @@ struct InfraxCore {
 
     // Network operations
     intptr_t (*socket_create)(struct InfraxCore* self, int domain, int type, int protocol);
-    int (*socket_bind)(struct InfraxCore* self, intptr_t handle, const void* addr, size_t size);
+    int (*socket_bind)(struct InfraxCore* self, intptr_t handle, const void* addr, size_t addr_len);
     int (*socket_listen)(struct InfraxCore* self, intptr_t handle, int backlog);
-    intptr_t (*socket_accept)(struct InfraxCore* self, intptr_t handle, void* addr, size_t* size);
-    int (*socket_connect)(struct InfraxCore* self, intptr_t handle, const void* addr, size_t size);
-    ssize_t (*socket_send)(struct InfraxCore* self, intptr_t handle, const void* data, size_t size, int flags);
-    ssize_t (*socket_recv)(struct InfraxCore* self, intptr_t handle, void* buffer, size_t size, int flags);
+    intptr_t (*socket_accept)(struct InfraxCore* self, intptr_t handle, void* addr, size_t* addr_len);
+    int (*socket_connect)(struct InfraxCore* self, intptr_t handle, const void* addr, size_t addr_len);
+    ssize_t (*socket_send)(struct InfraxCore* self, intptr_t handle, const void* buf, size_t len, int flags);
+    ssize_t (*socket_recv)(struct InfraxCore* self, intptr_t handle, void* buf, size_t len, int flags);
     int (*socket_close)(struct InfraxCore* self, intptr_t handle);
     int (*socket_shutdown)(struct InfraxCore* self, intptr_t handle, int how);
     int (*socket_set_option)(struct InfraxCore* self, intptr_t handle, int level, int option, const void* value, size_t len);
     int (*socket_get_option)(struct InfraxCore* self, intptr_t handle, int level, int option, void* value, size_t* len);
     int (*socket_get_error)(struct InfraxCore* self, intptr_t handle);
+    int (*socket_get_name)(struct InfraxCore* self, intptr_t handle, void* addr, size_t* addr_len);
+    int (*socket_get_peer)(struct InfraxCore* self, intptr_t handle, void* addr, size_t* addr_len);
 
     // Network address operations
     int (*ip_to_binary)(struct InfraxCore* self, const char* ip, void* addr, size_t size);
@@ -255,6 +373,34 @@ struct InfraxCore {
     // Error handling
     int (*get_last_error)(struct InfraxCore* self);
     const char* (*get_error_string)(struct InfraxCore* self, int error_code);
+
+    // File descriptor set operations
+    void (*fd_zero)(struct InfraxCore* self, InfraxFdSet* set);
+    void (*fd_set)(struct InfraxCore* self, int fd, InfraxFdSet* set);
+    void (*fd_clr)(struct InfraxCore* self, int fd, InfraxFdSet* set);
+    int (*fd_isset)(struct InfraxCore* self, int fd, InfraxFdSet* set);
+
+    // File descriptor control operations
+    int (*fcntl)(struct InfraxCore* self, int fd, int cmd, int arg);
+
+    // IO multiplexing
+    int (*select)(struct InfraxCore* self, int nfds, InfraxFdSet* readfds, 
+                  InfraxFdSet* writefds, InfraxFdSet* exceptfds, InfraxTimeVal* timeout);
+
+    // High-level IO operations
+    InfraxError (*wait_for_read)(struct InfraxCore* self, int fd, int timeout_ms);
+    InfraxError (*wait_for_write)(struct InfraxCore* self, int fd, int timeout_ms);
+    InfraxError (*wait_for_except)(struct InfraxCore* self, int fd, int timeout_ms);
+
+    // Poll operations
+    int (*poll)(struct InfraxCore* self, InfraxPollFd* fds, size_t nfds, int timeout_ms);
+    
+    // Timer operations
+    InfraxU32 (*timer_create)(struct InfraxCore* self, InfraxU32 interval_ms, InfraxBool is_interval, void (*handler)(void*), void* arg);
+    InfraxError (*timer_delete)(struct InfraxCore* self, InfraxU32 timer_id);
+    InfraxError (*timer_reset)(struct InfraxCore* self, InfraxU32 timer_id, InfraxU32 interval_ms);
+    InfraxError (*timer_pause)(struct InfraxCore* self, InfraxU32 timer_id);
+    InfraxError (*timer_resume)(struct InfraxCore* self, InfraxU32 timer_id);
 };
 
 // "Class" for static methods
