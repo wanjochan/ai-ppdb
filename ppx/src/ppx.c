@@ -5,8 +5,7 @@
 
 // Forward declarations
 static InfraxError ppx_execute_command(PolyxCmdline* cmdline, InfraxI32 argc, char** argv);
-static InfraxError handle_help_cmd(PolyxCmdline* cmdline, const polyx_config_t* config, 
-                                    InfraxI32 argc, char** argv);
+static InfraxError handle_help_cmd(const polyx_config_t* config, InfraxI32 argc, char** argv);
 static InfraxI32 string_to_int(InfraxCore* core, const char* str);
 
 // String to integer conversion
@@ -59,7 +58,7 @@ static InfraxError ppx_execute_command(PolyxCmdline* cmdline, InfraxI32 argc, ch
 
     if (!cmd_name) {
         // Show help if no command
-        return handle_help_cmd(cmdline, &cmdline->config, argc, argv);
+        return handle_help_cmd(&cmdline->config, argc, argv);
     }
 
     // Find and execute command
@@ -73,44 +72,16 @@ static InfraxError ppx_execute_command(PolyxCmdline* cmdline, InfraxI32 argc, ch
 }
 
 // Help command handler
-static InfraxError handle_help_cmd(PolyxCmdline* cmdline, const polyx_config_t* config, 
-                                    InfraxI32 argc, char** argv) {
+static InfraxError handle_help_cmd(const polyx_config_t* config, InfraxI32 argc, char** argv) {
     InfraxCore* core = InfraxCoreClass.singleton();
     
-    const char* cmd_name = NULL;
-    if (argc > 2) {
-        cmd_name = argv[2];
-    }
-
-    if (cmd_name) {
-        // Show specific command help
-        const polyx_cmd_t* cmd = PolyxCmdlineClass.find_command(cmdline, cmd_name);
-        if (!cmd) {
-            core->printf(core, "Unknown command: %s\n", cmd_name);
-            return make_error(INFRAX_ERROR_FILE_NOT_FOUND, "Command not found");
-        }
-
-        core->printf(core, "Command: %s\n", cmd->name);
-        core->printf(core, "Description: %s\n", cmd->desc);
-        if (cmd->options && cmd->option_count > 0) {
-            core->printf(core, "Options:\n");
-            for (InfraxI32 i = 0; i < cmd->option_count; i++) {
-                core->printf(core, "  --%s%s\t%s\n",
-                    cmd->options[i].name,
-                    cmd->options[i].has_value ? "=<value>" : "",
-                    cmd->options[i].desc);
-            }
-        }
-    } else {
-        // Show all commands
-        core->printf(core, "Usage: ppx [options] <command> [command_options]\n");
-        core->printf(core, "Available commands:\n");
-        const polyx_cmd_t* cmds = PolyxCmdlineClass.get_commands(cmdline);
-        InfraxSize cmd_count = PolyxCmdlineClass.get_command_count(cmdline);
-        for (InfraxSize i = 0; i < cmd_count; i++) {
-            core->printf(core, "  %-20s %s\n", cmds[i].name, cmds[i].desc);
-        }
-    }
+    core->printf(core, "Usage: ppx [options] <command> [command_options]\n");
+    core->printf(core, "Available commands:\n");
+    core->printf(core, "  %-20s %s\n", "help", "Show help information");
+    core->printf(core, "  %-20s %s\n", "rinetd", "Manage rinetd service");
+    core->printf(core, "  %-20s %s\n", "sqlite", "Manage sqlite3 service");
+    core->printf(core, "  %-20s %s\n", "memkv", "Manage memkv service");
+    
     return make_error(INFRAX_ERROR_OK, NULL);
 }
 
@@ -125,23 +96,26 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Parse command line for log level
-    InfraxError err = PolyxCmdlineClass.parse_args(cmdline, argc, argv);
-    if (INFRAX_ERROR_IS_OK(err)) {
-        char log_level_str[16] = {0};
-        err = PolyxCmdlineClass.get_option(cmdline, "--log-level", log_level_str, sizeof(log_level_str));
-        if (INFRAX_ERROR_IS_OK(err) && log_level_str[0]) {
-            InfraxI32 level = string_to_int(core, log_level_str);
-            if (level >= 0 && level <= 5) {  // TODO: Define log levels in Infrax
-                // TODO: Set log level through Infrax
-            }
-        }
-    }
-
     // Create service command instance
     PolyxServiceCmd* service_cmd = PolyxServiceCmdClass.new();
     if (!service_cmd) {
         core->printf(core, "Failed to create service command instance\n");
+        PolyxCmdlineClass.free(cmdline);
+        return 1;
+    }
+
+    // Register help command
+    static const polyx_cmd_t help_cmd = {
+        .name = "help",
+        .desc = "Show help information",
+        .options = NULL,
+        .option_count = 0,
+        .handler = handle_help_cmd
+    };
+    InfraxError err = PolyxCmdlineClass.register_cmd(cmdline, &help_cmd);
+    if (!INFRAX_ERROR_IS_OK(err)) {
+        core->printf(core, "Failed to register help command: %d\n", err.code);
+        PolyxServiceCmdClass.free(service_cmd);
         PolyxCmdlineClass.free(cmdline);
         return 1;
     }
@@ -153,6 +127,19 @@ int main(int argc, char** argv) {
         PolyxServiceCmdClass.free(service_cmd);
         PolyxCmdlineClass.free(cmdline);
         return 1;
+    }
+
+    // Parse command line for log level
+    err = PolyxCmdlineClass.parse_args(cmdline, argc, argv);
+    if (INFRAX_ERROR_IS_OK(err)) {
+        char log_level_str[16] = {0};
+        err = PolyxCmdlineClass.get_option(cmdline, "--log-level", log_level_str, sizeof(log_level_str));
+        if (INFRAX_ERROR_IS_OK(err) && log_level_str[0]) {
+            InfraxI32 level = string_to_int(core, log_level_str);
+            if (level >= 0 && level <= 5) {  // TODO: Define log levels in Infrax
+                // TODO: Set log level through Infrax
+            }
+        }
     }
 
     // Execute command

@@ -38,12 +38,36 @@ static PolyxServiceCmd* polyx_service_cmd_new(void) {
     self->self = self;
     self->klass = &PolyxServiceCmdClass;
 
+    // Create command line instance
+    self->cmdline = PolyxCmdlineClass.new();
+    if (!self->cmdline) {
+        g_memory->dealloc(g_memory, self);
+        return NULL;
+    }
+
+    // Create service instance
+    self->service = PolyxServiceClass.new();
+    if (!self->service) {
+        PolyxCmdlineClass.free(self->cmdline);
+        g_memory->dealloc(g_memory, self);
+        return NULL;
+    }
+
     return self;
 }
 
 // Destructor
 static void polyx_service_cmd_free(PolyxServiceCmd* self) {
     if (!self) return;
+    
+    if (self->cmdline) {
+        PolyxCmdlineClass.free(self->cmdline);
+    }
+    
+    if (self->service) {
+        PolyxServiceClass.free(self->service);
+    }
+    
     g_memory->dealloc(g_memory, self);
 }
 
