@@ -2,12 +2,6 @@
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
 
-#include <string.h>
-#include <errno.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <time.h>
-
 // Poll events
 #define INFRAX_POLLIN  0x001
 #define INFRAX_POLLOUT 0x004
@@ -21,10 +15,10 @@
 // Timer structure
 typedef struct {
     InfraxU32 id;
-    uint64_t expire_time;
+    InfraxU64 expire_time;
     InfraxU32 interval_ms;
-    bool is_interval;
-    bool is_valid;
+    InfraxBool is_interval;
+    InfraxBool is_valid;
     InfraxPollCallback handler;
     void* arg;
 } InfraxTimer;
@@ -33,10 +27,10 @@ typedef struct {
 typedef struct {
     InfraxTimer* timers;     // Dynamic timer pool
     InfraxTimer** heap;      // Dynamic min heap
-    size_t capacity;         // Current capacity
-    size_t heap_size;        // Current heap size
+    InfraxSize capacity;     // Current capacity
+    InfraxSize heap_size;    // Current heap size
     InfraxU32 next_id;
-    bool initialized;
+    InfraxBool initialized;
 } InfraxTimerSystem;
 
 static InfraxTimerSystem g_timers = {0};
@@ -52,22 +46,22 @@ struct InfraxPollInfo {
 
 // Poll structure
 struct InfraxPollset {
-    struct pollfd* fds;
+    InfraxPollFd* fds;
     struct InfraxPollInfo** infos;
-    size_t size;
-    size_t capacity;
+    InfraxSize size;
+    InfraxSize capacity;
 };
 
 // 堆操作辅助函数
-static void heap_swap(size_t i, size_t j) {
+static void heap_swap(InfraxSize i, InfraxSize j) {
     InfraxTimer* temp = g_timers.heap[i];
     g_timers.heap[i] = g_timers.heap[j];
     g_timers.heap[j] = temp;
 }
 
-static void heap_up(size_t pos) {
+static void heap_up(InfraxSize pos) {
     while (pos > 0) {
-        size_t parent = (pos - 1) / 2;
+        InfraxSize parent = (pos - 1) / 2;
         if (g_timers.heap[parent]->expire_time <= g_timers.heap[pos]->expire_time) {
             break;
         }
@@ -76,11 +70,11 @@ static void heap_up(size_t pos) {
     }
 }
 
-static void heap_down(size_t pos) {
-    while (true) {
-        size_t min_pos = pos;
-        size_t left = 2 * pos + 1;
-        size_t right = 2 * pos + 2;
+static void heap_down(InfraxSize pos) {
+    while (INFRAX_TRUE) {
+        InfraxSize min_pos = pos;
+        InfraxSize left = 2 * pos + 1;
+        InfraxSize right = 2 * pos + 2;
         
         if (left < g_timers.heap_size && 
             g_timers.heap[left]->expire_time < g_timers.heap[min_pos]->expire_time) {
@@ -100,10 +94,7 @@ static void heap_down(size_t pos) {
 }
 
 static void remove_timer_from_heap(InfraxTimer* timer) {
-    if (!timer || g_timers.heap_size == 0) return;
-    
-    // Find timer in heap
-    size_t pos;
+    InfraxSize pos;
     for (pos = 0; pos < g_timers.heap_size; pos++) {
         if (g_timers.heap[pos] == timer) break;
     }
@@ -132,8 +123,8 @@ extern InfraxMemoryClassType InfraxMemoryClass;
 static InfraxCore* g_core = NULL;
 
 // Initialize timer system
-static bool init_timer_system(void) {
-    if (g_timers.initialized) return true;
+static InfraxBool init_timer_system(void) {
+    if (g_timers.initialized) return INFRAX_TRUE;
     
     // Allocate initial arrays
     g_timers.timers = (InfraxTimer*)g_memory->alloc(g_memory, INITIAL_TIMER_CAPACITY * sizeof(InfraxTimer));
@@ -142,20 +133,20 @@ static bool init_timer_system(void) {
     if (!g_timers.timers || !g_timers.heap) {
         if (g_timers.timers) g_memory->dealloc(g_memory, g_timers.timers);
         if (g_timers.heap) g_memory->dealloc(g_memory, g_timers.heap);
-        return false;
+        return INFRAX_FALSE;
     }
     
     g_timers.capacity = INITIAL_TIMER_CAPACITY;
     g_timers.heap_size = 0;
     g_timers.next_id = 1;  // Start from 1
-    g_timers.initialized = true;
+    g_timers.initialized = INFRAX_TRUE;
     
-    return true;
+    return INFRAX_TRUE;
 }
 
 // Expand timer arrays
-static bool expand_timer_arrays(void) {
-    size_t new_capacity = g_timers.capacity * 2;
+static InfraxBool expand_timer_arrays(void) {
+    InfraxSize new_capacity = g_timers.capacity * 2;
     
     // Allocate new arrays
     InfraxTimer* new_timers = (InfraxTimer*)g_memory->alloc(g_memory, new_capacity * sizeof(InfraxTimer));
@@ -164,16 +155,16 @@ static bool expand_timer_arrays(void) {
     if (!new_timers || !new_heap) {
         if (new_timers) g_memory->dealloc(g_memory, new_timers);
         if (new_heap) g_memory->dealloc(g_memory, new_heap);
-        return false;
+        return INFRAX_FALSE;
     }
     
     // Copy existing data
-    memcpy(new_timers, g_timers.timers, g_timers.capacity * sizeof(InfraxTimer));
-    memcpy(new_heap, g_timers.heap, g_timers.heap_size * sizeof(InfraxTimer*));
+    g_core->memcpy(g_core, new_timers, g_timers.timers, g_timers.capacity * sizeof(InfraxTimer));
+    g_core->memcpy(g_core, new_heap, g_timers.heap, g_timers.heap_size * sizeof(InfraxTimer*));
     
     // Update heap pointers
-    for (size_t i = 0; i < g_timers.heap_size; i++) {
-        size_t offset = g_timers.heap[i] - g_timers.timers;
+    for (InfraxSize i = 0; i < g_timers.heap_size; i++) {
+        InfraxSize offset = g_timers.heap[i] - g_timers.timers;
         new_heap[i] = new_timers + offset;
     }
     
@@ -186,32 +177,32 @@ static bool expand_timer_arrays(void) {
     g_timers.heap = new_heap;
     g_timers.capacity = new_capacity;
     
-    return true;
+    return INFRAX_TRUE;
 }
 
 // Add timer to heap
-static bool add_timer_to_heap(InfraxTimer* timer) {
-    if (!timer || !timer->is_valid) return false;
+static InfraxBool add_timer_to_heap(InfraxTimer* timer) {
+    if (!timer || !timer->is_valid) return INFRAX_FALSE;
     
     // Check if expansion is needed
     if (g_timers.heap_size >= g_timers.capacity) {
-        if (!expand_timer_arrays()) return false;
+        if (!expand_timer_arrays()) return INFRAX_FALSE;
     }
     
-    size_t pos = g_timers.heap_size++;
+    InfraxSize pos = g_timers.heap_size++;
     g_timers.heap[pos] = timer;
     heap_up(pos);
     
-    return true;
+    return INFRAX_TRUE;
 }
 
 // Create new timer
-static InfraxU32 create_timer(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg, bool is_interval) {
+static InfraxU32 create_timer(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg, InfraxBool is_interval) {
     if (!init_timer_system() || !handler) return INVALID_TIMER_ID;
     
     // Find free timer slot
     InfraxTimer* timer = NULL;
-    for (size_t i = 0; i < g_timers.capacity; i++) {
+    for (InfraxSize i = 0; i < g_timers.capacity; i++) {
         if (!g_timers.timers[i].is_valid) {
             timer = &g_timers.timers[i];
             break;
@@ -229,13 +220,13 @@ static InfraxU32 create_timer(InfraxU32 interval_ms, InfraxPollCallback handler,
     timer->expire_time = g_core->time_monotonic_ms(g_core) + interval_ms;
     timer->interval_ms = interval_ms;
     timer->is_interval = is_interval;
-    timer->is_valid = true;
+    timer->is_valid = INFRAX_TRUE;
     timer->handler = handler;
     timer->arg = arg;
     
     // Add to heap
     if (!add_timer_to_heap(timer)) {
-        timer->is_valid = false;
+        timer->is_valid = INFRAX_FALSE;
         return INVALID_TIMER_ID;
     }
     
@@ -244,12 +235,12 @@ static InfraxU32 create_timer(InfraxU32 interval_ms, InfraxPollCallback handler,
 
 // Set timeout
 static InfraxU32 infrax_async_set_timeout(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg) {
-    return create_timer(interval_ms, handler, arg, false);
+    return create_timer(interval_ms, handler, arg, INFRAX_FALSE);
 }
 
 // Set interval
 static InfraxU32 infrax_async_set_interval(InfraxU32 interval_ms, InfraxPollCallback handler, void* arg) {
-    return create_timer(interval_ms, handler, arg, true);
+    return create_timer(interval_ms, handler, arg, INFRAX_TRUE);
 }
 
 // Clear timer
@@ -293,10 +284,10 @@ static bool init_memory(void) {
 }
 
 // Initialize pollset
-static int pollset_init(struct InfraxPollset* ps, size_t initial_capacity) {
+static int pollset_init(struct InfraxPollset* ps, InfraxSize initial_capacity) {
     if (!ps || initial_capacity == 0 || !g_memory) return -1;
     
-    ps->fds = (struct pollfd*)g_memory->alloc(g_memory, initial_capacity * sizeof(struct pollfd));
+    ps->fds = (InfraxPollFd*)g_memory->alloc(g_memory, initial_capacity * sizeof(InfraxPollFd));
     ps->infos = (struct InfraxPollInfo**)g_memory->alloc(g_memory, initial_capacity * sizeof(struct InfraxPollInfo*));
     
     if (!ps->fds || !ps->infos) {
@@ -314,7 +305,7 @@ static int pollset_init(struct InfraxPollset* ps, size_t initial_capacity) {
 static void pollset_cleanup(struct InfraxPollset* ps) {
     if (!ps || !g_memory) return;
     
-    for (size_t i = 0; i < ps->size; i++) {
+    for (InfraxSize i = 0; i < ps->size; i++) {
         if (ps->infos[i]) g_memory->dealloc(g_memory, ps->infos[i]);
     }
     
@@ -347,7 +338,7 @@ static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, 
     if (!g_pollset || fd < 0) return -1;
     
     // Check if fd already exists
-    for (size_t i = 0; i < g_pollset->size; i++) {
+    for (InfraxSize i = 0; i < g_pollset->size; i++) {
         if (g_pollset->fds[i].fd == fd) {
             // Update existing entry
             g_pollset->fds[i].events = events;
@@ -359,8 +350,8 @@ static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, 
     
     // Check capacity
     if (g_pollset->size >= g_pollset->capacity) {
-        size_t new_capacity = g_pollset->capacity * 2;
-        struct pollfd* new_fds = (struct pollfd*)g_memory->alloc(g_memory, new_capacity * sizeof(struct pollfd));
+        InfraxSize new_capacity = g_pollset->capacity * 2;
+        InfraxPollFd* new_fds = (InfraxPollFd*)g_memory->alloc(g_memory, new_capacity * sizeof(InfraxPollFd));
         struct InfraxPollInfo** new_infos = (struct InfraxPollInfo**)g_memory->alloc(g_memory, new_capacity * sizeof(struct InfraxPollInfo*));
         
         if (!new_fds || !new_infos) {
@@ -369,8 +360,8 @@ static int infrax_async_pollset_add_fd(InfraxAsync* self, int fd, short events, 
             return -1;
         }
         
-        memcpy(new_fds, g_pollset->fds, g_pollset->size * sizeof(struct pollfd));
-        memcpy(new_infos, g_pollset->infos, g_pollset->size * sizeof(struct InfraxPollInfo*));
+        g_core->memcpy(g_core, new_fds, g_pollset->fds, g_pollset->size * sizeof(InfraxPollFd));
+        g_core->memcpy(g_core, new_infos, g_pollset->infos, g_pollset->size * sizeof(struct InfraxPollInfo*));
         
         g_memory->dealloc(g_memory, g_pollset->fds);
         g_memory->dealloc(g_memory, g_pollset->infos);
@@ -427,8 +418,8 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
     if (!g_pollset) return 0;
     
     // Check timers
-    uint64_t now = g_core->time_monotonic_ms(g_core);
-    bool timer_triggered = false;
+    InfraxU64 now = g_core->time_monotonic_ms(g_core);
+    InfraxBool timer_triggered = INFRAX_FALSE;
     
     while (g_timers.heap_size > 0 && g_timers.heap[0]->expire_time <= now) {
         InfraxTimer* timer = g_timers.heap[0];
@@ -436,7 +427,7 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
             // Call handler
             if (timer->handler) {
                 timer->handler(self, -1, INFRAX_POLLIN, timer->arg);
-                timer_triggered = true;
+                timer_triggered = INFRAX_TRUE;
             }
             
             if (timer->is_interval) {
@@ -446,7 +437,7 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
                 add_timer_to_heap(timer);
             } else {
                 // Remove one-shot timer
-                timer->is_valid = false;
+                timer->is_valid = INFRAX_FALSE;
                 remove_timer_from_heap(timer);
             }
         } else {
@@ -461,16 +452,17 @@ static int infrax_async_pollset_poll(InfraxAsync* self, int timeout_ms) {
     }
     
     // Poll with timeout
-    int ret = poll(g_pollset->fds, g_pollset->size, timeout_ms);
+    int ret = g_core->poll(g_core, g_pollset->fds, g_pollset->size, timeout_ms);
     if (ret < 0) {
-        if (errno == EINTR) return 0;
+        int err = g_core->get_last_error(g_core);
+        if (err == INFRAX_EINTR) return 0;
         return -1;
     }
     
     // Process events in batch
     if (ret > 0) {
         // Process all ready events
-        for (size_t i = 0; i < g_pollset->size; i++) {
+        for (InfraxSize i = 0; i < g_pollset->size; i++) {
             if (g_pollset->fds[i].revents) {
                 struct InfraxPollInfo* info = g_pollset->infos[i];
                 if (info && info->callback) {

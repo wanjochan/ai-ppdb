@@ -85,6 +85,7 @@ typedef struct InfraxTimeVal {
 #define INFRAX_ENOBUFS     105
 #define INFRAX_ENOMEM      12
 #define INFRAX_EPIPE       32
+#define INFRAX_EINTR       4
 
 // 网络地址结构 （TODO 要加 ipv6 地址？）
 typedef struct InfraxInAddr {
