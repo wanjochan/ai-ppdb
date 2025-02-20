@@ -1,15 +1,15 @@
 #ifndef COSMOPOLITAN_H_
 #define COSMOPOLITAN_H_
 
-#if defined(_WIN32)
+// #if defined(_WIN32)
 
-//win for quick dev and test only, and the binary is not portable for arm osx
-//https://justine.lol/cosmopolitan/windows-compiling.html
-//https://justine.lol/cosmopolitan/cosmopolitan.zip
-//https://justine.lol/linux-compiler-on-windows/cross9.zip
-#include "../../../repos/cosmos/cosmopolitan.h"
+// //win for quick dev and test only, and the binary is not portable for arm osx
+// //https://justine.lol/cosmopolitan/windows-compiling.html
+// //https://justine.lol/cosmopolitan/cosmopolitan.zip
+// //https://justine.lol/linux-compiler-on-windows/cross9.zip
+// #include "../../../repos/cosmos/cosmopolitan.h"
 
-#else
+// #else
 
 #include <cosmo.h>
 
@@ -45,5 +45,11 @@
 #include <netdb.h>
 #include <sys/resource.h>  /* 系统资源使用统计 */
 
-#endif
+#include <errno.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+// #endif
 #endif /* COSMOPOLITAN_H_ */

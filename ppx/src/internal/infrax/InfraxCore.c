@@ -1,6 +1,30 @@
 #include "cosmopolitan.h"
-
 #include "InfraxCore.h"
+
+//forward declare
+// Network operations
+typedef intptr_t (*InfraxCoreSocketCreate)(struct InfraxCore* self, int domain, int type, int protocol);
+typedef int (*InfraxCoreSocketBind)(struct InfraxCore* self, intptr_t handle, const void* addr, size_t size);
+typedef int (*InfraxCoreSocketListen)(struct InfraxCore* self, intptr_t handle, int backlog);
+typedef intptr_t (*InfraxCoreSocketAccept)(struct InfraxCore* self, intptr_t handle, void* addr, size_t* size);
+typedef int (*InfraxCoreSocketConnect)(struct InfraxCore* self, intptr_t handle, const void* addr, size_t size);
+typedef ssize_t (*InfraxCoreSocketSend)(struct InfraxCore* self, intptr_t handle, const void* data, size_t size, int flags);
+typedef ssize_t (*InfraxCoreSocketRecv)(struct InfraxCore* self, intptr_t handle, void* buffer, size_t size, int flags);
+typedef int (*InfraxCoreSocketClose)(struct InfraxCore* self, intptr_t handle);
+typedef int (*InfraxCoreSocketShutdown)(struct InfraxCore* self, intptr_t handle, int how);
+typedef int (*InfraxCoreSocketSetOption)(struct InfraxCore* self, intptr_t handle, int level, int option, const void* value, size_t len);
+typedef int (*InfraxCoreSocketGetOption)(struct InfraxCore* self, intptr_t handle, int level, int option, void* value, size_t* len);
+typedef int (*InfraxCoreSocketGetError)(struct InfraxCore* self, intptr_t handle);
+
+// Network address operations
+typedef int (*InfraxCoreIpToBinary)(struct InfraxCore* self, const char* ip, void* addr, size_t size);
+typedef int (*InfraxCoreBinaryToIp)(struct InfraxCore* self, const void* addr, char* ip, size_t size);
+
+// Error handling
+typedef int (*InfraxCoreGetLastError)(struct InfraxCore* self);
+typedef const char* (*InfraxCoreGetErrorString)(struct InfraxCore* self, int error_code);
+
+
 
 void* infrax_core_malloc(InfraxCore *self, size_t size) {
     return malloc(size);
@@ -21,6 +45,14 @@ int infrax_core_printf(InfraxCore *self, const char* format, ...) {
     va_list args;
     va_start(args, format);
     int result = vprintf(format, args);
+    va_end(args);
+    return result;
+}
+
+int infrax_core_fprintf(InfraxCore *self, int* stream, const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    int result = fprintf((FILE*)stream, format, args);
     va_end(args);
     return result;
 }
@@ -822,6 +854,84 @@ static long long infrax_core_atoll(InfraxCore *self, const char* str) {
     return sign * result;
 }
 
+// Network operations implementations
+static intptr_t infrax_core_socket_create(InfraxCore* self, int domain, int type, int protocol) {
+    return socket(domain, type, protocol);
+}
+
+static int infrax_core_socket_bind(InfraxCore* self, intptr_t handle, const void* addr, size_t size) {
+    return bind(handle, (const struct sockaddr*)addr, size);
+}
+
+static int infrax_core_socket_listen(InfraxCore* self, intptr_t handle, int backlog) {
+    return listen(handle, backlog);
+}
+
+static intptr_t infrax_core_socket_accept(InfraxCore* self, intptr_t handle, void* addr, size_t* size) {
+    socklen_t addr_len = *size;
+    intptr_t result = accept(handle, (struct sockaddr*)addr, &addr_len);
+    *size = addr_len;
+    return result;
+}
+
+static int infrax_core_socket_connect(InfraxCore* self, intptr_t handle, const void* addr, size_t size) {
+    return connect(handle, (const struct sockaddr*)addr, size);
+}
+
+static ssize_t infrax_core_socket_send(InfraxCore* self, intptr_t handle, const void* data, size_t size, int flags) {
+    return send(handle, data, size, flags);
+}
+
+static ssize_t infrax_core_socket_recv(InfraxCore* self, intptr_t handle, void* buffer, size_t size, int flags) {
+    return recv(handle, buffer, size, flags);
+}
+
+static int infrax_core_socket_close(InfraxCore* self, intptr_t handle) {
+    return close(handle);
+}
+
+static int infrax_core_socket_shutdown(InfraxCore* self, intptr_t handle, int how) {
+    return shutdown(handle, how);
+}
+
+static int infrax_core_socket_set_option(InfraxCore* self, intptr_t handle, int level, int option, const void* value, size_t len) {
+    return setsockopt(handle, level, option, value, len);
+}
+
+static int infrax_core_socket_get_option(InfraxCore* self, intptr_t handle, int level, int option, void* value, size_t* len) {
+    socklen_t optlen = *len;
+    int result = getsockopt(handle, level, option, value, &optlen);
+    *len = optlen;
+    return result;
+}
+
+static int infrax_core_socket_get_error(InfraxCore* self, intptr_t handle) {
+    int error = 0;
+    socklen_t len = sizeof(error);
+    if (getsockopt(handle, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
+        return errno;
+    }
+    return error;
+}
+
+// Network address operations implementations
+static int infrax_core_ip_to_binary(InfraxCore* self, const char* ip, void* addr, size_t size) {
+    return inet_pton(AF_INET, ip, addr);
+}
+
+static int infrax_core_binary_to_ip(InfraxCore* self, const void* addr, char* ip, size_t size) {
+    return inet_ntop(AF_INET, addr, ip, size) ? 0 : -1;
+}
+
+// Error handling implementations
+static int infrax_core_get_last_error(InfraxCore* self) {
+    return errno;
+}
+
+static const char* infrax_core_get_error_string(InfraxCore* self, int error_code) {
+    return strerror(error_code);
+}
+
 // Initialize singleton instance
 InfraxCore gInfraxCore = {
     .self = &gInfraxCore,
@@ -831,6 +941,7 @@ InfraxCore gInfraxCore = {
     .forward_call = infrax_core_forward_call,
     .printf = infrax_core_printf,
     .snprintf = infrax_core_snprintf,
+    .fprintf = infrax_core_fprintf,
     
     // Memory operations
     .malloc = infrax_core_malloc,
@@ -935,6 +1046,28 @@ InfraxCore gInfraxCore = {
     // Signal operations
     .signal = infrax_core_signal,
     .alarm = infrax_core_alarm,
+
+    // Network operations
+    .socket_create = infrax_core_socket_create,
+    .socket_bind = infrax_core_socket_bind,
+    .socket_listen = infrax_core_socket_listen,
+    .socket_accept = infrax_core_socket_accept,
+    .socket_connect = infrax_core_socket_connect,
+    .socket_send = infrax_core_socket_send,
+    .socket_recv = infrax_core_socket_recv,
+    .socket_close = infrax_core_socket_close,
+    .socket_shutdown = infrax_core_socket_shutdown,
+    .socket_set_option = infrax_core_socket_set_option,
+    .socket_get_option = infrax_core_socket_get_option,
+    .socket_get_error = infrax_core_socket_get_error,
+
+    // Network address operations
+    .ip_to_binary = infrax_core_ip_to_binary,
+    .binary_to_ip = infrax_core_binary_to_ip,
+
+    // Error handling
+    .get_last_error = infrax_core_get_last_error,
+    .get_error_string = infrax_core_get_error_string,
 };
 
 // Simple singleton getter

@@ -1,4 +1,3 @@
-#include "cosmopolitan.h"
 #include "internal/infrax/InfraxAsync.h"
 #include "internal/infrax/InfraxCore.h"
 #include "internal/infrax/InfraxMemory.h"
@@ -492,7 +491,7 @@ static InfraxAsync* infrax_async_new(InfraxAsyncCallback callback, void* arg) {
     InfraxAsync* self = (InfraxAsync*)g_memory->alloc(g_memory, sizeof(InfraxAsync));
     if (!self) return NULL;
     
-    memset(self, 0, sizeof(InfraxAsync));
+    gInfraxCore.memset(&gInfraxCore, self, 0, sizeof(InfraxAsync));
     self->klass = &InfraxAsyncClass;
     self->state = INFRAX_ASYNC_PENDING;
     self->callback = callback;

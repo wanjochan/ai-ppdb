@@ -1,4 +1,3 @@
-#include "cosmopolitan.h"
 #include "InfraxMemory.h"
 
 // Forward declarations of instance methods
@@ -13,7 +12,7 @@ static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
     if (!config) return NULL;
 
     // Allocate memory manager
-    InfraxMemory* self = malloc(sizeof(InfraxMemory));
+    InfraxMemory* self = gInfraxCore.malloc(&gInfraxCore, sizeof(InfraxMemory));
     if (!self) return NULL;
 
     self->self = self;
@@ -31,7 +30,7 @@ static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
 
     // Initialize memory pool
     if (self->config.use_pool) {
-        self->pool_start = malloc(self->config.initial_size);
+        self->pool_start = gInfraxCore.malloc(&gInfraxCore, self->config.initial_size);
         if (self->pool_start) {
             self->pool_size = self->config.initial_size;
             self->free_list = self->pool_start;
@@ -43,7 +42,7 @@ static InfraxMemory* infrax_memory_new(const InfraxMemoryConfig* config) {
     }
 
     // Initialize stats
-    memset(&self->stats, 0, sizeof(InfraxMemoryStats));
+    gInfraxCore.memset(&gInfraxCore,&self->stats, 0, sizeof(InfraxMemoryStats));
 
     return self;
 }
@@ -54,18 +53,18 @@ static void infrax_memory_free(InfraxMemory* self) {
     
     // Free memory pool
     if (self->pool_start) {
-        free(self->pool_start);
+        gInfraxCore.free(&gInfraxCore, self->pool_start);
     }
     
     // Free GC objects
     MemoryBlock* obj = self->gc_objects;
     while (obj) {
         MemoryBlock* next = obj->next;
-        free(obj);
+        gInfraxCore.free(&gInfraxCore, obj);
         obj = next;
     }
     
-    free(self);
+    gInfraxCore.free(&gInfraxCore, self);
 }
 
 // The "static" interface implementation
@@ -140,7 +139,7 @@ static void sweep_unused(InfraxMemory* self) {
             *obj_ptr = obj->next;
             self->stats.total_deallocations++;
             self->stats.current_usage -= obj->size;
-            free(obj);
+            gInfraxCore.free(&gInfraxCore, obj);
         } else {
             obj->is_used = INFRAX_FALSE;  // Reset for next collection
             obj_ptr = &obj->next;
@@ -170,7 +169,7 @@ static void* infrax_memory_alloc(InfraxMemory* self, size_t size) {
     if (!ptr) {
         // Fallback to direct allocation
         size_t total_size = sizeof(MemoryBlock) + size;
-        MemoryBlock* block = malloc(total_size);
+        MemoryBlock* block = gInfraxCore.malloc(&gInfraxCore, total_size);
         if (!block) return NULL;
         
         block->size = size;
@@ -229,7 +228,7 @@ static void infrax_memory_dealloc(InfraxMemory* self, void* ptr) {
         } else {
             self->stats.current_usage = 0;
         }
-        free(block);
+        gInfraxCore.free(&gInfraxCore, block);
     }
     // If using GC, memory will be freed during collection
 }
@@ -286,14 +285,14 @@ static void* infrax_memory_realloc(InfraxMemory* self, void* ptr, size_t size) {
     void* new_ptr = infrax_memory_alloc(self, size);
     if (!new_ptr) return NULL;
     
-    memcpy(new_ptr, ptr, block->size);
+    gInfraxCore.memcpy(&gInfraxCore, new_ptr, ptr, block->size);
     infrax_memory_dealloc(self, ptr);
     return new_ptr;
 }
 
 static void infrax_memory_get_stats(const InfraxMemory* self, InfraxMemoryStats* stats) {
     if (!self || !stats) return;
-    memcpy(stats, &self->stats, sizeof(InfraxMemoryStats));
+    gInfraxCore.memcpy(&gInfraxCore, stats, &self->stats, sizeof(InfraxMemoryStats));
 }
 
 static void infrax_memory_collect(InfraxMemory* self) {

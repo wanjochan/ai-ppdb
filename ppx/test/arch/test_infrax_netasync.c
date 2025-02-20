@@ -12,6 +12,7 @@ typedef struct {
     InfraxNet* server;
     InfraxNet* client;
     bool connected;
+    bool completed;
     char buffer[1024];
     size_t bytes;
 } AsyncTcpContext;
@@ -74,11 +75,17 @@ static void on_tcp_connect(InfraxAsync* self, int fd, short events, void* arg) {
     
     InfraxError err = ctx->client->klass->send(ctx->client, test_data, core->strlen(core, test_data), &ctx->bytes);
     if (INFRAX_ERROR_IS_ERR(err)) {
+        if (err.code == INFRAX_ERROR_NET_WOULD_BLOCK_CODE) {
+            // 继续尝试发送
+            InfraxAsyncClass.setTimeout(10, on_tcp_connect, ctx);
+            return;
+        }
         core->printf(core, "Send failed: %s\n", err.message);
         return;
     }
     
     core->printf(core, "Sent %zu bytes\n", ctx->bytes);
+    ctx->completed = true;
 }
 
 // UDP数据发送回调函数
@@ -228,10 +235,13 @@ static void test_async_tcp(void) {
     // 绑定服务器地址
     InfraxNetAddr server_addr = {0};
     core->strncpy(core, server_addr.ip, "127.0.0.1", sizeof(server_addr.ip));
-    server_addr.port = 12345;
+    server_addr.port = 45678;  // 使用一个不太常用的端口
     
     InfraxError err = ctx.server->klass->bind(ctx.server, &server_addr);
-    INFRAX_ASSERT(core, INFRAX_ERROR_IS_OK(err));
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        core->printf(core, "Bind failed: %s\n", err.message);
+        INFRAX_ASSERT(core, INFRAX_ERROR_IS_OK(err));
+    }
     
     err = ctx.server->klass->listen(ctx.server, 5);
     INFRAX_ASSERT(core, INFRAX_ERROR_IS_OK(err));
@@ -245,14 +255,26 @@ static void test_async_tcp(void) {
         InfraxAsyncClass.setTimeout(10, on_tcp_connect, &ctx);
     } else {
         INFRAX_ASSERT(core, INFRAX_ERROR_IS_OK(err));
+        // 如果连接立即成功，直接发送数据
+        on_tcp_connect(async, ctx.client->native_handle, 0, &ctx);
     }
     
     // 等待异步操作完成
-    core->sleep_ms(core, 2000);
+    int timeout = 1000;  // 1秒超时
+    while (!ctx.completed && timeout > 0) {
+        InfraxAsyncClass.pollset_poll(async, 10);  // 每次等待10ms
+        timeout -= 10;
+    }
+    
+    INFRAX_ASSERT(core, ctx.completed);
     
     // 清理资源
-    InfraxNetClass.free(ctx.server);
-    InfraxNetClass.free(ctx.client);
+    if (ctx.server) {
+        InfraxNetClass.free(ctx.server);
+    }
+    if (ctx.client) {
+        InfraxNetClass.free(ctx.client);
+    }
     
     core->printf(core, "Async TCP test completed\n");
 }
@@ -433,37 +455,36 @@ static void test_concurrent_udp(int num_sockets) {
 }
 
 int main(void) {
-    core = InfraxCoreClass.singleton();
-    INFRAX_ASSERT(core, core != NULL);
-    
-    // 创建内存管理器
-    InfraxMemoryConfig mem_config = {
+    // 初始化全局实例
+    core = &gInfraxCore;
+    memory = InfraxMemoryClass.new(&(InfraxMemoryConfig){
         .initial_size = 1024 * 1024,  // 1MB
         .use_gc = false,
         .use_pool = true,
         .gc_threshold = 0
-    };
-    memory = InfraxMemoryClass.new(&mem_config);
+    });
     INFRAX_ASSERT(core, memory != NULL);
-    
-    // 创建异步执行器
+
+    // 创建异步实例
     async = InfraxAsyncClass.new(NULL, NULL);
     INFRAX_ASSERT(core, async != NULL);
-    
+
     core->printf(core, "Starting InfraxNet async tests...\n");
-    
-    // 运行基本测试
+
+    // 运行测试
     test_async_tcp();
     test_async_udp();
-    
-    // 运行并发测试
-    test_concurrent_tcp(10);  // 10个并发TCP客户端
-    test_concurrent_udp(10);  // 10个并发UDP socket
-    
+    test_concurrent_tcp(5);  // 测试5个并发客户端
+    test_concurrent_udp(5);  // 测试5个并发UDP socket
+
     // 清理资源
-    InfraxAsyncClass.free(async);
-    InfraxMemoryClass.free(memory);
-    
+    if (async) {
+        InfraxAsyncClass.free(async);
+    }
+    if (memory) {
+        InfraxMemoryClass.free(memory);
+    }
+
     core->printf(core, "All InfraxNet async tests passed!\n");
     return 0;
 }

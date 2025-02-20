@@ -97,6 +97,9 @@ extern InfraxNetClassType InfraxNetClass;
 #define INFRAX_ERROR_NET_NOT_CONNECTED_CODE -110
 #define INFRAX_ERROR_NET_WOULD_BLOCK_CODE -111
 #define INFRAX_ERROR_NET_TIMEOUT_CODE -112
+#define INFRAX_ERROR_NET_OUT_OF_MEMORY_CODE -113
+#define INFRAX_ERROR_NET_INVALID_ADDRESS_CODE -114
+#define INFRAX_ERROR_NET_INVALID_STATE_CODE -115
 
 // Error structs
 #define INFRAX_ERROR_NET_INVALID_ARGUMENT make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid argument")
@@ -112,6 +115,9 @@ extern InfraxNetClassType InfraxNetClass;
 #define INFRAX_ERROR_NET_NOT_CONNECTED make_error(INFRAX_ERROR_NET_NOT_CONNECTED_CODE, "Socket is not connected")
 #define INFRAX_ERROR_NET_WOULD_BLOCK make_error(INFRAX_ERROR_NET_WOULD_BLOCK_CODE, "Operation would block")
 #define INFRAX_ERROR_NET_TIMEOUT make_error(INFRAX_ERROR_NET_TIMEOUT_CODE, "Operation timed out")
+#define INFRAX_ERROR_NET_OUT_OF_MEMORY make_error(INFRAX_ERROR_NET_OUT_OF_MEMORY_CODE, "Out of memory")
+#define INFRAX_ERROR_NET_INVALID_ADDRESS make_error(INFRAX_ERROR_NET_INVALID_ADDRESS_CODE, "Invalid address")
+#define INFRAX_ERROR_NET_INVALID_STATE make_error(INFRAX_ERROR_NET_INVALID_STATE_CODE, "Invalid state")
 
 // Utility functions for address conversion
 InfraxError infrax_net_addr_from_string(const char* ip, uint16_t port, InfraxNetAddr* addr);

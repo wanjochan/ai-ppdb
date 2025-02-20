@@ -127,6 +127,7 @@ struct InfraxCore {
     void* (*forward_call)(InfraxCore *self, void* (*target_func)(), ...);
     int (*printf)(InfraxCore *self, const char* format, ...);
     int (*snprintf)(InfraxCore *self, char* str, size_t size, const char* format, ...);
+    int (*fprintf)(InfraxCore *self, int* stream, const char* format, ...);
     
     // core (base) memory operations (for high level need to use InfraxMemory)
     void* (*malloc)(InfraxCore *self, size_t size);
@@ -232,6 +233,28 @@ struct InfraxCore {
     // Signal operations
     InfraxSignalHandler (*signal)(InfraxCore *self, int signum, InfraxSignalHandler handler);
     unsigned int (*alarm)(InfraxCore *self, unsigned int seconds);
+
+    // Network operations
+    intptr_t (*socket_create)(struct InfraxCore* self, int domain, int type, int protocol);
+    int (*socket_bind)(struct InfraxCore* self, intptr_t handle, const void* addr, size_t size);
+    int (*socket_listen)(struct InfraxCore* self, intptr_t handle, int backlog);
+    intptr_t (*socket_accept)(struct InfraxCore* self, intptr_t handle, void* addr, size_t* size);
+    int (*socket_connect)(struct InfraxCore* self, intptr_t handle, const void* addr, size_t size);
+    ssize_t (*socket_send)(struct InfraxCore* self, intptr_t handle, const void* data, size_t size, int flags);
+    ssize_t (*socket_recv)(struct InfraxCore* self, intptr_t handle, void* buffer, size_t size, int flags);
+    int (*socket_close)(struct InfraxCore* self, intptr_t handle);
+    int (*socket_shutdown)(struct InfraxCore* self, intptr_t handle, int how);
+    int (*socket_set_option)(struct InfraxCore* self, intptr_t handle, int level, int option, const void* value, size_t len);
+    int (*socket_get_option)(struct InfraxCore* self, intptr_t handle, int level, int option, void* value, size_t* len);
+    int (*socket_get_error)(struct InfraxCore* self, intptr_t handle);
+
+    // Network address operations
+    int (*ip_to_binary)(struct InfraxCore* self, const char* ip, void* addr, size_t size);
+    int (*binary_to_ip)(struct InfraxCore* self, const void* addr, char* ip, size_t size);
+
+    // Error handling
+    int (*get_last_error)(struct InfraxCore* self);
+    const char* (*get_error_string)(struct InfraxCore* self, int error_code);
 };
 
 // "Class" for static methods

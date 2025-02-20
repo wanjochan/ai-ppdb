@@ -1,4 +1,3 @@
-#include "cosmopolitan.h"
 #include "PpxArch.h"
 
 static PpxArch g_arch = {0};
