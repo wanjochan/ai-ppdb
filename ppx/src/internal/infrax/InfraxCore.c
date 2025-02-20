@@ -909,7 +909,10 @@ static int infrax_core_socket_get_error(InfraxCore* self, intptr_t handle) {
     int error = 0;
     socklen_t len = sizeof(error);
     if (getsockopt(handle, SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
-        return errno;
+        error = errno;
+    }
+    if (error == 0) {
+        error = errno;  // 如果 SO_ERROR 为 0，使用当前的 errno
     }
     return error;
 }

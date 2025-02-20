@@ -2,11 +2,32 @@
 #include "InfraxNet.h"
 #include "InfraxCore.h"
 #include "InfraxMemory.h"
+/** TODO to remove cosmopolitan.h ref
+
+1. 主要问题是缺少了一些系统头文件和定义：
+   - <string.h> - 用于 memset, strncpy 等函数
+   - <stdbool.h> - 用于 bool 类型
+   - <sys/socket.h> - 用于 socket 相关的常量和结构体
+   - <netinet/in.h> - 用于网络地址结构体
+   - <arpa/inet.h> - 用于 inet_ntop 等函数
+   - <unistd.h> - 用于 close 等函数
+   - <fcntl.h> - 用于 fcntl 等函数
+   - <sys/time.h> - 用于 timeval 结构体
+   - <stdio.h> - 用于 fprintf 等函数
+
+2. 需要替换的系统常量和类型：
+   - SOL_SOCKET, SO_REUSEADDR 等 socket 选项
+   - AF_INET, SOCK_STREAM 等协议族和类型
+   - IPPROTO_TCP, IPPROTO_UDP 等协议
+   - socklen_t, struct sockaddr_in 等类型
+   - EAGAIN, EWOULDBLOCK 等错误码
+   
+ */
 
 // Private functions declarations
 static InfraxError set_socket_option(intptr_t handle, int level, int option, const void* value, size_t len);
 static InfraxError get_socket_option(intptr_t handle, int level, int option, void* value, size_t* len);
-static InfraxError set_socket_nonblocking(intptr_t handle, InfraxBool nonblock);
+static InfraxError set_socket_nonblocking(intptr_t handle, InfraxBool nonblocking);
 static InfraxNet* net_new(const InfraxNetConfig* config);
 static void net_free(InfraxNet* self);
 static InfraxError net_shutdown(InfraxNet* self, int how);
@@ -72,16 +93,17 @@ static InfraxError net_bind(InfraxNet* self, const InfraxNetAddr* addr) {
     struct sockaddr_in bind_addr;
     memset(&bind_addr, 0, sizeof(bind_addr));
     bind_addr.sin_family = AF_INET;
-    bind_addr.sin_port = htons(addr->port);
+    bind_addr.sin_port = gInfraxCore.host_to_net16(&gInfraxCore, addr->port);
     
     // 验证 IP 地址格式
     if (inet_pton(AF_INET, addr->ip, &bind_addr.sin_addr) <= 0) {
         return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid IP address format");
     }
 
-    if (bind(self->native_handle, (struct sockaddr*)&bind_addr, sizeof(bind_addr)) < 0) {
+    if (gInfraxCore.socket_bind(&gInfraxCore, self->native_handle, &bind_addr, sizeof(bind_addr)) < 0) {
         char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Bind failed: %s (errno=%d)", strerror(errno), errno);
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Bind failed: %s (errno=%d)", strerror(err), err);
         return make_error(INFRAX_ERROR_NET_BIND_FAILED_CODE, err_msg);
     }
 
@@ -90,18 +112,21 @@ static InfraxError net_bind(InfraxNet* self, const InfraxNetAddr* addr) {
 }
 
 static InfraxError net_listen(InfraxNet* self, int backlog) {
-    if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    if (self->config.is_udp) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (!self) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket");
+    if (self->config.is_udp) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "UDP socket cannot listen");
 
-    if (listen(self->native_handle, backlog) < 0) {
-        return INFRAX_ERROR_NET_LISTEN_FAILED;
+    if (gInfraxCore.socket_listen(&gInfraxCore, self->native_handle, backlog) < 0) {
+        char err_msg[256];
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Listen failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_LISTEN_FAILED_CODE, err_msg);
     }
 
     return INFRAX_ERROR_OK_STRUCT;
 }
 
 static InfraxError net_shutdown(InfraxNet* self, int how) {
-    if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (!self) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket");
     if (self->native_handle < 0) return INFRAX_ERROR_OK_STRUCT;  // 已经关闭
     
     // 映射 shutdown 模式
@@ -120,28 +145,30 @@ static InfraxError net_shutdown(InfraxNet* self, int how) {
             return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid shutdown mode");
     }
     
-    if (shutdown(self->native_handle, sys_how) < 0) {
+    if (gInfraxCore.socket_shutdown(&gInfraxCore, self->native_handle, sys_how) < 0) {
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
         // 忽略某些特定的错误
-        if (errno == ENOTCONN) {
+        if (err == ENOTCONN) {
             // socket未连接，这是可以接受的
             return INFRAX_ERROR_OK_STRUCT;
         }
         
         char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Shutdown failed: %s (errno=%d)", strerror(errno), errno);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Shutdown failed: %s (errno=%d)", strerror(err), err);
         return make_error(INFRAX_ERROR_NET_SOCKET_FAILED_CODE, err_msg);
     }
     return INFRAX_ERROR_OK_STRUCT;
 }
 
 static InfraxError net_close(InfraxNet* self) {
-    if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (!self) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket");
     if (self->native_handle < 0) return INFRAX_ERROR_OK_STRUCT;  // 已经关闭
     
     // 关闭socket
-    if (close(self->native_handle) < 0) {
+    if (gInfraxCore.socket_close(&gInfraxCore, self->native_handle) < 0) {
         char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Close failed: %s (errno=%d)", strerror(errno), errno);
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Close failed: %s (errno=%d)", strerror(err), err);
         return make_error(INFRAX_ERROR_NET_SOCKET_FAILED_CODE, err_msg);
     }
     
@@ -151,18 +178,21 @@ static InfraxError net_close(InfraxNet* self) {
 }
 
 static InfraxError net_accept(InfraxNet* self, InfraxNet** client_socket, InfraxNetAddr* client_addr) {
-    if (!self || !client_socket) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    if (self->config.is_udp) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (!self || !client_socket) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket or client socket pointer");
+    if (self->config.is_udp) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "UDP socket cannot accept");
 
     struct sockaddr_in addr;
-    socklen_t addr_len = sizeof(addr);
-    intptr_t client_fd = accept(self->native_handle, (struct sockaddr*)&addr, &addr_len);
+    size_t addr_len = sizeof(addr);
+    intptr_t client_fd = gInfraxCore.socket_accept(&gInfraxCore, self->native_handle, &addr, &addr_len);
     
     if (client_fd < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return INFRAX_ERROR_NET_WOULD_BLOCK;
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        if (err == EAGAIN || err == EWOULDBLOCK) {
+            return make_error(INFRAX_ERROR_NET_WOULD_BLOCK_CODE, "Accept would block");
         }
-        return INFRAX_ERROR_NET_ACCEPT_FAILED;
+        char err_msg[256];
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Accept failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_ACCEPT_FAILED_CODE, err_msg);
     }
 
     // Create new socket configuration for client
@@ -177,13 +207,13 @@ static InfraxError net_accept(InfraxNet* self, InfraxNet** client_socket, Infrax
     // Create new socket instance
     InfraxNet* new_socket = net_new(&config);
     if (!new_socket) {
-        close(client_fd);
-        return INFRAX_ERROR_NET_SOCKET_FAILED;
+        gInfraxCore.socket_close(&gInfraxCore, client_fd);
+        return make_error(INFRAX_ERROR_NET_SOCKET_FAILED_CODE, "Failed to create new socket instance");
     }
 
     // Close the original socket created by net_new
     if (new_socket->native_handle >= 0) {
-        close(new_socket->native_handle);
+        gInfraxCore.socket_close(&gInfraxCore, new_socket->native_handle);
     }
     
     // Set client file descriptor
@@ -192,7 +222,7 @@ static InfraxError net_accept(InfraxNet* self, InfraxNet** client_socket, Infrax
 
     // Set client address if requested
     if (client_addr) {
-        client_addr->port = ntohs(addr.sin_port);
+        client_addr->port = gInfraxCore.net_to_host16(&gInfraxCore, addr.sin_port);
         inet_ntop(AF_INET, &addr.sin_addr, client_addr->ip, sizeof(client_addr->ip));
         new_socket->peer_addr = *client_addr;
     }
@@ -202,16 +232,16 @@ static InfraxError net_accept(InfraxNet* self, InfraxNet** client_socket, Infrax
 }
 
 static InfraxError net_connect(InfraxNet* self, const InfraxNetAddr* addr) {
-    if (!self || !addr) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    if (self->is_connected) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (!self || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket or address");
+    if (self->is_connected) return make_error(INFRAX_ERROR_NET_ALREADY_CONNECTED_CODE, "Socket is already connected");
 
     struct sockaddr_in connect_addr;
-    memset(&connect_addr, 0, sizeof(connect_addr));
+    gInfraxCore.memset(&gInfraxCore, &connect_addr, 0, sizeof(connect_addr));
     connect_addr.sin_family = AF_INET;
-    connect_addr.sin_port = htons(addr->port);
+    connect_addr.sin_port = gInfraxCore.host_to_net16(&gInfraxCore, addr->port);
     
     if (inet_pton(AF_INET, addr->ip, &connect_addr.sin_addr) <= 0) {
-        return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid IP address format");
     }
 
     // 保存原始的非阻塞状态
@@ -224,17 +254,27 @@ static InfraxError net_connect(InfraxNet* self, const InfraxNetAddr* addr) {
     }
 
     // 尝试连接
-    int connect_result = connect(self->native_handle, (struct sockaddr*)&connect_addr, sizeof(connect_addr));
+    int connect_result = gInfraxCore.socket_connect(&gInfraxCore, self->native_handle, &connect_addr, sizeof(connect_addr));
     if (connect_result < 0) {
-        if (errno != EINPROGRESS) {
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        if (err != EINPROGRESS) {
             // 如果不是EINPROGRESS，说明是立即失败
-            if (errno == ECONNREFUSED) {
-                return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, "Connection refused");
+            char err_msg[256];
+            if (err == ECONNREFUSED) {
+                gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Connection refused to %s:%d", addr->ip, addr->port);
+            } else if (err == ETIMEDOUT) {
+                gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Connection timed out to %s:%d", addr->ip, addr->port);
+            } else if (err == ENETUNREACH) {
+                gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Network unreachable for %s:%d", addr->ip, addr->port);
+            } else if (err == EADDRNOTAVAIL) {
+                gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Address not available: %s:%d", addr->ip, addr->port);
             } else {
-                char err_msg[256];
-                snprintf(err_msg, sizeof(err_msg), "Connect failed: %s (errno=%d)", strerror(errno), errno);
-                return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
+                const char* err_str = strerror(err);
+                if (!err_str) err_str = "Unknown error";
+                gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Connect failed to %s:%d: %s (errno=%d)", 
+                    addr->ip, addr->port, err_str, err);
             }
+            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
         }
 
         // 使用select等待连接完成或超时
@@ -248,32 +288,41 @@ static InfraxError net_connect(InfraxNet* self, const InfraxNetAddr* addr) {
         tv.tv_usec = (self->config.send_timeout_ms % 1000) * 1000;
 
         int select_result = select(self->native_handle + 1, NULL, &write_fds, NULL, &tv);
-        
-        if (select_result == 0) {
-            // 超时
-            return make_error(INFRAX_ERROR_NET_TIMEOUT_CODE, "Connection timed out");
-        } else if (select_result < 0) {
-            // select错误
+        if (select_result < 0) {
             char err_msg[256];
-            snprintf(err_msg, sizeof(err_msg), "Select failed: %s (errno=%d)", strerror(errno), errno);
+            err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+            const char* err_str = strerror(err);
+            if (!err_str) err_str = "Unknown error";
+            gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Select failed while connecting to %s:%d: %s (errno=%d)", 
+                addr->ip, addr->port, err_str, err);
+            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
+        } else if (select_result == 0) {
+            char err_msg[256];
+            gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Connection timed out while connecting to %s:%d", 
+                addr->ip, addr->port);
             return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
         }
-        
-        // 检查socket是否真的已连接
-        int socket_error;
-        socklen_t len = sizeof(socket_error);
-        if (getsockopt(self->native_handle, SOL_SOCKET, SO_ERROR, &socket_error, &len) < 0) {
-            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, "Failed to get socket error");
+
+        // 检查连接是否成功
+        int socket_err;
+        size_t socket_err_len = sizeof(socket_err);
+        if (gInfraxCore.socket_get_option(&gInfraxCore, self->native_handle, SOL_SOCKET, SO_ERROR, &socket_err, &socket_err_len) < 0) {
+            char err_msg[256];
+            err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+            const char* err_str = strerror(err);
+            if (!err_str) err_str = "Unknown error";
+            gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Failed to get socket error while connecting to %s:%d: %s (errno=%d)", 
+                addr->ip, addr->port, err_str, err);
+            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
         }
-        
-        if (socket_error) {
-            if (socket_error == ETIMEDOUT) {
-                return make_error(INFRAX_ERROR_NET_TIMEOUT_CODE, "Connection timed out");
-            } else {
-                char err_msg[256];
-                snprintf(err_msg, sizeof(err_msg), "Connect failed: %s (errno=%d)", strerror(socket_error), socket_error);
-                return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
-            }
+
+        if (socket_err != 0) {
+            char err_msg[256];
+            const char* err_str = strerror(socket_err);
+            if (!err_str) err_str = "Unknown error";
+            gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Connect failed to %s:%d: %s (errno=%d)", 
+                addr->ip, addr->port, err_str, socket_err);
+            return make_error(INFRAX_ERROR_NET_CONNECT_FAILED_CODE, err_msg);
         }
     }
 
@@ -285,156 +334,176 @@ static InfraxError net_connect(InfraxNet* self, const InfraxNetAddr* addr) {
         }
     }
 
-    self->peer_addr = *addr;
     self->is_connected = INFRAX_TRUE;
+    self->peer_addr = *addr;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError net_send(InfraxNet* self, const void* data, size_t size, size_t* sent) {
-    if (!self || !data || !sent) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    if (!self->is_connected && !self->config.is_udp) return INFRAX_ERROR_NET_NOT_CONNECTED;
+static InfraxError net_send(InfraxNet* self, const void* data, size_t size, size_t* sent_size) {
+    if (!self || !data || !sent_size) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket, data or sent_size pointer");
+    if (self->native_handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not open");
+    if (!self->is_connected && !self->config.is_udp) return make_error(INFRAX_ERROR_NET_NOT_CONNECTED_CODE, "Socket is not connected");
 
-    ssize_t result;
-    if (self->config.is_udp) {
-        // For UDP, we need to send to the peer address
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(self->peer_addr.port);
-        inet_pton(AF_INET, self->peer_addr.ip, &addr.sin_addr);
-        result = sendto(self->native_handle, data, size, 0, (struct sockaddr*)&addr, sizeof(addr));
-    } else {
-        result = send(self->native_handle, data, size, 0);
-    }
-
+    ssize_t result = gInfraxCore.socket_send(&gInfraxCore, self->native_handle, data, size, 0);
     if (result < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            *sent = 0;
-            return INFRAX_ERROR_NET_WOULD_BLOCK;
-        }
-        *sent = 0;
-        return INFRAX_ERROR_NET_SEND_FAILED;
-    }
-
-    *sent = (size_t)result;
-    return INFRAX_ERROR_OK_STRUCT;
-}
-
-static InfraxError net_recv(InfraxNet* self, void* buffer, size_t size, size_t* received) {
-    if (!self || !buffer || !received) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    if (!self->is_connected && !self->config.is_udp) return INFRAX_ERROR_NET_NOT_CONNECTED;
-
-    ssize_t result;
-    if (self->config.is_udp) {
-        // For UDP, we need to receive from any address
-        struct sockaddr_in addr;
-        socklen_t addr_len = sizeof(addr);
-        result = recvfrom(self->native_handle, buffer, size, 0, (struct sockaddr*)&addr, &addr_len);
-        if (result >= 0) {
-            // Store the peer address for future sends
-            self->peer_addr.port = ntohs(addr.sin_port);
-            inet_ntop(AF_INET, &addr.sin_addr, self->peer_addr.ip, sizeof(self->peer_addr.ip));
-        }
-    } else {
-        result = recv(self->native_handle, buffer, size, 0);
-    }
-
-    if (result < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            *received = 0;
-            return INFRAX_ERROR_NET_WOULD_BLOCK;
-        }
-        *received = 0;
-        return INFRAX_ERROR_NET_RECV_FAILED;
-    }
-
-    *received = (size_t)result;
-    return INFRAX_ERROR_OK_STRUCT;
-}
-
-static InfraxError net_sendto(InfraxNet* self, const void* data, size_t size, size_t* sent, const InfraxNetAddr* addr) {
-    if (!self || !data || !sent || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid arguments");
-
-    struct sockaddr_in dest_addr;
-    memset(&dest_addr, 0, sizeof(dest_addr));
-    dest_addr.sin_family = AF_INET;
-    dest_addr.sin_port = htons(addr->port);
-    
-    if (inet_pton(AF_INET, addr->ip, &dest_addr.sin_addr) <= 0) {
-        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid IP address format");
-    }
-
-    ssize_t result = sendto(self->native_handle, data, size, 0, 
-                          (struct sockaddr*)&dest_addr, sizeof(dest_addr));
-
-    if (result < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return INFRAX_ERROR_NET_WOULD_BLOCK;
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        if (err == EAGAIN || err == EWOULDBLOCK) {
+            *sent_size = 0;
+            return make_error(INFRAX_ERROR_NET_WOULD_BLOCK_CODE, "Send would block");
         }
         char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Send failed: %s (errno=%d)", strerror(errno), errno);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Send failed: %s (errno=%d)", strerror(err), err);
         return make_error(INFRAX_ERROR_NET_SEND_FAILED_CODE, err_msg);
     }
 
-    *sent = result;
+    *sent_size = result;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError net_recvfrom(InfraxNet* self, void* buffer, size_t size, size_t* received, InfraxNetAddr* addr) {
-    if (!self || !buffer || !received || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid arguments");
+static InfraxError net_recv(InfraxNet* self, void* buffer, size_t size, size_t* received_size) {
+    if (!self || !buffer || !received_size) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket, buffer or received_size pointer");
+    if (self->native_handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not open");
+    if (!self->is_connected && !self->config.is_udp) return make_error(INFRAX_ERROR_NET_NOT_CONNECTED_CODE, "Socket is not connected");
 
-    struct sockaddr_in src_addr;
-    memset(&src_addr, 0, sizeof(src_addr));
-    socklen_t addr_len = sizeof(src_addr);
-
-    ssize_t result = recvfrom(self->native_handle, buffer, size, 0, 
-                             (struct sockaddr*)&src_addr, &addr_len);
-
+    ssize_t result = gInfraxCore.socket_recv(&gInfraxCore, self->native_handle, buffer, size, 0);
     if (result < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            return INFRAX_ERROR_NET_WOULD_BLOCK;
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        if (err == EAGAIN || err == EWOULDBLOCK) {
+            *received_size = 0;
+            return make_error(INFRAX_ERROR_NET_WOULD_BLOCK_CODE, "Receive would block");
         }
         char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "Receive failed: %s (errno=%d)", strerror(errno), errno);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Receive failed: %s (errno=%d)", strerror(err), err);
         return make_error(INFRAX_ERROR_NET_RECV_FAILED_CODE, err_msg);
     }
 
-    // 转换源地址
-    char ip[64];
-    if (inet_ntop(AF_INET, &src_addr.sin_addr, ip, sizeof(ip)) == NULL) {
-        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Failed to convert source IP address");
+    *received_size = result;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError net_sendto(InfraxNet* self, const void* data, size_t size, size_t* sent_size, const InfraxNetAddr* addr) {
+    if (!self || !data || !addr || !sent_size) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket, data, address or sent_size pointer");
+    if (self->native_handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not open");
+    if (!self->config.is_udp) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not UDP");
+
+    struct sockaddr_in send_addr;
+    gInfraxCore.memset(&gInfraxCore, &send_addr, 0, sizeof(send_addr));
+    send_addr.sin_family = AF_INET;
+    send_addr.sin_port = gInfraxCore.host_to_net16(&gInfraxCore, addr->port);
+    
+    if (inet_pton(AF_INET, addr->ip, &send_addr.sin_addr) <= 0) {
+        return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid IP address format");
     }
 
-    strncpy(addr->ip, ip, sizeof(addr->ip) - 1);
-    addr->ip[sizeof(addr->ip) - 1] = '\0';
-    addr->port = ntohs(src_addr.sin_port);
+    ssize_t result = gInfraxCore.socket_send(&gInfraxCore, self->native_handle, data, size, 0);
+    if (result < 0) {
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        if (err == EAGAIN || err == EWOULDBLOCK) {
+            *sent_size = 0;
+            return make_error(INFRAX_ERROR_NET_WOULD_BLOCK_CODE, "Send would block");
+        }
+        char err_msg[256];
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Send failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_SEND_FAILED_CODE, err_msg);
+    }
 
-    *received = result;
+    *sent_size = result;
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError net_recvfrom(InfraxNet* self, void* buffer, size_t size, size_t* received_size, InfraxNetAddr* from_addr) {
+    if (!self || !buffer || !from_addr || !received_size) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket, buffer, from_addr or received_size pointer");
+    if (self->native_handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not open");
+    if (!self->config.is_udp) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not UDP");
+
+    struct sockaddr_in recv_addr;
+    socklen_t addr_len = sizeof(recv_addr);
+    gInfraxCore.memset(&gInfraxCore, &recv_addr, 0, sizeof(recv_addr));
+
+    ssize_t result = gInfraxCore.socket_recv(&gInfraxCore, self->native_handle, buffer, size, 0);
+    if (result < 0) {
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        if (err == EAGAIN || err == EWOULDBLOCK) {
+            *received_size = 0;
+            return make_error(INFRAX_ERROR_NET_WOULD_BLOCK_CODE, "Receive would block");
+        }
+        char err_msg[256];
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Receive failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_RECV_FAILED_CODE, err_msg);
+    }
+
+    // 填充发送方地址信息
+    from_addr->port = gInfraxCore.net_to_host16(&gInfraxCore, recv_addr.sin_port);
+    inet_ntop(AF_INET, &recv_addr.sin_addr, from_addr->ip, sizeof(from_addr->ip));
+
+    *received_size = result;
     return INFRAX_ERROR_OK_STRUCT;
 }
 
 static InfraxError net_set_option(InfraxNet* self, int level, int option, const void* value, size_t len) {
-    if (!self || !value) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    return set_socket_option(self->native_handle, level, option, value, len);
+    if (!self || !value) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket or value pointer");
+    if (self->native_handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not open");
+
+    int sys_level = map_socket_level(level);
+    int sys_option = map_socket_option(option);
+
+    if (gInfraxCore.socket_set_option(&gInfraxCore, self->native_handle, sys_level, sys_option, value, len) < 0) {
+        char err_msg[256];
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Set socket option failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_SET_OPTION_FAILED_CODE, err_msg);
+    }
+
+    return INFRAX_ERROR_OK_STRUCT;
 }
 
 static InfraxError net_get_option(InfraxNet* self, int level, int option, void* value, size_t* len) {
-    if (!self || !value || !len) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    return get_socket_option(self->native_handle, level, option, value, len);
+    if (!self || !value || !len) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket, value or len pointer");
+    if (self->native_handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not open");
+
+    int sys_level = map_socket_level(level);
+    int sys_option = map_socket_option(option);
+
+    if (gInfraxCore.socket_get_option(&gInfraxCore, self->native_handle, sys_level, sys_option, value, len) < 0) {
+        char err_msg[256];
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Get socket option failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_GET_OPTION_FAILED_CODE, err_msg);
+    }
+
+    return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError net_set_nonblock(InfraxNet* self, InfraxBool nonblock) {
-    if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
-    
-    InfraxError err = set_socket_nonblocking(self->native_handle, nonblock);
-    if (INFRAX_ERROR_IS_OK(err)) {
-        self->config.is_nonblocking = nonblock;
+static InfraxError set_socket_nonblocking(intptr_t handle, InfraxBool nonblocking) {
+    if (handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket handle");
+
+    int flags = nonblocking ? 1 : 0;
+    if (gInfraxCore.socket_set_option(&gInfraxCore, handle, SOL_SOCKET, O_NONBLOCK, &flags, sizeof(flags)) < 0) {
+        char err_msg[256];
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, handle);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Set nonblocking failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_SET_NONBLOCKING_FAILED_CODE, err_msg);
     }
-    return err;
+
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError net_set_nonblocking(InfraxNet* self, InfraxBool nonblocking) {
+    if (!self) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket");
+    if (self->native_handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not open");
+
+    InfraxError err = set_socket_nonblocking(self->native_handle, nonblocking);
+    if (INFRAX_ERROR_IS_ERR(err)) {
+        return err;
+    }
+
+    self->config.is_nonblocking = nonblocking;
+    return INFRAX_ERROR_OK_STRUCT;
 }
 
 static InfraxError net_set_timeout(InfraxNet* self, uint32_t send_timeout_ms, uint32_t recv_timeout_ms) {
-    if (!self) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
+    if (!self) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid socket");
+    if (self->native_handle < 0) return make_error(INFRAX_ERROR_NET_INVALID_OPERATION_CODE, "Socket is not open");
 
     struct timeval send_tv = {
         .tv_sec = send_timeout_ms / 1000,
@@ -446,11 +515,21 @@ static InfraxError net_set_timeout(InfraxNet* self, uint32_t send_timeout_ms, ui
         .tv_usec = (recv_timeout_ms % 1000) * 1000
     };
 
-    InfraxError err = set_socket_option(self->native_handle, SOL_SOCKET, SO_SNDTIMEO, &send_tv, sizeof(send_tv));
-    if (INFRAX_ERROR_IS_ERR(err)) return err;
+    // 设置发送超时
+    if (gInfraxCore.socket_set_option(&gInfraxCore, self->native_handle, SOL_SOCKET, SO_SNDTIMEO, &send_tv, sizeof(send_tv)) < 0) {
+        char err_msg[256];
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Set send timeout failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_SET_TIMEOUT_FAILED_CODE, err_msg);
+    }
 
-    err = set_socket_option(self->native_handle, SOL_SOCKET, SO_RCVTIMEO, &recv_tv, sizeof(recv_tv));
-    if (INFRAX_ERROR_IS_ERR(err)) return err;
+    // 设置接收超时
+    if (gInfraxCore.socket_set_option(&gInfraxCore, self->native_handle, SOL_SOCKET, SO_RCVTIMEO, &recv_tv, sizeof(recv_tv)) < 0) {
+        char err_msg[256];
+        int err = gInfraxCore.socket_get_error(&gInfraxCore, self->native_handle);
+        gInfraxCore.snprintf(&gInfraxCore, err_msg, sizeof(err_msg), "Set receive timeout failed: %s (errno=%d)", strerror(err), err);
+        return make_error(INFRAX_ERROR_NET_SET_TIMEOUT_FAILED_CODE, err_msg);
+    }
 
     self->config.send_timeout_ms = send_timeout_ms;
     self->config.recv_timeout_ms = recv_timeout_ms;
@@ -599,7 +678,7 @@ InfraxNetClassType InfraxNetClass = {
     .recvfrom = net_recvfrom,
     .set_option = net_set_option,
     .get_option = net_get_option,
-    .set_nonblock = net_set_nonblock,
+    .set_nonblock = net_set_nonblocking,
     .set_timeout = net_set_timeout,
     .get_local_addr = net_get_local_addr,
     .get_peer_addr = net_get_peer_addr,
@@ -630,18 +709,6 @@ static InfraxError get_socket_option(intptr_t handle, int level, int option, voi
     return INFRAX_ERROR_OK_STRUCT;
 }
 
-static InfraxError set_socket_nonblocking(intptr_t handle, InfraxBool nonblock) {
-    int flags = fcntl(handle, F_GETFL, 0);
-    if (flags < 0) return INFRAX_ERROR_NET_OPTION_FAILED;
-
-    flags = nonblock ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
-    if (fcntl(handle, F_SETFL, flags) < 0) {
-        return INFRAX_ERROR_NET_OPTION_FAILED;
-    }
-
-    return INFRAX_ERROR_OK_STRUCT;
-}
-
 // Utility functions implementations
 InfraxError infrax_net_addr_from_string(const char* ip, uint16_t port, InfraxNetAddr* addr) {
     if (!ip || !addr) return make_error(INFRAX_ERROR_NET_INVALID_ARGUMENT_CODE, "Invalid arguments: NULL pointer");
@@ -660,7 +727,7 @@ InfraxError infrax_net_addr_from_string(const char* ip, uint16_t port, InfraxNet
 InfraxError infrax_net_addr_to_string(const InfraxNetAddr* addr, char* buffer, size_t size) {
     if (!addr || !buffer || size == 0) return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     
-    int result = snprintf(buffer, size, "%s:%u", addr->ip, addr->port);
+    int result = gInfraxCore.snprintf(&gInfraxCore, buffer, size, "%s:%u", addr->ip, addr->port);
     if (result < 0 || (size_t)result >= size) {
         return INFRAX_ERROR_NET_INVALID_ARGUMENT;
     }
