@@ -7,6 +7,32 @@
 static InfraxError ppx_execute_command(PolyxCmdline* cmdline, InfraxI32 argc, char** argv);
 static InfraxError handle_help_cmd(PolyxCmdline* cmdline, const polyx_config_t* config, 
                                     InfraxI32 argc, char** argv);
+static InfraxI32 string_to_int(InfraxCore* core, const char* str);
+
+// String to integer conversion
+static InfraxI32 string_to_int(InfraxCore* core, const char* str) {
+    if (!str || !core) return 0;
+    
+    InfraxI32 result = 0;
+    InfraxBool is_negative = INFRAX_FALSE;
+    const char* p = str;
+    
+    // Handle sign
+    if (*p == '-') {
+        is_negative = INFRAX_TRUE;
+        p++;
+    } else if (*p == '+') {
+        p++;
+    }
+    
+    // Convert digits
+    while (*p >= '0' && *p <= '9') {
+        result = result * 10 + (*p - '0');
+        p++;
+    }
+    
+    return is_negative ? -result : result;
+}
 
 // Command execution
 static InfraxError ppx_execute_command(PolyxCmdline* cmdline, InfraxI32 argc, char** argv) {
@@ -40,7 +66,7 @@ static InfraxError ppx_execute_command(PolyxCmdline* cmdline, InfraxI32 argc, ch
     const polyx_cmd_t* cmd = PolyxCmdlineClass.find_command(cmdline, cmd_name);
     if (!cmd) {
         core->printf(core, "Unknown command: %s\n", cmd_name);
-        return make_error(INFRAX_ERROR_NOT_FOUND, "Command not found");
+        return make_error(INFRAX_ERROR_FILE_NOT_FOUND, "Command not found");
     }
 
     return cmd->handler(&cmdline->config, argc, argv);
@@ -61,7 +87,7 @@ static InfraxError handle_help_cmd(PolyxCmdline* cmdline, const polyx_config_t* 
         const polyx_cmd_t* cmd = PolyxCmdlineClass.find_command(cmdline, cmd_name);
         if (!cmd) {
             core->printf(core, "Unknown command: %s\n", cmd_name);
-            return make_error(INFRAX_ERROR_NOT_FOUND, "Command not found");
+            return make_error(INFRAX_ERROR_FILE_NOT_FOUND, "Command not found");
         }
 
         core->printf(core, "Command: %s\n", cmd->name);
@@ -105,7 +131,7 @@ int main(int argc, char** argv) {
         char log_level_str[16] = {0};
         err = PolyxCmdlineClass.get_option(cmdline, "--log-level", log_level_str, sizeof(log_level_str));
         if (INFRAX_ERROR_IS_OK(err) && log_level_str[0]) {
-            InfraxI32 level = core->atoi(core, log_level_str);
+            InfraxI32 level = string_to_int(core, log_level_str);
             if (level >= 0 && level <= 5) {  // TODO: Define log levels in Infrax
                 // TODO: Set log level through Infrax
             }

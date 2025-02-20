@@ -83,6 +83,8 @@ typedef struct InfraxRingBuffer {
 #define INFRAX_ERROR_FILE_READ -6
 #define INFRAX_ERROR_TIMEOUT -7
 #define INFRAX_ERROR_SYSTEM 5  // 系统级错误(如pthread, pipe等)
+#define INFRAX_ERROR_FILE_EXISTS -8  // 文件已存在
+#define INFRAX_ERROR_WRITE_FAILED -9  // 写入失败
 
 //-----------------------------------------------------------------------------
 // Thread Types
@@ -126,7 +128,7 @@ struct InfraxCore {
     int (*printf)(InfraxCore *self, const char* format, ...);
     int (*snprintf)(InfraxCore *self, char* str, size_t size, const char* format, ...);
     
-    // core memory operations
+    // core (base) memory operations (for high level need to use InfraxMemory)
     void* (*malloc)(InfraxCore *self, size_t size);
     void* (*calloc)(InfraxCore *self, size_t nmemb, size_t size);
     void* (*realloc)(InfraxCore *self, void* ptr, size_t size);
@@ -149,8 +151,17 @@ struct InfraxCore {
     //Misc operations
     int (*memcmp)(struct InfraxCore *self, const void* s1, const void* s2, size_t n);
     void* (*memset)(struct InfraxCore *self, void* s, int c, size_t n);
+    void* (*memcpy)(struct InfraxCore *self, void* dest, const void* src, size_t n);
+    void* (*memmove)(struct InfraxCore *self, void* dest, const void* src, size_t n);
+    int (*isspace)(struct InfraxCore *self, int c);
+    int (*isdigit)(struct InfraxCore *self, int c);
     void (*hint_yield)(struct InfraxCore *self);//hint only, not guaranteed to yield
     int (*pid)(struct InfraxCore *self);
+    
+    // String to number conversion
+    int (*atoi)(struct InfraxCore *self, const char* str);
+    long (*atol)(struct InfraxCore *self, const char* str);
+    long long (*atoll)(struct InfraxCore *self, const char* str);
     
     // Random number operations
     InfraxU32 (*random)(struct InfraxCore *self);          // Generate random number

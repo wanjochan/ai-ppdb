@@ -1,7 +1,6 @@
 #include "PolyxService.h"
 #include "internal/infrax/InfraxMemory.h"
-#include <string.h>
-#include <stdio.h>
+#include "internal/infrax/InfraxCore.h"
 
 #define MAX_SERVICES 16
 #define MAX_STATUS_LENGTH 1024
@@ -9,16 +8,18 @@
 // Private data structure
 typedef struct {
     PolyxService* services[MAX_SERVICES];
-    size_t count;
+    InfraxSize count;
     InfraxMemory* memory;
 } PolyxServicePrivate;
 
 // Global memory manager
 static InfraxMemory* g_memory = NULL;
+static InfraxCore* g_core = NULL;
 extern InfraxMemoryClassType InfraxMemoryClass;
+extern InfraxCoreClassType InfraxCoreClass;
 
 // Forward declarations of private functions
-static bool init_memory(void);
+static InfraxBool init_memory(void);
 
 // Constructor
 static PolyxService* polyx_service_new(void) {
@@ -34,7 +35,7 @@ static PolyxService* polyx_service_new(void) {
     }
 
     // Initialize instance
-    memset(self, 0, sizeof(PolyxService));
+    g_core->memset(g_core, self, 0, sizeof(PolyxService));
     self->self = self;
     self->klass = &PolyxServiceClass;
 
@@ -46,7 +47,7 @@ static PolyxService* polyx_service_new(void) {
     }
 
     // Initialize private data
-    memset(private, 0, sizeof(PolyxServicePrivate));
+    g_core->memset(g_core, private, 0, sizeof(PolyxServicePrivate));
     private->memory = g_memory;
 
     self->private_data = private;
@@ -63,7 +64,7 @@ static void polyx_service_free(PolyxService* self) {
     // Cleanup services
     PolyxServicePrivate* private = self->private_data;
     if (private) {
-        for (size_t i = 0; i < private->count; i++) {
+        for (InfraxSize i = 0; i < private->count; i++) {
             PolyxService* service = private->services[i];
             if (service && service->cleanup) {
                 service->cleanup(service);
@@ -79,40 +80,40 @@ static void polyx_service_free(PolyxService* self) {
 }
 
 // Service registration
-static infrax_error_t polyx_service_register(PolyxService* self, const polyx_service_config_t* config) {
+static InfraxError polyx_service_register(PolyxService* self, const polyx_service_config_t* config) {
     if (!self || !config) {
-        return INFRAX_ERROR_INVALID_PARAM;
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
     PolyxServicePrivate* private = self->private_data;
     if (!private) {
-        return INFRAX_ERROR_INVALID_STATE;
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid state");
     }
 
     if (private->count >= MAX_SERVICES) {
-        return INFRAX_ERROR_NO_MEMORY;
+        return make_error(INFRAX_ERROR_NO_MEMORY, "Too many services");
     }
 
     // Check for duplicate
-    for (size_t i = 0; i < private->count; i++) {
+    for (InfraxSize i = 0; i < private->count; i++) {
         if (private->services[i]->config.type == config->type) {
-            return INFRAX_ERROR_EXISTS;
+            return make_error(INFRAX_ERROR_FILE_EXISTS, "Service already exists");
         }
     }
 
     // Create new service
     PolyxService* service = polyx_service_new();
     if (!service) {
-        return INFRAX_ERROR_NO_MEMORY;
+        return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to create service");
     }
 
     // Initialize service
-    memcpy(&service->config, config, sizeof(polyx_service_config_t));
+    g_core->memcpy(g_core, &service->config, config, sizeof(polyx_service_config_t));
     service->state = POLYX_SERVICE_STATE_INIT;
 
     // Add to registry
     private->services[private->count++] = service;
-    return INFRAX_OK;
+    return make_error(INFRAX_ERROR_OK, NULL);
 }
 
 static PolyxService* polyx_service_get(PolyxService* self, polyx_service_type_t type) {
@@ -121,7 +122,7 @@ static PolyxService* polyx_service_get(PolyxService* self, polyx_service_type_t 
     PolyxServicePrivate* private = self->private_data;
     if (!private) return NULL;
 
-    for (size_t i = 0; i < private->count; i++) {
+    for (InfraxSize i = 0; i < private->count; i++) {
         if (private->services[i]->config.type == type) {
             return private->services[i];
         }
@@ -131,21 +132,21 @@ static PolyxService* polyx_service_get(PolyxService* self, polyx_service_type_t 
 }
 
 // Service lifecycle management
-static infrax_error_t polyx_service_start_all(PolyxService* self) {
-    if (!self) return INFRAX_ERROR_INVALID_PARAM;
+static InfraxError polyx_service_start_all(PolyxService* self) {
+    if (!self) return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
 
     PolyxServicePrivate* private = self->private_data;
-    if (!private) return INFRAX_ERROR_INVALID_STATE;
+    if (!private) return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid state");
 
-    infrax_error_t last_error = INFRAX_OK;
+    InfraxError last_error = make_error(INFRAX_ERROR_OK, NULL);
 
-    for (size_t i = 0; i < private->count; i++) {
+    for (InfraxSize i = 0; i < private->count; i++) {
         PolyxService* service = private->services[i];
         if (!service || !service->start) continue;
 
         if (service->state != POLYX_SERVICE_STATE_RUNNING) {
-            infrax_error_t err = service->start(service);
-            if (err != INFRAX_OK) {
+            InfraxError err = service->start(service);
+            if (!INFRAX_ERROR_IS_OK(err)) {
                 last_error = err;
                 service->state = POLYX_SERVICE_STATE_ERROR;
             } else {
@@ -157,21 +158,21 @@ static infrax_error_t polyx_service_start_all(PolyxService* self) {
     return last_error;
 }
 
-static infrax_error_t polyx_service_stop_all(PolyxService* self) {
-    if (!self) return INFRAX_ERROR_INVALID_PARAM;
+static InfraxError polyx_service_stop_all(PolyxService* self) {
+    if (!self) return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
 
     PolyxServicePrivate* private = self->private_data;
-    if (!private) return INFRAX_ERROR_INVALID_STATE;
+    if (!private) return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid state");
 
-    infrax_error_t last_error = INFRAX_OK;
+    InfraxError last_error = make_error(INFRAX_ERROR_OK, NULL);
 
-    for (size_t i = 0; i < private->count; i++) {
+    for (InfraxSize i = 0; i < private->count; i++) {
         PolyxService* service = private->services[i];
         if (!service || !service->stop) continue;
 
         if (service->state == POLYX_SERVICE_STATE_RUNNING) {
-            infrax_error_t err = service->stop(service);
-            if (err != INFRAX_OK) {
+            InfraxError err = service->stop(service);
+            if (!INFRAX_ERROR_IS_OK(err)) {
                 last_error = err;
                 service->state = POLYX_SERVICE_STATE_ERROR;
             } else {
@@ -183,20 +184,20 @@ static infrax_error_t polyx_service_stop_all(PolyxService* self) {
     return last_error;
 }
 
-static infrax_error_t polyx_service_reload_all(PolyxService* self) {
-    if (!self) return INFRAX_ERROR_INVALID_PARAM;
+static InfraxError polyx_service_reload_all(PolyxService* self) {
+    if (!self) return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
 
     PolyxServicePrivate* private = self->private_data;
-    if (!private) return INFRAX_ERROR_INVALID_STATE;
+    if (!private) return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid state");
 
-    infrax_error_t last_error = INFRAX_OK;
+    InfraxError last_error = make_error(INFRAX_ERROR_OK, NULL);
 
-    for (size_t i = 0; i < private->count; i++) {
+    for (InfraxSize i = 0; i < private->count; i++) {
         PolyxService* service = private->services[i];
         if (!service || !service->reload) continue;
 
-        infrax_error_t err = service->reload(service);
-        if (err != INFRAX_OK) {
+        InfraxError err = service->reload(service);
+        if (!INFRAX_ERROR_IS_OK(err)) {
             last_error = err;
             service->state = POLYX_SERVICE_STATE_ERROR;
         }
@@ -206,15 +207,15 @@ static infrax_error_t polyx_service_reload_all(PolyxService* self) {
 }
 
 // Service status
-static infrax_error_t polyx_service_get_status(PolyxService* self, polyx_service_type_t type, 
-                                             char* status, size_t size) {
+static InfraxError polyx_service_get_status(PolyxService* self, polyx_service_type_t type, 
+                                         char* status, InfraxSize size) {
     if (!self || !status || size == 0) {
-        return INFRAX_ERROR_INVALID_PARAM;
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
     PolyxService* service = polyx_service_get(self, type);
     if (!service) {
-        return INFRAX_ERROR_NOT_FOUND;
+        return make_error(INFRAX_ERROR_FILE_NOT_FOUND, "Service not found");
     }
 
     if (service->get_status) {
@@ -232,38 +233,32 @@ static infrax_error_t polyx_service_get_status(PolyxService* self, polyx_service
         default: state_str = "unknown";
     }
 
-    snprintf(status, size, "%s: %s", 
+    g_core->snprintf(g_core, status, size, "%s: %s", 
              polyx_config_get_service_type_name(service->config.type),
              state_str);
 
-    return INFRAX_OK;
+    return make_error(INFRAX_ERROR_OK, NULL);
 }
 
-static infrax_error_t polyx_service_get_all_status(PolyxService* self, char* status, size_t size) {
+static InfraxError polyx_service_get_all_status(PolyxService* self, char* status, InfraxSize size) {
     if (!self || !status || size == 0) {
-        return INFRAX_ERROR_INVALID_PARAM;
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
     PolyxServicePrivate* private = self->private_data;
-    if (!private) return INFRAX_ERROR_INVALID_STATE;
+    if (!private) return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid state");
 
     char* ptr = status;
-    size_t remaining = size;
+    InfraxSize remaining = size;
 
-    for (size_t i = 0; i < private->count; i++) {
-        PolyxService* service = private->services[i];
-        if (!service) continue;
-
+    for (InfraxSize i = 0; i < private->count; i++) {
         char service_status[MAX_STATUS_LENGTH];
-        infrax_error_t err = polyx_service_get_status(self, service->config.type, 
-                                                    service_status, 
-                                                    sizeof(service_status));
-        if (err != INFRAX_OK) {
-            continue;
-        }
+        InfraxError err = polyx_service_get_status(self, private->services[i]->config.type,
+                                                service_status, sizeof(service_status));
+        if (!INFRAX_ERROR_IS_OK(err)) continue;
 
-        size_t len = strlen(service_status);
-        if (len + 2 > remaining) {
+        InfraxSize len = g_core->strlen(g_core, service_status);
+        if (len + 2 > remaining) { // +2 for newline and null terminator
             break;
         }
 
@@ -272,27 +267,40 @@ static infrax_error_t polyx_service_get_all_status(PolyxService* self, char* sta
             remaining--;
         }
 
-        strcpy(ptr, service_status);
+        g_core->strcpy(g_core, ptr, service_status);
         ptr += len;
         remaining -= len;
     }
 
-    return INFRAX_OK;
+    *ptr = '\0';
+    return make_error(INFRAX_ERROR_OK, NULL);
 }
 
-// Initialize memory
-static bool init_memory(void) {
-    if (g_memory) return true;
-    
-    InfraxMemoryConfig config = {
-        .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
-        .gc_threshold = 0
+// Memory initialization
+static InfraxBool init_memory(void) {
+    if (g_memory) return INFRAX_TRUE;
+
+    // Create memory configuration
+    InfraxMemoryConfig mem_config = {
+        .initial_size = 1024 * 1024,  // 1MB initial size
+        .use_gc = INFRAX_FALSE,       // No GC for now
+        .use_pool = INFRAX_TRUE,      // Use memory pool
+        .gc_threshold = 0             // Not used when GC is disabled
     };
-    
-    g_memory = InfraxMemoryClass.new(&config);
-    return g_memory != NULL;
+
+    // Create memory instance
+    g_memory = InfraxMemoryClass.new(&mem_config);
+    if (!g_memory) return INFRAX_FALSE;
+
+    // Get core singleton instance
+    g_core = InfraxCoreClass.singleton();
+    if (!g_core) {
+        InfraxMemoryClass.free(g_memory);
+        g_memory = NULL;
+        return INFRAX_FALSE;
+    }
+
+    return INFRAX_TRUE;
 }
 
 // Global class instance

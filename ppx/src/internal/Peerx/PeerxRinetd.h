@@ -2,6 +2,8 @@
 #define PEERX_RINETD_INTERFACE_H
 
 #include "PeerxService.h"
+#include "internal/polyx/PolyxCmdline.h"
+#include "internal/polyx/PolyxConfig.h"
 
 // Forward declarations
 typedef struct PeerxRinetd PeerxRinetd;
@@ -20,18 +22,6 @@ typedef struct {
 struct PeerxRinetd {
     // Base service
     PeerxService base;
-    
-    // Rules management
-    infrax_error_t (*add_rule)(PeerxRinetd* self, const peerx_rinetd_rule_t* rule);
-    infrax_error_t (*remove_rule)(PeerxRinetd* self, const char* bind_host, int bind_port);
-    infrax_error_t (*enable_rule)(PeerxRinetd* self, const char* bind_host, int bind_port);
-    infrax_error_t (*disable_rule)(PeerxRinetd* self, const char* bind_host, int bind_port);
-    infrax_error_t (*get_rules)(PeerxRinetd* self, peerx_rinetd_rule_t* rules, size_t* count);
-    
-    // Statistics
-    infrax_error_t (*get_stats)(PeerxRinetd* self, const char* bind_host, int bind_port, 
-                               uint64_t* bytes_in, uint64_t* bytes_out,
-                               uint64_t* connections);
 };
 
 // Rinetd service class interface
@@ -41,19 +31,31 @@ struct PeerxRinetdClassType {
     void (*free)(PeerxRinetd* self);
     
     // Service lifecycle (inherited from PeerxService)
-    infrax_error_t (*init)(PeerxRinetd* self, const polyx_service_config_t* config);
-    infrax_error_t (*start)(PeerxRinetd* self);
-    infrax_error_t (*stop)(PeerxRinetd* self);
-    infrax_error_t (*reload)(PeerxRinetd* self);
+    InfraxError (*init)(PeerxRinetd* self, const polyx_service_config_t* config);
+    InfraxError (*start)(PeerxRinetd* self);
+    InfraxError (*stop)(PeerxRinetd* self);
+    InfraxError (*reload)(PeerxRinetd* self);
     
     // Status and error handling (inherited from PeerxService)
-    infrax_error_t (*get_status)(PeerxRinetd* self, char* status, size_t size);
+    InfraxError (*get_status)(PeerxRinetd* self, char* status, size_t size);
     const char* (*get_error)(PeerxRinetd* self);
     void (*clear_error)(PeerxRinetd* self);
     
     // Configuration (inherited from PeerxService)
-    infrax_error_t (*validate_config)(PeerxRinetd* self, const polyx_service_config_t* config);
-    infrax_error_t (*apply_config)(PeerxRinetd* self, const polyx_service_config_t* config);
+    InfraxError (*validate_config)(PeerxRinetd* self, const polyx_service_config_t* config);
+    InfraxError (*apply_config)(PeerxRinetd* self, const polyx_service_config_t* config);
+
+    // Rules management
+    InfraxError (*add_rule)(PeerxRinetd* self, const peerx_rinetd_rule_t* rule);
+    InfraxError (*remove_rule)(PeerxRinetd* self, const char* bind_host, int bind_port);
+    InfraxError (*enable_rule)(PeerxRinetd* self, const char* bind_host, int bind_port);
+    InfraxError (*disable_rule)(PeerxRinetd* self, const char* bind_host, int bind_port);
+    InfraxError (*get_rules)(PeerxRinetd* self, peerx_rinetd_rule_t* rules, size_t* count);
+    
+    // Statistics
+    InfraxError (*get_stats)(PeerxRinetd* self, const char* bind_host, int bind_port, 
+                            uint64_t* bytes_in, uint64_t* bytes_out,
+                            uint64_t* connections);
 };
 
 // Global class instance

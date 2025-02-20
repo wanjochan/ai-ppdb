@@ -1,33 +1,24 @@
 #include "PolyxServiceCmd.h"
-#include "PolyxConfig.h"
 #include "internal/infrax/InfraxMemory.h"
-#include <string.h>
-#include <stdio.h>
+#include "internal/infrax/InfraxCore.h"
 
-// Common service command options
+// Command definitions
 static const polyx_cmd_option_t service_options[] = {
-    {"start", "Start the service", false},
-    {"stop", "Stop the service", false},
-    {"status", "Show service status", false},
-    {"reload", "Reload service configuration", false},
-    {"config", "Configuration file path", true},
-    {"daemon", "Run as daemon", false}
+    {"start", "Start the service", INFRAX_FALSE},
+    {"stop", "Stop the service", INFRAX_FALSE},
+    {"reload", "Reload the service", INFRAX_FALSE},
+    {"status", "Show service status", INFRAX_FALSE},
+    {"config", "Configuration file path", INFRAX_TRUE}
 };
 
-// Private data structure
-typedef struct {
-    InfraxMemory* memory;
-} PolyxServiceCmdPrivate;
-
-// Global memory manager
+// Global instances
 static InfraxMemory* g_memory = NULL;
-extern InfraxMemoryClassType InfraxMemoryClass;
+static InfraxCore* g_core = NULL;
 
-// Forward declarations of private functions
-static bool init_memory(void);
-static infrax_error_t handle_service_command(PolyxServiceCmd* self, PolyxService* service, 
-                                           const polyx_config_t* config,
-                                           const char* config_file);
+// Forward declarations
+static InfraxBool init_memory(void);
+static InfraxError handle_service_command(PolyxServiceCmd* self, PolyxService* service,
+                                      const char* command, const char* config_file);
 
 // Constructor
 static PolyxServiceCmd* polyx_service_cmd_new(void) {
@@ -43,231 +34,186 @@ static PolyxServiceCmd* polyx_service_cmd_new(void) {
     }
 
     // Initialize instance
-    memset(self, 0, sizeof(PolyxServiceCmd));
+    g_core->memset(g_core, self, 0, sizeof(PolyxServiceCmd));
     self->self = self;
     self->klass = &PolyxServiceCmdClass;
 
-    // Create service and cmdline instances
-    self->service = PolyxServiceClass.new();
-    if (!self->service) {
-        g_memory->dealloc(g_memory, self);
-        return NULL;
-    }
-
-    self->cmdline = PolyxCmdlineClass.new();
-    if (!self->cmdline) {
-        PolyxServiceClass.free(self->service);
-        g_memory->dealloc(g_memory, self);
-        return NULL;
-    }
-
-    // Allocate private data
-    PolyxServiceCmdPrivate* private = g_memory->alloc(g_memory, sizeof(PolyxServiceCmdPrivate));
-    if (!private) {
-        PolyxCmdlineClass.free(self->cmdline);
-        PolyxServiceClass.free(self->service);
-        g_memory->dealloc(g_memory, self);
-        return NULL;
-    }
-
-    // Initialize private data
-    memset(private, 0, sizeof(PolyxServiceCmdPrivate));
-    private->memory = g_memory;
-
-    self->private_data = private;
     return self;
 }
 
 // Destructor
 static void polyx_service_cmd_free(PolyxServiceCmd* self) {
     if (!self) return;
-
-    if (self->cmdline) {
-        PolyxCmdlineClass.free(self->cmdline);
-    }
-
-    if (self->service) {
-        PolyxServiceClass.free(self->service);
-    }
-
-    PolyxServiceCmdPrivate* private = self->private_data;
-    if (private) {
-        private->memory->dealloc(private->memory, private);
-    }
-
     g_memory->dealloc(g_memory, self);
 }
 
-// Helper functions
-static infrax_error_t handle_service_command(PolyxServiceCmd* self, PolyxService* service, 
-                                           const polyx_config_t* config,
-                                           const char* config_file) {
-    if (!self || !service || !config) {
-        return INFRAX_ERROR_INVALID_PARAM;
+// Service command handlers
+static InfraxError handle_service_command(PolyxServiceCmd* self, PolyxService* service,
+                                      const char* command, const char* config_file) {
+    if (!self || !service || !command) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
-    // Parse configuration file if provided
-    if (config_file) {
-        polyx_config_t service_config = {0};
-        infrax_error_t err = polyx_config_parse_file(config_file, &service_config);
-        if (err != INFRAX_OK) {
-            fprintf(stderr, "Failed to parse config file: %s\n", config_file);
-            return err;
-        }
+    if (g_core->strcmp(g_core, command, "start") == 0) {
+        if (config_file) {
+            polyx_config_t config;
+            InfraxError err = polyx_config_parse_file(config_file, &config);
+            if (!INFRAX_ERROR_IS_OK(err)) {
+                g_core->printf(g_core, "Failed to parse config file: %s\n", config_file);
+                return err;
+            }
 
-        // Apply configuration
-        err = PolyxServiceClass.register_service(self->service, &service_config.services[0]);
-        if (err != INFRAX_OK) {
-            return err;
+            // Register service with configuration
+            if (config.service_count > 0) {
+                err = PolyxServiceClass.register_service(self->service, &config.services[0]);
+                if (!INFRAX_ERROR_IS_OK(err)) {
+                    return err;
+                }
+            }
         }
-    }
-
-    // Handle command
-    if (PolyxCmdlineClass.has_option(self->cmdline, "--start")) {
         return service->start(service);
     }
-    else if (PolyxCmdlineClass.has_option(self->cmdline, "--stop")) {
+    else if (g_core->strcmp(g_core, command, "stop") == 0) {
         return service->stop(service);
     }
-    else if (PolyxCmdlineClass.has_option(self->cmdline, "--reload")) {
+    else if (g_core->strcmp(g_core, command, "reload") == 0) {
         return service->reload(service);
     }
-    else if (PolyxCmdlineClass.has_option(self->cmdline, "--status")) {
+    else if (g_core->strcmp(g_core, command, "status") == 0) {
         char status[1024];
-        infrax_error_t err = service->get_status(service, status, sizeof(status));
-        if (err == INFRAX_OK) {
-            printf("%s\n", status);
+        InfraxError err = service->get_status(service, status, sizeof(status));
+        if (INFRAX_ERROR_IS_OK(err)) {
+            g_core->printf(g_core, "%s\n", status);
         }
         return err;
     }
     else {
-        // Default to status
         char status[1024];
-        infrax_error_t err = service->get_status(service, status, sizeof(status));
-        if (err == INFRAX_OK) {
-            printf("%s\n", status);
+        InfraxError err = service->get_status(service, status, sizeof(status));
+        if (INFRAX_ERROR_IS_OK(err)) {
+            g_core->printf(g_core, "%s\n", status);
         }
         return err;
     }
 }
 
-// Service command handlers
-static infrax_error_t polyx_service_cmd_handle_rinetd(PolyxServiceCmd* self, 
-                                                     const polyx_config_t* config, 
-                                                     int argc, char** argv) {
-    if (!self || !config) {
-        return INFRAX_ERROR_INVALID_PARAM;
+static InfraxError polyx_service_cmd_handle_rinetd(PolyxServiceCmd* self,
+                                                const polyx_config_t* config,
+                                                InfraxI32 argc,
+                                                char** argv) {
+    if (!self || !config || argc < 2) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
-    // Get service instance
     PolyxService* service = PolyxServiceClass.get_service(self->service, POLYX_SERVICE_RINETD);
     if (!service) {
-        fprintf(stderr, "Rinetd service not available\n");
-        return INFRAX_ERROR_NOT_FOUND;
+        g_core->printf(g_core, "Rinetd service not available\n");
+        return make_error(INFRAX_ERROR_FILE_NOT_FOUND, "Service not found");
     }
 
-    // Get config file path
-    char config_file[POLYX_CMD_MAX_VALUE] = {0};
-    PolyxCmdlineClass.get_option(self->cmdline, "--config", config_file, sizeof(config_file));
-
-    return handle_service_command(self, service, config, config_file[0] ? config_file : NULL);
+    return handle_service_command(self, service, argv[1], argc > 2 ? argv[2] : NULL);
 }
 
-static infrax_error_t polyx_service_cmd_handle_sqlite(PolyxServiceCmd* self, 
-                                                     const polyx_config_t* config, 
-                                                     int argc, char** argv) {
-    if (!self || !config) {
-        return INFRAX_ERROR_INVALID_PARAM;
+static InfraxError polyx_service_cmd_handle_sqlite(PolyxServiceCmd* self,
+                                                const polyx_config_t* config,
+                                                InfraxI32 argc,
+                                                char** argv) {
+    if (!self || !config || argc < 2) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
-    // Get service instance
     PolyxService* service = PolyxServiceClass.get_service(self->service, POLYX_SERVICE_SQLITE);
     if (!service) {
-        fprintf(stderr, "SQLite service not available\n");
-        return INFRAX_ERROR_NOT_FOUND;
+        g_core->printf(g_core, "SQLite service not available\n");
+        return make_error(INFRAX_ERROR_FILE_NOT_FOUND, "Service not found");
     }
 
-    // Get config file path
-    char config_file[POLYX_CMD_MAX_VALUE] = {0};
-    PolyxCmdlineClass.get_option(self->cmdline, "--config", config_file, sizeof(config_file));
-
-    return handle_service_command(self, service, config, config_file[0] ? config_file : NULL);
+    return handle_service_command(self, service, argv[1], argc > 2 ? argv[2] : NULL);
 }
 
-static infrax_error_t polyx_service_cmd_handle_memkv(PolyxServiceCmd* self, 
-                                                    const polyx_config_t* config, 
-                                                    int argc, char** argv) {
-    if (!self || !config) {
-        return INFRAX_ERROR_INVALID_PARAM;
+static InfraxError polyx_service_cmd_handle_memkv(PolyxServiceCmd* self,
+                                               const polyx_config_t* config,
+                                               InfraxI32 argc,
+                                               char** argv) {
+    if (!self || !config || argc < 2) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
-    // Get service instance
     PolyxService* service = PolyxServiceClass.get_service(self->service, POLYX_SERVICE_MEMKV);
     if (!service) {
-        fprintf(stderr, "MemKV service not available\n");
-        return INFRAX_ERROR_NOT_FOUND;
+        g_core->printf(g_core, "MemKV service not available\n");
+        return make_error(INFRAX_ERROR_FILE_NOT_FOUND, "Service not found");
     }
 
-    // Get config file path
-    char config_file[POLYX_CMD_MAX_VALUE] = {0};
-    PolyxCmdlineClass.get_option(self->cmdline, "--config", config_file, sizeof(config_file));
-
-    return handle_service_command(self, service, config, config_file[0] ? config_file : NULL);
+    return handle_service_command(self, service, argv[1], argc > 2 ? argv[2] : NULL);
 }
 
 // Service command registration
-static infrax_error_t polyx_service_cmd_register_all(PolyxServiceCmd* self) {
+static InfraxError polyx_service_cmd_register_all(PolyxServiceCmd* self) {
     if (!self) {
-        return INFRAX_ERROR_INVALID_PARAM;
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
     }
 
+    // Register service commands
     static const polyx_cmd_t commands[] = {
         {
             .name = "rinetd",
-            .desc = "Manage rinetd service",
+            .desc = "Rinetd service management",
             .options = service_options,
             .option_count = sizeof(service_options) / sizeof(service_options[0]),
-            .handler = polyx_service_cmd_handle_rinetd
+            .handler = (InfraxError (*)(const polyx_config_t*, InfraxI32, char**))polyx_service_cmd_handle_rinetd
         },
         {
             .name = "sqlite",
-            .desc = "Manage sqlite service",
+            .desc = "SQLite service management",
             .options = service_options,
             .option_count = sizeof(service_options) / sizeof(service_options[0]),
-            .handler = polyx_service_cmd_handle_sqlite
+            .handler = (InfraxError (*)(const polyx_config_t*, InfraxI32, char**))polyx_service_cmd_handle_sqlite
         },
         {
             .name = "memkv",
-            .desc = "Manage memkv service",
+            .desc = "MemKV service management",
             .options = service_options,
             .option_count = sizeof(service_options) / sizeof(service_options[0]),
-            .handler = polyx_service_cmd_handle_memkv
+            .handler = (InfraxError (*)(const polyx_config_t*, InfraxI32, char**))polyx_service_cmd_handle_memkv
         }
     };
 
-    for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
-        infrax_error_t err = PolyxCmdlineClass.register_cmd(self->cmdline, &commands[i]);
-        if (err != INFRAX_OK) {
+    for (InfraxSize i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+        InfraxError err = PolyxCmdlineClass.register_cmd(self->cmdline, &commands[i]);
+        if (!INFRAX_ERROR_IS_OK(err)) {
             return err;
         }
     }
 
-    return INFRAX_OK;
+    return make_error(INFRAX_ERROR_OK, NULL);
 }
 
-// Initialize memory
-static bool init_memory(void) {
-    if (g_memory) return true;
-    
-    InfraxMemoryConfig config = {
-        .initial_size = 1024 * 1024,  // 1MB
-        .use_gc = false,
-        .use_pool = true,
-        .gc_threshold = 0
+// Memory initialization
+static InfraxBool init_memory(void) {
+    if (g_memory) return INFRAX_TRUE;
+
+    // Create memory configuration
+    InfraxMemoryConfig mem_config = {
+        .initial_size = 1024 * 1024,  // 1MB initial size
+        .use_gc = INFRAX_FALSE,       // No GC for now
+        .use_pool = INFRAX_TRUE,      // Use memory pool
+        .gc_threshold = 0             // Not used when GC is disabled
     };
-    
-    g_memory = InfraxMemoryClass.new(&config);
-    return g_memory != NULL;
+
+    // Create memory instance
+    g_memory = InfraxMemoryClass.new(&mem_config);
+    if (!g_memory) return INFRAX_FALSE;
+
+    // Get core singleton instance
+    g_core = InfraxCoreClass.singleton();
+    if (!g_core) {
+        InfraxMemoryClass.free(g_memory);
+        g_memory = NULL;
+        return INFRAX_FALSE;
+    }
+
+    return INFRAX_TRUE;
 }
 
 // Global class instance

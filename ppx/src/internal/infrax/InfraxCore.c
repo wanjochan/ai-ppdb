@@ -704,14 +704,126 @@ static unsigned int infrax_core_alarm(InfraxCore *self, unsigned int seconds) {
     return alarm(seconds);
 }
 
+static void* infrax_core_memcpy(InfraxCore *self, void* dest, const void* src, size_t n) {
+    if (!dest || !src || !n) return dest;
+    unsigned char* d = dest;
+    const unsigned char* s = src;
+    while (n--) *d++ = *s++;
+    return dest;
+}
+
+static void* infrax_core_memmove(InfraxCore *self, void* dest, const void* src, size_t n) {
+    if (!dest || !src || !n) return dest;
+    unsigned char* d = dest;
+    const unsigned char* s = src;
+    if (d < s) {
+        while (n--) *d++ = *s++;
+    } else {
+        d += n;
+        s += n;
+        while (n--) *--d = *--s;
+    }
+    return dest;
+}
+
+static int infrax_core_isspace(InfraxCore *self, int c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+
+static int infrax_core_isdigit(InfraxCore *self, int c) {
+    return c >= '0' && c <= '9';
+}
+
+// String to number conversion
+static int infrax_core_atoi(InfraxCore *self, const char* str) {
+    if (!str) return 0;
+    
+    int result = 0;
+    int sign = 1;
+    
+    // Skip leading whitespace
+    while (infrax_core_isspace(self, *str)) str++;
+    
+    // Handle sign
+    if (*str == '-') {
+        sign = -1;
+        str++;
+    } else if (*str == '+') {
+        str++;
+    }
+    
+    // Convert digits
+    while (infrax_core_isdigit(self, *str)) {
+        result = result * 10 + (*str - '0');
+        str++;
+    }
+    
+    return sign * result;
+}
+
+static long infrax_core_atol(InfraxCore *self, const char* str) {
+    if (!str) return 0;
+    
+    long result = 0;
+    int sign = 1;
+    
+    // Skip leading whitespace
+    while (infrax_core_isspace(self, *str)) str++;
+    
+    // Handle sign
+    if (*str == '-') {
+        sign = -1;
+        str++;
+    } else if (*str == '+') {
+        str++;
+    }
+    
+    // Convert digits
+    while (infrax_core_isdigit(self, *str)) {
+        result = result * 10 + (*str - '0');
+        str++;
+    }
+    
+    return sign * result;
+}
+
+static long long infrax_core_atoll(InfraxCore *self, const char* str) {
+    if (!str) return 0;
+    
+    long long result = 0;
+    int sign = 1;
+    
+    // Skip leading whitespace
+    while (infrax_core_isspace(self, *str)) str++;
+    
+    // Handle sign
+    if (*str == '-') {
+        sign = -1;
+        str++;
+    } else if (*str == '+') {
+        str++;
+    }
+    
+    // Convert digits
+    while (infrax_core_isdigit(self, *str)) {
+        result = result * 10 + (*str - '0');
+        str++;
+    }
+    
+    return sign * result;
+}
+
 // Initialize singleton instance
-static InfraxCore singleton = {
-    .self = &singleton,  // Self pointer to the static instance
-    .klass = &InfraxCoreClass,
+static InfraxCore g_core = {
+    .self = &g_core,
+    .klass = NULL,
+    
     // Core functions
     .forward_call = infrax_core_forward_call,
     .printf = infrax_core_printf,
     .snprintf = infrax_core_snprintf,
+    
+    // Memory operations
     .malloc = infrax_core_malloc,
     .calloc = infrax_core_calloc,
     .realloc = infrax_core_realloc,
@@ -734,8 +846,17 @@ static InfraxCore singleton = {
     // Misc operations
     .memcmp = infrax_core_memcmp,
     .memset = infrax_core_memset,
+    .memcpy = infrax_core_memcpy,
+    .memmove = infrax_core_memmove,
+    .isspace = infrax_core_isspace,
+    .isdigit = infrax_core_isdigit,
     .hint_yield = infrax_core_hint_yield,
     .pid = infrax_core_pid,
+    
+    // String to number conversion
+    .atoi = infrax_core_atoi,
+    .atol = infrax_core_atol,
+    .atoll = infrax_core_atoll,
     
     // Random number operations
     .random = infrax_core_random,
@@ -809,7 +930,7 @@ static InfraxCore singleton = {
 
 // Simple singleton getter
 InfraxCore* infrax_core_singleton(void) {
-    return &singleton;
+    return &g_core;
 };
 
 InfraxCoreClassType InfraxCoreClass = {

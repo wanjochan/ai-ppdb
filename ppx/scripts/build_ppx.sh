@@ -4,7 +4,31 @@
 source "$(dirname "$0")/build_env.sh"
 
 # Set compile flags with all necessary include paths
-CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR} -I${ROOT_DIR}/repos/cosmocc/include"
+CFLAGS="-Os -fomit-frame-pointer -fno-pie -fno-pic -fno-common -fno-plt -mcmodel=large -finline-functions -I${PPX_DIR}/src -I${PPX_DIR}/include -I${SRC_DIR} -I${ROOT_DIR}/repos/cosmocc/include -I${PPX_DIR}/vendor"
+
+# Build SQLite3 first
+echo "Building SQLite3..."
+SQLITE_LIB="${BUILD_DIR}/sqlite3/libsqlite3.a"
+SQLITE_SRC="${PPX_DIR}/vendor/sqlite3/sqlite3.c"
+
+# Create SQLite3 build directory
+mkdir -p "${BUILD_DIR}/sqlite3"
+
+# Compile SQLite3
+echo "Compiling SQLite3..."
+"${CC}" ${CFLAGS} -c -o "${BUILD_DIR}/sqlite3/sqlite3.o" "${SQLITE_SRC}"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to compile sqlite3"
+    exit 1
+fi
+
+# Create SQLite3 static library
+echo "Creating SQLite3 static library..."
+"${AR}" rcs "${SQLITE_LIB}" "${BUILD_DIR}/sqlite3/sqlite3.o"
+if [ $? -ne 0 ]; then
+    echo "Error: Failed to create sqlite3 static library"
+    exit 1
+fi
 
 # Define source files
 PPX_SOURCES=(
@@ -58,7 +82,7 @@ build_ppx() {
 
     # Link everything together
     echo "Linking PPX..."
-    "${CC}" ${CFLAGS} "${objects[@]}" -L"${BUILD_DIR}/arch" -larch -o "${build_dir}/ppx_latest.exe"
+    "${CC}" ${CFLAGS} "${objects[@]}" -L"${BUILD_DIR}/arch" -larch -L"${BUILD_DIR}/sqlite3" -lsqlite3 ${LDFLAGS} -o "${build_dir}/ppx_latest.exe"
     if [ $? -ne 0 ]; then
         echo "Failed to link PPX"
         exit 1
