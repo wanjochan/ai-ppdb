@@ -21,6 +21,7 @@ ARCH_SOURCES=(
     "${SRC_DIR}/internal/infrax/InfraxNet.c"
     "${SRC_DIR}/internal/infrax/InfraxThread.c"
     "${SRC_DIR}/internal/infrax/InfraxAsync.c"
+    "${SRC_DIR}/internal/polyx/PolyxScript.c"
 )
 
 # Define test sources
@@ -35,6 +36,7 @@ TEST_SOURCES=(
     "${TEST_DIR}/arch/test_c1m.c"
     "${TEST_DIR}/arch/test_cosmopolitan.c"
     "${TEST_DIR}/arch/test_infrax_netasync.c"
+    "${TEST_DIR}/arch/test_polyx_script.c"
 )
 
 # Clean build and test files
