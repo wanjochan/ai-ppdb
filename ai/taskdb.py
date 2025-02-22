@@ -206,4 +206,45 @@ class DBManager:
                 """,
                 (task_id,)
             )
-            return [dict(row) for row in cursor.fetchall()] 
+            return [dict(row) for row in cursor.fetchall()]
+
+    def delete_completed_tasks(self) -> int:
+        """删除所有已完成的任务
+        
+        Returns:
+            int: 删除的任务数量
+        """
+        with self.get_connection() as conn:
+            # 先删除历史记录
+            conn.execute(
+                """
+                DELETE FROM task_status_history
+                WHERE task_id IN (
+                    SELECT id FROM tasks
+                    WHERE status = 'COMPLETED'
+                )
+                """
+            )
+            
+            # 删除会话历史
+            conn.execute(
+                """
+                DELETE FROM session_history
+                WHERE task_id IN (
+                    SELECT id FROM tasks
+                    WHERE status = 'completed'
+                )
+                """
+            )
+            
+            # 最后删除任务
+            cursor = conn.execute(
+                """
+                DELETE FROM tasks
+                WHERE status = 'completed'
+                """
+            )
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            return deleted_count

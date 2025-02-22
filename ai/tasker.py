@@ -145,7 +145,7 @@ def check_tasks(task_manager: TaskManager, role: str, status: Optional[str] = No
 
 def main():
     parser = argparse.ArgumentParser(description='Task Manager')
-    parser.add_argument('--mode', choices=['check', 'send', 'update-status', 'recall', 'check-changes'],
+    parser.add_argument('--mode', choices=['check', 'send', 'update-status', 'recall', 'check-changes', 'delete-completed'],
                       required=True,
                       help='Operation mode')
     parser.add_argument('--role', help='Role to check tasks for')
@@ -216,6 +216,14 @@ def main():
                 raise ValueError("from_role and task_id are required")
             task_manager.recall_task(args.from_role, args.task_id)
             print(json.dumps({"status": "success"}, ensure_ascii=False))
+            
+        elif args.mode == 'delete-completed':
+            deleted_count = task_manager.db.delete_completed_tasks()
+            print(json.dumps({
+                "status": "success",
+                "message": f"已删除 {deleted_count} 个已完成任务",
+                "deleted_count": deleted_count
+            }, ensure_ascii=False))
 
     except Exception as e:
         print(json.dumps({
@@ -226,3 +234,13 @@ def main():
 
 if __name__ == '__main__':
     main()
+'''
+
+Roo：
+
+你先阅读 tasker.py 了解它的命令行用法。然后：
+
+1）按顺序分别扮演 PM 和 Dev 去用命令行查收任务。如果有新任务就分析、计划、执行、回复、更新状态；
+2）如果全部角色都没有新任务就sleep 15 秒
+3）回到第 1 步
+'''
