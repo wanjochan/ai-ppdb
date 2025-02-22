@@ -1,0 +1,264 @@
+from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+import uvicorn
+import os
+import sys
+import json
+import asyncio
+from typing import List, Dict, Any, Set
+from datetime import datetime
+
+# 添加项目根目录到 Python 路径
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ai.db import DBManager
+
+app = FastAPI(title="邮件监控系统")
+
+# 挂载静态文件目录
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+os.makedirs(static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# 存储活动的WebSocket连接
+active_connections: Set[WebSocket] = set()
+
+async def broadcast_mails():
+    """广播邮件状态到所有连接的客户端"""
+    if not active_connections:
+        return
+        
+    db = DBManager()
+    roles = ["User", "ProjectManager", "Engineer"]
+    
+    # 获取所有角色的邮件
+    all_mails = {}
+    for role in roles:
+        mails = db.get_mails_by_role(role, include_sent=True)
+        all_mails[role] = mails
+    
+    # 广播到所有连接
+    message = {
+        "type": "mails_update",
+        "timestamp": datetime.now().isoformat(),
+        "data": all_mails
+    }
+    
+    for connection in active_connections:
+        try:
+            await connection.send_json(message)
+        except:
+            # 如果发送失败，移除连接
+            active_connections.remove(connection)
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket连接处理"""
+    await websocket.accept()
+    active_connections.add(websocket)
+    
+    try:
+        while True:
+            # 等待客户端消息（心跳检测）
+            await websocket.receive_text()
+    except:
+        # 连接断开时清理
+        active_connections.remove(websocket)
+
+@app.on_event("startup")
+async def startup_event():
+    """启动时开始邮件状态广播任务"""
+    asyncio.create_task(periodic_broadcast())
+
+async def periodic_broadcast():
+    """定期广播邮件状态"""
+    while True:
+        await broadcast_mails()
+        await asyncio.sleep(5)  # 每5秒更新一次
+
+@app.get("/", response_class=HTMLResponse)
+async def get_index():
+    """返回监控页面"""
+    with open(os.path.join(static_dir, "index.html")) as f:
+        return f.read()
+
+@app.get("/api/roles")
+async def get_roles() -> Dict[str, List[str]]:
+    """获取所有角色"""
+    return {
+        "status": "success",
+        "data": ["User", "ProjectManager", "Engineer"]
+    }
+
+def main():
+    """启动监控服务器"""
+    # 创建前端页面
+    index_html = """<!DOCTYPE html>
+<html>
+<head>
+    <title>邮件监控系统</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .role-section { margin-bottom: 30px; }
+        .mail-card {
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+        }
+        .mail-card.unread { background-color: #f0f8ff; }
+        .mail-card.processing { background-color: #fff0f0; }
+        .mail-card.completed { background-color: #f0fff0; }
+        .mail-card.archived { background-color: #f0f0f0; }
+        .mail-card.recalled { background-color: #fff0ff; }
+        .timestamp { color: #666; font-size: 0.9em; }
+        .status { font-weight: bold; }
+        .controls { margin-top: 10px; }
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .connection-status.connected {
+            background-color: #90EE90;
+            color: #006400;
+        }
+        .connection-status.disconnected {
+            background-color: #FFB6C1;
+            color: #8B0000;
+        }
+        .last-update {
+            position: fixed;
+            top: 40px;
+            right: 10px;
+            font-size: 0.8em;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>邮件监控系统</h1>
+    <div id="connection-status" class="connection-status">连接中...</div>
+    <div id="last-update" class="last-update"></div>
+    <div id="app"></div>
+    <script>
+        let ws = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+        
+        // 连接WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('connection-status').textContent = '已连接';
+                document.getElementById('connection-status').className = 'connection-status connected';
+                reconnectAttempts = 0;
+                
+                // 开始发送心跳
+                startHeartbeat();
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('connection-status').textContent = '已断开';
+                document.getElementById('connection-status').className = 'connection-status disconnected';
+                
+                // 尝试重连
+                if (reconnectAttempts < maxReconnectAttempts) {
+                    reconnectAttempts++;
+                    setTimeout(connectWebSocket, 3000);
+                }
+            };
+            
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                if (message.type === 'mails_update') {
+                    updateMailsDisplay(message.data);
+                    document.getElementById('last-update').textContent = 
+                        `最后更新: ${new Date(message.timestamp).toLocaleString()}`;
+                }
+            };
+        }
+        
+        // 发送心跳包
+        function startHeartbeat() {
+            setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send('ping');
+                }
+            }, 30000);  // 每30秒发送一次心跳
+        }
+        
+        // 格式化时间戳
+        function formatTimestamp(timestamp) {
+            return new Date(timestamp).toLocaleString();
+        }
+        
+        // 渲染邮件卡片
+        function renderMailCard(mail) {
+            return `
+                <div class="mail-card ${mail.status.toLowerCase()}">
+                    <div class="status">状态: ${mail.status}</div>
+                    <div>从: ${mail.from_role} 到: ${mail.to_role}</div>
+                    <div>主题: ${mail.subject}</div>
+                    <div>内容: ${mail.content}</div>
+                    <div class="timestamp">
+                        创建时间: ${formatTimestamp(mail.created_at)}<br>
+                        ${mail.read_at ? '阅读时间: ' + formatTimestamp(mail.read_at) + '<br>' : ''}
+                        ${mail.recalled_at ? '撤回时间: ' + formatTimestamp(mail.recalled_at) + '<br>' : ''}
+                    </div>
+                    <div class="controls">
+                        ID: ${mail.id}
+                    </div>
+                </div>
+            `;
+        }
+        
+        // 渲染角色部分
+        function renderRoleSection(role, mails) {
+            const inboxMails = mails.filter(m => m.to_role === role);
+            const sentMails = mails.filter(m => m.from_role === role);
+            
+            return `
+                <div class="role-section">
+                    <h2>${role}</h2>
+                    <h3>收件箱 (${inboxMails.length})</h3>
+                    ${inboxMails.map(renderMailCard).join('')}
+                    <h3>发件箱 (${sentMails.length})</h3>
+                    ${sentMails.map(renderMailCard).join('')}
+                </div>
+            `;
+        }
+        
+        // 更新邮件显示
+        function updateMailsDisplay(mailsByRole) {
+            const app = document.getElementById('app');
+            app.innerHTML = Object.entries(mailsByRole)
+                .map(([role, mails]) => renderRoleSection(role, mails))
+                .join('');
+        }
+        
+        // 初始化连接
+        connectWebSocket();
+    </script>
+</body>
+</html>
+"""
+    
+    # 写入前端页面
+    with open(os.path.join(static_dir, "index.html"), "w") as f:
+        f.write(index_html)
+    
+    # 启动服务器
+    uvicorn.run(app, host="127.0.0.1", port=18888)
+
+if __name__ == "__main__":
+    main() 
