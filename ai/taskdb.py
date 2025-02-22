@@ -1,22 +1,80 @@
+"""
+任务数据库管理模块
+"""
+
 import os
 import sqlite3
 from datetime import datetime
 from contextlib import contextmanager
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 class DBManager:
-    def __init__(self, db_path="./ai/var/ppdb.sqlite"):
+    def __init__(self, db_path: str = "tasks.db"):
         self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._init_db()
 
-    def _init_db(self):
+    def _init_db(self) -> None:
         """初始化数据库"""
-        with open("ai/schema.sql", "r") as f:
-            schema = f.read()
-        
         with self.get_connection() as conn:
-            conn.executescript(schema)
+            cursor = conn.cursor()
+            
+            # 创建任务表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id TEXT PRIMARY KEY,
+                    from_role TEXT NOT NULL,
+                    to_role TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    read_at TEXT,
+                    recalled_at TEXT,
+                    reply_to TEXT,
+                    last_active_at TEXT
+                )
+            """)
+            
+            # 创建变更记录表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id TEXT NOT NULL,
+                    change_type TEXT NOT NULL,
+                    change_time TEXT NOT NULL,
+                    details TEXT,
+                    FOREIGN KEY (task_id) REFERENCES tasks (id)
+                )
+            """)
+            
+            # 创建会话表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    current_role TEXT NOT NULL,
+                    current_task_id TEXT,
+                    ide_pid INTEGER,
+                    started_at TEXT NOT NULL,
+                    last_active_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    FOREIGN KEY (current_task_id) REFERENCES tasks (id)
+                )
+            """)
+            
+            # 创建会话历史表
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS session_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES sessions (id),
+                    FOREIGN KEY (task_id) REFERENCES tasks (id)
+                )
+            """)
+            
             conn.commit()
 
     @contextmanager
@@ -103,61 +161,60 @@ class DBManager:
             return dict(row) if row else None
 
     def create_task(self, from_role: str, to_role: str, subject: str, content: str,
-                   task_id: str, reply_to: str = None) -> None:
+                   task_id: str, reply_to: Optional[str] = None) -> None:
         """创建新任务"""
-        now = datetime.now()
+        now = datetime.now().isoformat()
         with self.get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO tasks (id, from_role, to_role, subject, content, status,
-                                 created_at, reply_to)
-                VALUES (?, ?, ?, ?, ?, 'UNREAD', ?, ?)
-                """,
-                (task_id, from_role, to_role, subject, content, now, reply_to)
-            )
-            conn.execute(
-                """
-                INSERT INTO task_status_history (task_id, status, timestamp, note)
-                VALUES (?, 'UNREAD', ?, 'Task created')
-                """,
-                (task_id, now)
-            )
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO tasks (
+                    id, from_role, to_role, subject, content,
+                    status, created_at, reply_to, last_active_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (task_id, from_role, to_role, subject, content,
+                  "unread", now, reply_to, now))
+            
+            # 记录变更
+            cursor.execute("""
+                INSERT INTO changes (task_id, change_type, change_time, details)
+                VALUES (?, ?, ?, ?)
+            """, (task_id, "create", now, f"Task created by {from_role}"))
+            
             conn.commit()
 
-    def update_task_status(self, task_id: str, status: str, note: str = None) -> None:
+    def update_task_status(self, task_id: str, new_status: str,
+                          note: Optional[str] = None) -> None:
         """更新任务状态"""
-        now = datetime.now()
+        now = datetime.now().isoformat()
         with self.get_connection() as conn:
-            updates = ["status = ?", "last_active_at = ?"]
-            params = [status, now]
+            cursor = conn.cursor()
             
-            if status == 'UNREAD':
-                updates.append("read_at = NULL")
-            elif status != 'RECALLED' and self.get_task_status(task_id) == 'UNREAD':
-                updates.append("read_at = ?")
-                params.append(now)
-            elif status == 'RECALLED':
+            # 更新任务状态
+            updates = ["status = ?", "last_active_at = ?"]
+            params = [new_status, now]
+            
+            if new_status == "recalled":
                 updates.append("recalled_at = ?")
+                params.append(now)
+            elif new_status not in ("unread", "recalled"):
+                updates.append("read_at = COALESCE(read_at, ?)")
                 params.append(now)
             
             params.append(task_id)
             
-            conn.execute(
-                f"""
+            cursor.execute(f"""
                 UPDATE tasks
-                SET {', '.join(updates)}
+                SET {", ".join(updates)}
                 WHERE id = ?
-                """,
-                params
-            )
+            """, params)
             
-            conn.execute(
-                """
-                INSERT INTO task_status_history (task_id, status, timestamp, note)
+            # 记录变更
+            cursor.execute("""
+                INSERT INTO changes (task_id, change_type, change_time, details)
                 VALUES (?, ?, ?, ?)
-                """,
-                (task_id, status, now, note or f"Status changed to {status}")
-            )
+            """, (task_id, "status_update", now,
+                  f"Status updated to {new_status}" + (f": {note}" if note else "")))
+            
             conn.commit()
 
     def get_task_status(self, task_id: str) -> Optional[str]:
@@ -170,30 +227,41 @@ class DBManager:
             row = cursor.fetchone()
             return row['status'] if row else None
 
-    def get_tasks_by_role(self, role: str, status: str = None,
-                         include_sent: bool = False) -> List[Dict[str, Any]]:
-        """获取角色的任务"""
-        query = """
-            SELECT * FROM tasks
-            WHERE (to_role = ?
-        """
-        params = [role]
-        
-        if include_sent:
-            query += " OR from_role = ?"
-            params.append(role)
-            
-        query += ")"
-        
-        if status:
-            query += " AND status = ?"
-            params.append(status)
-            
-        query += " ORDER BY created_at DESC"
-        
+    def get_tasks_by_role(self, role: str, status: Optional[str] = None,
+                         include_sent: bool = False,
+                         excluded_statuses: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """获取指定角色的任务"""
         with self.get_connection() as conn:
-            cursor = conn.execute(query, params)
-            return [dict(row) for row in cursor.fetchall()]
+            cursor = conn.cursor()
+            
+            # 构建查询条件
+            conditions = []
+            params = []
+            
+            if include_sent:
+                conditions.append("(to_role = ? OR from_role = ?)")
+                params.extend([role, role])
+            else:
+                conditions.append("to_role = ?")
+                params.append(role)
+            
+            if status:
+                conditions.append("status = ?")
+                params.append(status)
+            elif excluded_statuses:
+                placeholders = ",".join("?" * len(excluded_statuses))
+                conditions.append(f"status NOT IN ({placeholders})")
+                params.extend(excluded_statuses)
+            
+            # 组合查询语句
+            query = "SELECT * FROM tasks"
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY last_active_at DESC"
+            
+            cursor.execute(query, params)
+            columns = [col[0] for col in cursor.description]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
     def get_task_history(self, task_id: str) -> List[Dict[str, Any]]:
         """获取任务状态历史"""
@@ -209,42 +277,10 @@ class DBManager:
             return [dict(row) for row in cursor.fetchall()]
 
     def delete_completed_tasks(self) -> int:
-        """删除所有已完成的任务
-        
-        Returns:
-            int: 删除的任务数量
-        """
+        """删除已完成的任务"""
         with self.get_connection() as conn:
-            # 先删除历史记录
-            conn.execute(
-                """
-                DELETE FROM task_status_history
-                WHERE task_id IN (
-                    SELECT id FROM tasks
-                    WHERE status = 'COMPLETED'
-                )
-                """
-            )
-            
-            # 删除会话历史
-            conn.execute(
-                """
-                DELETE FROM session_history
-                WHERE task_id IN (
-                    SELECT id FROM tasks
-                    WHERE status = 'completed'
-                )
-                """
-            )
-            
-            # 最后删除任务
-            cursor = conn.execute(
-                """
-                DELETE FROM tasks
-                WHERE status = 'completed'
-                """
-            )
-            
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM tasks WHERE status IN ('completed', 'archived')")
             deleted_count = cursor.rowcount
             conn.commit()
             return deleted_count

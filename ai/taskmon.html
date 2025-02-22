@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>任务监控系统</title>
+    <title>任务监控</title>
     <meta charset="utf-8">
     <style>
         body { 
@@ -9,381 +9,108 @@
             margin: 20px;
             background-color: #f5f5f5;
         }
-        .roles-container {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            gap: 20px;
-            margin-top: 20px;
-        }
-        .role-section { 
-            flex: 0 0 30%;  /* 固定宽度30% */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
             background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .role-section h2 {
-            margin-top: 0;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #eee;
-            color: #333;
-        }
-        .role-section h3 {
-            color: #666;
-            font-size: 1.1em;
-            margin: 15px 0 10px;
-        }
-        .task-card {
+        th, td {
+            padding: 10px;
             border: 1px solid #ddd;
-            padding: 8px;
-            margin: 8px 0;
-            border-radius: 4px;
-            transition: all 0.3s ease;
-            background: white;
-            cursor: pointer;
+            text-align: center;
         }
-        .task-card .task-summary {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 10px;
+        th {
+            background: #f0f0f0;
         }
-        .task-card .task-summary .left {
-            flex: 1;
-            min-width: 0;  /* 防止文本溢出 */
-        }
-        .task-card .task-summary .subject {
-            font-weight: bold;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-        .task-card .task-summary .meta {
-            font-size: 0.85em;
-            color: #666;
-        }
-        .task-card .task-details {
-            display: none;
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid #eee;
-        }
-        .task-card.expanded .task-details {
-            display: block;
-        }
-        .task-card .status-badge {
-            font-size: 0.8em;
-            padding: 2px 6px;
-            border-radius: 3px;
-            background: #eee;
-            color: #666;
-        }
-        .task-card.unread .status-badge { 
-            background-color: #1e90ff;
-            color: white;
-        }
-        .task-card.processing .status-badge { 
-            background-color: #ff4500;
-            color: white;
-        }
-        .task-card.completed .status-badge { 
-            background-color: #32cd32;
-            color: white;
-        }
-        .task-card.archived .status-badge { 
-            background-color: #808080;
-            color: white;
-        }
-        .task-card.recalled .status-badge { 
-            background-color: #dda0dd;
-            color: white;
-        }
-        .timestamp { 
-            color: #666; 
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
-        .status { 
-            font-weight: bold;
-            color: #444;
-        }
-        .controls { 
-            margin-top: 10px;
-            font-size: 0.85em;
-            color: #888;
-        }
+        .status-unread { color: blue; }
+        .status-processing { color: orange; }
+        .status-completed { color: green; }
+        .status-archived { color: gray; }
         .connection-status {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            padding: 5px 10px;
-            border-radius: 4px;
-            font-size: 0.9em;
-            z-index: 1000;
-        }
-        .connection-status.connected {
-            background-color: #90EE90;
-            color: #006400;
-        }
-        .connection-status.disconnected {
-            background-color: #FFB6C1;
-            color: #8B0000;
-        }
-        .last-update {
-            position: fixed;
-            top: 40px;
-            right: 10px;
-            font-size: 0.8em;
-            color: #666;
-            z-index: 1000;
-        }
-        .page-header {
-            margin-bottom: 30px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #ddd;
-        }
-        .page-header h1 {
-            margin: 0;
-            color: #333;
-        }
-        @media (max-width: 1200px) {
-            .role-section {
-                flex: 0 0 45%;  /* 在中等屏幕上两列显示 */
-            }
-        }
-        @media (max-width: 768px) {
-            .role-section {
-                flex: 0 0 100%;  /* 在小屏幕上单列显示 */
-            }
-        }
-        .status-stats {
-            font-size: 0.9em;
-            color: #666;
-            margin: 10px 0;
             padding: 5px;
-            background: #f9f9f9;
-            border-radius: 4px;
-        }
-        .status-stats span {
-            margin: 0 5px;
+            margin: 10px 0;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
-    <div class="page-header">
-        <h1>任务监控系统</h1>
-    </div>
+    <h1>任务监控</h1>
     <div id="connection-status" class="connection-status">连接中...</div>
-    <div id="last-update" class="last-update"></div>
-    <div id="app" class="roles-container"></div>
+    <div id="tasks-table"></div>
+
     <script>
         let ws = null;
-        let reconnectAttempts = 0;
-        let reconnectTimer = null;
-        const maxReconnectAttempts = 5;
-        const reconnectInterval = 3000; // 3秒重连一次
         
-        // 角色显示名称映射
-        const roleDisplayNames = {
-            'User': '用户',
-            'PM': '项目经理',
-            'Dev': '开发者'
-        };
-        
-        // 连接WebSocket
         function connectWebSocket() {
-            if (ws) {
-                ws.close();
-                ws = null;
-            }
-
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            ws = new WebSocket(protocol + '//' + window.location.host + '/ws');
             
             ws.onopen = () => {
-                console.log('WebSocket connected');
                 document.getElementById('connection-status').textContent = '已连接';
-                document.getElementById('connection-status').className = 'connection-status connected';
-                reconnectAttempts = 0;
-                if (reconnectTimer) {
-                    clearInterval(reconnectTimer);
-                    reconnectTimer = null;
-                }
-                
-                // 开始发送心跳
-                startHeartbeat();
+                document.getElementById('connection-status').style.color = 'green';
             };
             
             ws.onclose = () => {
-                console.log('WebSocket disconnected');
                 document.getElementById('connection-status').textContent = '已断开，正在重连...';
-                document.getElementById('connection-status').className = 'connection-status disconnected';
-                
-                // 清理心跳
-                if (heartbeatTimer) {
-                    clearInterval(heartbeatTimer);
-                    heartbeatTimer = null;
-                }
-                
-                // 尝试重连
-                if (reconnectAttempts < maxReconnectAttempts) {
-                    reconnectAttempts++;
-                    if (!reconnectTimer) {
-                        reconnectTimer = setInterval(() => {
-                            if (reconnectAttempts >= maxReconnectAttempts) {
-                                clearInterval(reconnectTimer);
-                                reconnectTimer = null;
-                                document.getElementById('connection-status').textContent = 
-                                    '重连失败，请刷新页面';
-                                return;
-                            }
-                            console.log(`Reconnecting... attempt ${reconnectAttempts}`);
-                            connectWebSocket();
-                        }, reconnectInterval);
-                    }
-                } else {
-                    document.getElementById('connection-status').textContent = 
-                        '重连失败，请刷新页面';
-                }
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                ws.close(); // 触发 onclose 事件进行重连
+                document.getElementById('connection-status').style.color = 'red';
+                setTimeout(connectWebSocket, 3000);
             };
             
             ws.onmessage = (event) => {
-                const message = JSON.parse(event.data);
-                if (message.type === 'tasks_update') {
-                    updateTasksDisplay(message.data);
-                    document.getElementById('last-update').textContent = 
-                        `最后更新: ${new Date(message.timestamp).toLocaleString()}`;
-                }
+                const data = JSON.parse(event.data);
+                updateTasksTable(data.data);
             };
         }
         
-        let heartbeatTimer = null;
-        // 发送心跳包
-        function startHeartbeat() {
-            if (heartbeatTimer) {
-                clearInterval(heartbeatTimer);
+        function updateTasksTable(data) {
+            const table = document.createElement('table');
+            table.innerHTML = `
+                <tr>
+                    <th>角色</th>
+                    <th>未读</th>
+                    <th>处理中</th>
+                    <th>已完成</th>
+                    <th>已归档</th>
+                </tr>
+            `;
+            
+            for (const role in data) {
+                const inbox = data[role].inbox;
+                table.innerHTML += `
+                    <tr>
+                        <td>${getRoleDisplayName(role)}</td>
+                        <td class="status-unread">${inbox.unread}</td>
+                        <td class="status-processing">${inbox.processing}</td>
+                        <td class="status-completed">${inbox.completed}</td>
+                        <td class="status-archived">${inbox.archived}</td>
+                    </tr>
+                `;
             }
-            heartbeatTimer = setInterval(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send('ping');
-                } else {
-                    clearInterval(heartbeatTimer);
-                    heartbeatTimer = null;
-                }
-            }, 30000);  // 每30秒发送一次心跳
+            
+            const container = document.getElementById('tasks-table');
+            container.innerHTML = '';
+            container.appendChild(table);
         }
         
-        // 格式化时间戳
-        function formatTimestamp(timestamp) {
-            return new Date(timestamp).toLocaleString();
-        }
-        
-        // 获取角色显示名称
         function getRoleDisplayName(role) {
-            return roleDisplayNames[role] || role;
-        }
-        
-        // 渲染任务卡片
-        function renderTaskCard(task) {
-            const statusText = {
-                'unread': '未读',
-                'processing': '处理中',
-                'completed': '已完成',
-                'archived': '已归档',
-                'recalled': '已撤回'
-            }[task.status.toLowerCase()] || task.status;
-
-            return `
-                <div class="task-card ${task.status.toLowerCase()}" onclick="toggleTaskDetails(this)">
-                    <div class="task-summary">
-                        <div class="left">
-                            <div class="subject">${task.subject}</div>
-                            <div class="meta">
-                                ${getRoleDisplayName(task.from)} → ${getRoleDisplayName(task.to)}
-                                · ${formatTimestamp(task.created_at)}
-                            </div>
-                        </div>
-                        <div class="status-badge">${statusText}</div>
-                    </div>
-                    <div class="task-details">
-                        <div>内容: ${task.content}</div>
-                        ${task.read_at ? '<div class="timestamp">阅读时间: ' + formatTimestamp(task.read_at) + '</div>' : ''}
-                        ${task.recalled_at ? '<div class="timestamp">撤回时间: ' + formatTimestamp(task.recalled_at) + '</div>' : ''}
-                        <div class="controls">ID: ${task.task_id}</div>
-                    </div>
-                </div>
-            `;
-        }
-        
-        // 渲染角色部分
-        function renderRoleSection(role, tasks) {
-            const inboxTasks = tasks.filter(m => m.to === role);
-            const sentTasks = tasks.filter(m => m.from === role);
-            
-            // 按状态统计收件箱任务
-            const inboxStats = {
-                'unread': inboxTasks.filter(t => t.status.toLowerCase() === 'unread').length,
-                'processing': inboxTasks.filter(t => t.status.toLowerCase() === 'processing').length,
-                'completed': inboxTasks.filter(t => t.status.toLowerCase() === 'completed').length,
-                'archived': inboxTasks.filter(t => t.status.toLowerCase() === 'archived').length,
-                'recalled': inboxTasks.filter(t => t.status.toLowerCase() === 'recalled').length
+            const names = {
+                'User': '用户',
+                'PM': '项目经理',
+                'Dev': '开发者'
             };
-            
-            // 按状态统计发件箱任务
-            const sentStats = {
-                'unread': sentTasks.filter(t => t.status.toLowerCase() === 'unread').length,
-                'processing': sentTasks.filter(t => t.status.toLowerCase() === 'processing').length,
-                'completed': sentTasks.filter(t => t.status.toLowerCase() === 'completed').length,
-                'archived': sentTasks.filter(t => t.status.toLowerCase() === 'archived').length,
-                'recalled': sentTasks.filter(t => t.status.toLowerCase() === 'recalled').length
-            };
-            
-            return `
-                <div class="role-section">
-                    <h2>${getRoleDisplayName(role)}</h2>
-                    <h3>收件箱 (${inboxTasks.length})</h3>
-                    <div class="status-stats">
-                        <span>未读: ${inboxStats.unread}</span> |
-                        <span>处理中: ${inboxStats.processing}</span> |
-                        <span>已完成: ${inboxStats.completed}</span> |
-                        <span>已归档: ${inboxStats.archived}</span> |
-                        <span>已撤回: ${inboxStats.recalled}</span>
-                    </div>
-                    ${inboxTasks.map(renderTaskCard).join('')}
-                    <h3>发件箱 (${sentTasks.length})</h3>
-                    <div class="status-stats">
-                        <span>未读: ${sentStats.unread}</span> |
-                        <span>处理中: ${sentStats.processing}</span> |
-                        <span>已完成: ${sentStats.completed}</span> |
-                        <span>已归档: ${sentStats.archived}</span> |
-                        <span>已撤回: ${sentStats.recalled}</span>
-                    </div>
-                    ${sentTasks.map(renderTaskCard).join('')}
-                </div>
-            `;
+            return names[role] || role;
         }
         
-        // 更新任务显示
-        function updateTasksDisplay(tasksByRole) {
-            const app = document.getElementById('app');
-            app.innerHTML = Object.entries(tasksByRole)
-                .map(([role, tasks]) => renderRoleSection(role, tasks))
-                .join('');
-        }
-        
-        // 切换任务详情显示
-        function toggleTaskDetails(element) {
-            element.classList.toggle('expanded');
-        }
-        
-        // 初始化连接
+        // 启动WebSocket连接
         connectWebSocket();
+        
+        // 保持连接活跃
+        setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('ping');
+            }
+        }, 30000);
     </script>
 </body>
 </html>
