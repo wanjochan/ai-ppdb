@@ -1,25 +1,38 @@
 #include "PolyxService.h"
 #include "internal/infrax/InfraxMemory.h"
 #include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxLog.h"
 
 #define MAX_SERVICES 16
 #define MAX_STATUS_LENGTH 1024
+
+// Service factory function type
+typedef PolyxService* (*polyx_service_factory_t)(void);
+
+// Service factory registry
+typedef struct {
+    polyx_service_type_t type;
+    polyx_service_factory_t factory;
+} polyx_service_factory_entry_t;
 
 // Private data structure
 typedef struct {
     PolyxService* services[MAX_SERVICES];
     InfraxSize count;
     InfraxMemory* memory;
+    polyx_service_factory_entry_t factories[MAX_SERVICES];
+    InfraxSize factory_count;
 } PolyxServicePrivate;
 
-// Global memory manager
+// Global instances
 static InfraxMemory* g_memory = NULL;
 static InfraxCore* g_core = NULL;
 extern InfraxMemoryClassType InfraxMemoryClass;
 extern InfraxCoreClassType InfraxCoreClass;
 
-// Forward declarations of private functions
+// Forward declarations
 static InfraxBool init_memory(void);
+static PolyxService* create_service(PolyxServicePrivate* private, polyx_service_type_t type);
 
 // Constructor
 static PolyxService* polyx_service_new(void) {
@@ -79,6 +92,51 @@ static void polyx_service_free(PolyxService* self) {
     g_memory->dealloc(g_memory, self);
 }
 
+// Service factory registration
+InfraxError polyx_service_register_factory(PolyxService* self, polyx_service_type_t type, 
+                                         polyx_service_factory_t factory) {
+    if (!self || !factory) {
+        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid parameters");
+    }
+
+    PolyxServicePrivate* private = self->private_data;
+    if (!private) {
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
+    }
+
+    if (private->factory_count >= MAX_SERVICES) {
+        return make_error(INFRAX_ERROR_NO_MEMORY, "Too many service factories");
+    }
+
+    // Check for duplicate
+    for (InfraxSize i = 0; i < private->factory_count; i++) {
+        if (private->factories[i].type == type) {
+            return make_error(INFRAX_ERROR_FILE_EXISTS, "Service factory already registered");
+        }
+    }
+
+    // Add factory
+    private->factories[private->factory_count].type = type;
+    private->factories[private->factory_count].factory = factory;
+    private->factory_count++;
+
+    return make_error(INFRAX_ERROR_OK, NULL);
+}
+
+// Create service instance using factory
+static PolyxService* create_service(PolyxServicePrivate* private, polyx_service_type_t type) {
+    if (!private) return NULL;
+
+    // Find factory
+    for (InfraxSize i = 0; i < private->factory_count; i++) {
+        if (private->factories[i].type == type) {
+            return private->factories[i].factory();
+        }
+    }
+
+    return NULL;
+}
+
 // Service registration
 static InfraxError polyx_service_register(PolyxService* self, const polyx_service_config_t* config) {
     if (!self || !config) {
@@ -87,7 +145,7 @@ static InfraxError polyx_service_register(PolyxService* self, const polyx_servic
 
     PolyxServicePrivate* private = self->private_data;
     if (!private) {
-        return make_error(INFRAX_ERROR_INVALID_PARAM, "Invalid state");
+        return make_error(INFRAX_ERROR_INVALID_STATE, "Invalid state");
     }
 
     if (private->count >= MAX_SERVICES) {
@@ -101,8 +159,8 @@ static InfraxError polyx_service_register(PolyxService* self, const polyx_servic
         }
     }
 
-    // Create new service
-    PolyxService* service = polyx_service_new();
+    // Create service instance using factory
+    PolyxService* service = create_service(private, config->type);
     if (!service) {
         return make_error(INFRAX_ERROR_NO_MEMORY, "Failed to create service");
     }
@@ -308,6 +366,7 @@ const PolyxServiceClassType PolyxServiceClass = {
     .new = polyx_service_new,
     .free = polyx_service_free,
     .register_service = polyx_service_register,
+    .register_factory = polyx_service_register_factory,
     .get_service = polyx_service_get,
     .start_all = polyx_service_start_all,
     .stop_all = polyx_service_stop_all,

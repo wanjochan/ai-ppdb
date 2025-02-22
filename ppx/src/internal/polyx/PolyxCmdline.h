@@ -12,15 +12,6 @@ typedef struct PolyxCmdlineClassType PolyxCmdlineClassType;
 #define POLYX_CMD_MAX_DESC 256
 #define POLYX_CMD_MAX_ARGS 16
 #define POLYX_CMD_MAX_VALUE 1024
-#define POLYX_CMD_MAX_SERVICES 32
-
-// Service types
-typedef enum {
-    POLYX_SERVICE_RINETD,
-    POLYX_SERVICE_SQLITE,
-    POLYX_SERVICE_MEMKV,
-    POLYX_SERVICE_DISKV
-} polyx_service_type_t;
 
 // Command line argument
 typedef struct {
@@ -29,48 +20,55 @@ typedef struct {
     InfraxBool has_value;
 } polyx_cmd_arg_t;
 
-// Service configuration
-typedef struct {
-    polyx_service_type_t type;
-    char listen_host[POLYX_CMD_MAX_NAME];
-    InfraxI32 listen_port;
-    char target_host[POLYX_CMD_MAX_NAME];
-    InfraxI32 target_port;
-    char backend[POLYX_CMD_MAX_VALUE];
-} polyx_service_config_t;
-
-// Global configuration
+// Command context
 typedef struct {
     polyx_cmd_arg_t args[POLYX_CMD_MAX_ARGS];
     InfraxI32 arg_count;
     InfraxI32 log_level;
-    polyx_service_config_t services[POLYX_CMD_MAX_SERVICES];
-    InfraxI32 service_count;
-} polyx_config_t;
+    void* user_data;
+} polyx_cmd_context_t;
+
+// Command option flags
+typedef enum {
+    POLYX_CMD_OPTION_NONE = 0,
+    POLYX_CMD_OPTION_REQUIRED = 1,
+    POLYX_CMD_OPTION_OPTIONAL = 2
+} polyx_cmd_option_flags_t;
 
 // Command option
 typedef struct {
-    char name[POLYX_CMD_MAX_NAME];
-    char desc[POLYX_CMD_MAX_DESC];
+    const char* name;
+    const char* desc;
     InfraxBool has_value;
 } polyx_cmd_option_t;
 
-// Command structure
+// Command handler function type
+typedef InfraxError (*polyx_cmd_handler_t)(const polyx_cmd_context_t* ctx, InfraxI32 argc, char** argv);
+
+// Command definition
 typedef struct {
-    char name[POLYX_CMD_MAX_NAME];
-    char desc[POLYX_CMD_MAX_DESC];
+    const char* name;
+    const char* desc;
     const polyx_cmd_option_t* options;
-    InfraxI32 option_count;
-    InfraxError (*handler)(const polyx_config_t* config, InfraxI32 argc, char** argv);
+    InfraxSize option_count;
+    polyx_cmd_handler_t handler;
 } polyx_cmd_t;
 
-// Command line class
+// Command line instance
 struct PolyxCmdline {
     PolyxCmdline* self;
     const PolyxCmdlineClassType* klass;
     
-    // Public members
-    polyx_config_t config;
+    // Command registration
+    InfraxError (*register_cmd)(struct PolyxCmdline* self, const polyx_cmd_t* cmd);
+    
+    // Command execution
+    InfraxError (*execute)(struct PolyxCmdline* self, const polyx_cmd_context_t* ctx,
+                          InfraxI32 argc, char** argv);
+    
+    // Help and usage
+    void (*print_usage)(struct PolyxCmdline* self, const char* cmd_name);
+    void (*print_help)(struct PolyxCmdline* self, const char* cmd_name);
     
     // Private data
     void* private_data;
@@ -85,18 +83,13 @@ struct PolyxCmdlineClassType {
     // Command registration
     InfraxError (*register_cmd)(PolyxCmdline* self, const polyx_cmd_t* cmd);
     
-    // Argument parsing
-    InfraxError (*parse_args)(PolyxCmdline* self, InfraxI32 argc, char** argv);
+    // Command execution
+    InfraxError (*execute)(PolyxCmdline* self, const polyx_cmd_context_t* ctx,
+                          InfraxI32 argc, char** argv);
     
-    // Option handling
-    InfraxError (*get_option)(PolyxCmdline* self, const char* option, char* value, InfraxSize size);
-    InfraxBool (*has_option)(PolyxCmdline* self, const char* option);
-    InfraxError (*get_int_option)(PolyxCmdline* self, const char* option, InfraxI32* value);
-    
-    // Command lookup
-    const polyx_cmd_t* (*find_command)(PolyxCmdline* self, const char* name);
-    const polyx_cmd_t* (*get_commands)(PolyxCmdline* self);
-    InfraxSize (*get_command_count)(PolyxCmdline* self);
+    // Help and usage
+    void (*print_usage)(PolyxCmdline* self, const char* cmd_name);
+    void (*print_help)(PolyxCmdline* self, const char* cmd_name);
 };
 
 // Global class instance
