@@ -85,3 +85,5 @@ ppdb/src/vendor/libduckdb.zip
 ppdb/vendor/duckdb/tmp/duckdb
 ppdb/vendor/duckdb/tmp/duckdb-cli.zip
 ppx/build/
+
+ai/var/
