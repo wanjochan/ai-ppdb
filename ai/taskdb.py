@@ -43,7 +43,7 @@ class DBManager:
             conn.commit()
             return cursor.lastrowid
 
-    def update_session(self, session_id: int, role: str = None, mail_id: str = None,
+    def update_session(self, session_id: int, role: str = None, task_id: str = None,
                       ide_pid: int = None, status: str = None) -> None:
         """更新会话状态"""
         updates = []
@@ -51,9 +51,9 @@ class DBManager:
         if role is not None:
             updates.append("current_role = ?")
             params.append(role)
-        if mail_id is not None:
-            updates.append("current_mail_id = ?")
-            params.append(mail_id)
+        if task_id is not None:
+            updates.append("current_task_id = ?")
+            params.append(task_id)
         if ide_pid is not None:
             updates.append("ide_pid = ?")
             params.append(ide_pid)
@@ -76,15 +76,15 @@ class DBManager:
             )
             conn.commit()
 
-    def add_session_history(self, session_id: int, role: str, mail_id: str, action: str) -> None:
+    def add_session_history(self, session_id: int, role: str, task_id: str, action: str) -> None:
         """添加会话历史记录"""
         with self.get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO session_history (session_id, role, mail_id, action, timestamp)
+                INSERT INTO session_history (session_id, role, task_id, action, timestamp)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (session_id, role, mail_id, action, datetime.now())
+                (session_id, role, task_id, action, datetime.now())
             )
             conn.commit()
 
@@ -102,30 +102,30 @@ class DBManager:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def create_mail(self, from_role: str, to_role: str, subject: str, content: str,
-                   mail_id: str, reply_to: str = None) -> None:
-        """创建新邮件"""
+    def create_task(self, from_role: str, to_role: str, subject: str, content: str,
+                   task_id: str, reply_to: str = None) -> None:
+        """创建新任务"""
         now = datetime.now()
         with self.get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO mails (id, from_role, to_role, subject, content, status,
+                INSERT INTO tasks (id, from_role, to_role, subject, content, status,
                                  created_at, reply_to)
                 VALUES (?, ?, ?, ?, ?, 'UNREAD', ?, ?)
                 """,
-                (mail_id, from_role, to_role, subject, content, now, reply_to)
+                (task_id, from_role, to_role, subject, content, now, reply_to)
             )
             conn.execute(
                 """
-                INSERT INTO mail_status_history (mail_id, status, timestamp, note)
-                VALUES (?, 'UNREAD', ?, 'Mail created')
+                INSERT INTO task_status_history (task_id, status, timestamp, note)
+                VALUES (?, 'UNREAD', ?, 'Task created')
                 """,
-                (mail_id, now)
+                (task_id, now)
             )
             conn.commit()
 
-    def update_mail_status(self, mail_id: str, status: str, note: str = None) -> None:
-        """更新邮件状态"""
+    def update_task_status(self, task_id: str, status: str, note: str = None) -> None:
+        """更新任务状态"""
         now = datetime.now()
         with self.get_connection() as conn:
             updates = ["status = ?", "last_active_at = ?"]
@@ -133,18 +133,18 @@ class DBManager:
             
             if status == 'UNREAD':
                 updates.append("read_at = NULL")
-            elif status != 'RECALLED' and self.get_mail_status(mail_id) == 'UNREAD':
+            elif status != 'RECALLED' and self.get_task_status(task_id) == 'UNREAD':
                 updates.append("read_at = ?")
                 params.append(now)
             elif status == 'RECALLED':
                 updates.append("recalled_at = ?")
                 params.append(now)
             
-            params.append(mail_id)
+            params.append(task_id)
             
             conn.execute(
                 f"""
-                UPDATE mails
+                UPDATE tasks
                 SET {', '.join(updates)}
                 WHERE id = ?
                 """,
@@ -153,28 +153,28 @@ class DBManager:
             
             conn.execute(
                 """
-                INSERT INTO mail_status_history (mail_id, status, timestamp, note)
+                INSERT INTO task_status_history (task_id, status, timestamp, note)
                 VALUES (?, ?, ?, ?)
                 """,
-                (mail_id, status, now, note or f"Status changed to {status}")
+                (task_id, status, now, note or f"Status changed to {status}")
             )
             conn.commit()
 
-    def get_mail_status(self, mail_id: str) -> Optional[str]:
-        """获取邮件状态"""
+    def get_task_status(self, task_id: str) -> Optional[str]:
+        """获取任务状态"""
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "SELECT status FROM mails WHERE id = ?",
-                (mail_id,)
+                "SELECT status FROM tasks WHERE id = ?",
+                (task_id,)
             )
             row = cursor.fetchone()
             return row['status'] if row else None
 
-    def get_mails_by_role(self, role: str, status: str = None,
+    def get_tasks_by_role(self, role: str, status: str = None,
                          include_sent: bool = False) -> List[Dict[str, Any]]:
-        """获取角色的邮件"""
+        """获取角色的任务"""
         query = """
-            SELECT * FROM mails
+            SELECT * FROM tasks
             WHERE (to_role = ?
         """
         params = [role]
@@ -195,15 +195,15 @@ class DBManager:
             cursor = conn.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_mail_history(self, mail_id: str) -> List[Dict[str, Any]]:
-        """获取邮件状态历史"""
+    def get_task_history(self, task_id: str) -> List[Dict[str, Any]]:
+        """获取任务状态历史"""
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT * FROM mail_status_history
-                WHERE mail_id = ?
+                SELECT * FROM task_status_history
+                WHERE task_id = ?
                 ORDER BY timestamp
                 """,
-                (mail_id,)
+                (task_id,)
             )
             return [dict(row) for row in cursor.fetchall()] 
