@@ -111,6 +111,8 @@ struct PolyxScript {
     
     // Parser state
     PolyxToken current_token;
+    InfraxBool had_error;
+    char* error_message;
     
     // Interpreter state
     struct {
@@ -130,6 +132,27 @@ struct PolyxScriptClassType {
     // Core functionality
     InfraxError (*load_source)(PolyxScript* self, const char* source);
     InfraxError (*run)(PolyxScript* self);
+    
+    // Lexer functions
+    PolyxToken (*get_next_token)(PolyxScript* self);
+    
+    // Parser functions
+    PolyxAstNode* (*parse_program)(PolyxScript* self);
+    PolyxAstNode* (*parse_statement)(PolyxScript* self);
+    PolyxAstNode* (*parse_expression)(PolyxScript* self);
+    
+    // AST node management
+    PolyxAstNode* (*create_number_node)(double value);
+    PolyxAstNode* (*create_string_node)(const char* value);
+    PolyxAstNode* (*create_identifier_node)(const char* name);
+    PolyxAstNode* (*create_binary_op_node)(char operator, PolyxAstNode* left, PolyxAstNode* right);
+    PolyxAstNode* (*create_unary_op_node)(char operator, PolyxAstNode* operand);
+    PolyxAstNode* (*create_assignment_node)(const char* name, PolyxAstNode* value);
+    PolyxAstNode* (*create_if_node)(PolyxAstNode* condition, PolyxAstNode* then_branch, PolyxAstNode* else_branch);
+    PolyxAstNode* (*create_while_node)(PolyxAstNode* condition, PolyxAstNode* body);
+    PolyxAstNode* (*create_block_node)(void);
+    InfraxError (*add_statement_to_block)(PolyxAstNode* block, PolyxAstNode* statement);
+    void (*free_ast_node)(PolyxAstNode* node);
     
     // Debug support
     void (*print_tokens)(PolyxScript* self);
