@@ -1,11 +1,138 @@
-# PPDB 架构设计 （由AI自己总结和调整的）
+# PPDB 架构设计文档
 
-## TMP NOTES
+## 1. 概述
 
+PPDB 是一个分布式数据库系统的概念验证(PoC)实现。系统目标是提供高性能、可扩展的数据存储和处理能力。
 
+### 1.1 设计目标
+
+- 高性能：支持并行处理
+- 可扩展：支持多种存储引擎
+- 可靠性：提供事务支持
+- 跨平台：基于 cosmopolitan 实现
+
+### 1.2 核心特性
+
+- 多存储引擎支持（SQLite、DuckDB）
+- 键值存储接口
+- 脚本扩展系统
+
+## 2. 系统架构
+
+PPDB 采用模块化设计，主要包含以下组件：
+
+### 2.1 基础设施
+
+- 内存管理
+- 错误处理
+- 数据结构（哈希表、红黑树等）
+- 缓冲区操作
+- 跨平台支持
+
+### 2.2 数据库抽象
+
+- 统一的数据库操作接口
+- 事务管理
+- 查询处理
+
+### 2.3 网络服务
+
+- 基本的网络通信
+- 服务管理
+- 数据同步
+
+## 3. 核心组件
+
+### 3.1 数据库引擎
+
+#### 3.1.1 SQLite 引擎
+- 内置支持
+- 适用于单机场景
+- 提供完整的 SQL 支持
+
+#### 3.1.2 DuckDB 引擎
+- 动态加载支持
+- 面向分析的列式存储
+- 高性能并行处理
+
+### 3.2 存储引擎
+
+#### 3.2.1 MemKV
+- 内存键值存储
+- 高性能读写
+- 支持数据过期
+- 原子操作支持
+
+### 3.3 脚本系统
+
+- 支持自定义函数
+- 错误处理机制
+- 类型系统
+- 环境隔离
+
+## 4. 关键接口
+
+### 4.1 数据库接口
+
+基本操作：
+```c
+InfraxError (*open)(PolyxDB* self, const polyx_db_config_t* config);
+InfraxError (*close)(PolyxDB* self);
+InfraxError (*exec)(PolyxDB* self, const char* sql);
+InfraxError (*query)(PolyxDB* self, const char* sql, polyx_db_result_t* result);
 ```
-### 注意，ppdb 已经基本完成 PoC，
-目前正在重构 PPX（INFRAX, POLYX, PEERX），预计完成迁移后会删除 ppdb 目录
+
+事务支持：
+```c
+InfraxError (*begin)(PolyxDB* self);
+InfraxError (*commit)(PolyxDB* self);
+InfraxError (*rollback)(PolyxDB* self);
+```
+
+KV操作：
+```c
+InfraxError (*set)(PolyxDB* self, const char* key, const void* value, size_t value_size);
+InfraxError (*get)(PolyxDB* self, const char* key, void** value, size_t* value_size);
+InfraxError (*del)(PolyxDB* self, const char* key);
+```
+
+### 4.2 服务接口
+
+服务生命周期管理：
+- 服务注册
+- 状态管理
+- 配置应用
+- 启动/停止控制
+
+## 5. 开发状态
+
+### 5.1 当前状态
+- 已完成概念验证(PoC)
+- 代码将迁移到新的 PPX 架构
+- 具有基本的测试框架
+
+### 5.2 后续计划
+- 迁移到 PPX 架构
+- 完善功能
+- 优化性能
+- 完善文档
+
+## 6. 优势与改进空间
+
+### 6.1 主要优势
+- 模块化设计
+- 多存储引擎支持
+- 基本的事务支持
+- 跨平台能力
+
+### 6.2 改进空间
+- 完善分布式功能
+- 增强并行处理能力
+- 优化内存使用
+- 增加更多存储引擎支持
+
+### 注意
+ppdb 已经基本完成 PoC，目前正在重构为 PPX 架构（INFRAX, POLYX, PEERX），预计完成迁移后会删除 ppdb 目录。
 
 ### test arch (infrax+polyx+peerx)
 rm -rf ppx/build/ && timeout 60s sh ppx/scripts/build_test_arch.sh

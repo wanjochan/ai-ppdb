@@ -1,0 +1,14 @@
+与用户对话用中文，保持简洁（concise）和准确（precise）；
+代码中的文档和注释都用英文；
+
+本代码仓介绍：
+
+用 c 语言开发的分布式数据库（架构文档 docs/ARCH.md）
+
+- ppdb/ 是已经打通了几个功能（Rinetd、Sqlite、MemKV）的版本
+- ppx/ 是目前主要要进行 OOP 重构的版本（但目前还有不少问题，特别是可能是重构得不好导致还未运行成功）
+- Infrax 层目标是成为我们的底层设施，目前基本已经稳定
+- Polyx 层目标是组件层，目标是可重用，而且只基于 Infrax 层
+- Peerx 层目标是产品层（比如说 Rinetd、Sqlite、Duckdb、MemKV、DisKV、Ppx）
+- 所有的测试代码必须基于 Infrax 层
+
