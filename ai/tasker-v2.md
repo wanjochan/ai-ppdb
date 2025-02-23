@@ -39,9 +39,9 @@
 1. 元数据区 (YAML 格式)
    ```yaml
    ---
+   工作流程（非常重要）: ai/tasker-v2.md
    task_id: task_name
    session_id: abc123      # 最后一次会话ID
-   flow_file: ai/tasker-v2.md # 工作流程文档
    current_role: researcher # 当前执行角色(新任务默认为研究员)
    next_role: planner      # 下一个预期角色
    status: in_progress     # 任务状态
