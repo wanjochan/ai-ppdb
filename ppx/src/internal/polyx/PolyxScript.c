@@ -773,6 +773,553 @@ static void script_print_ast(PolyxScript* self, PolyxAstNode* node) {
     script_print_ast_node(self, node, 0);
 }
 
+// Value management
+static PolyxValue* script_create_null_value(void) {
+    PolyxValue* value = g_memory->alloc(g_memory, sizeof(PolyxValue));
+    if (value) {
+        g_core->memset(g_core, value, 0, sizeof(PolyxValue));
+        value->type = POLYX_VALUE_NULL;
+    }
+    return value;
+}
+
+static PolyxValue* script_create_number_value(double number) {
+    PolyxValue* value = g_memory->alloc(g_memory, sizeof(PolyxValue));
+    if (value) {
+        g_core->memset(g_core, value, 0, sizeof(PolyxValue));
+        value->type = POLYX_VALUE_NUMBER;
+        value->as.number = number;
+    }
+    return value;
+}
+
+static PolyxValue* script_create_string_value(const char* string) {
+    PolyxValue* value = g_memory->alloc(g_memory, sizeof(PolyxValue));
+    if (value) {
+        g_core->memset(g_core, value, 0, sizeof(PolyxValue));
+        value->type = POLYX_VALUE_STRING;
+        value->as.string = copy_string(string);
+    }
+    return value;
+}
+
+static PolyxValue* script_create_boolean_value(InfraxBool boolean) {
+    PolyxValue* value = g_memory->alloc(g_memory, sizeof(PolyxValue));
+    if (value) {
+        g_core->memset(g_core, value, 0, sizeof(PolyxValue));
+        value->type = POLYX_VALUE_BOOLEAN;
+        value->as.boolean = boolean;
+    }
+    return value;
+}
+
+static PolyxValue* script_create_function_value(PolyxAstNode* body, char** parameters, InfraxSize param_count, PolyxScope* closure) {
+    PolyxValue* value = g_memory->alloc(g_memory, sizeof(PolyxValue));
+    if (!value) return NULL;
+    
+    g_core->memset(g_core, value, 0, sizeof(PolyxValue));
+    value->type = POLYX_VALUE_FUNCTION;
+    value->as.function.body = body;
+    value->as.function.closure = closure;
+    
+    if (param_count > 0) {
+        value->as.function.parameters = g_memory->alloc(g_memory, param_count * sizeof(char*));
+        if (!value->as.function.parameters) {
+            g_memory->dealloc(g_memory, value);
+            return NULL;
+        }
+        
+        for (InfraxSize i = 0; i < param_count; i++) {
+            value->as.function.parameters[i] = copy_string(parameters[i]);
+            if (!value->as.function.parameters[i]) {
+                for (InfraxSize j = 0; j < i; j++) {
+                    g_memory->dealloc(g_memory, value->as.function.parameters[j]);
+                }
+                g_memory->dealloc(g_memory, value->as.function.parameters);
+                g_memory->dealloc(g_memory, value);
+                return NULL;
+            }
+        }
+        value->as.function.param_count = param_count;
+    }
+    
+    return value;
+}
+
+static PolyxValue* script_create_array_value(void) {
+    PolyxValue* value = g_memory->alloc(g_memory, sizeof(PolyxValue));
+    if (value) {
+        g_core->memset(g_core, value, 0, sizeof(PolyxValue));
+        value->type = POLYX_VALUE_ARRAY;
+    }
+    return value;
+}
+
+static PolyxValue* script_create_object_value(void) {
+    PolyxValue* value = g_memory->alloc(g_memory, sizeof(PolyxValue));
+    if (value) {
+        g_core->memset(g_core, value, 0, sizeof(PolyxValue));
+        value->type = POLYX_VALUE_OBJECT;
+    }
+    return value;
+}
+
+static void script_free_value(PolyxValue* value) {
+    if (!value) return;
+    
+    switch (value->type) {
+        case POLYX_VALUE_STRING:
+            if (value->as.string) {
+                g_memory->dealloc(g_memory, value->as.string);
+            }
+            break;
+            
+        case POLYX_VALUE_FUNCTION:
+            if (value->as.function.parameters) {
+                for (InfraxSize i = 0; i < value->as.function.param_count; i++) {
+                    if (value->as.function.parameters[i]) {
+                        g_memory->dealloc(g_memory, value->as.function.parameters[i]);
+                    }
+                }
+                g_memory->dealloc(g_memory, value->as.function.parameters);
+            }
+            break;
+            
+        case POLYX_VALUE_ARRAY:
+            if (value->as.array.elements) {
+                for (InfraxSize i = 0; i < value->as.array.count; i++) {
+                    script_free_value(value->as.array.elements[i]);
+                }
+                g_memory->dealloc(g_memory, value->as.array.elements);
+            }
+            break;
+            
+        case POLYX_VALUE_OBJECT:
+            if (value->as.object.keys) {
+                for (InfraxSize i = 0; i < value->as.object.count; i++) {
+                    if (value->as.object.keys[i]) {
+                        g_memory->dealloc(g_memory, value->as.object.keys[i]);
+                    }
+                    script_free_value(value->as.object.values[i]);
+                }
+                g_memory->dealloc(g_memory, value->as.object.keys);
+                g_memory->dealloc(g_memory, value->as.object.values);
+            }
+            break;
+            
+        default:
+            break;
+    }
+    
+    g_memory->dealloc(g_memory, value);
+}
+
+// Scope management
+static PolyxScope* script_create_scope(PolyxScope* parent) {
+    PolyxScope* scope = g_memory->alloc(g_memory, sizeof(PolyxScope));
+    if (scope) {
+        g_core->memset(g_core, scope, 0, sizeof(PolyxScope));
+        scope->parent = parent;
+        scope->capacity = 8;  // Initial capacity
+        
+        scope->names = g_memory->alloc(g_memory, scope->capacity * sizeof(char*));
+        scope->values = g_memory->alloc(g_memory, scope->capacity * sizeof(PolyxValue*));
+        
+        if (!scope->names || !scope->values) {
+            if (scope->names) g_memory->dealloc(g_memory, scope->names);
+            if (scope->values) g_memory->dealloc(g_memory, scope->values);
+            g_memory->dealloc(g_memory, scope);
+            return NULL;
+        }
+    }
+    return scope;
+}
+
+static void script_free_scope(PolyxScope* scope) {
+    if (!scope) return;
+    
+    if (scope->names) {
+        for (InfraxSize i = 0; i < scope->count; i++) {
+            if (scope->names[i]) {
+                g_memory->dealloc(g_memory, scope->names[i]);
+            }
+            if (scope->values[i]) {
+                script_free_value(scope->values[i]);
+            }
+        }
+        g_memory->dealloc(g_memory, scope->names);
+        g_memory->dealloc(g_memory, scope->values);
+    }
+    
+    g_memory->dealloc(g_memory, scope);
+}
+
+static InfraxError script_define_variable(PolyxScope* scope, const char* name, PolyxValue* value) {
+    if (!scope || !name || !value) {
+        return make_error(-1, "Invalid arguments to define_variable");
+    }
+    
+    // Check if we need to resize
+    if (scope->count >= scope->capacity) {
+        InfraxSize new_capacity = scope->capacity * 2;
+        char** new_names = g_memory->alloc(g_memory, new_capacity * sizeof(char*));
+        PolyxValue** new_values = g_memory->alloc(g_memory, new_capacity * sizeof(PolyxValue*));
+        
+        if (!new_names || !new_values) {
+            if (new_names) g_memory->dealloc(g_memory, new_names);
+            if (new_values) g_memory->dealloc(g_memory, new_values);
+            return make_error(-1, "Memory allocation failed");
+        }
+        
+        g_core->memcpy(g_core, new_names, scope->names, scope->count * sizeof(char*));
+        g_core->memcpy(g_core, new_values, scope->values, scope->count * sizeof(PolyxValue*));
+        
+        g_memory->dealloc(g_memory, scope->names);
+        g_memory->dealloc(g_memory, scope->values);
+        
+        scope->names = new_names;
+        scope->values = new_values;
+        scope->capacity = new_capacity;
+    }
+    
+    // Add the new variable
+    scope->names[scope->count] = copy_string(name);
+    scope->values[scope->count] = value;
+    scope->count++;
+    
+    return INFRAX_ERROR_OK_STRUCT;
+}
+
+static InfraxError script_set_variable(PolyxScope* scope, const char* name, PolyxValue* value) {
+    if (!scope || !name || !value) {
+        return make_error(-1, "Invalid arguments to set_variable");
+    }
+    
+    // Search in current scope
+    for (InfraxSize i = 0; i < scope->count; i++) {
+        if (g_core->strcmp(g_core, scope->names[i], name) == 0) {
+            script_free_value(scope->values[i]);
+            scope->values[i] = value;
+            return INFRAX_ERROR_OK_STRUCT;
+        }
+    }
+    
+    // If not found and we have a parent scope, try there
+    if (scope->parent) {
+        return script_set_variable(scope->parent, name, value);
+    }
+    
+    return make_error(-1, "Variable not found");
+}
+
+static PolyxValue* script_get_variable(PolyxScope* scope, const char* name) {
+    if (!scope || !name) return NULL;
+    
+    // Search in current scope
+    for (InfraxSize i = 0; i < scope->count; i++) {
+        if (g_core->strcmp(g_core, scope->names[i], name) == 0) {
+            return scope->values[i];
+        }
+    }
+    
+    // If not found and we have a parent scope, try there
+    if (scope->parent) {
+        return script_get_variable(scope->parent, name);
+    }
+    
+    return NULL;
+}
+
+// Debug: Print value
+static void script_print_value(PolyxScript* self, PolyxValue* value) {
+    if (!self || !value) return;
+    
+    switch (value->type) {
+        case POLYX_VALUE_NULL:
+            g_core->printf(g_core, "null");
+            break;
+            
+        case POLYX_VALUE_NUMBER:
+            g_core->printf(g_core, "%f", value->as.number);
+            break;
+            
+        case POLYX_VALUE_STRING:
+            g_core->printf(g_core, "\"%s\"", value->as.string ? value->as.string : "");
+            break;
+            
+        case POLYX_VALUE_BOOLEAN:
+            g_core->printf(g_core, "%s", value->as.boolean ? "true" : "false");
+            break;
+            
+        case POLYX_VALUE_FUNCTION:
+            g_core->printf(g_core, "<function>");
+            break;
+            
+        case POLYX_VALUE_ARRAY:
+            g_core->printf(g_core, "[");
+            for (InfraxSize i = 0; i < value->as.array.count; i++) {
+                if (i > 0) g_core->printf(g_core, ", ");
+                script_print_value(self, value->as.array.elements[i]);
+            }
+            g_core->printf(g_core, "]");
+            break;
+            
+        case POLYX_VALUE_OBJECT:
+            g_core->printf(g_core, "{");
+            for (InfraxSize i = 0; i < value->as.object.count; i++) {
+                if (i > 0) g_core->printf(g_core, ", ");
+                g_core->printf(g_core, "\"%s\": ", value->as.object.keys[i]);
+                script_print_value(self, value->as.object.values[i]);
+            }
+            g_core->printf(g_core, "}");
+            break;
+    }
+}
+
+// Expression evaluation
+static PolyxValue* script_eval_expression(PolyxScript* self, PolyxAstNode* node) {
+    if (!self || !node) return NULL;
+    
+    switch (node->type) {
+        case POLYX_AST_NUMBER: {
+            return script_create_number_value(node->as.number_value);
+        }
+        
+        case POLYX_AST_STRING: {
+            return script_create_string_value(node->as.string_value);
+        }
+        
+        case POLYX_AST_IDENTIFIER: {
+            PolyxValue* value = script_get_variable(self->current_scope, node->as.identifier);
+            if (!value) {
+                self->had_error = INFRAX_TRUE;
+                if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+                self->error_message = copy_string("Undefined variable");
+                return NULL;
+            }
+            return value;
+        }
+        
+        case POLYX_AST_BINARY_OP: {
+            PolyxValue* left = script_eval_expression(self, node->as.binary_op.left);
+            if (!left) return NULL;
+            
+            PolyxValue* right = script_eval_expression(self, node->as.binary_op.right);
+            if (!right) {
+                script_free_value(left);
+                return NULL;
+            }
+            
+            PolyxValue* result = NULL;
+            
+            // Both operands must be numbers for arithmetic operations
+            if (left->type == POLYX_VALUE_NUMBER && right->type == POLYX_VALUE_NUMBER) {
+                double left_num = left->as.number;
+                double right_num = right->as.number;
+                
+                switch (node->as.binary_op.operator) {
+                    case '+':
+                        result = script_create_number_value(left_num + right_num);
+                        break;
+                    case '-':
+                        result = script_create_number_value(left_num - right_num);
+                        break;
+                    case '*':
+                        result = script_create_number_value(left_num * right_num);
+                        break;
+                    case '/':
+                        if (right_num == 0) {
+                            self->had_error = INFRAX_TRUE;
+                            if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+                            self->error_message = copy_string("Division by zero");
+                        } else {
+                            result = script_create_number_value(left_num / right_num);
+                        }
+                        break;
+                    case '<':
+                        result = script_create_boolean_value(left_num < right_num);
+                        break;
+                    case '>':
+                        result = script_create_boolean_value(left_num > right_num);
+                        break;
+                    case TOKEN_EQ:
+                        result = script_create_boolean_value(left_num == right_num);
+                        break;
+                    case TOKEN_NEQ:
+                        result = script_create_boolean_value(left_num != right_num);
+                        break;
+                    case TOKEN_LEQ:
+                        result = script_create_boolean_value(left_num <= right_num);
+                        break;
+                    case TOKEN_GEQ:
+                        result = script_create_boolean_value(left_num >= right_num);
+                        break;
+                }
+            }
+            // String concatenation
+            else if (left->type == POLYX_VALUE_STRING && right->type == POLYX_VALUE_STRING && node->as.binary_op.operator == '+') {
+                InfraxSize left_len = g_core->strlen(g_core, left->as.string);
+                InfraxSize right_len = g_core->strlen(g_core, right->as.string);
+                InfraxSize total_len = left_len + right_len;
+                
+                char* concat = g_memory->alloc(g_memory, total_len + 1);
+                if (concat) {
+                    g_core->strcpy(g_core, concat, left->as.string);
+                    g_core->strcat(g_core, concat, right->as.string);
+                    result = script_create_string_value(concat);
+                    g_memory->dealloc(g_memory, concat);
+                }
+            }
+            // Boolean operations
+            else if (left->type == POLYX_VALUE_BOOLEAN && right->type == POLYX_VALUE_BOOLEAN) {
+                switch (node->as.binary_op.operator) {
+                    case TOKEN_AND:
+                        result = script_create_boolean_value(left->as.boolean && right->as.boolean);
+                        break;
+                    case TOKEN_OR:
+                        result = script_create_boolean_value(left->as.boolean || right->as.boolean);
+                        break;
+                    case TOKEN_EQ:
+                        result = script_create_boolean_value(left->as.boolean == right->as.boolean);
+                        break;
+                    case TOKEN_NEQ:
+                        result = script_create_boolean_value(left->as.boolean != right->as.boolean);
+                        break;
+                }
+            }
+            
+            script_free_value(left);
+            script_free_value(right);
+            
+            if (!result) {
+                self->had_error = INFRAX_TRUE;
+                if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+                self->error_message = copy_string("Invalid operands for binary operation");
+            }
+            
+            return result;
+        }
+        
+        case POLYX_AST_UNARY_OP: {
+            PolyxValue* operand = script_eval_expression(self, node->as.unary_op.operand);
+            if (!operand) return NULL;
+            
+            PolyxValue* result = NULL;
+            
+            switch (node->as.unary_op.operator) {
+                case '-':
+                    if (operand->type == POLYX_VALUE_NUMBER) {
+                        result = script_create_number_value(-operand->as.number);
+                    }
+                    break;
+                    
+                case '!':
+                    if (operand->type == POLYX_VALUE_BOOLEAN) {
+                        result = script_create_boolean_value(!operand->as.boolean);
+                    }
+                    break;
+            }
+            
+            script_free_value(operand);
+            
+            if (!result) {
+                self->had_error = INFRAX_TRUE;
+                if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+                self->error_message = copy_string("Invalid operand for unary operation");
+            }
+            
+            return result;
+        }
+        
+        case POLYX_AST_FUNCTION_CALL: {
+            // Get the function value
+            PolyxValue* func = script_eval_expression(self, node->as.function_call.callee);
+            if (!func) return NULL;
+            
+            if (func->type != POLYX_VALUE_FUNCTION) {
+                script_free_value(func);
+                self->had_error = INFRAX_TRUE;
+                if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+                self->error_message = copy_string("Attempting to call a non-function value");
+                return NULL;
+            }
+            
+            // Evaluate arguments
+            PolyxValue** args = NULL;
+            InfraxSize arg_count = node->as.function_call.arg_count;
+            
+            if (arg_count > 0) {
+                args = g_memory->alloc(g_memory, arg_count * sizeof(PolyxValue*));
+                if (!args) {
+                    script_free_value(func);
+                    self->had_error = INFRAX_TRUE;
+                    if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+                    self->error_message = copy_string("Memory allocation failed");
+                    return NULL;
+                }
+                
+                for (InfraxSize i = 0; i < arg_count; i++) {
+                    args[i] = script_eval_expression(self, node->as.function_call.arguments[i]);
+                    if (!args[i]) {
+                        for (InfraxSize j = 0; j < i; j++) {
+                            script_free_value(args[j]);
+                        }
+                        g_memory->dealloc(g_memory, args);
+                        script_free_value(func);
+                        return NULL;
+                    }
+                }
+            }
+            
+            // Create a new scope for the function
+            PolyxScope* func_scope = script_create_scope(func->as.function.closure);
+            if (!func_scope) {
+                if (args) {
+                    for (InfraxSize i = 0; i < arg_count; i++) {
+                        script_free_value(args[i]);
+                    }
+                    g_memory->dealloc(g_memory, args);
+                }
+                script_free_value(func);
+                self->had_error = INFRAX_TRUE;
+                if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+                self->error_message = copy_string("Memory allocation failed");
+                return NULL;
+            }
+            
+            // Bind arguments to parameters
+            for (InfraxSize i = 0; i < arg_count && i < func->as.function.param_count; i++) {
+                script_define_variable(func_scope, func->as.function.parameters[i], args[i]);
+            }
+            
+            // Switch to function scope
+            PolyxScope* prev_scope = self->current_scope;
+            self->current_scope = func_scope;
+            
+            // Execute function body
+            PolyxValue* result = script_eval_expression(self, func->as.function.body);
+            
+            // Restore previous scope
+            self->current_scope = prev_scope;
+            
+            // Clean up
+            script_free_scope(func_scope);
+            if (args) {
+                g_memory->dealloc(g_memory, args);
+            }
+            script_free_value(func);
+            
+            return result;
+        }
+        
+        default:
+            self->had_error = INFRAX_TRUE;
+            if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+            self->error_message = copy_string("Unknown expression type");
+            return NULL;
+    }
+}
+
 // Constructor
 static PolyxScript* script_new(void) {
     if (!init_globals()) return NULL;
@@ -784,6 +1331,14 @@ static PolyxScript* script_new(void) {
     script->self = script;
     script->klass = &PolyxScriptClass;
     
+    // Initialize interpreter state
+    script->global_scope = script_create_scope(NULL);
+    if (!script->global_scope) {
+        g_memory->dealloc(g_memory, script);
+        return NULL;
+    }
+    script->current_scope = script->global_scope;
+    
     return script;
 }
 
@@ -794,18 +1349,19 @@ static void script_free(PolyxScript* self) {
     // Free current token
     free_token(&self->current_token);
     
-    // Free variables
-    if (self->variables.names) {
-        for (InfraxSize i = 0; i < self->variables.count; i++) {
-            if (self->variables.names[i]) {
-                g_memory->dealloc(g_memory, self->variables.names[i]);
-            }
-        }
-        g_memory->dealloc(g_memory, self->variables.names);
+    // Free error message
+    if (self->error_message) {
+        g_memory->dealloc(g_memory, self->error_message);
     }
     
-    if (self->variables.values) {
-        g_memory->dealloc(g_memory, self->variables.values);
+    // Free scopes
+    if (self->global_scope) {
+        script_free_scope(self->global_scope);
+    }
+    
+    // Free last result
+    if (self->last_result) {
+        script_free_value(self->last_result);
     }
     
     g_memory->dealloc(g_memory, self);
@@ -879,6 +1435,21 @@ PolyxScriptClassType PolyxScriptClass = {
     .create_block_node = script_create_block_node,
     .add_statement_to_block = script_add_statement_to_block,
     .free_ast_node = script_free_ast_node,
+    .create_null_value = script_create_null_value,
+    .create_number_value = script_create_number_value,
+    .create_string_value = script_create_string_value,
+    .create_boolean_value = script_create_boolean_value,
+    .create_function_value = script_create_function_value,
+    .create_array_value = script_create_array_value,
+    .create_object_value = script_create_object_value,
+    .free_value = script_free_value,
+    .create_scope = script_create_scope,
+    .free_scope = script_free_scope,
+    .define_variable = script_define_variable,
+    .set_variable = script_set_variable,
+    .get_variable = script_get_variable,
     .print_tokens = script_print_tokens,
-    .print_ast = script_print_ast
+    .print_ast = script_print_ast,
+    .print_value = script_print_value,
+    .eval_expression = script_eval_expression
 }; 
