@@ -1320,6 +1320,742 @@ static PolyxValue* script_eval_expression(PolyxScript* self, PolyxAstNode* node)
     }
 }
 
+// Statement execution
+static InfraxError script_execute_statement(PolyxScript* self, PolyxAstNode* node) {
+    if (!self || !node) return make_error(-1, "Invalid arguments to execute_statement");
+    
+    switch (node->type) {
+        case POLYX_AST_LET: {
+            // Evaluate the initializer if present
+            PolyxValue* value = NULL;
+            if (node->as.let.initializer) {
+                value = script_eval_expression(self, node->as.let.initializer);
+                if (!value) {
+                    return make_error(-1, "Failed to evaluate initializer");
+                }
+            } else {
+                value = script_create_null_value();
+                if (!value) {
+                    return make_error(-1, "Memory allocation failed");
+                }
+            }
+            
+            // Define the variable in the current scope
+            InfraxError error = script_define_variable(self->current_scope, node->as.let.name, value);
+            if (error.code != 0) {
+                script_free_value(value);
+                return error;
+            }
+            
+            return INFRAX_ERROR_OK_STRUCT;
+        }
+        
+        case POLYX_AST_ASSIGNMENT: {
+            // Evaluate the value
+            PolyxValue* value = script_eval_expression(self, node->as.assignment.value);
+            if (!value) {
+                return make_error(-1, "Failed to evaluate assignment value");
+            }
+            
+            // Set the variable value
+            InfraxError error = script_set_variable(self->current_scope, node->as.assignment.name, value);
+            if (error.code != 0) {
+                script_free_value(value);
+                return error;
+            }
+            
+            return INFRAX_ERROR_OK_STRUCT;
+        }
+        
+        case POLYX_AST_IF: {
+            // Evaluate the condition
+            PolyxValue* condition = script_eval_expression(self, node->as.if_stmt.condition);
+            if (!condition) {
+                return make_error(-1, "Failed to evaluate if condition");
+            }
+            
+            InfraxError error = INFRAX_ERROR_OK_STRUCT;
+            
+            if (condition->type != POLYX_VALUE_BOOLEAN) {
+                script_free_value(condition);
+                return make_error(-1, "If condition must be a boolean");
+            }
+            
+            if (condition->as.boolean) {
+                error = script_execute_statement(self, node->as.if_stmt.then_branch);
+            } else if (node->as.if_stmt.else_branch) {
+                error = script_execute_statement(self, node->as.if_stmt.else_branch);
+            }
+            
+            script_free_value(condition);
+            return error;
+        }
+        
+        case POLYX_AST_WHILE: {
+            InfraxError error = INFRAX_ERROR_OK_STRUCT;
+            
+            while (1) {
+                // Evaluate the condition
+                PolyxValue* condition = script_eval_expression(self, node->as.while_stmt.condition);
+                if (!condition) {
+                    return make_error(-1, "Failed to evaluate while condition");
+                }
+                
+                if (condition->type != POLYX_VALUE_BOOLEAN) {
+                    script_free_value(condition);
+                    return make_error(-1, "While condition must be a boolean");
+                }
+                
+                if (!condition->as.boolean) {
+                    script_free_value(condition);
+                    break;
+                }
+                
+                script_free_value(condition);
+                
+                // Execute the body
+                error = script_execute_statement(self, node->as.while_stmt.body);
+                if (error.code != 0) {
+                    return error;
+                }
+            }
+            
+            return error;
+        }
+        
+        case POLYX_AST_BLOCK: {
+            // Create a new scope for the block
+            PolyxScope* block_scope = script_create_scope(self->current_scope);
+            if (!block_scope) {
+                return make_error(-1, "Memory allocation failed");
+            }
+            
+            // Switch to block scope
+            PolyxScope* prev_scope = self->current_scope;
+            self->current_scope = block_scope;
+            
+            // Execute all statements in the block
+            InfraxError error = INFRAX_ERROR_OK_STRUCT;
+            for (InfraxSize i = 0; i < node->as.block.count; i++) {
+                error = script_execute_statement(self, node->as.block.statements[i]);
+                if (error.code != 0) {
+                    break;
+                }
+            }
+            
+            // Restore previous scope
+            self->current_scope = prev_scope;
+            
+            // Clean up block scope
+            script_free_scope(block_scope);
+            
+            return error;
+        }
+        
+        case POLYX_AST_EXPRESSION: {
+            // Evaluate the expression and store the result
+            if (self->last_result) {
+                script_free_value(self->last_result);
+            }
+            self->last_result = script_eval_expression(self, node->as.expression);
+            if (!self->last_result) {
+                return make_error(-1, "Failed to evaluate expression");
+            }
+            
+            return INFRAX_ERROR_OK_STRUCT;
+        }
+        
+        default:
+            return make_error(-1, "Unknown statement type");
+    }
+}
+
+// Run function implementation
+static InfraxError script_run(PolyxScript* self) {
+    if (!self) return make_error(-1, "Invalid script instance");
+    
+    // Reset error state
+    self->had_error = INFRAX_FALSE;
+    if (self->error_message) {
+        g_memory->dealloc(g_memory, self->error_message);
+    }
+    
+    // Parse the program
+    PolyxAstNode* ast = script_parse_program(self);
+    if (!ast) {
+        return make_error(-1, "Failed to parse program");
+    }
+    
+    // Execute the program
+    InfraxError error = script_execute_statement(self, ast);
+    
+    // Clean up
+    script_free_ast_node(ast);
+    
+    return error;
+}
+
+// Built-in function implementations
+static PolyxValue* builtin_print(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count < 1) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("print() requires at least one argument");
+        return NULL;
+    }
+    
+    for (InfraxSize i = 0; i < arg_count; i++) {
+        if (i > 0) g_core->printf(g_core, " ");
+        script_print_value(self, args[i]);
+    }
+    g_core->printf(g_core, "\n");
+    
+    return script_create_null_value();
+}
+
+static PolyxValue* builtin_to_string(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count != 1) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("toString() requires exactly one argument");
+        return NULL;
+    }
+    
+    PolyxValue* arg = args[0];
+    char buffer[64];  // For number conversion
+    
+    switch (arg->type) {
+        case POLYX_VALUE_NULL:
+            return script_create_string_value("null");
+            
+        case POLYX_VALUE_NUMBER:
+            g_core->snprintf(g_core, buffer, sizeof(buffer), "%g", arg->as.number);
+            return script_create_string_value(buffer);
+            
+        case POLYX_VALUE_STRING:
+            return script_create_string_value(arg->as.string);
+            
+        case POLYX_VALUE_BOOLEAN:
+            return script_create_string_value(arg->as.boolean ? "true" : "false");
+            
+        case POLYX_VALUE_FUNCTION:
+            return script_create_string_value("<function>");
+            
+        case POLYX_VALUE_ARRAY:
+            return script_create_string_value("<array>");
+            
+        case POLYX_VALUE_OBJECT:
+            return script_create_string_value("<object>");
+            
+        default:
+            return script_create_string_value("<unknown>");
+    }
+}
+
+static PolyxValue* builtin_to_number(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count != 1) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("toNumber() requires exactly one argument");
+        return NULL;
+    }
+    
+    PolyxValue* arg = args[0];
+    
+    switch (arg->type) {
+        case POLYX_VALUE_NUMBER:
+            return script_create_number_value(arg->as.number);
+            
+        case POLYX_VALUE_STRING: {
+            char* end;
+            double number = g_core->strtod(g_core, arg->as.string, &end);
+            if (*end != '\0') {
+                self->had_error = INFRAX_TRUE;
+                if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+                self->error_message = copy_string("Invalid number format");
+                return NULL;
+            }
+            return script_create_number_value(number);
+        }
+            
+        case POLYX_VALUE_BOOLEAN:
+            return script_create_number_value(arg->as.boolean ? 1.0 : 0.0);
+            
+        default:
+            self->had_error = INFRAX_TRUE;
+            if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+            self->error_message = copy_string("Cannot convert value to number");
+            return NULL;
+    }
+}
+
+static PolyxValue* builtin_array_push(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count < 2) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("push() requires at least two arguments");
+        return NULL;
+    }
+    
+    PolyxValue* array = args[0];
+    if (array->type != POLYX_VALUE_ARRAY) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("First argument must be an array");
+        return NULL;
+    }
+    
+    // Resize array if needed
+    if (array->as.array.count + arg_count - 1 > array->as.array.capacity) {
+        InfraxSize new_capacity = array->as.array.capacity * 2;
+        if (new_capacity < array->as.array.count + arg_count - 1) {
+            new_capacity = array->as.array.count + arg_count - 1;
+        }
+        
+        PolyxValue** new_elements = g_memory->alloc(g_memory, new_capacity * sizeof(PolyxValue*));
+        if (!new_elements) {
+            self->had_error = INFRAX_TRUE;
+            if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+            self->error_message = copy_string("Memory allocation failed");
+            return NULL;
+        }
+        
+        g_core->memcpy(g_core, new_elements, array->as.array.elements, array->as.array.count * sizeof(PolyxValue*));
+        g_memory->dealloc(g_memory, array->as.array.elements);
+        array->as.array.elements = new_elements;
+        array->as.array.capacity = new_capacity;
+    }
+    
+    // Add new elements
+    for (InfraxSize i = 1; i < arg_count; i++) {
+        array->as.array.elements[array->as.array.count++] = args[i];
+    }
+    
+    return script_create_number_value(array->as.array.count);
+}
+
+static PolyxValue* builtin_array_pop(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count != 1) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("pop() requires exactly one argument");
+        return NULL;
+    }
+    
+    PolyxValue* array = args[0];
+    if (array->type != POLYX_VALUE_ARRAY) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("Argument must be an array");
+        return NULL;
+    }
+    
+    if (array->as.array.count == 0) {
+        return script_create_null_value();
+    }
+    
+    return array->as.array.elements[--array->as.array.count];
+}
+
+static PolyxValue* builtin_array_length(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count != 1) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("length() requires exactly one argument");
+        return NULL;
+    }
+    
+    PolyxValue* array = args[0];
+    if (array->type != POLYX_VALUE_ARRAY) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("Argument must be an array");
+        return NULL;
+    }
+    
+    return script_create_number_value(array->as.array.count);
+}
+
+static PolyxValue* builtin_object_set(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count != 3) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("set() requires exactly three arguments");
+        return NULL;
+    }
+    
+    PolyxValue* object = args[0];
+    if (object->type != POLYX_VALUE_OBJECT) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("First argument must be an object");
+        return NULL;
+    }
+    
+    PolyxValue* key = args[1];
+    if (key->type != POLYX_VALUE_STRING) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("Second argument must be a string");
+        return NULL;
+    }
+    
+    // Check if key already exists
+    for (InfraxSize i = 0; i < object->as.object.count; i++) {
+        if (g_core->strcmp(g_core, object->as.object.keys[i], key->as.string) == 0) {
+            script_free_value(object->as.object.values[i]);
+            object->as.object.values[i] = args[2];
+            return script_create_null_value();
+        }
+    }
+    
+    // Resize object if needed
+    if (object->as.object.count >= object->as.object.capacity) {
+        InfraxSize new_capacity = object->as.object.capacity * 2;
+        if (new_capacity == 0) new_capacity = 8;
+        
+        char** new_keys = g_memory->alloc(g_memory, new_capacity * sizeof(char*));
+        PolyxValue** new_values = g_memory->alloc(g_memory, new_capacity * sizeof(PolyxValue*));
+        
+        if (!new_keys || !new_values) {
+            if (new_keys) g_memory->dealloc(g_memory, new_keys);
+            if (new_values) g_memory->dealloc(g_memory, new_values);
+            self->had_error = INFRAX_TRUE;
+            if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+            self->error_message = copy_string("Memory allocation failed");
+            return NULL;
+        }
+        
+        g_core->memcpy(g_core, new_keys, object->as.object.keys, object->as.object.count * sizeof(char*));
+        g_core->memcpy(g_core, new_values, object->as.object.values, object->as.object.count * sizeof(PolyxValue*));
+        
+        g_memory->dealloc(g_memory, object->as.object.keys);
+        g_memory->dealloc(g_memory, object->as.object.values);
+        
+        object->as.object.keys = new_keys;
+        object->as.object.values = new_values;
+        object->as.object.capacity = new_capacity;
+    }
+    
+    // Add new key-value pair
+    object->as.object.keys[object->as.object.count] = copy_string(key->as.string);
+    object->as.object.values[object->as.object.count] = args[2];
+    object->as.object.count++;
+    
+    return script_create_null_value();
+}
+
+static PolyxValue* builtin_object_get(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count != 2) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("get() requires exactly two arguments");
+        return NULL;
+    }
+    
+    PolyxValue* object = args[0];
+    if (object->type != POLYX_VALUE_OBJECT) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("First argument must be an object");
+        return NULL;
+    }
+    
+    PolyxValue* key = args[1];
+    if (key->type != POLYX_VALUE_STRING) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("Second argument must be a string");
+        return NULL;
+    }
+    
+    for (InfraxSize i = 0; i < object->as.object.count; i++) {
+        if (g_core->strcmp(g_core, object->as.object.keys[i], key->as.string) == 0) {
+            return object->as.object.values[i];
+        }
+    }
+    
+    return script_create_null_value();
+}
+
+// Initialize built-in functions
+static void init_builtins(PolyxScript* self) {
+    // Create built-in function values
+    PolyxValue* print_func = script_create_function_value(NULL, NULL, 0, NULL);
+    print_func->as.function.native_fn = builtin_print;
+    
+    PolyxValue* to_string_func = script_create_function_value(NULL, NULL, 0, NULL);
+    to_string_func->as.function.native_fn = builtin_to_string;
+    
+    PolyxValue* to_number_func = script_create_function_value(NULL, NULL, 0, NULL);
+    to_number_func->as.function.native_fn = builtin_to_number;
+    
+    PolyxValue* array_push_func = script_create_function_value(NULL, NULL, 0, NULL);
+    array_push_func->as.function.native_fn = builtin_array_push;
+    
+    PolyxValue* array_pop_func = script_create_function_value(NULL, NULL, 0, NULL);
+    array_pop_func->as.function.native_fn = builtin_array_pop;
+    
+    PolyxValue* array_length_func = script_create_function_value(NULL, NULL, 0, NULL);
+    array_length_func->as.function.native_fn = builtin_array_length;
+    
+    PolyxValue* object_set_func = script_create_function_value(NULL, NULL, 0, NULL);
+    object_set_func->as.function.native_fn = builtin_object_set;
+    
+    PolyxValue* object_get_func = script_create_function_value(NULL, NULL, 0, NULL);
+    object_get_func->as.function.native_fn = builtin_object_get;
+    
+    // Define built-in functions in global scope
+    script_define_variable(self->global_scope, "print", print_func);
+    script_define_variable(self->global_scope, "toString", to_string_func);
+    script_define_variable(self->global_scope, "toNumber", to_number_func);
+    script_define_variable(self->global_scope, "arrayPush", array_push_func);
+    script_define_variable(self->global_scope, "arrayPop", array_pop_func);
+    script_define_variable(self->global_scope, "arrayLength", array_length_func);
+    script_define_variable(self->global_scope, "objectSet", object_set_func);
+    script_define_variable(self->global_scope, "objectGet", object_get_func);
+}
+
+// Async operation management
+static PolyxValue* script_create_promise(PolyxScript* self) {
+    PolyxValue* promise = g_memory->alloc(g_memory, sizeof(PolyxValue));
+    if (!promise) return NULL;
+    
+    g_core->memset(g_core, promise, 0, sizeof(PolyxValue));
+    promise->type = POLYX_VALUE_PROMISE;
+    promise->as.promise.state = POLYX_ASYNC_PENDING;
+    
+    return promise;
+}
+
+static void script_resolve_promise(PolyxScript* self, PolyxValue* promise, PolyxValue* value) {
+    if (!self || !promise || promise->type != POLYX_VALUE_PROMISE) return;
+    
+    promise->as.promise.state = POLYX_ASYNC_COMPLETED;
+    promise->as.promise.result = value;
+    
+    // Execute then handler if exists
+    if (promise->as.promise.then_handler) {
+        PolyxValue* args[] = { value };
+        script_eval_expression(self, promise->as.promise.then_handler);
+    }
+}
+
+static void script_reject_promise(PolyxScript* self, PolyxValue* promise, const char* error) {
+    if (!self || !promise || promise->type != POLYX_VALUE_PROMISE) return;
+    
+    promise->as.promise.state = POLYX_ASYNC_ERROR;
+    if (error) {
+        PolyxValue* error_value = script_create_string_value(error);
+        promise->as.promise.result = error_value;
+    }
+    
+    // Execute catch handler if exists
+    if (promise->as.promise.catch_handler) {
+        PolyxValue* args[] = { promise->as.promise.result };
+        script_eval_expression(self, promise->as.promise.catch_handler);
+    }
+}
+
+static void script_update_async(PolyxScript* self) {
+    if (!self || !self->async_operations) return;
+    
+    for (InfraxSize i = 0; i < self->async_count; i++) {
+        PolyxAsyncContext* ctx = self->async_operations[i];
+        if (!ctx) continue;
+        
+        if (ctx->state == POLYX_ASYNC_COMPLETED) {
+            // Execute callback
+            if (ctx->callback) {
+                PolyxAsyncResult result = {
+                    .state = POLYX_ASYNC_COMPLETED,
+                    .result = ctx->promise->as.promise.result,
+                    .error_message = NULL
+                };
+                ctx->callback(self, &result);
+            }
+            
+            // Clean up
+            g_memory->dealloc(g_memory, ctx);
+            self->async_operations[i] = NULL;
+        }
+        else if (ctx->state == POLYX_ASYNC_ERROR) {
+            // Execute callback
+            if (ctx->callback) {
+                PolyxAsyncResult result = {
+                    .state = POLYX_ASYNC_ERROR,
+                    .result = NULL,
+                    .error_message = ctx->error_message
+                };
+                ctx->callback(self, &result);
+            }
+            
+            // Clean up
+            if (ctx->error_message) {
+                g_memory->dealloc(g_memory, ctx->error_message);
+            }
+            g_memory->dealloc(g_memory, ctx);
+            self->async_operations[i] = NULL;
+        }
+    }
+}
+
+// Built-in async functions
+static void sleep_callback(PolyxScript* script, void* user_data) {
+    PolyxAsyncContext* ctx = (PolyxAsyncContext*)user_data;
+    if (!ctx) return;
+    
+    ctx->state = POLYX_ASYNC_COMPLETED;
+    script_resolve_promise(script, ctx->promise, script_create_null_value());
+}
+
+static PolyxValue* script_async_sleep(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count != 1) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("sleep() requires exactly one argument");
+        return NULL;
+    }
+    
+    if (args[0]->type != POLYX_VALUE_NUMBER) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("sleep() argument must be a number");
+        return NULL;
+    }
+    
+    // Create promise
+    PolyxValue* promise = script_create_promise(self);
+    if (!promise) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("Memory allocation failed");
+        return NULL;
+    }
+    
+    // Create async context
+    PolyxAsyncContext* ctx = g_memory->alloc(g_memory, sizeof(PolyxAsyncContext));
+    if (!ctx) {
+        script_free_value(promise);
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("Memory allocation failed");
+        return NULL;
+    }
+    
+    g_core->memset(g_core, ctx, 0, sizeof(PolyxAsyncContext));
+    ctx->state = POLYX_ASYNC_PENDING;
+    ctx->promise = promise;
+    ctx->callback = sleep_callback;
+    
+    // Add to async operations
+    if (self->async_count >= self->async_capacity) {
+        InfraxSize new_capacity = self->async_capacity * 2;
+        if (new_capacity == 0) new_capacity = 8;
+        
+        PolyxAsyncContext** new_operations = g_memory->alloc(g_memory, new_capacity * sizeof(PolyxAsyncContext*));
+        if (!new_operations) {
+            g_memory->dealloc(g_memory, ctx);
+            script_free_value(promise);
+            self->had_error = INFRAX_TRUE;
+            if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+            self->error_message = copy_string("Memory allocation failed");
+            return NULL;
+        }
+        
+        if (self->async_operations) {
+            g_core->memcpy(g_core, new_operations, self->async_operations, self->async_count * sizeof(PolyxAsyncContext*));
+            g_memory->dealloc(g_memory, self->async_operations);
+        }
+        
+        self->async_operations = new_operations;
+        self->async_capacity = new_capacity;
+    }
+    
+    self->async_operations[self->async_count++] = ctx;
+    promise->as.promise.context = ctx;
+    
+    return promise;
+}
+
+static void file_read_callback(PolyxScript* script, void* user_data) {
+    PolyxAsyncContext* ctx = (PolyxAsyncContext*)user_data;
+    if (!ctx) return;
+    
+    // TODO: Implement actual file reading
+    ctx->state = POLYX_ASYNC_COMPLETED;
+    script_resolve_promise(script, ctx->promise, script_create_string_value("File content"));
+}
+
+static PolyxValue* script_async_read_file(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    if (arg_count != 1) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("readFile() requires exactly one argument");
+        return NULL;
+    }
+    
+    if (args[0]->type != POLYX_VALUE_STRING) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("readFile() argument must be a string");
+        return NULL;
+    }
+    
+    // Create promise
+    PolyxValue* promise = script_create_promise(self);
+    if (!promise) {
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("Memory allocation failed");
+        return NULL;
+    }
+    
+    // Create async context
+    PolyxAsyncContext* ctx = g_memory->alloc(g_memory, sizeof(PolyxAsyncContext));
+    if (!ctx) {
+        script_free_value(promise);
+        self->had_error = INFRAX_TRUE;
+        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+        self->error_message = copy_string("Memory allocation failed");
+        return NULL;
+    }
+    
+    g_core->memset(g_core, ctx, 0, sizeof(PolyxAsyncContext));
+    ctx->state = POLYX_ASYNC_PENDING;
+    ctx->promise = promise;
+    ctx->callback = file_read_callback;
+    
+    // Add to async operations
+    if (self->async_count >= self->async_capacity) {
+        InfraxSize new_capacity = self->async_capacity * 2;
+        if (new_capacity == 0) new_capacity = 8;
+        
+        PolyxAsyncContext** new_operations = g_memory->alloc(g_memory, new_capacity * sizeof(PolyxAsyncContext*));
+        if (!new_operations) {
+            g_memory->dealloc(g_memory, ctx);
+            script_free_value(promise);
+            self->had_error = INFRAX_TRUE;
+            if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
+            self->error_message = copy_string("Memory allocation failed");
+            return NULL;
+        }
+        
+        if (self->async_operations) {
+            g_core->memcpy(g_core, new_operations, self->async_operations, self->async_count * sizeof(PolyxAsyncContext*));
+            g_memory->dealloc(g_memory, self->async_operations);
+        }
+        
+        self->async_operations = new_operations;
+        self->async_capacity = new_capacity;
+    }
+    
+    self->async_operations[self->async_count++] = ctx;
+    promise->as.promise.context = ctx;
+    
+    return promise;
+}
+
 // Constructor
 static PolyxScript* script_new(void) {
     if (!init_globals()) return NULL;
@@ -1338,6 +2074,19 @@ static PolyxScript* script_new(void) {
         return NULL;
     }
     script->current_scope = script->global_scope;
+    
+    // Initialize async state
+    script->async_count = 0;
+    script->async_capacity = 8;
+    script->async_operations = g_memory->alloc(g_memory, script->async_capacity * sizeof(PolyxAsyncContext*));
+    if (!script->async_operations) {
+        script_free_scope(script->global_scope);
+        g_memory->dealloc(g_memory, script);
+        return NULL;
+    }
+    
+    // Initialize built-in functions
+    init_builtins(script);
     
     return script;
 }
@@ -1364,6 +2113,19 @@ static void script_free(PolyxScript* self) {
         script_free_value(self->last_result);
     }
     
+    // Free async operations
+    if (self->async_operations) {
+        for (InfraxSize i = 0; i < self->async_count; i++) {
+            if (self->async_operations[i]) {
+                if (self->async_operations[i]->error_message) {
+                    g_memory->dealloc(g_memory, self->async_operations[i]->error_message);
+                }
+                g_memory->dealloc(g_memory, self->async_operations[i]);
+            }
+        }
+        g_memory->dealloc(g_memory, self->async_operations);
+    }
+    
     g_memory->dealloc(g_memory, self);
 }
 
@@ -1383,16 +2145,6 @@ static InfraxError script_load_source(PolyxScript* self, const char* source) {
     free_token(&self->current_token);
     self->current_token = get_next_token(self);
     
-    return INFRAX_ERROR_OK_STRUCT;
-}
-
-// Run script
-static InfraxError script_run(PolyxScript* self) {
-    if (!self) {
-        return make_error(-1, "Invalid script instance");
-    }
-    
-    // TODO: Implement parser and interpreter
     return INFRAX_ERROR_OK_STRUCT;
 }
 
@@ -1451,5 +2203,12 @@ PolyxScriptClassType PolyxScriptClass = {
     .print_tokens = script_print_tokens,
     .print_ast = script_print_ast,
     .print_value = script_print_value,
-    .eval_expression = script_eval_expression
+    .eval_expression = script_eval_expression,
+    .execute_statement = script_execute_statement,
+    .create_promise = script_create_promise,
+    .resolve_promise = script_resolve_promise,
+    .reject_promise = script_reject_promise,
+    .update_async = script_update_async,
+    .async_sleep = script_async_sleep,
+    .async_read_file = script_async_read_file
 }; 

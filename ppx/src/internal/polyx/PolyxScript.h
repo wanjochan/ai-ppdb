@@ -25,6 +25,7 @@
 
  */
 #include "internal/infrax/InfraxCore.h"
+#include "internal/infrax/InfraxError.h"
 
 // Forward declarations
 typedef struct PolyxScript PolyxScript;
@@ -38,7 +39,8 @@ typedef enum {
     POLYX_VALUE_BOOLEAN,
     POLYX_VALUE_FUNCTION,
     POLYX_VALUE_ARRAY,
-    POLYX_VALUE_OBJECT
+    POLYX_VALUE_OBJECT,
+    POLYX_VALUE_PROMISE
 } PolyxValueType;
 
 // Value structure
@@ -63,6 +65,7 @@ typedef struct PolyxValue {
             struct PolyxValue** values;
             InfraxSize count;
         } object;
+        PolyxPromise promise;
     } as;
 } PolyxValue;
 
@@ -143,6 +146,42 @@ typedef struct PolyxAstNode {
     } as;
 } PolyxAstNode;
 
+// Async operation types
+typedef enum {
+    POLYX_ASYNC_NONE,
+    POLYX_ASYNC_PENDING,
+    POLYX_ASYNC_COMPLETED,
+    POLYX_ASYNC_ERROR
+} PolyxAsyncState;
+
+// Async operation result
+typedef struct {
+    PolyxAsyncState state;
+    PolyxValue* result;
+    char* error_message;
+} PolyxAsyncResult;
+
+// Async operation callback
+typedef void (*PolyxAsyncCallback)(PolyxScript* script, PolyxAsyncResult* result);
+
+// Async operation context
+typedef struct {
+    PolyxAsyncState state;
+    PolyxValue* promise;
+    PolyxAsyncCallback callback;
+    void* user_data;
+    char* error_message;
+} PolyxAsyncContext;
+
+// Promise value
+typedef struct {
+    PolyxAsyncState state;
+    PolyxValue* result;
+    PolyxValue* then_handler;
+    PolyxValue* catch_handler;
+    PolyxAsyncContext* context;
+} PolyxPromise;
+
 // Script instance structure
 struct PolyxScript {
     PolyxScript* self;
@@ -163,6 +202,10 @@ struct PolyxScript {
     PolyxScope* global_scope;
     PolyxScope* current_scope;
     PolyxValue* last_result;
+    PolyxAsyncContext* current_async;
+    InfraxSize async_count;
+    InfraxSize async_capacity;
+    PolyxAsyncContext** async_operations;
 };
 
 // Script class interface
@@ -217,6 +260,19 @@ struct PolyxScriptClassType {
     void (*print_tokens)(PolyxScript* self);
     void (*print_ast)(PolyxScript* self, PolyxAstNode* node);
     void (*print_value)(PolyxScript* self, PolyxValue* value);
+    
+    // Async operation management
+    PolyxValue* (*create_promise)(PolyxScript* self);
+    void (*resolve_promise)(PolyxScript* self, PolyxValue* promise, PolyxValue* value);
+    void (*reject_promise)(PolyxScript* self, PolyxValue* promise, const char* error);
+    void (*update_async)(PolyxScript* self);
+    
+    // Built-in async functions
+    PolyxValue* (*async_sleep)(PolyxScript* self, PolyxValue** args, InfraxSize arg_count);
+    PolyxValue* (*async_read_file)(PolyxScript* self, PolyxValue** args, InfraxSize arg_count);
+    PolyxValue* (*async_write_file)(PolyxScript* self, PolyxValue** args, InfraxSize arg_count);
+    PolyxValue* (*async_http_get)(PolyxScript* self, PolyxValue** args, InfraxSize arg_count);
+    PolyxValue* (*async_http_post)(PolyxScript* self, PolyxValue** args, InfraxSize arg_count);
 };
 
 // Global class instance
