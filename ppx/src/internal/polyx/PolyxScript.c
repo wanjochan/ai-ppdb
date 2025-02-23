@@ -1,5 +1,6 @@
 #include "PolyxScript.h"
 #include "internal/infrax/InfraxMemory.h"
+#include <curl/curl.h>
 
 // Global instances
 static InfraxCore* g_core = NULL;
@@ -1978,81 +1979,241 @@ static PolyxValue* script_async_sleep(PolyxScript* self, PolyxValue** args, Infr
     return promise;
 }
 
-static void file_read_callback(PolyxScript* script, void* user_data) {
-    PolyxAsyncContext* ctx = (PolyxAsyncContext*)user_data;
-    if (!ctx) return;
-    
-    // TODO: Implement actual file reading
-    ctx->state = POLYX_ASYNC_COMPLETED;
-    script_resolve_promise(script, ctx->promise, script_create_string_value("File content"));
+// File operation helpers
+static InfraxBool file_exists(const char* path) {
+    FILE* file = fopen(path, "r");
+    if (file) {
+        fclose(file);
+        return INFRAX_TRUE;
+    }
+    return INFRAX_FALSE;
 }
 
-static PolyxValue* script_async_read_file(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
-    if (arg_count != 1) {
-        self->had_error = INFRAX_TRUE;
-        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
-        self->error_message = copy_string("readFile() requires exactly one argument");
+static InfraxSize get_file_size(const char* path) {
+    FILE* file = fopen(path, "r");
+    if (!file) return 0;
+    
+    fseek(file, 0, SEEK_END);
+    InfraxSize size = ftell(file);
+    fclose(file);
+    
+    return size;
+}
+
+static InfraxBool check_file_readable(const char* path) {
+    return access(path, R_OK) == 0;
+}
+
+static InfraxBool check_file_writable(const char* path) {
+    // Check if file exists and is writable, or directory is writable if file doesn't exist
+    if (file_exists(path)) {
+        return access(path, W_OK) == 0;
+    } else {
+        char* dir_path = copy_string(path);
+        if (!dir_path) return INFRAX_FALSE;
+        
+        char* last_slash = strrchr(dir_path, '/');
+        if (last_slash) {
+            *last_slash = '\0';
+        } else {
+            dir_path[0] = '.';
+            dir_path[1] = '\0';
+        }
+        
+        InfraxBool result = access(dir_path, W_OK) == 0;
+        g_memory->dealloc(g_memory, dir_path);
+        return result;
+    }
+}
+
+typedef struct {
+    char* path;
+    char* content;
+    InfraxSize size;
+    InfraxSize max_size;
+    InfraxSize bytes_written;
+    void (*progress_callback)(InfraxSize current, InfraxSize total);
+} FileWriteContext;
+
+static FileWriteContext* create_file_write_context(const char* path, const char* content, 
+                                                 InfraxSize size, InfraxSize max_size) {
+    FileWriteContext* ctx = g_memory->alloc(g_memory, sizeof(FileWriteContext));
+    if (ctx) {
+        ctx->path = copy_string(path);
+        ctx->content = copy_string(content);
+        ctx->size = size;
+        ctx->max_size = max_size;
+        ctx->bytes_written = 0;
+        ctx->progress_callback = NULL;
+    }
+    return ctx;
+}
+
+static void free_file_write_context(FileWriteContext* ctx) {
+    if (ctx) {
+        if (ctx->path) g_memory->dealloc(g_memory, ctx->path);
+        if (ctx->content) g_memory->dealloc(g_memory, ctx->content);
+        g_memory->dealloc(g_memory, ctx);
+    }
+}
+
+static void file_write_callback(PolyxScript* script, void* user_data) {
+    FileWriteContext* ctx = (FileWriteContext*)user_data;
+    PolyxAsyncContext* async_ctx = script->current_async;
+    
+    if (!ctx || !ctx->path || !ctx->content) {
+        script_reject_promise(script, async_ctx->promise, "Invalid file write context");
+        free_file_write_context(ctx);
+        return;
+    }
+    
+    // Check file permissions
+    if (!check_file_writable(ctx->path)) {
+        script_reject_promise(script, async_ctx->promise, "File is not writable");
+        free_file_write_context(ctx);
+        return;
+    }
+    
+    // Check content size
+    if (ctx->size > ctx->max_size) {
+        script_reject_promise(script, async_ctx->promise, "Content is too large");
+        free_file_write_context(ctx);
+        return;
+    }
+    
+    // Open file for writing
+    FILE* file = fopen(ctx->path, "w");
+    if (!file) {
+        script_reject_promise(script, async_ctx->promise, "Failed to open file for writing");
+        free_file_write_context(ctx);
+        return;
+    }
+    
+    // Write content in chunks
+    InfraxSize chunk_size = 4096;
+    while (ctx->bytes_written < ctx->size) {
+        InfraxSize to_write = ctx->size - ctx->bytes_written < chunk_size ? 
+                             ctx->size - ctx->bytes_written : chunk_size;
+        
+        InfraxSize written = fwrite(ctx->content + ctx->bytes_written, 1, to_write, file);
+        if (written == 0) break;
+        
+        ctx->bytes_written += written;
+        
+        // Update progress
+        if (ctx->progress_callback) {
+            ctx->progress_callback(ctx->bytes_written, ctx->size);
+        }
+    }
+    
+    fclose(file);
+    
+    if (ctx->bytes_written < ctx->size) {
+        script_reject_promise(script, async_ctx->promise, "Failed to write entire content");
+        free_file_write_context(ctx);
+        return;
+    }
+    
+    // Create and resolve promise with bytes written
+    PolyxValue* result = script_create_number_value((double)ctx->bytes_written);
+    if (!result) {
+        script_reject_promise(script, async_ctx->promise, "Failed to create result value");
+        free_file_write_context(ctx);
+        return;
+    }
+    
+    script_resolve_promise(script, async_ctx->promise, result);
+    free_file_write_context(ctx);
+}
+
+static PolyxValue* script_async_write_file(PolyxScript* self, PolyxValue** args, InfraxSize arg_count) {
+    // Check arguments
+    if (arg_count < 2 || arg_count > 3) {
+        set_error(self, "writeFile requires 2 or 3 arguments: path, content, and optional maxSize");
         return NULL;
     }
     
     if (args[0]->type != POLYX_VALUE_STRING) {
-        self->had_error = INFRAX_TRUE;
-        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
-        self->error_message = copy_string("readFile() argument must be a string");
+        set_error(self, "First argument must be a string (file path)");
+        return NULL;
+    }
+    
+    if (args[1]->type != POLYX_VALUE_STRING) {
+        set_error(self, "Second argument must be a string (content)");
+        return NULL;
+    }
+    
+    // Get max file size (default: 10MB)
+    InfraxSize max_size = 10 * 1024 * 1024;
+    if (arg_count > 2) {
+        if (args[2]->type != POLYX_VALUE_NUMBER) {
+            set_error(self, "Third argument must be a number (max file size)");
+            return NULL;
+        }
+        max_size = (InfraxSize)args[2]->as.number;
+    }
+    
+    // Create file write context
+    FileWriteContext* ctx = create_file_write_context(
+        args[0]->as.string,
+        args[1]->as.string,
+        g_core->strlen(g_core, args[1]->as.string),
+        max_size
+    );
+    
+    if (!ctx) {
+        set_error(self, "Failed to create file write context");
         return NULL;
     }
     
     // Create promise
     PolyxValue* promise = script_create_promise(self);
     if (!promise) {
-        self->had_error = INFRAX_TRUE;
-        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
-        self->error_message = copy_string("Memory allocation failed");
+        free_file_write_context(ctx);
+        set_error(self, "Failed to create promise");
         return NULL;
     }
     
     // Create async context
-    PolyxAsyncContext* ctx = g_memory->alloc(g_memory, sizeof(PolyxAsyncContext));
-    if (!ctx) {
+    PolyxAsyncContext* async_ctx = g_memory->alloc(g_memory, sizeof(PolyxAsyncContext));
+    if (!async_ctx) {
+        free_file_write_context(ctx);
         script_free_value(promise);
-        self->had_error = INFRAX_TRUE;
-        if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
-        self->error_message = copy_string("Memory allocation failed");
+        set_error(self, "Failed to create async context");
         return NULL;
     }
     
-    g_core->memset(g_core, ctx, 0, sizeof(PolyxAsyncContext));
-    ctx->state = POLYX_ASYNC_PENDING;
-    ctx->promise = promise;
-    ctx->callback = file_read_callback;
+    async_ctx->state = POLYX_ASYNC_PENDING;
+    async_ctx->promise = promise;
+    async_ctx->callback = file_write_callback;
+    async_ctx->user_data = ctx;
+    async_ctx->error_message = NULL;
     
     // Add to async operations
     if (self->async_count >= self->async_capacity) {
-        InfraxSize new_capacity = self->async_capacity * 2;
-        if (new_capacity == 0) new_capacity = 8;
+        InfraxSize new_capacity = self->async_capacity * 2 + 8;
+        PolyxAsyncContext** new_ops = g_memory->alloc(g_memory, 
+            sizeof(PolyxAsyncContext*) * new_capacity);
         
-        PolyxAsyncContext** new_operations = g_memory->alloc(g_memory, new_capacity * sizeof(PolyxAsyncContext*));
-        if (!new_operations) {
-            g_memory->dealloc(g_memory, ctx);
+        if (!new_ops) {
+            free_file_write_context(ctx);
             script_free_value(promise);
-            self->had_error = INFRAX_TRUE;
-            if (self->error_message) g_memory->dealloc(g_memory, self->error_message);
-            self->error_message = copy_string("Memory allocation failed");
+            g_memory->dealloc(g_memory, async_ctx);
+            set_error(self, "Failed to resize async operations array");
             return NULL;
         }
         
         if (self->async_operations) {
-            g_core->memcpy(g_core, new_operations, self->async_operations, self->async_count * sizeof(PolyxAsyncContext*));
+            g_core->memcpy(g_core, new_ops, self->async_operations,
+                sizeof(PolyxAsyncContext*) * self->async_count);
             g_memory->dealloc(g_memory, self->async_operations);
         }
         
-        self->async_operations = new_operations;
+        self->async_operations = new_ops;
         self->async_capacity = new_capacity;
     }
     
-    self->async_operations[self->async_count++] = ctx;
-    promise->as.promise.context = ctx;
-    
+    self->async_operations[self->async_count++] = async_ctx;
     return promise;
 }
 
@@ -2210,5 +2371,6 @@ PolyxScriptClassType PolyxScriptClass = {
     .reject_promise = script_reject_promise,
     .update_async = script_update_async,
     .async_sleep = script_async_sleep,
-    .async_read_file = script_async_read_file
+    .async_read_file = script_async_read_file,
+    .async_write_file = script_async_write_file
 }; 
