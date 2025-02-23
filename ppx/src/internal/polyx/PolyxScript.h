@@ -30,6 +30,51 @@
 typedef struct PolyxScript PolyxScript;
 typedef struct PolyxScriptClassType PolyxScriptClassType;
 
+// Value types
+typedef enum {
+    POLYX_VALUE_NULL,
+    POLYX_VALUE_NUMBER,
+    POLYX_VALUE_STRING,
+    POLYX_VALUE_BOOLEAN,
+    POLYX_VALUE_FUNCTION,
+    POLYX_VALUE_ARRAY,
+    POLYX_VALUE_OBJECT
+} PolyxValueType;
+
+// Value structure
+typedef struct PolyxValue {
+    PolyxValueType type;
+    union {
+        double number;
+        char* string;
+        InfraxBool boolean;
+        struct {
+            PolyxAstNode* body;
+            char** parameters;
+            InfraxSize param_count;
+            struct PolyxScope* closure;
+        } function;
+        struct {
+            struct PolyxValue** elements;
+            InfraxSize count;
+        } array;
+        struct {
+            char** keys;
+            struct PolyxValue** values;
+            InfraxSize count;
+        } object;
+    } as;
+} PolyxValue;
+
+// Scope structure for variable management
+typedef struct PolyxScope {
+    struct PolyxScope* parent;
+    char** names;
+    PolyxValue** values;
+    InfraxSize count;
+    InfraxSize capacity;
+} PolyxScope;
+
 // Token types
 typedef enum {
     POLYX_TOKEN_EOF = 0,
@@ -115,12 +160,9 @@ struct PolyxScript {
     char* error_message;
     
     // Interpreter state
-    struct {
-        char** names;
-        double* values;
-        InfraxSize count;
-        InfraxSize capacity;
-    } variables;
+    PolyxScope* global_scope;
+    PolyxScope* current_scope;
+    PolyxValue* last_result;
 };
 
 // Script class interface
@@ -154,9 +196,27 @@ struct PolyxScriptClassType {
     InfraxError (*add_statement_to_block)(PolyxAstNode* block, PolyxAstNode* statement);
     void (*free_ast_node)(PolyxAstNode* node);
     
+    // Interpreter functions
+    PolyxValue* (*create_null_value)(void);
+    PolyxValue* (*create_number_value)(double number);
+    PolyxValue* (*create_string_value)(const char* string);
+    PolyxValue* (*create_boolean_value)(InfraxBool boolean);
+    PolyxValue* (*create_function_value)(PolyxAstNode* body, char** parameters, InfraxSize param_count, PolyxScope* closure);
+    PolyxValue* (*create_array_value)(void);
+    PolyxValue* (*create_object_value)(void);
+    void (*free_value)(PolyxValue* value);
+    
+    // Scope management
+    PolyxScope* (*create_scope)(PolyxScope* parent);
+    void (*free_scope)(PolyxScope* scope);
+    InfraxError (*define_variable)(PolyxScope* scope, const char* name, PolyxValue* value);
+    InfraxError (*set_variable)(PolyxScope* scope, const char* name, PolyxValue* value);
+    PolyxValue* (*get_variable)(PolyxScope* scope, const char* name);
+    
     // Debug support
     void (*print_tokens)(PolyxScript* self);
     void (*print_ast)(PolyxScript* self, PolyxAstNode* node);
+    void (*print_value)(PolyxScript* self, PolyxValue* value);
 };
 
 // Global class instance

@@ -41,6 +41,7 @@
    ---
    task_id: task_name
    session_id: abc123      # 最后一次会话ID
+   flow_file: ai/tasker.md # 工作流程文档
    current_role: researcher # 当前执行角色(新任务默认为研究员)
    next_role: planner      # 下一个预期角色
    status: in_progress     # 任务状态
